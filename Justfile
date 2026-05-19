@@ -8,8 +8,6 @@ info:
     @echo
     @echo "Run"
     @echo "  just run"
-    @echo "  just run-macos"
-    @echo "  just run-daemon"
     @echo "  just run-cli --help"
     @echo
     @echo "Build"
@@ -25,27 +23,31 @@ info:
 
 run:
     @case "$(uname -s)" in \
-        Darwin) just run-macos ;; \
-        Linux) just run-daemon ;; \
+        Darwin) just _run-macos ;; \
+        Linux) just _run-daemon ;; \
         *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
     esac
 
-run-macos:
-    @profile="${IRIS_DRIVE_PROFILE:-debug}"; \
-    build_profile_arg=""; \
-    profile_dir="debug"; \
-    if [[ "$profile" == "release" ]]; then \
-        build_profile_arg="--release"; \
-        profile_dir="release"; \
-    elif [[ "$profile" != "debug" ]]; then \
-        echo "IRIS_DRIVE_PROFILE must be 'debug' or 'release'." >&2; \
-        exit 2; \
-    fi; \
+_run-macos:
+    @just macos-xcodeproj; \
     target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"; \
-    cargo build $build_profile_arg -p idrive -p iris-drive-mac; \
-    exec "$target_dir/$profile_dir/iris-drive-mac"
+    cargo build -p idrive; \
+    xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug CODE_SIGNING_ALLOWED=NO build >/tmp/iris-drive-macos-build.log; \
+    app_path="$(xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILT_PRODUCTS_DIR = / { dir=$2 } /^[[:space:]]*FULL_PRODUCT_NAME = / { app=$2 } END { print dir "/" app }')"; \
+    if [[ -z "$app_path" || ! -d "$app_path" ]]; then \
+        echo "Built macOS app not found. Build log: /tmp/iris-drive-macos-build.log" >&2; \
+        exit 1; \
+    fi; \
+    cp "$target_dir/debug/idrive" "$app_path/Contents/MacOS/idrive"; \
+    chmod +x "$app_path/Contents/MacOS/idrive"; \
+    codesign --force --sign - --entitlements macos/IrisDriveMac.entitlements "$app_path/Contents/MacOS/idrive"; \
+    codesign --force --sign - --entitlements macos/FileProvider/FileProvider.entitlements "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"; \
+    codesign --force --sign - --entitlements macos/IrisDriveMac.entitlements "$app_path"; \
+    codesign --verify --strict --deep "$app_path"; \
+    open "$app_path"; \
+    echo "macOS app launched: $app_path"
 
-run-daemon *args:
+_run-daemon *args:
     @profile="${IRIS_DRIVE_PROFILE:-debug}"; \
     build_profile_arg=""; \
     profile_dir="debug"; \

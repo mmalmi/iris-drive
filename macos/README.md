@@ -5,17 +5,24 @@ Native macOS File Provider scaffold for Iris Drive.
 This is the Apple-backed "drive folder" path from `docs/DESIGN.md`: a containing
 app registers a File Provider domain, and the `IrisDriveFileProvider` extension
 will eventually bridge Finder-visible file operations to the shared Rust app
-core.
+core. The containing app also starts the bundled `idrive daemon`, so there is
+one app entrypoint in development.
 
 ## Development build
 
 ```bash
-just macos-xcodeproj
-just macos-build
+just run
 ```
 
-`macos-build` passes `CODE_SIGNING_ALLOWED=NO`, so it verifies the Swift target
-and plist structure without requiring a local provisioning profile.
+`just run` builds the `idrive` helper, builds this app, copies `idrive` into the
+app bundle, ad-hoc signs the development entitlements, opens the app, registers
+the File Provider domain, and starts the daemon. `just macos-build` still exists
+as a compile-only check and passes `CODE_SIGNING_ALLOWED=NO`, so it verifies the
+Swift target and plist structure without requiring a local provisioning profile.
+
+The app-launched daemon uses the shared app-group container for its config and
+working tree. The user-visible drive folder should come from the File Provider
+domain, not from a separate `~/Iris Drive` directory.
 
 ## Entitlements
 
