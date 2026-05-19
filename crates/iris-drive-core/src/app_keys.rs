@@ -35,11 +35,27 @@ pub struct DeviceEntry {
 }
 
 /// A complete, owner-signed roster snapshot. Replaceable by `created_at`.
+///
+/// Carries the current drive content key (DCK) NIP-44–wrapped to each
+/// authorized device's pubkey. Rotating the DCK on every membership
+/// change gives forward secrecy against device revocation: a revoked
+/// device retains anything it already downloaded but cannot decrypt the
+/// drive's new root once the next rotation lands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppKeysSnapshot {
     pub owner_pubkey: String,
     pub created_at: i64,
     pub devices: Vec<DeviceEntry>,
+    /// Monotonically-increasing counter. Bumped each time the DCK
+    /// rotates (on approve, revoke, or explicit `rotate_dck`).
+    #[serde(default)]
+    pub dck_generation: u64,
+    /// NIP-44 wraps of the current DCK, keyed by device pubkey hex.
+    /// Encrypted by the owner secret to each device's pubkey. Devices
+    /// not present in the map are effectively revoked from the current
+    /// content.
+    #[serde(default)]
+    pub wrapped_dck: BTreeMap<String, String>,
 }
 
 impl AppKeysSnapshot {
@@ -163,6 +179,8 @@ mod tests {
                     label: None,
                 })
                 .collect(),
+            dck_generation: 0,
+            wrapped_dck: BTreeMap::new(),
         }
     }
 
@@ -306,6 +324,8 @@ mod tests {
                 added_at: 1_699_000_000,
                 label: Some("Mac mini".into()),
             }],
+            dck_generation: 1,
+            wrapped_dck: BTreeMap::from([("dev1".to_string(), "abcdef".to_string())]),
         };
         let serialized = toml::to_string(&s).unwrap();
         let back: AppKeysSnapshot = toml::from_str(&serialized).unwrap();

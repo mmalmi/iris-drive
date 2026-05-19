@@ -15,8 +15,11 @@
 //!    `AwaitingApproval`. It must be approved by an owner-capable
 //!    device before its drive root is honoured.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
+use nostr_sdk::{Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,6 +39,16 @@ pub enum AccountError {
     AlreadyAuthorized,
     #[error("device not in roster")]
     DeviceNotInRoster,
+    #[error("no AppKeys snapshot yet")]
+    NoCurrentSnapshot,
+    #[error("no DCK wrap for this device (revoked or never authorized)")]
+    NoWrapForThisDevice,
+    #[error("failed to wrap DCK: {0}")]
+    Wrap(String),
+    #[error("failed to unwrap DCK: {0}")]
+    Unwrap(String),
+    #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
+    InvalidDckLength(usize),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -131,14 +144,19 @@ impl Account {
         };
 
         let now = current_unix_seconds();
+        let devices = vec![DeviceEntry {
+            pubkey: state.device_pubkey.clone(),
+            added_at: now,
+            label: device_label,
+        }];
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
         let snap = AppKeysSnapshot {
             owner_pubkey: state.owner_pubkey.clone(),
             created_at: now,
-            devices: vec![DeviceEntry {
-                pubkey: state.device_pubkey.clone(),
-                added_at: now,
-                label: device_label,
-            }],
+            devices,
+            dck_generation: 1,
+            wrapped_dck: wraps,
         };
         state.apply_app_keys(snap);
 
@@ -229,9 +247,10 @@ impl Account {
         })
     }
 
-    /// Approve a new device by appending it to the `AppKeys` snapshot and
-    /// re-publishing under the owner key. Bumps `created_at` to now;
-    /// callers should fan the new snapshot out over Nostr.
+    /// Approve a new device by appending it to the `AppKeys` snapshot
+    /// and rotating the DCK so the new device gets a fresh wrap.
+    /// Bumps `created_at` and `dck_generation`. Callers should fan the
+    /// new snapshot out over Nostr.
     pub fn approve_device(
         &mut self,
         device_pubkey_hex: String,
@@ -245,6 +264,10 @@ impl Account {
         {
             return Err(AccountError::AlreadyAuthorized);
         }
+        let owner = self
+            .owner_key
+            .as_ref()
+            .ok_or(AccountError::NoOwnerAuthority)?;
         let now = next_local_timestamp(self.state.app_keys.as_ref());
         let mut devices = self
             .state
@@ -257,17 +280,31 @@ impl Account {
             added_at: now,
             label,
         });
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let next_gen = self
+            .state
+            .app_keys
+            .as_ref()
+            .map_or(1, |s| s.dck_generation + 1);
         let new_snap = AppKeysSnapshot {
             owner_pubkey: self.state.owner_pubkey.clone(),
             created_at: now,
             devices,
+            dck_generation: next_gen,
+            wrapped_dck: wraps,
         };
         self.state.apply_app_keys(new_snap);
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
-    /// Revoke a device from the roster. Bumps `created_at` to now.
-    pub fn revoke_device(&mut self, device_pubkey_hex: &str) -> Result<&AppKeysSnapshot, AccountError> {
+    /// Revoke a device from the roster and rotate the DCK so the
+    /// revoked device cannot decrypt any subsequent content. Bumps
+    /// `created_at` and `dck_generation`.
+    pub fn revoke_device(
+        &mut self,
+        device_pubkey_hex: &str,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
             return Err(AccountError::NoOwnerAuthority);
         }
@@ -279,6 +316,10 @@ impl Account {
         if !snap.contains(device_pubkey_hex) {
             return Err(AccountError::DeviceNotInRoster);
         }
+        let owner = self
+            .owner_key
+            .as_ref()
+            .ok_or(AccountError::NoOwnerAuthority)?;
         let now = next_local_timestamp(self.state.app_keys.as_ref());
         let devices: Vec<DeviceEntry> = snap
             .devices
@@ -286,14 +327,99 @@ impl Account {
             .filter(|d| d.pubkey != device_pubkey_hex)
             .cloned()
             .collect();
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let next_gen = snap.dck_generation + 1;
         let new_snap = AppKeysSnapshot {
             owner_pubkey: self.state.owner_pubkey.clone(),
             created_at: now,
             devices,
+            dck_generation: next_gen,
+            wrapped_dck: wraps,
         };
         self.state.apply_app_keys(new_snap);
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
+
+    /// Rotate the DCK without changing the device roster. Useful for
+    /// periodic key freshness ("rotate weekly even with no membership
+    /// churn"). Owner-only.
+    pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, AccountError> {
+        if !self.state.can_manage_devices() {
+            return Err(AccountError::NoOwnerAuthority);
+        }
+        let owner = self
+            .owner_key
+            .as_ref()
+            .ok_or(AccountError::NoOwnerAuthority)?;
+        let snap = self
+            .state
+            .app_keys
+            .as_ref()
+            .ok_or(AccountError::NoCurrentSnapshot)?;
+        let devices = snap.devices.clone();
+        let next_gen = snap.dck_generation + 1;
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let now = next_local_timestamp(Some(snap));
+        let new_snap = AppKeysSnapshot {
+            owner_pubkey: self.state.owner_pubkey.clone(),
+            created_at: now,
+            devices,
+            dck_generation: next_gen,
+            wrapped_dck: wraps,
+        };
+        self.state.apply_app_keys(new_snap);
+        Ok(self.state.app_keys.as_ref().expect("just applied"))
+    }
+
+    /// Decrypt this device's DCK wrap from the current snapshot. Errors
+    /// with `NoWrapForThisDevice` if the device has been revoked or
+    /// never authorized.
+    pub fn current_dck(&self) -> Result<[u8; 32], AccountError> {
+        let snap = self
+            .state
+            .app_keys
+            .as_ref()
+            .ok_or(AccountError::NoCurrentSnapshot)?;
+        let wrap = snap
+            .wrapped_dck
+            .get(&self.state.device_pubkey)
+            .ok_or(AccountError::NoWrapForThisDevice)?;
+        let owner_pk = PublicKey::from_hex(&self.state.owner_pubkey)
+            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+        let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &owner_pk, wrap)
+            .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+        Ok(arr)
+    }
+}
+
+fn generate_dck() -> [u8; 32] {
+    // Fresh 32 random bytes via nostr-sdk's RNG (no extra deps).
+    let keys = Keys::generate();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(keys.secret_key().as_secret_bytes());
+    out
+}
+
+fn wrap_dck_for_devices(
+    owner_secret: &SecretKey,
+    devices: &[DeviceEntry],
+    dck: &[u8; 32],
+) -> Result<BTreeMap<String, String>, AccountError> {
+    let mut wraps = BTreeMap::new();
+    for d in devices {
+        let pk = PublicKey::from_hex(&d.pubkey)
+            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+        let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
+            .map_err(|e| AccountError::Wrap(e.to_string()))?;
+        wraps.insert(d.pubkey.clone(), ct);
+    }
+    Ok(wraps)
 }
 
 fn current_unix_seconds() -> i64 {
@@ -404,11 +530,18 @@ mod tests {
         }
     }
 
+    /// Helper: produce a valid secp256k1 x-only pubkey hex for tests.
+    /// Random fake hex strings often fail NIP-44 because only ~half of
+    /// 32-byte values lie on the curve.
+    fn fresh_device_pubkey() -> String {
+        Keys::generate().public_key().to_hex()
+    }
+
     #[test]
     fn approve_adds_device_to_roster() {
         let dir = tempdir().unwrap();
         let mut acct = Account::create(dir.path(), None).unwrap();
-        let new_device = "ff".repeat(32);
+        let new_device = fresh_device_pubkey();
         let snap = acct.approve_device(new_device.clone(), Some("phone".into())).unwrap();
         assert_eq!(snap.devices.len(), 2);
         assert!(snap.contains(&new_device));
@@ -417,9 +550,11 @@ mod tests {
     #[test]
     fn approve_without_owner_authority_errors() {
         let dir = tempdir().unwrap();
-        let owner = "ab".repeat(32);
+        // Use a real x-only pubkey hex; the test only ever fails on the authority
+        // check before reaching crypto, so this is fine.
+        let owner = fresh_device_pubkey();
         let mut acct = Account::link(dir.path(), owner, None).unwrap();
-        match acct.approve_device("ff".repeat(32), None) {
+        match acct.approve_device(fresh_device_pubkey(), None) {
             Err(AccountError::NoOwnerAuthority) => {}
             _ => panic!("expected NoOwnerAuthority"),
         }
@@ -440,7 +575,7 @@ mod tests {
     fn revoke_removes_device_from_roster() {
         let dir = tempdir().unwrap();
         let mut acct = Account::create(dir.path(), None).unwrap();
-        let target = "ff".repeat(32);
+        let target = fresh_device_pubkey();
         acct.approve_device(target.clone(), None).unwrap();
         let snap = acct.revoke_device(&target).unwrap();
         assert!(!snap.contains(&target));
@@ -450,9 +585,220 @@ mod tests {
     fn revoke_missing_device_errors() {
         let dir = tempdir().unwrap();
         let mut acct = Account::create(dir.path(), None).unwrap();
-        match acct.revoke_device(&"00".repeat(32)) {
+        // Pubkey is well-formed but not in the roster.
+        let stranger = fresh_device_pubkey();
+        match acct.revoke_device(&stranger) {
             Err(AccountError::DeviceNotInRoster) => {}
             _ => panic!("expected DeviceNotInRoster"),
+        }
+    }
+
+    // ------------ DCK rotation / forward secrecy tests ------------
+
+    #[test]
+    fn create_seeds_dck_generation_one_with_self_wrap() {
+        let dir = tempdir().unwrap();
+        let acct = Account::create(dir.path(), None).unwrap();
+        let snap = acct.state.app_keys.as_ref().unwrap();
+        assert_eq!(snap.dck_generation, 1);
+        // One wrap, for the current device.
+        assert_eq!(snap.wrapped_dck.len(), 1);
+        assert!(snap.wrapped_dck.contains_key(&acct.state.device_pubkey));
+    }
+
+    #[test]
+    fn current_dck_is_decryptable_by_owner_device() {
+        let dir = tempdir().unwrap();
+        let acct = Account::create(dir.path(), None).unwrap();
+        let dck = acct.current_dck().unwrap();
+        assert_eq!(dck.len(), 32);
+        // Two reads return same key (state is deterministic).
+        let dck2 = acct.current_dck().unwrap();
+        assert_eq!(dck, dck2);
+    }
+
+    #[test]
+    fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
+        let dir = tempdir().unwrap();
+        let mut acct = Account::create(dir.path(), None).unwrap();
+        let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
+        let new_device = fresh_device_pubkey();
+        let snap = acct
+            .approve_device(new_device.clone(), Some("phone".into()))
+            .unwrap();
+        assert!(snap.dck_generation > gen_before);
+        // Every authorized device has a wrap.
+        assert_eq!(snap.wrapped_dck.len(), snap.devices.len());
+        for d in &snap.devices {
+            assert!(snap.wrapped_dck.contains_key(&d.pubkey));
+        }
+    }
+
+    #[test]
+    fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
+        let dir = tempdir().unwrap();
+        let mut acct = Account::create(dir.path(), None).unwrap();
+        let target = fresh_device_pubkey();
+        let own_device_pubkey = acct.state.device_pubkey.clone();
+        acct.approve_device(target.clone(), None).unwrap();
+        let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
+        let snap = acct.revoke_device(&target).unwrap();
+        assert!(snap.dck_generation > gen_before);
+        // Revoked device no longer has a wrap.
+        assert!(!snap.wrapped_dck.contains_key(&target));
+        // Remaining device(s) still have wraps.
+        assert!(snap.wrapped_dck.contains_key(&own_device_pubkey));
+    }
+
+    #[test]
+    fn dck_changes_after_rotation() {
+        let dir = tempdir().unwrap();
+        let mut acct = Account::create(dir.path(), None).unwrap();
+        let dck_before = acct.current_dck().unwrap();
+        acct.rotate_dck().unwrap();
+        let dck_after = acct.current_dck().unwrap();
+        assert_ne!(dck_before, dck_after);
+    }
+
+    #[test]
+    fn rotate_dck_preserves_roster() {
+        let dir = tempdir().unwrap();
+        let mut acct = Account::create(dir.path(), None).unwrap();
+        let new_device = fresh_device_pubkey();
+        acct.approve_device(new_device.clone(), None).unwrap();
+        let devices_before: Vec<_> = acct
+            .state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .devices
+            .iter()
+            .map(|d| d.pubkey.clone())
+            .collect();
+        acct.rotate_dck().unwrap();
+        let devices_after: Vec<_> = acct
+            .state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .devices
+            .iter()
+            .map(|d| d.pubkey.clone())
+            .collect();
+        assert_eq!(devices_before, devices_after);
+        // Both devices still have a wrap for the new DCK.
+        for d in &devices_after {
+            assert!(acct
+                .state
+                .app_keys
+                .as_ref()
+                .unwrap()
+                .wrapped_dck
+                .contains_key(d));
+        }
+    }
+
+    #[test]
+    fn rotate_dck_without_owner_authority_errors() {
+        let dir = tempdir().unwrap();
+        let owner = fresh_device_pubkey();
+        let mut acct = Account::link(dir.path(), owner, None).unwrap();
+        match acct.rotate_dck() {
+            Err(AccountError::NoOwnerAuthority) => {}
+            other => panic!("expected NoOwnerAuthority, got {:?}", other.is_ok()),
+        }
+    }
+
+    #[test]
+    fn current_dck_without_snapshot_errors() {
+        let dir = tempdir().unwrap();
+        let owner = fresh_device_pubkey();
+        let acct = Account::link(dir.path(), owner, None).unwrap();
+        match acct.current_dck() {
+            Err(AccountError::NoCurrentSnapshot) => {}
+            other => panic!("expected NoCurrentSnapshot, got {:?}", other.is_ok()),
+        }
+    }
+
+    #[test]
+    fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
+        // This is the end-to-end crypto test: owner creates,
+        // owner approves a *real* device keypair, the device then
+        // independently decrypts its wrap and recovers the same DCK
+        // the owner has.
+        let owner_dir = tempdir().unwrap();
+        let mut owner_acct = Account::create(owner_dir.path(), None).unwrap();
+
+        // Manually create a "linked device" keypair we control end-to-end.
+        let linked_dir = tempdir().unwrap();
+        let linked_device = DeviceIdentity::generate(linked_dir.path().join("key"));
+        linked_device.save().unwrap();
+        let linked_pubkey = linked_device.pubkey_hex();
+
+        // Owner approves the device's pubkey.
+        owner_acct
+            .approve_device(linked_pubkey.clone(), Some("phone".into()))
+            .unwrap();
+        let owner_dck = owner_acct.current_dck().unwrap();
+
+        // Reconstruct an Account from the linked device's perspective:
+        // device key is the one we generated; AccountState mirrors what
+        // the device would see after pulling the latest snapshot.
+        let snapshot_for_linked = owner_acct.state.app_keys.clone();
+        let linked_state = AccountState {
+            owner_pubkey: owner_acct.state.owner_pubkey.clone(),
+            device_pubkey: linked_pubkey.clone(),
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::Authorized,
+            device_label: Some("phone".into()),
+            app_keys: snapshot_for_linked,
+        };
+        let linked_acct = Account {
+            state: linked_state,
+            device: linked_device,
+            owner_key: None,
+        };
+
+        let linked_dck = linked_acct.current_dck().unwrap();
+        assert_eq!(
+            owner_dck, linked_dck,
+            "linked device must derive the same DCK the owner does"
+        );
+    }
+
+    #[test]
+    fn revoked_device_cannot_decrypt_new_dck() {
+        // Owner approves linked device, sees a DCK, then revokes it.
+        // After revoke, the linked device should fail current_dck()
+        // because its wrap is no longer present.
+        let owner_dir = tempdir().unwrap();
+        let mut owner_acct = Account::create(owner_dir.path(), None).unwrap();
+        let linked_dir = tempdir().unwrap();
+        let linked_device = DeviceIdentity::generate(linked_dir.path().join("key"));
+        linked_device.save().unwrap();
+        let linked_pubkey = linked_device.pubkey_hex();
+
+        owner_acct
+            .approve_device(linked_pubkey.clone(), None)
+            .unwrap();
+        owner_acct.revoke_device(&linked_pubkey).unwrap();
+
+        let linked_state = AccountState {
+            owner_pubkey: owner_acct.state.owner_pubkey.clone(),
+            device_pubkey: linked_pubkey,
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::Revoked,
+            device_label: None,
+            app_keys: owner_acct.state.app_keys.clone(),
+        };
+        let linked_acct = Account {
+            state: linked_state,
+            device: linked_device,
+            owner_key: None,
+        };
+        match linked_acct.current_dck() {
+            Err(AccountError::NoWrapForThisDevice) => {}
+            other => panic!("expected NoWrapForThisDevice, got {:?}", other.is_ok()),
         }
     }
 
@@ -470,6 +816,8 @@ mod tests {
                 added_at: 0,
                 label: None,
             }],
+            dck_generation: acct.state.app_keys.as_ref().unwrap().dck_generation + 1,
+            wrapped_dck: BTreeMap::new(),
         };
         acct.state.apply_app_keys(new_snap);
         assert_eq!(

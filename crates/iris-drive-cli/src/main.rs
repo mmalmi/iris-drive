@@ -73,6 +73,9 @@ enum Command {
     },
     /// Print the current `AppKeys` roster as JSON.
     Roster,
+    /// Rotate the drive content key (DCK) without changing the roster.
+    /// Useful for periodic key freshness. Owner-only.
+    RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
     /// List configured drives.
@@ -117,6 +120,7 @@ fn main() -> ExitCode {
         Command::Link { owner, label } => cmd_link(&config_dir, &owner, label),
         Command::Approve { device, label } => cmd_approve(&config_dir, &device, label),
         Command::Roster => cmd_roster(&config_dir),
+        Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),
@@ -229,14 +233,41 @@ fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
             "authorization_state": authorization_state_label(&state),
             "app_keys": snap.map(|s| json!({
                 "created_at": s.created_at,
+                "dck_generation": s.dck_generation,
                 "devices": s.devices.iter().map(|d| json!({
                     "pubkey": d.pubkey,
                     "npub": account_npub(&d.pubkey),
                     "added_at": d.added_at,
                     "label": d.label,
                     "is_current_device": d.pubkey == state.device_pubkey,
+                    "has_dck_wrap": s.wrapped_dck.contains_key(&d.pubkey),
                 })).collect::<Vec<_>>(),
             })),
+        })
+    );
+    Ok(())
+}
+
+fn cmd_rotate_dck(config_dir: &std::path::Path) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let snap = account.rotate_dck().context("rotating DCK")?;
+    let dck_gen = snap.dck_generation;
+    config.account = Some(account.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "dck_generation": dck_gen,
+            "device_wrap_count": account
+                .state
+                .app_keys
+                .as_ref()
+                .map_or(0, |s| s.wrapped_dck.len()),
         })
     );
     Ok(())

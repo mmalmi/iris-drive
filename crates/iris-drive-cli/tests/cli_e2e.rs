@@ -173,6 +173,106 @@ fn roster_before_init_errors() {
 }
 
 #[test]
+fn roster_after_init_shows_dck_generation_and_self_wrap() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let out = idrive(dir.path()).arg("roster").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["app_keys"]["dck_generation"], 1);
+    let devices = v["app_keys"]["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0]["has_dck_wrap"], true);
+    assert_eq!(devices[0]["is_current_device"], true);
+}
+
+#[test]
+fn rotate_dck_advances_generation() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let before: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(idrive(dir.path()).arg("roster").output().unwrap().stdout).unwrap()).unwrap();
+    let gen_before = before["app_keys"]["dck_generation"].as_u64().unwrap();
+
+    let out = idrive(dir.path()).arg("rotate-dck").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let gen_after = v["dck_generation"].as_u64().unwrap();
+    assert!(gen_after > gen_before, "{gen_after} should exceed {gen_before}");
+}
+
+#[test]
+fn rotate_dck_on_linked_device_errors() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner_npub = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["owner_npub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let linked_dir = tempdir().unwrap();
+    idrive(linked_dir.path())
+        .args(["link", &owner_npub])
+        .assert()
+        .success();
+    idrive(linked_dir.path()).arg("rotate-dck").assert().failure();
+}
+
+#[test]
+fn approve_advances_dck_generation() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let gen_before = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["app_keys"]["dck_generation"]
+        .as_u64()
+        .unwrap();
+
+    let owner_npub = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["owner_npub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let linked_dir = tempdir().unwrap();
+    let linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_npub])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let linked_device_npub = linked_v["device_npub"].as_str().unwrap().to_string();
+
+    idrive(owner_dir.path())
+        .args(["approve", &linked_device_npub])
+        .assert()
+        .success();
+
+    let gen_after = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["app_keys"]["dck_generation"]
+        .as_u64()
+        .unwrap();
+    assert!(gen_after > gen_before, "{gen_after} should exceed {gen_before}");
+}
+
+#[test]
 fn double_init_errors_without_force() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
