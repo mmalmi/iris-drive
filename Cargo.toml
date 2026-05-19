@@ -3,6 +3,7 @@ members = [
   "crates/iris-drive-core",
   "crates/iris-drive-cli",
   "crates/iris-drive-app-core",
+  "crates/iris-drive-mac",
 ]
 exclude = ["linux"]
 resolver = "2"
@@ -44,6 +45,8 @@ hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7
 tempfile = "3"
 notify = "6"
 notify-debouncer-mini = "0.4"
+tao = "0.30"
+tray-icon = "0.21"
 iris-drive-core = { version = "0.1.0", path = "crates/iris-drive-core" }
 
 [workspace.lints.clippy]
