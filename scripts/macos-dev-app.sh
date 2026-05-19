@@ -182,9 +182,23 @@ build_app() {
 
 run_app() {
   local app_path
+  local app_base_dir="${IRIS_DRIVE_APP_BASE_DIR:-}"
+  local mode
+
+  mode="$(signing_mode)"
   terminate_running_app
   app_path="$(build_app)"
-  open "$app_path"
+  if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
+    app_base_dir="$BUILD_DIR/AppData"
+  fi
+
+  if [[ -n "$app_base_dir" ]]; then
+    mkdir -p "$app_base_dir"
+    IRIS_DRIVE_APP_BASE_DIR="$app_base_dir" open "$app_path"
+    echo "macOS app data: $app_base_dir"
+  else
+    open "$app_path"
+  fi
   echo "macOS app launched: $app_path"
 }
 

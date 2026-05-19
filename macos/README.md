@@ -18,7 +18,9 @@ just run
 app bundle, opens the app, registers the File Provider domain, and starts the
 daemon. By default it uses a no-provisioning dev launch because macOS rejects
 restricted File Provider/app-group entitlements when they are only ad-hoc
-signed. For the fully entitled path, run with a configured Xcode account:
+signed. In that default mode the app data directory is
+`macos/.build/AppData`, avoiding app-group container prompts. For the fully
+entitled path, run with a configured Xcode account:
 
 ```bash
 IRIS_DRIVE_DEVELOPMENT_TEAM=<team-id> IRIS_DRIVE_MACOS_SIGNING=development just run
