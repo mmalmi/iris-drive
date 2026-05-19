@@ -16,6 +16,8 @@ APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 APP_PATH=""
+APP_STDOUT="$SMOKE_DIR/app.stdout.log"
+APP_STDERR="$SMOKE_DIR/app.stderr.log"
 
 cleanup() {
   if [[ -n "$APP_PATH" ]]; then
@@ -29,6 +31,19 @@ cleanup() {
     pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
     pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
   fi
+  osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+on run argv
+  set smokeRoot to item 1 of argv
+  tell application "Finder"
+    repeat with finderWindow in windows
+      try
+        set targetPath to POSIX path of (target of finderWindow as alias)
+        if targetPath starts with smokeRoot then close finderWindow
+      end try
+    end repeat
+  end tell
+end run
+APPLESCRIPT
   rm -rf "$SMOKE_DIR"
 }
 trap cleanup EXIT
@@ -36,6 +51,12 @@ trap cleanup EXIT
 show_recent_logs() {
   local end_time
   end_time="$(date '+%Y-%m-%d %H:%M:%S')"
+  if [[ -s "$APP_STDOUT" || -s "$APP_STDERR" ]]; then
+    echo "Captured app stdout:" >&2
+    cat "$APP_STDOUT" >&2 2>/dev/null || true
+    echo "Captured app stderr:" >&2
+    cat "$APP_STDERR" >&2 2>/dev/null || true
+  fi
   /usr/bin/log show \
     --start "$START_TIME" \
     --end "$end_time" \
@@ -72,21 +93,26 @@ wait_for_daemon() {
 wait_for_log() {
   local pattern="$1"
   local seconds="$2"
-  local end_time
 
-  for _ in $(seq 1 "$((seconds * 2))"); do
-    end_time="$(date '+%Y-%m-%d %H:%M:%S')"
-    if /usr/bin/log show \
-      --start "$START_TIME" \
-      --end "$end_time" \
-      --style compact \
-      --predicate "eventMessage CONTAINS[c] \"$pattern\"" \
-      2>/dev/null | grep -F "$pattern" >/dev/null; then
+  for _ in $(seq 1 "$((seconds * 10))"); do
+    if grep -F "$pattern" "$APP_STDOUT" "$APP_STDERR" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 0.5
+    sleep 0.1
   done
   return 1
+}
+
+click_show_iris_drive() {
+  osascript >/dev/null <<'APPLESCRIPT'
+tell application "System Events"
+  tell process "Iris Drive"
+    click menu bar item 1 of menu bar 2
+    delay 0.2
+    click menu item "Show Iris Drive" of menu 1 of menu bar item 1 of menu bar 2
+  end tell
+end tell
+APPLESCRIPT
 }
 
 APP_PATH="$("$ROOT/scripts/macos-dev-app.sh" build)"
@@ -95,7 +121,11 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-open --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" "$APP_PATH"
+open \
+  --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" \
+  --stdout "$APP_STDOUT" \
+  --stderr "$APP_STDERR" \
+  "$APP_PATH"
 
 if ! wait_for_process "$APP_PROCESS_NAME" 10; then
   echo "FAIL: Iris Drive did not launch." >&2
@@ -115,5 +145,17 @@ if ! wait_for_daemon 10; then
   exit 1
 fi
 
+if ! click_show_iris_drive; then
+  echo "FAIL: could not click the Show Iris Drive menu item." >&2
+  show_recent_logs >&2
+  exit 1
+fi
+
+if ! wait_for_log "Iris Drive drive folder opened" 10; then
+  echo "FAIL: Show Iris Drive did not open the drive folder." >&2
+  show_recent_logs >&2
+  exit 1
+fi
+
 echo "MACOS_SMOKE_OK"
-echo "app launched, menu bar item installed, and bundled idrive daemon started"
+echo "app launched, menu bar item installed, bundled daemon started, and Show Iris Drive opened the drive folder"

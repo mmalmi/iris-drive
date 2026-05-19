@@ -28,11 +28,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemon: Process?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var runtimePathsForMenu: IrisDriveRuntimePaths?
+    private var fileProviderDomainState = FileProviderDomainState.unknown
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
         updateStatus("Starting sync")
-        registerFileProviderDomain()
+        registerFileProviderDomain { [weak self] state in
+            DispatchQueue.main.async {
+                self?.fileProviderDomainState = state
+            }
+        }
         bootstrapAndStartDaemon()
     }
 
@@ -42,11 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         daemon = nil
     }
 
-    @objc private func showMainWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows {
-            window.makeKeyAndOrderFront(nil)
-        }
+    @objc private func showDriveFolder() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        showMountedDriveFolder(fallbackURL: paths.workingDirectory)
     }
 
     @objc private func quitApp() {
@@ -65,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let showItem = NSMenuItem(
             title: "Show Iris Drive",
-            action: #selector(showMainWindow),
+            action: #selector(showDriveFolder),
             keyEquivalent: ""
         )
         showItem.target = self
@@ -101,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let paths = runtimePaths()
+        runtimePathsForMenu = paths
         do {
             try FileManager.default.createDirectory(
                 at: paths.configDirectory,
@@ -132,6 +137,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             updateStatus("Sync failed")
+        }
+    }
+
+    private func showMountedDriveFolder(fallbackURL: URL) {
+        if fileProviderDomainState == .unavailable {
+            NSLog("Iris Drive FileProvider domain unavailable; opening backing drive folder")
+            openDriveFolder(fallbackURL, source: "backing")
+            return
+        }
+
+        let domain = NSFileProviderDomain(
+            identifier: irisDriveDomainIdentifier,
+            displayName: irisDriveDisplayName
+        )
+        guard let manager = NSFileProviderManager(for: domain) else {
+            NSLog("Iris Drive FileProvider manager unavailable; opening backing drive folder")
+            openDriveFolder(fallbackURL, source: "backing")
+            return
+        }
+
+        manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let url {
+                    self.openDriveFolder(url, source: "mounted")
+                    return
+                }
+
+                if let error {
+                    NSLog("Iris Drive mounted folder unavailable; opening backing drive folder: \(error)")
+                } else {
+                    NSLog("Iris Drive mounted folder unavailable; opening backing drive folder")
+                }
+                self.openDriveFolder(fallbackURL, source: "backing")
+            }
+        }
+    }
+
+    private func openDriveFolder(_ url: URL, source: String) {
+        if source == "backing" {
+            do {
+                try FileManager.default.createDirectory(
+                    at: url,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                NSLog("Iris Drive failed to create backing drive folder: \(error)")
+                return
+            }
+        }
+
+        let didStartSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        if NSWorkspace.shared.open(url) {
+            NSLog("Iris Drive drive folder opened (\(source)): \(url.path)")
+        } else {
+            NSLog("Iris Drive failed to open \(source) drive folder: \(url.path)")
         }
     }
 
@@ -282,13 +349,19 @@ private struct IrisDriveRuntimePaths {
     let workingDirectory: URL
 }
 
+private enum FileProviderDomainState {
+    case unknown
+    case registered
+    case unavailable
+}
+
 private final class IrisDriveStatus: ObservableObject {
     static let shared = IrisDriveStatus()
 
     @Published var message = "Starting sync"
 }
 
-private func registerFileProviderDomain() {
+private func registerFileProviderDomain(_ completion: @escaping (FileProviderDomainState) -> Void) {
     let domain = NSFileProviderDomain(
         identifier: irisDriveDomainIdentifier,
         displayName: irisDriveDisplayName
@@ -300,8 +373,10 @@ private func registerFileProviderDomain() {
     NSFileProviderManager.add(domain) { error in
         if let error {
             NSLog("Iris Drive FileProvider registration failed: \(error)")
+            completion(.unavailable)
         } else {
             NSLog("Iris Drive FileProvider domain registered")
+            completion(.registered)
         }
     }
 }
