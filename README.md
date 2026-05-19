@@ -67,7 +67,6 @@ crates/
   iris-drive-mac/         Rust macOS menu-bar dev wrapper
 macos/ linux/ windows/ android/ ios/   native shell placeholders
 docs/                   protocol notes, experiments
-tools/                  local run helpers
 ```
 
 ## License

@@ -29,10 +29,34 @@ run:
     esac
 
 run-macos:
-    ./tools/run-macos
+    @profile="${IRIS_DRIVE_PROFILE:-debug}"; \
+    build_profile_arg=""; \
+    profile_dir="debug"; \
+    if [[ "$profile" == "release" ]]; then \
+        build_profile_arg="--release"; \
+        profile_dir="release"; \
+    elif [[ "$profile" != "debug" ]]; then \
+        echo "IRIS_DRIVE_PROFILE must be 'debug' or 'release'." >&2; \
+        exit 2; \
+    fi; \
+    target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"; \
+    cargo build $build_profile_arg -p idrive -p iris-drive-mac; \
+    exec "$target_dir/$profile_dir/iris-drive-mac"
 
-run-daemon:
-    ./tools/run-daemon
+run-daemon *args:
+    @profile="${IRIS_DRIVE_PROFILE:-debug}"; \
+    build_profile_arg=""; \
+    profile_dir="debug"; \
+    if [[ "$profile" == "release" ]]; then \
+        build_profile_arg="--release"; \
+        profile_dir="release"; \
+    elif [[ "$profile" != "debug" ]]; then \
+        echo "IRIS_DRIVE_PROFILE must be 'debug' or 'release'." >&2; \
+        exit 2; \
+    fi; \
+    target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"; \
+    cargo build $build_profile_arg -p idrive; \
+    exec "$target_dir/$profile_dir/idrive" daemon {{args}}
 
 run-cli *args:
     cargo run -p idrive -- {{args}}
