@@ -64,11 +64,9 @@ No separate daemon process, no IPC — `hashdrive-app-core` links
   be migrated to fips's concern. Hashdrive should consume the transport
   layer through hashtree, not pin a specific transport. Treat any direct
   WebRTC reference as a temporary measure pending the fips transition.
-- **`~/src/squirreldisk`** — disk-usage pie chart analyzer. The "show me what's
-  using space" UI in Phase 7 should reuse squirreldisk's visualization rather
-  than reinvent it. Likely path: extract the chart component into a library
-  consumed by both projects, or invoke squirreldisk for the local hashtree
-  store.
+- **`~/src/squirreldisk`** — disk-usage pie chart analyzer. Reference only for
+  the "what's using space" UI idea in Phase 7; not a code dependency. Look at
+  it for visualization inspiration, no obligation to extract or reuse.
 
 ## Where adapter crates live
 
@@ -201,7 +199,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - Background updater (pattern from nostr-vpn's `hashtree-updater` +
   `tauri-plugin-hashtree-updater`).
 - Multi-account support.
-- **Disk-usage view** integrating squirreldisk's pie-chart component.
+- **Disk-usage view** (pie-chart style; squirreldisk for design inspiration).
 
 ## Decisions to lock in early
 
@@ -233,7 +231,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   current TURN/relay story.
 - **Storage growth**: content-addressed + retained revisions = unbounded
   growth. Need a gc policy and a "what's using space" UI by Phase 5 at the
-  latest. Squirreldisk integration helps the visualization side.
+  latest.
 - **Cold-start materialization**: first open of a 10 GB file on a new device
   blocks `open(2)` until fetched. Progress UI is required, not optional.
 
