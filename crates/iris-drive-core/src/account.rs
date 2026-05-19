@@ -23,7 +23,7 @@ use nostr_sdk::{Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::app_keys::{apply_snapshot, ApplyDecision, AppKeysSnapshot, DeviceEntry};
+use crate::app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::paths::{key_path_in, owner_key_path_in};
 
@@ -83,7 +83,10 @@ impl AccountState {
     /// Has the latest `AppKeys` snapshot included this device?
     #[must_use]
     pub fn is_authorized(&self) -> bool {
-        matches!(self.authorization_state, DeviceAuthorizationState::Authorized)
+        matches!(
+            self.authorization_state,
+            DeviceAuthorizationState::Authorized
+        )
     }
 
     /// Can this device add/remove other devices in the roster?
@@ -95,7 +98,9 @@ impl AccountState {
     /// Recompute `authorization_state` from the current `AppKeys` snapshot.
     pub fn recompute_authorization(&mut self) {
         self.authorization_state = match &self.app_keys {
-            Some(snap) if snap.contains(&self.device_pubkey) => DeviceAuthorizationState::Authorized,
+            Some(snap) if snap.contains(&self.device_pubkey) => {
+                DeviceAuthorizationState::Authorized
+            }
             Some(_) => {
                 // Previously authorized → Revoked; never authorized → AwaitingApproval.
                 match self.authorization_state {
@@ -542,7 +547,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut acct = Account::create(dir.path(), None).unwrap();
         let new_device = fresh_device_pubkey();
-        let snap = acct.approve_device(new_device.clone(), Some("phone".into())).unwrap();
+        let snap = acct
+            .approve_device(new_device.clone(), Some("phone".into()))
+            .unwrap();
         assert_eq!(snap.devices.len(), 2);
         assert!(snap.contains(&new_device));
     }
@@ -688,13 +695,14 @@ mod tests {
         assert_eq!(devices_before, devices_after);
         // Both devices still have a wrap for the new DCK.
         for d in &devices_after {
-            assert!(acct
-                .state
-                .app_keys
-                .as_ref()
-                .unwrap()
-                .wrapped_dck
-                .contains_key(d));
+            assert!(
+                acct.state
+                    .app_keys
+                    .as_ref()
+                    .unwrap()
+                    .wrapped_dck
+                    .contains_key(d)
+            );
         }
     }
 

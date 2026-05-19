@@ -19,8 +19,8 @@ use iris_drive_core::{Drive, PRIMARY_DRIVE_ID};
 use serde_json::Value;
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::TrayIconBuilder;
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 
 #[derive(Debug)]
 enum UserEvent {
@@ -141,9 +141,10 @@ fn main() -> Result<()> {
                         let _ = Command::new("open").arg(dir).spawn();
                     }
                 } else if e.id == open_config.id()
-                    && let Some(dir) = &cfg_dir_for_loop {
-                        let _ = Command::new("open").arg(dir).spawn();
-                    }
+                    && let Some(dir) = &cfg_dir_for_loop
+                {
+                    let _ = Command::new("open").arg(dir).spawn();
+                }
             }
             Event::UserEvent(UserEvent::DaemonLog(value)) => {
                 let kind = value
@@ -177,7 +178,10 @@ fn main() -> Result<()> {
                         let () = status_item.set_text(format!("Drive root: {outcome}"));
                     }
                     "blossom_downloaded" => {
-                        let fetched = value.get("fetched").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                        let fetched = value
+                            .get("fetched")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0);
                         let () = status_item.set_text(format!("Fetched {fetched} blocks"));
                     }
                     "shutdown" => {
@@ -187,8 +191,8 @@ fn main() -> Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::DaemonExited(code)) => {
-                let () = status_item
-                    .set_text(format!("Daemon exited ({code:?}) — restart Iris Drive"));
+                let () =
+                    status_item.set_text(format!("Daemon exited ({code:?}) — restart Iris Drive"));
             }
             _ => {}
         }
@@ -213,21 +217,30 @@ fn bootstrap_first_launch_with(config_dir: &Path, working_dir: &Path) -> Result<
 
     if !key_path.exists() {
         std::fs::create_dir_all(config_dir).context("creating config dir")?;
-        let account = Account::create(config_dir, Some("Mac".into()))
-            .context("generating account keys")?;
+        let account =
+            Account::create(config_dir, Some("Mac".into())).context("generating account keys")?;
         config.account = Some(account.state.clone());
         if config.drive(PRIMARY_DRIVE_ID).is_none() {
             config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
         }
     }
 
-    if let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == PRIMARY_DRIVE_ID)
-        && drive.working_dir.is_none() {
+    let mut dir_to_create = working_dir.to_path_buf();
+    if let Some(drive) = config
+        .drives
+        .iter_mut()
+        .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+    {
+        if drive.working_dir.is_none() {
             drive.working_dir = Some(working_dir.to_path_buf());
         }
+        if let Some(existing) = drive.working_dir.as_ref() {
+            dir_to_create.clone_from(existing);
+        }
+    }
 
     config.save(&config_path).context("saving config")?;
-    std::fs::create_dir_all(working_dir).context("creating working dir")?;
+    std::fs::create_dir_all(&dir_to_create).context("creating working dir")?;
     Ok(())
 }
 
@@ -242,11 +255,12 @@ fn read_primary_working_dir(config_dir: &Path) -> Option<PathBuf> {
 /// from a Drive/Dropbox-style app. Falls back to CWD if `$HOME` is
 /// unset (basically only headless test rigs).
 fn default_working_dir() -> PathBuf {
-    std::env::var_os("HOME").map_or_else(
-        || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        PathBuf::from,
-    )
-    .join("Iris Drive")
+    std::env::var_os("HOME")
+        .map_or_else(
+            || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            PathBuf::from,
+        )
+        .join("Iris Drive")
 }
 
 /// Spawn `idrive daemon` from the same directory as this binary if
@@ -307,7 +321,9 @@ mod tests {
 
         let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
         assert!(config.account.is_some(), "account stamped");
-        let drive = config.drive(PRIMARY_DRIVE_ID).expect("primary drive present");
+        let drive = config
+            .drive(PRIMARY_DRIVE_ID)
+            .expect("primary drive present");
         assert_eq!(drive.working_dir.as_deref(), Some(work.as_path()));
         assert!(
             !config.blossom_servers.is_empty(),
@@ -346,8 +362,7 @@ mod tests {
         // User picks a different folder (simulated by editing config).
         let custom = work_parent.path().join("Somewhere Else");
         {
-            let mut config =
-                AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+            let mut config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
             let drive = config
                 .drives
                 .iter_mut()
@@ -362,5 +377,6 @@ mod tests {
         let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
         let drive = config.drive(PRIMARY_DRIVE_ID).unwrap();
         assert_eq!(drive.working_dir.as_deref(), Some(custom.as_path()));
+        assert!(custom.is_dir());
     }
 }

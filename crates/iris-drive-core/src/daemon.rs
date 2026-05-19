@@ -16,7 +16,7 @@ use hashtree_fs::FsBlobStore;
 use thiserror::Error;
 
 use crate::config::{AppConfig, ConfigError};
-use crate::indexer::{index_dir_with_history, IndexError};
+use crate::indexer::{IndexError, index_dir_with_history};
 use crate::paths::{config_path_in, key_path_in};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
@@ -67,11 +67,8 @@ impl Daemon {
         std::fs::create_dir_all(&config_dir)?;
         let blocks_dir = config_dir.join("blocks");
         std::fs::create_dir_all(&blocks_dir)?;
-        let store =
-            FsBlobStore::new(&blocks_dir).map_err(|e| DaemonError::Store(e.to_string()))?;
-        let tree = Arc::new(HashTree::new(
-            HashTreeConfig::new(Arc::new(store)).public(),
-        ));
+        let store = FsBlobStore::new(&blocks_dir).map_err(|e| DaemonError::Store(e.to_string()))?;
+        let tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(store))));
         let config = AppConfig::load_or_default(config_path_in(&config_dir))?;
         Ok(Self {
             config_dir,
@@ -110,19 +107,26 @@ impl Daemon {
     }
 
     /// If the primary drive has a `working_dir` configured but this
-    /// device hasn't yet recorded a root, run the initial import.
-    /// Creates the working dir on disk if it doesn't exist. Returns
-    /// `Some(report)` if an import ran, `None` otherwise.
-    pub async fn ensure_initial_import(
-        &mut self,
-    ) -> Result<Option<ImportReport>, DaemonError> {
+    /// device hasn't yet recorded a private root, run the initial import.
+    /// This also migrates legacy public roots created before private
+    /// htree storage became the default. Creates the working dir on disk
+    /// if it doesn't exist. Returns `Some(report)` if an import ran,
+    /// `None` otherwise.
+    pub async fn ensure_initial_import(&mut self) -> Result<Option<ImportReport>, DaemonError> {
         let Some(account) = self.config.account.clone() else {
             return Ok(None);
         };
         let Some(drive) = self.config.drive(PRIMARY_DRIVE_ID).cloned() else {
             return Ok(None);
         };
-        if drive.device_roots.contains_key(&account.device_pubkey) {
+        let has_private_root = match drive.device_roots.get(&account.device_pubkey) {
+            Some(root) => Cid::parse(&root.root_cid)
+                .map_err(|e| DaemonError::Store(e.to_string()))?
+                .key
+                .is_some(),
+            None => false,
+        };
+        if has_private_root {
             return Ok(None);
         }
         let Some(working_dir) = drive.working_dir.clone() else {
@@ -158,13 +162,9 @@ impl Daemon {
             None => None,
         };
 
-        let root_cid = index_dir_with_history(
-            &self.tree,
-            working_dir,
-            previous_root.as_ref(),
-            unix_now(),
-        )
-        .await?;
+        let root_cid =
+            index_dir_with_history(&self.tree, working_dir, previous_root.as_ref(), unix_now())
+                .await?;
 
         // Live-file count excludes the .tombstones subtree from the
         // report (it's an internal-only annotation).
@@ -239,6 +239,7 @@ mod tests {
     use super::*;
     use crate::config::Drive;
     use crate::identity::Identity;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn init_config(dir: &Path) -> Identity {
@@ -310,6 +311,45 @@ mod tests {
         assert_eq!(entry.root_cid, report.root_cid);
         assert!(entry.published_at > 0);
         assert_eq!(entry.dck_generation, 1); // create-flow seeds DCK gen 1
+    }
+
+    #[tokio::test]
+    async fn import_uses_encrypted_private_hashtree_blocks() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        let secret = b"secret contents that must not appear as plaintext in blobs";
+        std::fs::write(work.path().join("secret.txt"), secret).unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+
+        let cid = Cid::parse(&report.root_cid).unwrap();
+        assert!(
+            cid.key.is_some(),
+            "persistent drive roots must carry a CHK key"
+        );
+
+        let mut stack = vec![daemon.blocks_dir().to_path_buf()];
+        let mut saw_blob = false;
+        while let Some(path) = stack.pop() {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    saw_blob = true;
+                    let bytes = std::fs::read(&path).unwrap();
+                    assert!(
+                        !bytes.windows(secret.len()).any(|window| window == secret),
+                        "stored blob {} leaked plaintext",
+                        path.display()
+                    );
+                }
+            }
+        }
+        assert!(saw_blob, "import should write blobs");
     }
 
     #[tokio::test]
@@ -410,8 +450,7 @@ mod tests {
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("note.txt"), b"hello").unwrap();
         {
-            let mut cfg =
-                AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
             let drive = cfg
                 .drives
                 .iter_mut()
@@ -427,9 +466,11 @@ mod tests {
         assert_eq!(report.working_dir, work.path());
 
         let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
-        assert!(drive
-            .device_roots
-            .contains_key(&account.state.device_pubkey));
+        assert!(
+            drive
+                .device_roots
+                .contains_key(&account.state.device_pubkey)
+        );
 
         // Second call is a no-op.
         let again = daemon.ensure_initial_import().await.unwrap();
@@ -446,8 +487,7 @@ mod tests {
         let missing = work_parent.path().join("Iris Drive");
         assert!(!missing.exists());
         {
-            let mut cfg =
-                AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
             let drive = cfg
                 .drives
                 .iter_mut()
@@ -459,7 +499,57 @@ mod tests {
 
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
         daemon.ensure_initial_import().await.unwrap();
-        assert!(missing.is_dir(), "ensure_initial_import should create the working dir");
+        assert!(
+            missing.is_dir(),
+            "ensure_initial_import should create the working dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_initial_import_reencrypts_legacy_public_root() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("secret.txt"), b"legacy plaintext").unwrap();
+
+        let blocks_dir = cfg_dir.path().join("blocks");
+        std::fs::create_dir_all(&blocks_dir).unwrap();
+        let store = FsBlobStore::new(&blocks_dir).unwrap();
+        let public_tree = HashTree::new(HashTreeConfig::new(Arc::new(store)).public());
+        let public_root = index_dir_with_history(&public_tree, work.path(), None, unix_now())
+            .await
+            .unwrap();
+        assert!(public_root.key.is_none());
+
+        {
+            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+            let drive = cfg
+                .drives
+                .iter_mut()
+                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+                .unwrap();
+            drive.working_dir = Some(work.path().to_path_buf());
+            drive.device_roots.insert(
+                account.state.device_pubkey.clone(),
+                crate::config::DeviceRootRef {
+                    root_cid: public_root.to_string(),
+                    published_at: unix_now(),
+                    dck_generation: account.state.app_keys.as_ref().unwrap().dck_generation,
+                },
+            );
+            cfg.save(config_path_in(cfg_dir.path())).unwrap();
+        }
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon
+            .ensure_initial_import()
+            .await
+            .unwrap()
+            .expect("legacy public root should be re-imported");
+
+        assert_ne!(report.root_cid, public_root.to_string());
+        let private_root = Cid::parse(&report.root_cid).unwrap();
+        assert!(private_root.key.is_some());
     }
 
     #[tokio::test]

@@ -199,10 +199,7 @@ mod tests {
     fn newer_snapshot_replaces() {
         let mut current = Some(snap("owner", 100, &[("dev-a", 100)]));
         let next = snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]);
-        assert_eq!(
-            apply_snapshot(&mut current, next),
-            ApplyDecision::Replaced
-        );
+        assert_eq!(apply_snapshot(&mut current, next), ApplyDecision::Replaced);
         let s = current.unwrap();
         assert_eq!(s.created_at, 200);
         assert_eq!(s.devices.len(), 2);
@@ -212,10 +209,7 @@ mod tests {
     fn older_snapshot_rejected() {
         let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]));
         let stale = snap("owner", 100, &[("dev-a", 100)]);
-        assert_eq!(
-            apply_snapshot(&mut current, stale),
-            ApplyDecision::Rejected
-        );
+        assert_eq!(apply_snapshot(&mut current, stale), ApplyDecision::Rejected);
         assert_eq!(current.unwrap().devices.len(), 2);
     }
 
@@ -223,10 +217,7 @@ mod tests {
     fn same_second_merges_additively() {
         let mut current = Some(snap("owner", 200, &[("dev-a", 100)]));
         let racing = snap("owner", 200, &[("dev-b", 200)]);
-        assert_eq!(
-            apply_snapshot(&mut current, racing),
-            ApplyDecision::Merged
-        );
+        assert_eq!(apply_snapshot(&mut current, racing), ApplyDecision::Merged);
         let s = current.unwrap();
         assert_eq!(s.devices.len(), 2);
         assert!(s.contains("dev-a"));
@@ -240,10 +231,7 @@ mod tests {
         // other.
         let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 150)]));
         let reduced = snap("owner", 200, &[("dev-a", 100)]); // omits dev-b
-        assert_eq!(
-            apply_snapshot(&mut current, reduced),
-            ApplyDecision::Merged
-        );
+        assert_eq!(apply_snapshot(&mut current, reduced), ApplyDecision::Merged);
         let s = current.unwrap();
         assert_eq!(s.devices.len(), 2, "dev-b must not be silently revoked");
         assert!(s.contains("dev-b"));
@@ -309,7 +297,10 @@ mod tests {
         let mut s = snap("owner", 100, &[("z", 100), ("a", 100), ("a", 200)]);
         s.normalize();
         assert_eq!(
-            s.devices.iter().map(|d| d.pubkey.as_str()).collect::<Vec<_>>(),
+            s.devices
+                .iter()
+                .map(|d| d.pubkey.as_str())
+                .collect::<Vec<_>>(),
             vec!["a", "z"]
         );
     }

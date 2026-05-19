@@ -115,10 +115,7 @@ pub struct MergedView {
 ///   - if the latest write and a tombstone share the same timestamp,
 ///     the tombstone wins (deletion is conservative)
 #[must_use]
-pub fn merge_drives(
-    authorized_devices: &[&str],
-    snapshots: &[DeviceSnapshot<'_>],
-) -> MergedView {
+pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>]) -> MergedView {
     let allow: std::collections::BTreeSet<&str> = authorized_devices.iter().copied().collect();
 
     // path -> (winning_write, latest_tombstone_at)
@@ -276,10 +273,7 @@ fn walk_dir_recursive<'a, S: Store>(
             if entry.link_type == LinkType::Dir {
                 walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
             } else if let Some(orig_path) = original_path_from_tombstone(&path) {
-                let raw = tree
-                    .read_file_range(&entry.hash, 0, None)
-                    .await?
-                    .unwrap_or_default();
+                let raw = tree.get(&child_cid, None).await?.unwrap_or_default();
                 let ts_str = String::from_utf8_lossy(&raw);
                 if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
                     tombstones.push(DeviceTombstone {

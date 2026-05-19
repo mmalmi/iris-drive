@@ -45,7 +45,7 @@ pub enum SyncAction {
 /// `device_label` is a short string identifying the device whose copy is
 /// being renamed in a conflict (e.g. "macbook"). It does not influence
 /// non-conflict outcomes.
-#[must_use] 
+#[must_use]
 pub fn resolve(
     path: &str,
     base: Option<&FileSnapshot>,
@@ -109,7 +109,7 @@ fn same_or_conflict(
 }
 
 /// Produce a Dropbox-style conflict filename: `name (conflict from X).ext`.
-#[must_use] 
+#[must_use]
 pub fn conflict_filename(original: &str, device_label: &str) -> String {
     let (stem, ext) = match original.rfind('.') {
         Some(idx) if idx > 0 && idx < original.len() - 1 => {
@@ -137,10 +137,7 @@ mod tests {
 
     #[test]
     fn nothing_to_do_when_both_absent() {
-        assert_eq!(
-            resolve("x", None, None, None, "dev"),
-            SyncAction::NoOp
-        );
+        assert_eq!(resolve("x", None, None, None, "dev"), SyncAction::NoOp);
     }
 
     #[test]

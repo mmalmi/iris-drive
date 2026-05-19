@@ -17,6 +17,8 @@
 //! functions take an `Event`, verify its signature, and extract the
 //! application-level type.
 
+use hashtree_core::{Cid, from_hex, to_hex};
+use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -48,6 +50,12 @@ pub enum WireError {
     SignatureFailed(String),
     #[error("invalid pubkey hex: {0}")]
     InvalidPubkey(String),
+    #[error("invalid root cid: {0}")]
+    InvalidRootCid(String),
+    #[error("drive-root event has no root hash")]
+    MissingRootHash,
+    #[error("drive-root key is not available for this device")]
+    RootKeyUnavailable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,7 +69,12 @@ struct AppKeysWireContent {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DriveRootWireContent {
-    root_cid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_cid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    root_key_wraps: std::collections::BTreeMap<String, String>,
     dck_generation: u64,
 }
 
@@ -145,9 +158,37 @@ pub fn build_drive_root_event(
     owner_pubkey_hex: &str,
     drive_id: &str,
     root: &DeviceRootRef,
+    authorized_device_pubkeys: &[String],
 ) -> Result<Event, WireError> {
+    let root_cid =
+        Cid::parse(&root.root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    let Some(root_key) = root_cid.key else {
+        return Err(WireError::InvalidRootCid(
+            "drive root is unencrypted".into(),
+        ));
+    };
+    let root_key_hex = hex::encode(root_key);
+    let mut root_key_wraps = std::collections::BTreeMap::new();
+    let mut recipients: std::collections::BTreeSet<String> =
+        authorized_device_pubkeys.iter().cloned().collect();
+    recipients.insert(device_keys.public_key().to_hex());
+    for recipient in recipients {
+        let recipient_pk =
+            PublicKey::from_hex(&recipient).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+        let ciphertext = nip44::encrypt(
+            device_keys.secret_key(),
+            &recipient_pk,
+            root_key_hex.clone(),
+            Nip44Version::V2,
+        )
+        .map_err(|e| WireError::Event(format!("root-key wrap: {e}")))?;
+        root_key_wraps.insert(recipient, ciphertext);
+    }
+
     let content = DriveRootWireContent {
-        root_cid: root.root_cid.clone(),
+        root_cid: None,
+        root_hash: Some(to_hex(&root_cid.hash)),
+        root_key_wraps,
         dck_generation: root.dck_generation,
     };
     let content_json =
@@ -182,6 +223,40 @@ pub fn build_drive_root_event(
 pub fn parse_drive_root_event(
     event: &Event,
 ) -> Result<(String, String, String, DeviceRootRef), WireError> {
+    parse_drive_root_event_inner(event, None)
+}
+
+pub fn parse_drive_root_event_for_device(
+    event: &Event,
+    device_keys: &Keys,
+) -> Result<(String, String, String, DeviceRootRef), WireError> {
+    parse_drive_root_event_inner(event, Some(device_keys))
+}
+
+pub fn parse_drive_root_event_header(event: &Event) -> Result<(String, String, String), WireError> {
+    let (device_pubkey_hex, owner_pubkey_hex, drive_id, _, _) =
+        parse_drive_root_event_parts(event)?;
+    Ok((device_pubkey_hex, owner_pubkey_hex, drive_id))
+}
+
+fn parse_drive_root_event_inner(
+    event: &Event,
+    device_keys: Option<&Keys>,
+) -> Result<(String, String, String, DeviceRootRef), WireError> {
+    let (device_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+        parse_drive_root_event_parts(event)?;
+    let root_cid = root_cid_from_wire_content(event, &content, device_keys)?;
+    let device_root = DeviceRootRef {
+        root_cid,
+        published_at,
+        dck_generation: content.dck_generation,
+    };
+    Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
+}
+
+fn parse_drive_root_event_parts(
+    event: &Event,
+) -> Result<(String, String, String, DriveRootWireContent, i64), WireError> {
     let kind = event.kind.as_u16();
     if kind != KIND_DRIVE_ROOT {
         return Err(WireError::WrongKind {
@@ -192,20 +267,54 @@ pub fn parse_drive_root_event(
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
     let (owner_pubkey_hex, drive_id) = parse_drive_root_d_tag(d_tag)?;
     // Sanity-check the owner pubkey is well-formed before trusting it.
-    PublicKey::from_hex(&owner_pubkey_hex)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    PublicKey::from_hex(&owner_pubkey_hex).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let content: DriveRootWireContent =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let device_pubkey_hex = event.pubkey.to_hex();
-    let device_root = DeviceRootRef {
-        root_cid: content.root_cid,
-        published_at: i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX),
-        dck_generation: content.dck_generation,
+    let published_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    Ok((
+        device_pubkey_hex,
+        owner_pubkey_hex,
+        drive_id,
+        content,
+        published_at,
+    ))
+}
+
+fn root_cid_from_wire_content(
+    event: &Event,
+    content: &DriveRootWireContent,
+    device_keys: Option<&Keys>,
+) -> Result<String, WireError> {
+    if let Some(root_cid) = content.root_cid.as_ref() {
+        Cid::parse(root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+        return Ok(root_cid.clone());
+    }
+
+    let root_hash = content
+        .root_hash
+        .as_ref()
+        .ok_or(WireError::MissingRootHash)?;
+    let hash = from_hex(root_hash).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    let Some(device_keys) = device_keys else {
+        return Err(WireError::RootKeyUnavailable);
     };
-    Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
+    let recipient = device_keys.public_key().to_hex();
+    let ciphertext = content
+        .root_key_wraps
+        .get(&recipient)
+        .ok_or(WireError::RootKeyUnavailable)?;
+    let key_hex = nip44::decrypt(device_keys.secret_key(), &event.pubkey, ciphertext)
+        .map_err(|_| WireError::RootKeyUnavailable)?;
+    let key = from_hex(&key_hex).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    Ok(Cid {
+        hash,
+        key: Some(key),
+    }
+    .to_string())
 }
 
 fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
@@ -244,9 +353,7 @@ mod tests {
                 label: Some("Mac mini".into()),
             }],
             dck_generation: 5,
-            wrapped_dck: BTreeMap::from([
-                ("ab".repeat(32), "base64ciphertext".into()),
-            ]),
+            wrapped_dck: BTreeMap::from([("ab".repeat(32), "base64ciphertext".into())]),
         }
     }
 
@@ -304,13 +411,12 @@ mod tests {
     fn app_keys_event_missing_d_tag_rejected() {
         let owner = Keys::generate();
         let snap = fake_snapshot(&owner.public_key().to_hex());
-        let content =
-            serde_json::to_string(&AppKeysWireContent {
-                devices: snap.devices.clone(),
-                dck_generation: snap.dck_generation,
-                wrapped_dck: snap.wrapped_dck.clone(),
-            })
-            .unwrap();
+        let content = serde_json::to_string(&AppKeysWireContent {
+            devices: snap.devices.clone(),
+            dck_generation: snap.dck_generation,
+            wrapped_dck: snap.wrapped_dck.clone(),
+        })
+        .unwrap();
         let event = EventBuilder::new(Kind::from(KIND_APP_KEYS), content, [])
             .to_event(&owner)
             .unwrap();
@@ -325,15 +431,17 @@ mod tests {
         let device = Keys::generate();
         let owner = Keys::generate();
         let owner_hex = owner.public_key().to_hex();
+        let authorized_devices = vec![device.public_key().to_hex()];
         let root = DeviceRootRef {
-            root_cid: "0123abcdef".into(),
+            root_cid: Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
             // Set an explicit published_at so roundtrip is stable.
             published_at: 1_700_000_000,
             dck_generation: 7,
         };
-        let event = build_drive_root_event(&device, &owner_hex, "main", &root).unwrap();
+        let event = build_drive_root_event(&device, &owner_hex, "main", &root, &authorized_devices)
+            .unwrap();
         let (device_pk, parsed_owner, drive_id, parsed_root) =
-            parse_drive_root_event(&event).unwrap();
+            parse_drive_root_event_for_device(&event, &device).unwrap();
         assert_eq!(device_pk, device.public_key().to_hex());
         assert_eq!(parsed_owner, owner_hex);
         assert_eq!(drive_id, "main");
@@ -343,16 +451,88 @@ mod tests {
     }
 
     #[test]
+    fn drive_root_event_does_not_publish_root_key_in_cleartext() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root_key = [0x44; 32];
+        let root = DeviceRootRef {
+            root_cid: Cid::encrypted([0x33; 32], root_key).to_string(),
+            published_at: 1_700_000_000,
+            dck_generation: 1,
+        };
+
+        let event = build_drive_root_event(
+            &device,
+            &owner,
+            "main",
+            &root,
+            &[device.public_key().to_hex()],
+        )
+        .unwrap();
+
+        assert!(!event.content.contains(&root.root_cid));
+        assert!(!event.content.contains(&hex::encode(root_key)));
+        assert!(parse_drive_root_event(&event).is_err());
+
+        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
+        assert_eq!(parsed_root.root_cid, root.root_cid);
+    }
+
+    #[test]
+    fn drive_root_event_builder_rejects_unencrypted_root() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root = DeviceRootRef {
+            root_cid: Cid::public([0x11; 32]).to_string(),
+            published_at: 1_700_000_000,
+            dck_generation: 1,
+        };
+
+        assert!(
+            build_drive_root_event(
+                &device,
+                &owner,
+                "main",
+                &root,
+                &[device.public_key().to_hex()]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn drive_root_event_builder_always_wraps_for_signing_device() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root = DeviceRootRef {
+            root_cid: Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
+            published_at: 1_700_000_000,
+            dck_generation: 1,
+        };
+
+        let event = build_drive_root_event(&device, &owner, "main", &root, &[]).unwrap();
+        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
+        assert_eq!(parsed_root.root_cid, root.root_cid);
+    }
+
+    #[test]
     fn drive_root_event_with_zero_published_at_falls_back_to_wall_clock() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
         let root = DeviceRootRef {
-            root_cid: "x".into(),
+            root_cid: Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
             published_at: 0, // caller hasn't stamped — should fall back
             dck_generation: 1,
         };
-        let event = build_drive_root_event(&device, &owner, "main", &root).unwrap();
-        let (_, _, _, parsed_root) = parse_drive_root_event(&event).unwrap();
+        let event = build_drive_root_event(
+            &device,
+            &owner,
+            "main",
+            &root,
+            &[device.public_key().to_hex()],
+        )
+        .unwrap();
+        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
         // Should be roughly now, not 0.
         assert!(parsed_root.published_at > 1_500_000_000);
     }
@@ -383,10 +563,7 @@ mod tests {
             "iris-drive/abc//root",
             "iris-drive/abc",
         ] {
-            assert!(
-                parse_drive_root_d_tag(bad).is_err(),
-                "should reject {bad}"
-            );
+            assert!(parse_drive_root_d_tag(bad).is_err(), "should reject {bad}");
         }
     }
 
@@ -418,14 +595,28 @@ mod tests {
         let device_b = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
         let root = DeviceRootRef {
-            root_cid: "x".into(),
+            root_cid: Cid::encrypted([0x88; 32], [0x99; 32]).to_string(),
             published_at: 0,
             dck_generation: 1,
         };
-        let ev_a = build_drive_root_event(&device_a, &owner, "main", &root).unwrap();
-        let ev_b = build_drive_root_event(&device_b, &owner, "main", &root).unwrap();
-        let (pk_a, _, _, _) = parse_drive_root_event(&ev_a).unwrap();
-        let (pk_b, _, _, _) = parse_drive_root_event(&ev_b).unwrap();
+        let ev_a = build_drive_root_event(
+            &device_a,
+            &owner,
+            "main",
+            &root,
+            &[device_a.public_key().to_hex()],
+        )
+        .unwrap();
+        let ev_b = build_drive_root_event(
+            &device_b,
+            &owner,
+            "main",
+            &root,
+            &[device_b.public_key().to_hex()],
+        )
+        .unwrap();
+        let (pk_a, _, _, _) = parse_drive_root_event_for_device(&ev_a, &device_a).unwrap();
+        let (pk_b, _, _, _) = parse_drive_root_event_for_device(&ev_b, &device_b).unwrap();
         assert_eq!(pk_a, device_a.public_key().to_hex());
         assert_eq!(pk_b, device_b.public_key().to_hex());
         assert_ne!(pk_a, pk_b);

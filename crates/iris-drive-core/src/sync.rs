@@ -52,11 +52,7 @@ pub struct ConflictResolution {
 /// `device_label` is used in the conflict filename. The peer's label is
 /// always rendered as `"peer"` in local-side renames, since the peer's
 /// own label is unknown here.
-pub async fn sync<L, R>(
-    local: &L,
-    remote: &R,
-    device_label: &str,
-) -> Result<SyncReport, SyncError>
+pub async fn sync<L, R>(local: &L, remote: &R, device_label: &str) -> Result<SyncReport, SyncError>
 where
     L: ProviderFs<ItemId = String>,
     R: ProviderFs<ItemId = String>,
@@ -65,10 +61,7 @@ where
     let remote_entries = enumerate_files(remote).await?;
 
     let mut report = SyncReport::default();
-    let all_paths: BTreeSet<&String> = local_entries
-        .keys()
-        .chain(remote_entries.keys())
-        .collect();
+    let all_paths: BTreeSet<&String> = local_entries.keys().chain(remote_entries.keys()).collect();
 
     for path in all_paths {
         let l = local_entries.get(path);
@@ -145,7 +138,10 @@ where
     Ok(())
 }
 
-async fn read_full<P: ProviderFs<ItemId = String>>(fs: &P, path: &str) -> Result<Vec<u8>, SyncError> {
+async fn read_full<P: ProviderFs<ItemId = String>>(
+    fs: &P,
+    path: &str,
+) -> Result<Vec<u8>, SyncError> {
     let id = path.to_string();
     let item = fs.item(&id).await?;
     if item.size == 0 {
@@ -321,8 +317,14 @@ mod tests {
         write_file(&l, "x.txt", b"local").await;
         write_file(&r, "y.txt", b"remote").await;
         sync(&l, &r, "dev").await.unwrap();
-        assert_eq!(paths(&l).await, vec!["x.txt".to_string(), "y.txt".to_string()]);
-        assert_eq!(paths(&r).await, vec!["x.txt".to_string(), "y.txt".to_string()]);
+        assert_eq!(
+            paths(&l).await,
+            vec!["x.txt".to_string(), "y.txt".to_string()]
+        );
+        assert_eq!(
+            paths(&r).await,
+            vec!["x.txt".to_string(), "y.txt".to_string()]
+        );
         // Second sync is a no-op.
         let report = sync(&l, &r, "dev").await.unwrap();
         assert_eq!(report, SyncReport::default());

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// Resolve the platform config dir for iris-drive, honouring `IRIS_DRIVE_CONFIG_DIR`
 /// as an override (mainly for tests).
-#[must_use] 
+#[must_use]
 pub fn default_config_dir() -> Option<PathBuf> {
     if let Ok(override_dir) = std::env::var("IRIS_DRIVE_CONFIG_DIR") {
         return Some(PathBuf::from(override_dir));
@@ -10,7 +10,7 @@ pub fn default_config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("iris-drive"))
 }
 
-#[must_use] 
+#[must_use]
 pub fn key_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("key")
 }
@@ -41,9 +41,6 @@ mod tests {
         let base = std::path::Path::new("/tmp/x");
         assert_eq!(key_path_in(base), PathBuf::from("/tmp/x/key"));
         assert_eq!(config_path_in(base), PathBuf::from("/tmp/x/config.toml"));
-        assert_eq!(
-            owner_key_path_in(base),
-            PathBuf::from("/tmp/x/owner_key")
-        );
+        assert_eq!(owner_key_path_in(base), PathBuf::from("/tmp/x/owner_key"));
     }
 }

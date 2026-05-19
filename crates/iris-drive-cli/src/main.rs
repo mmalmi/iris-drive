@@ -6,17 +6,17 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
 use iris_drive_core::{
+    AccountState, Drive, DriveRole,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
     daemon::Daemon,
     index_dir,
-    merge::{merge_drives, DeviceFileEntry, DeviceSnapshot, DeviceTombstone},
+    merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, key_path_in},
-    AccountState, Drive, DriveRole,
 };
-use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::PublicKey;
+use nostr_sdk::nips::nip19::FromBech32;
 use serde_json::json;
 
 #[derive(Debug, Parser)]
@@ -303,11 +303,7 @@ fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Resul
     Ok(())
 }
 
-fn cmd_approve(
-    config_dir: &std::path::Path,
-    device: &str,
-    label: Option<String>,
-) -> Result<()> {
+fn cmd_approve(config_dir: &std::path::Path, device: &str, label: Option<String>) -> Result<()> {
     let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
@@ -620,62 +616,7 @@ fn cmd_publish(
             .await
             .context("connecting to relays")?;
 
-        let mut published_app_keys = false;
-        let mut published_drive_root = false;
-
-        if state.has_owner_signing_authority
-            && let Some(snap) = state.app_keys.as_ref()
-        {
-            let account =
-                Account::load(state.clone(), config_dir).context("loading account")?;
-            let owner_keys = account
-                .owner_key
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-                .keys();
-            relay_sync::publish_app_keys(&client, owner_keys, snap)
-                .await
-                .context("publishing AppKeys")?;
-            published_app_keys = true;
-        }
-
-        let mut blossom_upload_report: Option<UploadReport> = None;
-
-        if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-            && let Some(root) = drive.device_roots.get(&state.device_pubkey)
-        {
-            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-                .context("loading device key")?;
-            relay_sync::publish_drive_root(
-                &client,
-                device.keys(),
-                &state.owner_pubkey,
-                &drive.drive_id,
-                root,
-            )
-            .await
-            .context("publishing drive root")?;
-            published_drive_root = true;
-
-            // Push the underlying blocks to Blossom if configured.
-            if !config.blossom_servers.is_empty() {
-                let bclient = iris_drive_core::blossom_sync_client(
-                    device.keys().clone(),
-                    &config.blossom_servers,
-                );
-                let daemon = Daemon::open(config_dir).context("opening daemon")?;
-                let cid = Cid::parse(&root.root_cid)
-                    .with_context(|| format!("parsing root cid {}", root.root_cid))?;
-                let report = iris_drive_core::blossom_sync::upload_tree(
-                    daemon.tree(),
-                    &cid,
-                    &bclient,
-                )
-                .await
-                .context("uploading tree to blossom")?;
-                blossom_upload_report = Some(report);
-            }
-        }
+        let report = publish_current_state(&client, config_dir, &config, &state).await?;
 
         let _ = client.disconnect().await;
         println!(
@@ -683,9 +624,9 @@ fn cmd_publish(
             json!({
                 "relays": relays,
                 "blossom_servers": config.blossom_servers,
-                "published_app_keys": published_app_keys,
-                "published_drive_root": published_drive_root,
-                "blossom_upload": blossom_upload_report.map(|r| json!({
+                "published_app_keys": report.published_app_keys,
+                "published_drive_root": report.published_drive_root,
+                "blossom_upload": report.blossom_upload.map(|r| json!({
                     "total_hashes": r.total_hashes,
                     "uploaded": r.uploaded,
                     "already_present": r.already_present,
@@ -694,6 +635,75 @@ fn cmd_publish(
         );
         Ok::<_, anyhow::Error>(())
     })
+}
+
+#[derive(Debug, Default)]
+struct PublishStateReport {
+    published_app_keys: bool,
+    published_drive_root: bool,
+    root_cid: Option<String>,
+    blossom_upload: Option<UploadReport>,
+}
+
+async fn publish_current_state(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    state: &AccountState,
+) -> Result<PublishStateReport> {
+    use iris_drive_core::relay_sync;
+
+    let mut report = PublishStateReport::default();
+    if state.has_owner_signing_authority
+        && let Some(snap) = state.app_keys.as_ref()
+    {
+        let account = Account::load(state.clone(), config_dir).context("loading account")?;
+        let owner_keys = account
+            .owner_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+            .keys();
+        relay_sync::publish_app_keys(client, owner_keys, snap)
+            .await
+            .context("publishing AppKeys")?;
+        report.published_app_keys = true;
+    }
+
+    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+    {
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        relay_sync::publish_drive_root(
+            client,
+            device.keys(),
+            &state.owner_pubkey,
+            &drive.drive_id,
+            root,
+            &authorized_device_pubkeys(state),
+        )
+        .await
+        .context("publishing drive root")?;
+        report.published_drive_root = true;
+        report.root_cid = Some(root.root_cid.clone());
+
+        if !config.blossom_servers.is_empty() {
+            let bclient = iris_drive_core::blossom_sync_client(
+                device.keys().clone(),
+                &config.blossom_servers,
+            );
+            let daemon = Daemon::open(config_dir).context("opening daemon")?;
+            let cid = Cid::parse(&root.root_cid)
+                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+            report.blossom_upload = Some(
+                iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &cid, &bclient)
+                    .await
+                    .context("uploading tree to blossom")?,
+            );
+        }
+    }
+
+    Ok(report)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -757,9 +767,13 @@ fn cmd_sync(
         let mut drive_roots_applied = 0usize;
         let mut drive_roots_skipped = 0usize;
         let mut applied_root_cids: Vec<String> = Vec::new();
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
         for ev in &drive_root_events {
-            let parsed = iris_drive_core::nostr_events::parse_drive_root_event(ev).ok();
-            match relay_sync::apply_remote_drive_root_event(&mut config, ev)
+            let parsed =
+                iris_drive_core::nostr_events::parse_drive_root_event_for_device(ev, device.keys())
+                    .ok();
+            match relay_sync::apply_remote_drive_root_event(&mut config, ev, Some(device.keys()))
                 .context("applying drive-root event")?
             {
                 relay_sync::DriveRootApply::Applied => {
@@ -788,8 +802,8 @@ fn cmd_sync(
             );
             let mut totals = DownloadReport::default();
             for cid_str in &applied_root_cids {
-                let cid = Cid::parse(cid_str)
-                    .with_context(|| format!("parsing root cid {cid_str}"))?;
+                let cid =
+                    Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
                 let r = iris_drive_core::blossom_sync::download_tree(
                     local.clone(),
                     &cid,
@@ -919,39 +933,34 @@ fn cmd_daemon(
             })
         );
 
-        // Announce the current device root once on startup, regardless
-        // of whether it changed since last run. The fs-notify + periodic
-        // paths only publish on change, so without this a freshly-imported
-        // device would sit silent until its first edit.
-        if let Some(entry) = config
-            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-            .and_then(|d| d.device_roots.get(&state.device_pubkey))
-            .cloned()
-        {
-            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-                .context("loading device key for initial publish")?;
-            if let Err(e) = relay_sync::publish_drive_root(
-                &client,
-                device.keys(),
-                &state.owner_pubkey,
-                iris_drive_core::PRIMARY_DRIVE_ID,
-                &entry,
-            )
-            .await
-            {
+        // Announce the current account roster and device root once on
+        // startup, and upload the initial blocks if this launch just
+        // imported them. The fs-notify + periodic paths only publish on
+        // change, so without this a freshly-imported device would sit
+        // silent until its first edit.
+        match publish_current_state(&client, config_dir, &config, &state).await {
+            Ok(report) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish",
+                        "published_app_keys": report.published_app_keys,
+                        "published_drive_root": report.published_drive_root,
+                        "root_cid": report.root_cid,
+                        "blossom_upload": report.blossom_upload.map(|r| json!({
+                            "total_hashes": r.total_hashes,
+                            "uploaded": r.uploaded,
+                            "already_present": r.already_present,
+                        })),
+                    })
+                );
+            }
+            Err(e) => {
                 println!(
                     "{}",
                     json!({
                         "event": "initial_publish_error",
                         "error": e.to_string(),
-                    })
-                );
-            } else {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "initial_publish",
-                        "root_cid": entry.root_cid,
                     })
                 );
             }
@@ -1061,10 +1070,7 @@ fn spawn_fs_watcher(
 /// Re-import the configured working dir; if the new root CID differs
 /// from what's already recorded for this device, publish a new
 /// drive-root event. No-op when the root hasn't changed.
-async fn scan_and_publish(
-    client: &nostr_sdk::Client,
-    config_dir: &std::path::Path,
-) -> Result<()> {
+async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Path) -> Result<()> {
     use iris_drive_core::relay_sync;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
@@ -1106,6 +1112,7 @@ async fn scan_and_publish(
         &state.owner_pubkey,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &new_root,
+        &authorized_device_pubkeys(state),
     )
     .await
     .context("publishing drive root")?;
@@ -1115,10 +1122,8 @@ async fn scan_and_publish(
     if !config.blossom_servers.is_empty() {
         let cid = Cid::parse(&new_root.root_cid)
             .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
-        let bclient = iris_drive_core::blossom_sync_client(
-            device.keys().clone(),
-            &config.blossom_servers,
-        );
+        let bclient =
+            iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
         match iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &cid, &bclient).await {
             Ok(r) => upload_report = Some(r),
             Err(e) => println!(
@@ -1158,8 +1163,13 @@ async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event)
             })
         );
     } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
-        let parsed = iris_drive_core::nostr_events::parse_drive_root_event(event).ok();
-        let outcome = relay_sync::apply_remote_drive_root_event(&mut config, event)?;
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        let parsed =
+            iris_drive_core::nostr_events::parse_drive_root_event_for_device(event, device.keys())
+                .ok();
+        let outcome =
+            relay_sync::apply_remote_drive_root_event(&mut config, event, Some(device.keys()))?;
         let was_applied = matches!(outcome, relay_sync::DriveRootApply::Applied);
         println!(
             "{}",
@@ -1178,12 +1188,13 @@ async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event)
         if was_applied
             && !config.blossom_servers.is_empty()
             && let Some((_, _, _, root_ref)) = parsed
-            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_ref.root_cid).await {
-                println!(
-                    "{}",
-                    json!({"event": "blossom_download_error", "error": e.to_string()})
-                );
-            }
+            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_ref.root_cid).await
+        {
+            println!(
+                "{}",
+                json!({"event": "blossom_download_error", "error": e.to_string()})
+            );
+        }
         return Ok(());
     } else {
         // Unknown kind; ignore.
@@ -1204,8 +1215,8 @@ async fn pull_blocks_for_root(
     let local = daemon.tree().get_store().clone();
     let bclient =
         iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
-    let cid = Cid::parse(root_cid_str)
-        .with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let cid =
+        Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
     let report = iris_drive_core::blossom_sync::download_tree(local, &cid, bclient)
         .await
         .with_context(|| format!("downloading tree {root_cid_str}"))?;
@@ -1228,6 +1239,18 @@ fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<String> {
     } else {
         override_list.to_vec()
     }
+}
+
+fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
+    let mut devices: Vec<String> = state
+        .app_keys
+        .as_ref()
+        .map(|snap| snap.devices.iter().map(|d| d.pubkey.clone()).collect())
+        .unwrap_or_default();
+    if !devices.contains(&state.device_pubkey) {
+        devices.push(state.device_pubkey.clone());
+    }
+    devices
 }
 
 fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<()> {
@@ -1329,6 +1352,7 @@ fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         &state.owner_pubkey,
         &drive.drive_id,
         root_ref,
+        &authorized_device_pubkeys(&state),
     )
     .context("building drive-root event")?;
     println!("{}", serde_json::to_string_pretty(&event)?);
@@ -1347,7 +1371,7 @@ fn cmd_index(dir: &std::path::Path) -> Result<()> {
         .build()
         .context("building tokio runtime")?;
     runtime.block_on(async {
-        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())));
         let cid = index_dir(&tree, dir)
             .await
             .with_context(|| format!("indexing {}", dir.display()))?;
@@ -1402,7 +1426,8 @@ fn account_npub(hex: &str) -> String {
 }
 
 fn account_npub_or_self(input: &str, state: &AccountState) -> String {
-    normalize_pubkey(input).map_or_else(|_| account_npub(&state.device_pubkey), |h| account_npub(&h))
+    normalize_pubkey(input)
+        .map_or_else(|_| account_npub(&state.device_pubkey), |h| account_npub(&h))
 }
 
 fn authorization_state_label(state: &AccountState) -> &'static str {
@@ -1429,4 +1454,3 @@ fn short_pubkey(pk: &str) -> String {
         pk.to_string()
     }
 }
-

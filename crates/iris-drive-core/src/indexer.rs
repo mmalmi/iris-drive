@@ -13,7 +13,7 @@ use std::path::Path;
 use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store};
 use thiserror::Error;
 
-use crate::merge::{walk_device_tree, PREV_LINK_PATH, TOMBSTONE_PREFIX};
+use crate::merge::{PREV_LINK_PATH, TOMBSTONE_PREFIX, walk_device_tree};
 
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -32,10 +32,7 @@ pub enum IndexError {
 /// Symlinks are not followed; they are silently skipped for v1 — Drive
 /// and Dropbox both ignore symlinks too. Files unreadable due to
 /// permissions surface as `IndexError::Io`.
-pub async fn index_dir<S: Store>(
-    tree: &HashTree<S>,
-    dir: &Path,
-) -> Result<Cid, IndexError> {
+pub async fn index_dir<S: Store>(tree: &HashTree<S>, dir: &Path) -> Result<Cid, IndexError> {
     if !dir.is_dir() {
         return Err(IndexError::NotADirectory(dir.display().to_string()));
     }
@@ -105,13 +102,17 @@ async fn attach_prev_link<S: Store>(
     mut root: Cid,
     previous: &Cid,
 ) -> Result<Cid, IndexError> {
-    let segments: Vec<&str> = PREV_LINK_PATH.split('/').filter(|s| !s.is_empty()).collect();
-    let (name, parent_segs) = segments
-        .split_last()
-        .expect("PREV_LINK_PATH is non-empty");
+    let segments: Vec<&str> = PREV_LINK_PATH
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (name, parent_segs) = segments.split_last().expect("PREV_LINK_PATH is non-empty");
     // Ensure each ancestor (just `.hashtree/` for now) exists.
     for depth in 1..=parent_segs.len() {
-        let dir_path: Vec<String> = parent_segs[..depth].iter().map(|s| (*s).to_string()).collect();
+        let dir_path: Vec<String> = parent_segs[..depth]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
         root = ensure_dir(tree, &root, &dir_path).await?;
     }
     let new_root = tree
@@ -198,9 +199,7 @@ async fn ensure_dir<S: Store>(
     dir_path: &[String],
 ) -> Result<Cid, IndexError> {
     let segs: Vec<&str> = dir_path.iter().map(String::as_str).collect();
-    let (name, parent_segs) = segs
-        .split_last()
-        .expect("dir_path must be non-empty");
+    let (name, parent_segs) = segs.split_last().expect("dir_path must be non-empty");
     let parent_cid = resolve_dir(tree, root, parent_segs).await?;
     let entries = tree.list_directory(&parent_cid).await?;
     if entries
@@ -229,9 +228,7 @@ async fn resolve_dir<S: Store>(
         let entry = entries
             .iter()
             .find(|e| e.name == *seg && e.link_type == LinkType::Dir)
-            .ok_or_else(|| {
-                IndexError::Tree(HashTreeError::PathNotFound((*seg).to_string()))
-            })?;
+            .ok_or_else(|| IndexError::Tree(HashTreeError::PathNotFound((*seg).to_string())))?;
         current = Cid {
             hash: entry.hash,
             key: entry.key,
@@ -372,11 +369,8 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("real.txt"), b"real").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            dir.path().join("real.txt"),
-            dir.path().join("link.txt"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real.txt"), dir.path().join("link.txt"))
+            .unwrap();
         let tree = new_tree();
         let cid = index_dir(&tree, dir.path()).await.unwrap();
         let listing = tree.list_directory(&cid).await.unwrap();
@@ -447,9 +441,7 @@ mod tests {
         let third = index_dir_with_history(&tree, dir.path(), Some(&second), 2000)
             .await
             .unwrap();
-        let (_, tombstones) = crate::merge::walk_device_tree(&tree, &third)
-            .await
-            .unwrap();
+        let (_, tombstones) = crate::merge::walk_device_tree(&tree, &third).await.unwrap();
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].tombstoned_at, 1000, "original ts preserved");
     }
@@ -470,9 +462,7 @@ mod tests {
         let third = index_dir_with_history(&tree, dir.path(), Some(&second), 2000)
             .await
             .unwrap();
-        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &third)
-            .await
-            .unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &third).await.unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "back.txt");
         assert!(tombstones.is_empty(), "tombstone should be gone");

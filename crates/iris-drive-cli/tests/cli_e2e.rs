@@ -4,6 +4,7 @@
 //! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
 
 use assert_cmd::Command;
+use hashtree_core::Cid;
 use predicates::str::contains;
 use tempfile::tempdir;
 
@@ -50,19 +51,16 @@ fn restore_uses_provided_nsec_and_grants_owner_authority() {
         .unwrap()
         .trim()
         .to_string();
-    let original_owner = String::from_utf8(
-        idrive(dir_a.path())
-            .arg("whoami")
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap();
+    let original_owner =
+        String::from_utf8(idrive(dir_a.path()).arg("whoami").output().unwrap().stdout).unwrap();
     let original_v: serde_json::Value = serde_json::from_str(&original_owner).unwrap();
     let original_owner_npub = original_v["owner_npub"].as_str().unwrap().to_string();
 
     let dir_b = tempdir().unwrap();
-    let out = idrive(dir_b.path()).args(["restore", &nsec]).output().unwrap();
+    let out = idrive(dir_b.path())
+        .args(["restore", &nsec])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
@@ -79,12 +77,22 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     // Use the test owner's npub from a separate init.
     let owner_dir = tempdir().unwrap();
     let init_v: serde_json::Value = serde_json::from_str(
-        &String::from_utf8(idrive(owner_dir.path()).arg("init").output().unwrap().stdout).unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("init")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap();
     let owner_npub = init_v["owner_npub"].as_str().unwrap().to_string();
 
-    let out = idrive(dir.path()).args(["link", &owner_npub]).output().unwrap();
+    let out = idrive(dir.path())
+        .args(["link", &owner_npub])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
@@ -101,8 +109,14 @@ fn link_then_approve_authorizes_the_linked_device() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner_npub = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["owner_npub"]
         .as_str()
@@ -135,8 +149,14 @@ fn link_then_approve_authorizes_the_linked_device() {
 
     // Roster on the owner side now has 2 devices.
     let roster = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(roster["app_keys"]["devices"].as_array().unwrap().len(), 2);
@@ -148,8 +168,14 @@ fn approve_without_owner_authority_errors() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner_npub = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["owner_npub"]
         .as_str()
@@ -191,8 +217,10 @@ fn roster_after_init_shows_dck_generation_and_self_wrap() {
 fn rotate_dck_advances_generation() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
-    let before: serde_json::Value =
-        serde_json::from_str(&String::from_utf8(idrive(dir.path()).arg("roster").output().unwrap().stdout).unwrap()).unwrap();
+    let before: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(idrive(dir.path()).arg("roster").output().unwrap().stdout).unwrap(),
+    )
+    .unwrap();
     let gen_before = before["app_keys"]["dck_generation"].as_u64().unwrap();
 
     let out = idrive(dir.path()).arg("rotate-dck").output().unwrap();
@@ -200,7 +228,10 @@ fn rotate_dck_advances_generation() {
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     let gen_after = v["dck_generation"].as_u64().unwrap();
-    assert!(gen_after > gen_before, "{gen_after} should exceed {gen_before}");
+    assert!(
+        gen_after > gen_before,
+        "{gen_after} should exceed {gen_before}"
+    );
 }
 
 #[test]
@@ -208,8 +239,14 @@ fn rotate_dck_on_linked_device_errors() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner_npub = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["owner_npub"]
         .as_str()
@@ -220,7 +257,10 @@ fn rotate_dck_on_linked_device_errors() {
         .args(["link", &owner_npub])
         .assert()
         .success();
-    idrive(linked_dir.path()).arg("rotate-dck").assert().failure();
+    idrive(linked_dir.path())
+        .arg("rotate-dck")
+        .assert()
+        .failure();
 }
 
 #[test]
@@ -228,16 +268,28 @@ fn approve_advances_dck_generation() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let gen_before = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["app_keys"]["dck_generation"]
         .as_u64()
         .unwrap();
 
     let owner_npub = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["owner_npub"]
         .as_str()
@@ -263,13 +315,22 @@ fn approve_advances_dck_generation() {
         .success();
 
     let gen_after = serde_json::from_str::<serde_json::Value>(
-        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
-            .unwrap(),
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
     )
     .unwrap()["app_keys"]["dck_generation"]
         .as_u64()
         .unwrap();
-    assert!(gen_after > gen_before, "{gen_after} should exceed {gen_before}");
+    assert!(
+        gen_after > gen_before,
+        "{gen_after} should exceed {gen_before}"
+    );
 }
 
 #[test]
@@ -325,7 +386,8 @@ fn status_after_init_reports_initialized() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
     let out = idrive(dir.path()).arg("status").output().unwrap();
-    let v: serde_json::Value = serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["initialized"], true);
     assert!(v["pubkey_npub"].as_str().unwrap().starts_with("npub1"));
     let drives = v["drives"].as_array().unwrap();
@@ -372,7 +434,11 @@ fn index_command_prints_root_cid_and_count() {
     let body = String::from_utf8(out.stdout).unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["top_level_entries"], 2);
-    assert!(v["root_cid"].as_str().unwrap().len() > 10);
+    let root_cid = Cid::parse(v["root_cid"].as_str().unwrap()).unwrap();
+    assert!(
+        root_cid.key.is_some(),
+        "index roots should be private by default"
+    );
 }
 
 #[test]
@@ -548,10 +614,7 @@ fn deleted_file_can_return_and_tombstone_drops() {
         .map(|f| f["path"].as_str().unwrap())
         .collect();
     assert_eq!(paths, vec!["file.txt"]);
-    assert!(v["suppressed_by_tombstone"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(v["suppressed_by_tombstone"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -563,5 +626,8 @@ fn restore_after_init_errors_without_force_path() {
         .unwrap()
         .trim()
         .to_string();
-    idrive(dir.path()).args(["restore", &nsec]).assert().failure();
+    idrive(dir.path())
+        .args(["restore", &nsec])
+        .assert()
+        .failure();
 }

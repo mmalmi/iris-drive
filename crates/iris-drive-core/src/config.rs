@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use std::collections::BTreeMap;
 
-use crate::account::AccountState;
 use crate::CONFIG_SCHEMA_VERSION;
+use crate::account::AccountState;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -30,9 +30,9 @@ pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 /// Default Blossom servers for new installs — HTTP blob hosts used to
 /// transfer the actual htree blocks between devices. Without at least
 /// one server, multi-device sync is metadata-only (other devices see
-/// root CIDs but can't fetch the bytes), so we ship a working public
-/// default. Users can `idrive blossom-servers add/remove` to taste.
-pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://blossom.primal.net"];
+/// root CIDs but can't fetch the bytes). `upload.iris.to` rejects
+/// unencrypted uploads, matching Iris Drive's private-by-default model.
+pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
 
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,14 +49,21 @@ pub struct AppConfig {
     #[serde(default = "default_relays")]
     pub relays: Vec<String>,
     /// Blossom HTTP blob servers used for block replication between
-    /// devices. Empty by default; configure to enable file-content
-    /// sync (not just metadata).
-    #[serde(default)]
+    /// devices. Defaults to [`DEFAULT_BLOSSOM_SERVERS`] on fresh
+    /// installs and when loading older configs that lack this field.
+    #[serde(default = "default_blossom_servers")]
     pub blossom_servers: Vec<String>,
 }
 
 fn default_relays() -> Vec<String> {
     DEFAULT_RELAYS.iter().map(|s| (*s).to_string()).collect()
+}
+
+fn default_blossom_servers() -> Vec<String> {
+    DEFAULT_BLOSSOM_SERVERS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 impl Default for AppConfig {
@@ -66,10 +73,7 @@ impl Default for AppConfig {
             account: None,
             drives: Vec::new(),
             relays: default_relays(),
-            blossom_servers: DEFAULT_BLOSSOM_SERVERS
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect(),
+            blossom_servers: default_blossom_servers(),
         }
     }
 }
@@ -78,7 +82,11 @@ impl AppConfig {
     /// Insert or update a drive by `drive_id`. Returns `true` if the drive
     /// was new.
     pub fn upsert_drive(&mut self, drive: Drive) -> bool {
-        if let Some(existing) = self.drives.iter_mut().find(|d| d.drive_id == drive.drive_id) {
+        if let Some(existing) = self
+            .drives
+            .iter_mut()
+            .find(|d| d.drive_id == drive.drive_id)
+        {
             *existing = drive;
             false
         } else {
@@ -87,7 +95,7 @@ impl AppConfig {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn drive(&self, drive_id: &str) -> Option<&Drive> {
         self.drives.iter().find(|d| d.drive_id == drive_id)
     }
@@ -119,7 +127,8 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let raw = toml::to_string_pretty(self).map_err(|e| ConfigError::Serialize(e.to_string()))?;
+        let raw =
+            toml::to_string_pretty(self).map_err(|e| ConfigError::Serialize(e.to_string()))?;
         fs::write(path, raw)?;
         Ok(())
     }
@@ -137,7 +146,7 @@ pub enum DriveRole {
 }
 
 impl DriveRole {
-    #[must_use] 
+    #[must_use]
     pub fn can_write(self) -> bool {
         matches!(self, DriveRole::Owner | DriveRole::Editor)
     }
@@ -215,6 +224,19 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
         assert!(cfg.drives.is_empty());
+    }
+
+    #[test]
+    fn default_blossom_server_is_upload_iris_to() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
+    }
+
+    #[test]
+    fn missing_blossom_servers_field_loads_default_server() {
+        let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
+        let cfg: AppConfig = toml::from_str(&raw).unwrap();
+        assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
     }
 
     #[test]

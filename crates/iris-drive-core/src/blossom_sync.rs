@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use hashtree_blossom::BlossomClient;
 use hashtree_core::diff::collect_hashes;
 use hashtree_core::{
-    to_hex, Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError,
+    Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use thiserror::Error;
 
@@ -184,7 +184,7 @@ where
         return Err(BlossomSyncError::NoServers);
     }
     let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
-    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()).public());
+    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
     let hashes = collect_hashes(&tree, root, 4).await?;
     Ok(DownloadReport {
         total_hashes: hashes.len(),

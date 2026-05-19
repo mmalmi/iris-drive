@@ -81,10 +81,7 @@ macro_rules! keypair_struct {
             }
 
             /// Construct from a bech32 nsec1 (or 64-char hex) string.
-            pub fn from_secret(
-                raw: &str,
-                path: impl Into<PathBuf>,
-            ) -> Result<Self, IdentityError> {
+            pub fn from_secret(raw: &str, path: impl Into<PathBuf>) -> Result<Self, IdentityError> {
                 let secret = parse_secret_key(raw.trim())?;
                 Ok(Self::new(Keys::new(secret), path))
             }
