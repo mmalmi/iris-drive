@@ -1,6 +1,19 @@
 pub mod account;
 pub mod app_keys;
+pub mod blossom_sync;
 pub mod config;
+
+/// Convenience constructor: a `BlossomClient` wired with the given
+/// signing keys and the given server URLs. Used as both the write and
+/// read pool — single account installs typically use the same servers
+/// for both.
+#[must_use]
+pub fn blossom_sync_client(
+    keys: nostr_sdk::Keys,
+    servers: &[String],
+) -> hashtree_blossom::BlossomClient {
+    hashtree_blossom::BlossomClient::new(keys).with_servers(servers.to_vec())
+}
 pub mod conflict;
 pub mod daemon;
 pub mod identity;

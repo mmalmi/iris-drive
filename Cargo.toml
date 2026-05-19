@@ -38,6 +38,7 @@ nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
 # single source avoids two versions in the dep graph. Swap both to
 # crates.io once hashtree-provider publishes.
 hashtree-core = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-core" }
+hashtree-blossom = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-blossom", features = ["store"] }
 hashtree-fs = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-fs" }
 hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"

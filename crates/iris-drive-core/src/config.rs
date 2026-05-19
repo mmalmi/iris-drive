@@ -27,6 +27,12 @@ pub enum ConfigError {
 /// `--relay` flags. Public, write-friendly, no auth — fine for v1.
 pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 
+/// Default Blossom servers for new installs — HTTP blob hosts used to
+/// transfer the actual htree blocks between devices. Empty by default
+/// (block replication is opt-in). Configure via `blossom_servers` or
+/// `--blossom-server` flags.
+pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &[];
+
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -41,6 +47,11 @@ pub struct AppConfig {
     /// [`DEFAULT_RELAYS`] on a fresh install.
     #[serde(default = "default_relays")]
     pub relays: Vec<String>,
+    /// Blossom HTTP blob servers used for block replication between
+    /// devices. Empty by default; configure to enable file-content
+    /// sync (not just metadata).
+    #[serde(default)]
+    pub blossom_servers: Vec<String>,
 }
 
 fn default_relays() -> Vec<String> {
@@ -54,6 +65,10 @@ impl Default for AppConfig {
             account: None,
             drives: Vec::new(),
             relays: default_relays(),
+            blossom_servers: DEFAULT_BLOSSOM_SERVERS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         }
     }
 }

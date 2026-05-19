@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
 use iris_drive_core::{
     account::Account,
+    blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
     daemon::Daemon,
     index_dir,
@@ -106,6 +107,10 @@ enum Command {
     Event(EventCmd),
     /// Print configured relay URLs.
     Relays,
+    /// List or modify configured Blossom HTTP blob servers used for
+    /// block replication.
+    #[command(subcommand)]
+    BlossomServers(BlossomServersCmd),
     /// Publish current state (`AppKeys` + this device's drive root) to
     /// all configured relays. Skips `AppKeys` on linked devices that
     /// lack owner-signing authority.
@@ -143,6 +148,16 @@ enum Command {
         #[arg(long, default_value_t = 15)]
         watch_interval: u64,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum BlossomServersCmd {
+    /// Print current Blossom servers as JSON.
+    List,
+    /// Append a server URL to the configured list.
+    Add { url: String },
+    /// Remove a server URL from the configured list.
+    Remove { url: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -190,6 +205,7 @@ fn main() -> ExitCode {
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
         },
         Command::Relays => cmd_relays(&config_dir),
+        Command::BlossomServers(sub) => cmd_blossom_servers(&config_dir, sub),
         Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
         Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
         Command::Daemon {
@@ -525,6 +541,28 @@ fn cmd_relays(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+fn cmd_blossom_servers(config_dir: &std::path::Path, sub: BlossomServersCmd) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    match sub {
+        BlossomServersCmd::List => {}
+        BlossomServersCmd::Add { url } => {
+            if !config.blossom_servers.contains(&url) {
+                config.blossom_servers.push(url);
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+        BlossomServersCmd::Remove { url } => {
+            let before = config.blossom_servers.len();
+            config.blossom_servers.retain(|s| s != &url);
+            if config.blossom_servers.len() != before {
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&config.blossom_servers)?);
+    Ok(())
+}
+
 fn cmd_publish(
     config_dir: &std::path::Path,
     relay_override: &[String],
@@ -566,6 +604,8 @@ fn cmd_publish(
             published_app_keys = true;
         }
 
+        let mut blossom_upload_report: Option<UploadReport> = None;
+
         if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
             && let Some(root) = drive.device_roots.get(&state.device_pubkey)
         {
@@ -581,6 +621,25 @@ fn cmd_publish(
             .await
             .context("publishing drive root")?;
             published_drive_root = true;
+
+            // Push the underlying blocks to Blossom if configured.
+            if !config.blossom_servers.is_empty() {
+                let bclient = iris_drive_core::blossom_sync_client(
+                    device.keys().clone(),
+                    &config.blossom_servers,
+                );
+                let daemon = Daemon::open(config_dir).context("opening daemon")?;
+                let cid = Cid::parse(&root.root_cid)
+                    .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+                let report = iris_drive_core::blossom_sync::upload_tree(
+                    daemon.tree(),
+                    &cid,
+                    &bclient,
+                )
+                .await
+                .context("uploading tree to blossom")?;
+                blossom_upload_report = Some(report);
+            }
         }
 
         let _ = client.disconnect().await;
@@ -588,14 +647,21 @@ fn cmd_publish(
             "{}",
             json!({
                 "relays": relays,
+                "blossom_servers": config.blossom_servers,
                 "published_app_keys": published_app_keys,
                 "published_drive_root": published_drive_root,
+                "blossom_upload": blossom_upload_report.map(|r| json!({
+                    "total_hashes": r.total_hashes,
+                    "uploaded": r.uploaded,
+                    "already_present": r.already_present,
+                })),
             })
         );
         Ok::<_, anyhow::Error>(())
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_sync(
     config_dir: &std::path::Path,
     relay_override: &[String],
@@ -655,26 +721,70 @@ fn cmd_sync(
         .context("fetching drive roots")?;
         let mut drive_roots_applied = 0usize;
         let mut drive_roots_skipped = 0usize;
+        let mut applied_root_cids: Vec<String> = Vec::new();
         for ev in &drive_root_events {
+            let parsed = iris_drive_core::nostr_events::parse_drive_root_event(ev).ok();
             match relay_sync::apply_remote_drive_root_event(&mut config, ev)
                 .context("applying drive-root event")?
             {
-                relay_sync::DriveRootApply::Applied => drive_roots_applied += 1,
+                relay_sync::DriveRootApply::Applied => {
+                    drive_roots_applied += 1;
+                    if let Some((_, _, _, root_ref)) = parsed {
+                        applied_root_cids.push(root_ref.root_cid);
+                    }
+                }
                 _ => drive_roots_skipped += 1,
             }
         }
 
         config.save(config_path_in(config_dir))?;
+
+        // 3) Replicate blocks for each newly-applied drive root via
+        // Blossom if servers are configured.
+        let mut blossom_download_report: Option<DownloadReport> = None;
+        if !applied_root_cids.is_empty() && !config.blossom_servers.is_empty() {
+            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+                .context("loading device key")?;
+            let daemon = Daemon::open(config_dir).context("opening daemon")?;
+            let local = daemon.tree().get_store().clone();
+            let bclient = iris_drive_core::blossom_sync_client(
+                device.keys().clone(),
+                &config.blossom_servers,
+            );
+            let mut totals = DownloadReport::default();
+            for cid_str in &applied_root_cids {
+                let cid = Cid::parse(cid_str)
+                    .with_context(|| format!("parsing root cid {cid_str}"))?;
+                let r = iris_drive_core::blossom_sync::download_tree(
+                    local.clone(),
+                    &cid,
+                    bclient.clone(),
+                )
+                .await
+                .with_context(|| format!("downloading tree for {cid_str}"))?;
+                totals.total_hashes += r.total_hashes;
+                totals.fetched += r.fetched;
+                totals.already_local += r.already_local;
+            }
+            blossom_download_report = Some(totals);
+        }
+
         let _ = client.disconnect().await;
 
         println!(
             "{}",
             json!({
                 "relays": relays,
+                "blossom_servers": config.blossom_servers,
                 "app_keys_event_applied": app_keys_applied,
                 "drive_root_events_seen": drive_root_events.len(),
                 "drive_root_events_applied": drive_roots_applied,
                 "drive_root_events_skipped": drive_roots_skipped,
+                "blossom_download": blossom_download_report.map(|r| json!({
+                    "total_hashes": r.total_hashes,
+                    "fetched": r.fetched,
+                    "already_local": r.already_local,
+                })),
             })
         );
         Ok::<_, anyhow::Error>(())
@@ -758,7 +868,7 @@ fn cmd_daemon(
                 recv = notifications.recv() => {
                     match recv {
                         Ok(RelayPoolNotification::Event { event, .. }) => {
-                            if let Err(e) = apply_one_event(config_dir, &event) {
+                            if let Err(e) = apply_one_event(config_dir, &event).await {
                                 println!(
                                     "{}",
                                     json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
@@ -845,18 +955,41 @@ async fn scan_and_publish(
     )
     .await
     .context("publishing drive root")?;
+
+    // Upload blocks to Blossom (best-effort; logged on failure).
+    let mut upload_report: Option<UploadReport> = None;
+    if !config.blossom_servers.is_empty() {
+        let cid = Cid::parse(&new_root.root_cid)
+            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
+        let bclient = iris_drive_core::blossom_sync_client(
+            device.keys().clone(),
+            &config.blossom_servers,
+        );
+        match iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &cid, &bclient).await {
+            Ok(r) => upload_report = Some(r),
+            Err(e) => println!(
+                "{}",
+                json!({"event": "blossom_upload_error", "error": e.to_string()})
+            ),
+        }
+    }
     println!(
         "{}",
         json!({
             "event": "auto_published",
             "root_cid": report.root_cid,
             "top_level_entries": report.top_level_entries,
+            "blossom_upload": upload_report.map(|r| json!({
+                "total_hashes": r.total_hashes,
+                "uploaded": r.uploaded,
+                "already_present": r.already_present,
+            })),
         })
     );
     Ok(())
 }
 
-fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Result<()> {
+async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Result<()> {
     use iris_drive_core::relay_sync;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
@@ -871,7 +1004,9 @@ fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Re
             })
         );
     } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
+        let parsed = iris_drive_core::nostr_events::parse_drive_root_event(event).ok();
         let outcome = relay_sync::apply_remote_drive_root_event(&mut config, event)?;
+        let was_applied = matches!(outcome, relay_sync::DriveRootApply::Applied);
         println!(
             "{}",
             json!({
@@ -881,11 +1016,55 @@ fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Re
                 "outcome": format!("{outcome:?}"),
             })
         );
+        config.save(config_path_in(config_dir))?;
+
+        // If we applied a fresh drive root and Blossom is configured,
+        // pull the underlying blocks so `idrive list` can walk the
+        // remote device's tree. Best-effort; errors are logged.
+        if was_applied
+            && !config.blossom_servers.is_empty()
+            && let Some((_, _, _, root_ref)) = parsed
+            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_ref.root_cid).await {
+                println!(
+                    "{}",
+                    json!({"event": "blossom_download_error", "error": e.to_string()})
+                );
+            }
+        return Ok(());
     } else {
         // Unknown kind; ignore.
         return Ok(());
     }
     config.save(config_path_in(config_dir))?;
+    Ok(())
+}
+
+async fn pull_blocks_for_root(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    root_cid_str: &str,
+) -> Result<()> {
+    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    let daemon = Daemon::open(config_dir).context("opening daemon")?;
+    let local = daemon.tree().get_store().clone();
+    let bclient =
+        iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
+    let cid = Cid::parse(root_cid_str)
+        .with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let report = iris_drive_core::blossom_sync::download_tree(local, &cid, bclient)
+        .await
+        .with_context(|| format!("downloading tree {root_cid_str}"))?;
+    println!(
+        "{}",
+        json!({
+            "event": "blossom_downloaded",
+            "root_cid": root_cid_str,
+            "fetched": report.fetched,
+            "already_local": report.already_local,
+            "total_hashes": report.total_hashes,
+        })
+    );
     Ok(())
 }
 
