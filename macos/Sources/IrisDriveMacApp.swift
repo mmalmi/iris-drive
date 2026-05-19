@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try process.run()
             daemon = process
+            NSLog("Iris Drive sync daemon started")
             updateStatus("Sync running")
         } catch {
             NSLog("Iris Drive daemon failed to start: \(error)")
@@ -175,9 +176,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func runtimePaths() -> IrisDriveRuntimePaths {
-        let baseDirectory = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: irisDriveAppGroupIdentifier)
-            ?? fallbackApplicationSupportDirectory()
+        let baseDirectory: URL
+        if let override = ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"],
+           !override.isEmpty {
+            baseDirectory = URL(fileURLWithPath: override, isDirectory: true)
+        } else {
+            baseDirectory = FileManager.default
+                .containerURL(forSecurityApplicationGroupIdentifier: irisDriveAppGroupIdentifier)
+                ?? fallbackApplicationSupportDirectory()
+        }
+
         return IrisDriveRuntimePaths(
             configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true),
             workingDirectory: baseDirectory.appendingPathComponent("Drive", isDirectory: true)
