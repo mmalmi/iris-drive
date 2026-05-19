@@ -472,6 +472,89 @@ fn list_before_init_errors() {
 }
 
 #[test]
+fn delete_then_reimport_marks_path_suppressed() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("keep.txt"), b"k").unwrap();
+    std::fs::write(work.path().join("drop.txt"), b"d").unwrap();
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    // Delete one file, re-import, list should hide it and show as suppressed.
+    std::fs::remove_file(work.path().join("drop.txt")).unwrap();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    let out = idrive(cfg.path()).arg("list").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let paths: Vec<&str> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["keep.txt"]);
+    let suppressed: Vec<&str> = v["suppressed_by_tombstone"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert_eq!(suppressed, vec!["drop.txt"]);
+}
+
+#[test]
+fn deleted_file_can_return_and_tombstone_drops() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("file.txt"), b"v1").unwrap();
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+    std::fs::remove_file(work.path().join("file.txt")).unwrap();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    // File comes back.
+    std::fs::write(work.path().join("file.txt"), b"v2-back").unwrap();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    let out = idrive(cfg.path()).arg("list").output().unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let paths: Vec<&str> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["file.txt"]);
+    assert!(v["suppressed_by_tombstone"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn restore_after_init_errors_without_force_path() {
     // For now restore refuses to overwrite an existing install.
     let dir = tempdir().unwrap();

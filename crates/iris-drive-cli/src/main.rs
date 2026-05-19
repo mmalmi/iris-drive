@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, LinkType, MemoryStore};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
 use iris_drive_core::{
     account::Account,
     config::AppConfig,
     daemon::Daemon,
     index_dir,
-    merge::{merge_drives, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, TOMBSTONE_PREFIX},
+    merge::{merge_drives, DeviceFileEntry, DeviceSnapshot, DeviceTombstone},
     paths::{config_path_in, default_config_dir, key_path_in},
     AccountState, Drive, DriveRole,
 };
@@ -450,63 +450,9 @@ async fn walk_device_tree(
     tree: &HashTree<hashtree_fs::FsBlobStore>,
     root: &Cid,
 ) -> Result<(Vec<DeviceFileEntry>, Vec<DeviceTombstone>)> {
-    let mut files = Vec::new();
-    let mut tombstones = Vec::new();
-    walk_dir(tree, root, "", &mut files, &mut tombstones).await?;
-    Ok((files, tombstones))
-}
-
-fn walk_dir<'a>(
-    tree: &'a HashTree<hashtree_fs::FsBlobStore>,
-    dir_cid: &'a Cid,
-    prefix: &'a str,
-    files: &'a mut Vec<DeviceFileEntry>,
-    tombstones: &'a mut Vec<DeviceTombstone>,
-) -> futures::future::BoxFuture<'a, Result<()>> {
-    Box::pin(async move {
-        let entries = tree
-            .list_directory(dir_cid)
-            .await
-            .with_context(|| format!("listing directory at {dir_cid}"))?;
-        for entry in entries {
-            let path = if prefix.is_empty() {
-                entry.name.clone()
-            } else {
-                format!("{prefix}/{}", entry.name)
-            };
-            let child_cid = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-            if entry.link_type == LinkType::Dir {
-                walk_dir(tree, &child_cid, &path, files, tombstones).await?;
-            } else if let Some(orig_path) = path.strip_prefix(TOMBSTONE_PREFIX) {
-                // Tombstone leaf — content is the unix-seconds timestamp,
-                // stored as raw text.
-                let raw = tree
-                    .read_file_range(&entry.hash, 0, None)
-                    .await
-                    .with_context(|| format!("reading tombstone {path}"))?
-                    .unwrap_or_default();
-                let ts_str = String::from_utf8_lossy(&raw);
-                let tombstoned_at: i64 = ts_str.trim().parse().with_context(|| {
-                    format!("parsing tombstone timestamp at {path}: {ts_str:?}")
-                })?;
-                let cleaned = orig_path.strip_prefix('/').unwrap_or(orig_path);
-                tombstones.push(DeviceTombstone {
-                    path: cleaned.to_string(),
-                    tombstoned_at,
-                });
-            } else {
-                files.push(DeviceFileEntry {
-                    path,
-                    hash: entry.hash,
-                    size: entry.size,
-                });
-            }
-        }
-        Ok(())
-    })
+    iris_drive_core::merge::walk_device_tree(tree, root)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 fn cmd_index(dir: &std::path::Path) -> Result<()> {

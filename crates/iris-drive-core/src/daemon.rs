@@ -16,7 +16,7 @@ use hashtree_fs::FsBlobStore;
 use thiserror::Error;
 
 use crate::config::{AppConfig, ConfigError};
-use crate::indexer::{index_dir, IndexError};
+use crate::indexer::{index_dir_with_history, IndexError};
 use crate::paths::{config_path_in, key_path_in};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
@@ -117,20 +117,49 @@ impl Daemon {
         working_dir: impl AsRef<Path>,
     ) -> Result<ImportReport, DaemonError> {
         let working_dir = working_dir.as_ref();
-        let root_cid = index_dir(&self.tree, working_dir).await?;
+        // Look up this device's previous root, if any, so the indexer
+        // can diff against it and emit tombstones for removed files.
+        let previous_root_cid = self
+            .config
+            .account
+            .as_ref()
+            .and_then(|account| {
+                self.config
+                    .drive(PRIMARY_DRIVE_ID)
+                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
+            })
+            .map(|entry| entry.root_cid.clone());
+        let previous_root = match previous_root_cid.as_ref() {
+            Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
+            None => None,
+        };
 
+        let root_cid = index_dir_with_history(
+            &self.tree,
+            working_dir,
+            previous_root.as_ref(),
+            unix_now(),
+        )
+        .await?;
+
+        // Live-file count excludes the .tombstones subtree from the
+        // report (it's an internal-only annotation).
         let listing = self
             .tree
             .list_directory(&root_cid)
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
+        let top_level_entries = listing
+            .iter()
+            .filter(|e| e.name != crate::merge::TOMBSTONE_PREFIX)
+            .count();
 
         self.update_primary_drive(&root_cid)?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
             working_dir: working_dir.to_path_buf(),
-            top_level_entries: listing.len(),
+            top_level_entries,
         })
     }
 

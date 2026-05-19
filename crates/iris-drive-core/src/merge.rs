@@ -21,6 +21,7 @@
 
 use std::collections::BTreeMap;
 
+use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store};
 use serde::{Deserialize, Serialize};
 
 use crate::config::DeviceRootRef;
@@ -137,21 +138,27 @@ pub fn merge_drives(
     }
 
     let mut view = MergedView::default();
-    for (path, write) in writes {
-        let tombstone = tombstones.get(&path).copied();
-        let suppressed = match tombstone {
-            // Deletion conservative: tombstone wins on ties.
-            Some(ts) if ts >= write.published_at => true,
-            _ => false,
-        };
+    for (path, write) in &writes {
+        let tombstone = tombstones.get(path).copied();
+        let suppressed = matches!(tombstone, Some(ts) if ts >= write.published_at);
         if suppressed {
-            view.suppressed_by_tombstone.push(path);
+            view.suppressed_by_tombstone.push(path.clone());
         } else {
-            view.files.push(write);
+            view.files.push(write.clone());
+        }
+    }
+    // Tombstones that don't have a surviving write anywhere should also
+    // show up as evidence the path was deleted. Without this, a
+    // single-device delete (no concurrent write to suppress) would
+    // silently vanish from both lists.
+    for path in tombstones.keys() {
+        if !writes.contains_key(path) {
+            view.suppressed_by_tombstone.push(path.clone());
         }
     }
     view.files.sort_by(|a, b| a.path.cmp(&b.path));
     view.suppressed_by_tombstone.sort();
+    view.suppressed_by_tombstone.dedup();
     view
 }
 
@@ -169,6 +176,67 @@ pub fn original_path_from_tombstone(tombstone_path: &str) -> Option<&str> {
     tombstone_path
         .strip_prefix(TOMBSTONE_PREFIX)
         .and_then(|rest| rest.strip_prefix('/'))
+}
+
+/// Walk an htree directory root and partition its contents into
+/// regular files and tombstones. Tombstone leaves (under `.tombstones/`)
+/// are decoded by parsing their content as a unix-seconds integer; any
+/// leaf whose content can't be parsed is silently skipped.
+pub async fn walk_device_tree<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<(Vec<DeviceFileEntry>, Vec<DeviceTombstone>), HashTreeError> {
+    let mut files = Vec::new();
+    let mut tombstones = Vec::new();
+    walk_dir_recursive(tree, root, "", &mut files, &mut tombstones).await?;
+    Ok((files, tombstones))
+}
+
+fn walk_dir_recursive<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    files: &'a mut Vec<DeviceFileEntry>,
+    tombstones: &'a mut Vec<DeviceTombstone>,
+) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir_cid).await?;
+        for entry in entries {
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            if entry.link_type == LinkType::Dir {
+                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
+            } else if let Some(orig_path) = original_path_from_tombstone(&path) {
+                let raw = tree
+                    .read_file_range(&entry.hash, 0, None)
+                    .await?
+                    .unwrap_or_default();
+                let ts_str = String::from_utf8_lossy(&raw);
+                if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
+                    tombstones.push(DeviceTombstone {
+                        path: orig_path.to_string(),
+                        tombstoned_at,
+                    });
+                } else {
+                    tracing::warn!("malformed tombstone at {path}: {ts_str:?}");
+                }
+            } else {
+                files.push(DeviceFileEntry {
+                    path,
+                    hash: entry.hash,
+                    size: entry.size,
+                });
+            }
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
