@@ -28,10 +28,11 @@ pub enum ConfigError {
 pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 
 /// Default Blossom servers for new installs — HTTP blob hosts used to
-/// transfer the actual htree blocks between devices. Empty by default
-/// (block replication is opt-in). Configure via `blossom_servers` or
-/// `--blossom-server` flags.
-pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &[];
+/// transfer the actual htree blocks between devices. Without at least
+/// one server, multi-device sync is metadata-only (other devices see
+/// root CIDs but can't fetch the bytes), so we ship a working public
+/// default. Users can `idrive blossom-servers add/remove` to taste.
+pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://blossom.primal.net"];
 
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

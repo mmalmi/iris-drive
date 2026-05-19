@@ -8,10 +8,14 @@
 //! existing supervisor/restart story still works as-is.
 
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
+use iris_drive_core::account::Account;
+use iris_drive_core::config::AppConfig;
+use iris_drive_core::paths::{config_path_in, key_path_in};
+use iris_drive_core::{Drive, PRIMARY_DRIVE_ID};
 use serde_json::Value;
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -60,6 +64,21 @@ fn main() -> Result<()> {
 
     let config_dir = iris_drive_core::paths::default_config_dir();
     let mut working_dir: Option<PathBuf> = None;
+
+    // First-launch bootstrap. The CLI exposes `idrive init` /
+    // `blossom-servers add` / `import` for power users, but the tray
+    // app is the zero-config path: if no keys or config exist yet,
+    // generate them, point the primary drive at `~/Iris Drive`, and
+    // create that folder. After this returns the daemon child can
+    // start with everything it needs already on disk.
+    if let Some(dir) = config_dir.as_ref() {
+        if let Err(e) = bootstrap_first_launch(dir) {
+            eprintln!("first-launch bootstrap failed: {e:#}");
+        } else if let Some(wd) = read_primary_working_dir(dir) {
+            let () = workingdir_item.set_text(format!("Working dir: {}", wd.display()));
+            working_dir = Some(wd);
+        }
+    }
 
     // Spawn `idrive daemon` and pump its stdout into the event loop.
     let proxy = event_loop.create_proxy();
@@ -176,6 +195,60 @@ fn main() -> Result<()> {
     });
 }
 
+/// On first launch, generate an account, configure `~/Iris Drive` as
+/// the primary drive's working dir, and create that folder. No-op if
+/// any of those pieces already exist (so re-runs are safe). The CLI's
+/// `idrive init` is the manual equivalent; this is its tray twin.
+fn bootstrap_first_launch(config_dir: &Path) -> Result<()> {
+    bootstrap_first_launch_with(config_dir, &default_working_dir())
+}
+
+/// Inner form that takes an explicit working dir so tests can avoid
+/// poking the real `$HOME`.
+fn bootstrap_first_launch_with(config_dir: &Path, working_dir: &Path) -> Result<()> {
+    let key_path = key_path_in(config_dir);
+    let config_path = config_path_in(config_dir);
+
+    let mut config = AppConfig::load_or_default(&config_path).context("loading config")?;
+
+    if !key_path.exists() {
+        std::fs::create_dir_all(config_dir).context("creating config dir")?;
+        let account = Account::create(config_dir, Some("Mac".into()))
+            .context("generating account keys")?;
+        config.account = Some(account.state.clone());
+        if config.drive(PRIMARY_DRIVE_ID).is_none() {
+            config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+        }
+    }
+
+    if let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+        && drive.working_dir.is_none() {
+            drive.working_dir = Some(working_dir.to_path_buf());
+        }
+
+    config.save(&config_path).context("saving config")?;
+    std::fs::create_dir_all(working_dir).context("creating working dir")?;
+    Ok(())
+}
+
+fn read_primary_working_dir(config_dir: &Path) -> Option<PathBuf> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir)).ok()?;
+    config
+        .drive(PRIMARY_DRIVE_ID)
+        .and_then(|d| d.working_dir.clone())
+}
+
+/// `$HOME/Iris Drive` — matches the visible folder name users expect
+/// from a Drive/Dropbox-style app. Falls back to CWD if `$HOME` is
+/// unset (basically only headless test rigs).
+fn default_working_dir() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(
+        || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        PathBuf::from,
+    )
+    .join("Iris Drive")
+}
+
 /// Spawn `idrive daemon` from the same directory as this binary if
 /// present, otherwise fall back to `idrive` on PATH.
 fn spawn_daemon() -> std::io::Result<Child> {
@@ -214,4 +287,80 @@ fn make_icon() -> tray_icon::Icon {
         }
     }
     tray_icon::Icon::from_rgba(data, SIZE, SIZE).expect("valid icon")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn bootstrap_creates_account_and_working_dir() {
+        let cfg = tempdir().unwrap();
+        let work_parent = tempdir().unwrap();
+        let work = work_parent.path().join("Iris Drive");
+
+        bootstrap_first_launch_with(cfg.path(), &work).unwrap();
+
+        assert!(key_path_in(cfg.path()).exists(), "device key written");
+        assert!(work.is_dir(), "working dir created");
+
+        let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+        assert!(config.account.is_some(), "account stamped");
+        let drive = config.drive(PRIMARY_DRIVE_ID).expect("primary drive present");
+        assert_eq!(drive.working_dir.as_deref(), Some(work.as_path()));
+        assert!(
+            !config.blossom_servers.is_empty(),
+            "default blossom server seeded"
+        );
+    }
+
+    #[test]
+    fn bootstrap_is_idempotent() {
+        let cfg = tempdir().unwrap();
+        let work_parent = tempdir().unwrap();
+        let work = work_parent.path().join("Iris Drive");
+
+        bootstrap_first_launch_with(cfg.path(), &work).unwrap();
+        let first = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+
+        bootstrap_first_launch_with(cfg.path(), &work).unwrap();
+        let second = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+
+        // Keys + account survive untouched; same npub, same drive id.
+        assert_eq!(
+            first.account.as_ref().map(|a| &a.device_pubkey),
+            second.account.as_ref().map(|a| &a.device_pubkey),
+        );
+        assert_eq!(first.drives, second.drives);
+    }
+
+    #[test]
+    fn bootstrap_preserves_existing_working_dir() {
+        let cfg = tempdir().unwrap();
+        let work_parent = tempdir().unwrap();
+        let new_dir = work_parent.path().join("Iris Drive");
+
+        bootstrap_first_launch_with(cfg.path(), &new_dir).unwrap();
+
+        // User picks a different folder (simulated by editing config).
+        let custom = work_parent.path().join("Somewhere Else");
+        {
+            let mut config =
+                AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+            let drive = config
+                .drives
+                .iter_mut()
+                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+                .unwrap();
+            drive.working_dir = Some(custom.clone());
+            config.save(config_path_in(cfg.path())).unwrap();
+        }
+
+        // Re-bootstrap shouldn't overwrite the user's choice.
+        bootstrap_first_launch_with(cfg.path(), &new_dir).unwrap();
+        let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
+        let drive = config.drive(PRIMARY_DRIVE_ID).unwrap();
+        assert_eq!(drive.working_dir.as_deref(), Some(custom.as_path()));
+    }
 }

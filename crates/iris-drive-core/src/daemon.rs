@@ -109,6 +109,30 @@ impl Daemon {
             .and_then(|d| d.last_root_cid.as_deref())
     }
 
+    /// If the primary drive has a `working_dir` configured but this
+    /// device hasn't yet recorded a root, run the initial import.
+    /// Creates the working dir on disk if it doesn't exist. Returns
+    /// `Some(report)` if an import ran, `None` otherwise.
+    pub async fn ensure_initial_import(
+        &mut self,
+    ) -> Result<Option<ImportReport>, DaemonError> {
+        let Some(account) = self.config.account.clone() else {
+            return Ok(None);
+        };
+        let Some(drive) = self.config.drive(PRIMARY_DRIVE_ID).cloned() else {
+            return Ok(None);
+        };
+        if drive.device_roots.contains_key(&account.device_pubkey) {
+            return Ok(None);
+        }
+        let Some(working_dir) = drive.working_dir.clone() else {
+            return Ok(None);
+        };
+        std::fs::create_dir_all(&working_dir)?;
+        let report = self.import_working_dir(&working_dir).await?;
+        Ok(Some(report))
+    }
+
     /// Bulk-index `working_dir` into the daemon's persistent store and
     /// stamp the resulting root CID onto the primary drive. The previous
     /// root remains addressable in the store; nothing is GC'd.
@@ -374,6 +398,77 @@ mod tests {
             Err(DaemonError::PrimaryDriveMissing) => {}
             other => panic!("expected PrimaryDriveMissing, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn ensure_initial_import_runs_when_working_dir_set_but_no_root() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+
+        // Pre-stage a working_dir on the primary drive (mimics the
+        // tray-app bootstrap), but no device_roots entry yet.
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"hello").unwrap();
+        {
+            let mut cfg =
+                AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+            let drive = cfg
+                .drives
+                .iter_mut()
+                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+                .unwrap();
+            drive.working_dir = Some(work.path().to_path_buf());
+            cfg.save(config_path_in(cfg_dir.path())).unwrap();
+        }
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon.ensure_initial_import().await.unwrap();
+        let report = report.expect("initial import should run");
+        assert_eq!(report.working_dir, work.path());
+
+        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
+        assert!(drive
+            .device_roots
+            .contains_key(&account.state.device_pubkey));
+
+        // Second call is a no-op.
+        let again = daemon.ensure_initial_import().await.unwrap();
+        assert!(again.is_none());
+    }
+
+    #[tokio::test]
+    async fn ensure_initial_import_creates_working_dir_if_missing() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+
+        // Point working_dir at a path that does NOT exist yet.
+        let work_parent = tempdir().unwrap();
+        let missing = work_parent.path().join("Iris Drive");
+        assert!(!missing.exists());
+        {
+            let mut cfg =
+                AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+            let drive = cfg
+                .drives
+                .iter_mut()
+                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
+                .unwrap();
+            drive.working_dir = Some(missing.clone());
+            cfg.save(config_path_in(cfg_dir.path())).unwrap();
+        }
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        daemon.ensure_initial_import().await.unwrap();
+        assert!(missing.is_dir(), "ensure_initial_import should create the working dir");
+    }
+
+    #[tokio::test]
+    async fn ensure_initial_import_noop_without_working_dir() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon.ensure_initial_import().await.unwrap();
+        assert!(report.is_none());
     }
 
     #[tokio::test]

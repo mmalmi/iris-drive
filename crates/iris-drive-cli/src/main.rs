@@ -843,6 +843,29 @@ fn cmd_daemon(
         .build()
         .context("building tokio runtime")?;
     runtime.block_on(async {
+        // Zero-config bootstrap: if the tray app (or a future installer)
+        // staged an account + working_dir but never ran an initial
+        // import, do that now so the first launch produces a root
+        // before we open the relay subscription.
+        if key_path_in(config_dir).exists() {
+            let mut daemon = Daemon::open(config_dir).context("opening daemon for bootstrap")?;
+            if let Some(report) = daemon
+                .ensure_initial_import()
+                .await
+                .context("initial import")?
+            {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_import",
+                        "root_cid": report.root_cid,
+                        "working_dir": report.working_dir.display().to_string(),
+                        "entries": report.top_level_entries,
+                    })
+                );
+            }
+        }
+
         let config = AppConfig::load_or_default(config_path_in(config_dir))?;
         let state = config
             .account
@@ -895,6 +918,45 @@ fn cmd_daemon(
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
             })
         );
+
+        // Announce the current device root once on startup, regardless
+        // of whether it changed since last run. The fs-notify + periodic
+        // paths only publish on change, so without this a freshly-imported
+        // device would sit silent until its first edit.
+        if let Some(entry) = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .and_then(|d| d.device_roots.get(&state.device_pubkey))
+            .cloned()
+        {
+            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+                .context("loading device key for initial publish")?;
+            if let Err(e) = relay_sync::publish_drive_root(
+                &client,
+                device.keys(),
+                &state.owner_pubkey,
+                iris_drive_core::PRIMARY_DRIVE_ID,
+                &entry,
+            )
+            .await
+            {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish_error",
+                        "error": e.to_string(),
+                    })
+                );
+            } else {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish",
+                        "root_cid": entry.root_cid,
+                    })
+                );
+            }
+        }
+
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
