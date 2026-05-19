@@ -154,7 +154,7 @@ impl Daemon {
             .filter(|e| e.name != crate::merge::TOMBSTONE_PREFIX)
             .count();
 
-        self.update_primary_drive(&root_cid)?;
+        self.update_primary_drive(&root_cid, Some(working_dir))?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
@@ -163,13 +163,20 @@ impl Daemon {
         })
     }
 
-    fn update_primary_drive(&mut self, root_cid: &Cid) -> Result<(), DaemonError> {
+    fn update_primary_drive(
+        &mut self,
+        root_cid: &Cid,
+        working_dir: Option<&Path>,
+    ) -> Result<(), DaemonError> {
         let drive = match self.config.drive(PRIMARY_DRIVE_ID) {
             Some(d) => d.clone(),
             None => return Err(DaemonError::PrimaryDriveMissing),
         };
         let mut updated = drive;
         updated.last_root_cid = Some(root_cid.to_string());
+        if let Some(wd) = working_dir {
+            updated.working_dir = Some(wd.to_path_buf());
+        }
 
         // Per-device root entry, keyed by this device's pubkey.
         // Falls back to no-op when there is no account yet (legacy
@@ -231,6 +238,33 @@ mod tests {
         cfg.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
         cfg.save(config_path_in(dir)).unwrap();
         account
+    }
+
+    #[tokio::test]
+    async fn import_persists_working_dir_on_primary_drive() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("a.txt"), b"a").unwrap();
+        daemon.import_working_dir(work.path()).await.unwrap();
+
+        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
+        assert_eq!(drive.working_dir.as_deref(), Some(work.path()));
+
+        // Survives reopen.
+        drop(daemon);
+        let reopened = Daemon::open(cfg_dir.path()).unwrap();
+        assert_eq!(
+            reopened
+                .config()
+                .drive(PRIMARY_DRIVE_ID)
+                .unwrap()
+                .working_dir
+                .as_deref(),
+            Some(work.path())
+        );
     }
 
     #[tokio::test]

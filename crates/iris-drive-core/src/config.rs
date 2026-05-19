@@ -148,6 +148,11 @@ pub struct Drive {
     /// `device_roots[my_device_pubkey].root_cid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_root_cid: Option<String>,
+    /// Local filesystem path this device backs the drive with. Set on
+    /// the first `idrive import`; the daemon watches this dir for
+    /// changes and auto-republishes. `None` until first import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<std::path::PathBuf>,
     /// Symmetric key for encrypted drives, hex-encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_hex: Option<String>,
@@ -178,6 +183,7 @@ impl Drive {
             role: DriveRole::Owner,
             device_roots: BTreeMap::new(),
             last_root_cid: None,
+            working_dir: None,
             key_hex: None,
         }
     }
@@ -206,6 +212,7 @@ mod tests {
             role: DriveRole::Reader,
             device_roots: BTreeMap::new(),
             last_root_cid: Some("Q123abc".into()),
+            working_dir: None,
             key_hex: Some("deadbeef".into()),
         });
 

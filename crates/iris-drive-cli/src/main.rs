@@ -128,15 +128,20 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         timeout: u64,
     },
-    /// Run a long-running subscriber. Maintains open subscriptions for
-    /// `AppKeys` + drive-root events for this account, applies each
-    /// event in real time, and persists the resulting config. Stops on
-    /// Ctrl+C. Use with `idrive publish` from other devices to see
-    /// updates arrive within milliseconds.
+    /// Run a long-running subscriber + publisher. Maintains open
+    /// subscriptions for `AppKeys` + drive-root events, applies each
+    /// event in real time, and periodically re-imports the configured
+    /// working directory (set by the first `idrive import`),
+    /// auto-publishing a new drive-root event whenever the root CID
+    /// changes. Stops on Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
         #[arg(long)]
         relay: Vec<String>,
+        /// Seconds between working-dir re-import scans. Set to 0 to
+        /// disable auto-publish entirely (subscribe-only mode).
+        #[arg(long, default_value_t = 15)]
+        watch_interval: u64,
     },
 }
 
@@ -187,7 +192,10 @@ fn main() -> ExitCode {
         Command::Relays => cmd_relays(&config_dir),
         Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
         Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
-        Command::Daemon { relay } => cmd_daemon(&config_dir, &relay),
+        Command::Daemon {
+            relay,
+            watch_interval,
+        } => cmd_daemon(&config_dir, &relay, watch_interval),
     };
 
     match result {
@@ -673,7 +681,11 @@ fn cmd_sync(
     })
 }
 
-fn cmd_daemon(config_dir: &std::path::Path, relay_override: &[String]) -> Result<()> {
+fn cmd_daemon(
+    config_dir: &std::path::Path,
+    relay_override: &[String],
+    watch_interval: u64,
+) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
     use tokio::sync::broadcast::error::RecvError;
@@ -693,14 +705,12 @@ fn cmd_daemon(config_dir: &std::path::Path, relay_override: &[String]) -> Result
             &state.owner_pubkey,
             iris_drive_core::PRIMARY_DRIVE_ID,
         );
-        let authorized_devices: Vec<String> = state
-            .app_keys
-            .as_ref()
-            .map(|s| s.devices.iter().map(|d| d.pubkey.clone()).collect())
-            .unwrap_or_default();
         if filters.is_empty() {
             return Err(anyhow::anyhow!("no filters to subscribe to"));
         }
+        let working_dir = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .and_then(|d| d.working_dir.clone());
 
         let client = relay_sync::connect(&relays)
             .await
@@ -717,13 +727,27 @@ fn cmd_daemon(config_dir: &std::path::Path, relay_override: &[String]) -> Result
                 "event": "subscribed",
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
-                "roster_size": authorized_devices.len(),
+                "watch_interval_secs": watch_interval,
+                "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
             })
         );
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
+
+        // Watch timer fires only if both an interval and a working dir
+        // are set; otherwise the daemon is subscribe-only.
+        let mut watch_timer = if watch_interval > 0 && working_dir.is_some() {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(watch_interval));
+            // Skip the immediate first tick — daemon startup already
+            // implies a recent import.
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            Some(interval)
+        } else {
+            None
+        };
 
         loop {
             tokio::select! {
@@ -749,11 +773,87 @@ fn cmd_daemon(config_dir: &std::path::Path, relay_override: &[String]) -> Result
                         }
                     }
                 }
+                () = async {
+                    if let Some(timer) = watch_timer.as_mut() {
+                        timer.tick().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    if let Err(e) = scan_and_publish(&client, config_dir).await {
+                        println!(
+                            "{}",
+                            json!({"event": "auto_publish_error", "error": e.to_string()})
+                        );
+                    }
+                }
             }
         }
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+/// Re-import the configured working dir; if the new root CID differs
+/// from what's already recorded for this device, publish a new
+/// drive-root event. No-op when the root hasn't changed.
+async fn scan_and_publish(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no account"))?;
+    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
+        return Ok(());
+    };
+    let Some(working_dir) = drive.working_dir.clone() else {
+        return Ok(());
+    };
+    let previous_root_cid = drive
+        .device_roots
+        .get(&state.device_pubkey)
+        .map(|r| r.root_cid.clone());
+
+    let mut daemon = Daemon::open(config_dir).context("opening daemon")?;
+    let report = daemon
+        .import_working_dir(&working_dir)
+        .await
+        .context("re-importing working dir")?;
+    if previous_root_cid.as_deref() == Some(report.root_cid.as_str()) {
+        // No change — silently skip publish.
+        return Ok(());
+    }
+    let new_root = daemon
+        .config()
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .and_then(|d| d.device_roots.get(&state.device_pubkey))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("device root missing after import"))?;
+
+    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    relay_sync::publish_drive_root(
+        client,
+        device.keys(),
+        &state.owner_pubkey,
+        iris_drive_core::PRIMARY_DRIVE_ID,
+        &new_root,
+    )
+    .await
+    .context("publishing drive root")?;
+    println!(
+        "{}",
+        json!({
+            "event": "auto_published",
+            "root_cid": report.root_cid,
+            "top_level_entries": report.top_level_entries,
+        })
+    );
+    Ok(())
 }
 
 fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Result<()> {
