@@ -149,18 +149,28 @@ enum Command {
     },
     /// Run a long-running subscriber + publisher. Maintains open
     /// subscriptions for `AppKeys` + drive-root events, applies each
-    /// event in real time, and periodically re-imports the configured
-    /// working directory (set by the first `idrive import`),
-    /// auto-publishing a new drive-root event whenever the root CID
-    /// changes. Stops on Ctrl+C.
+    /// event in real time, and watches the working directory (set by
+    /// the first `idrive import`) for changes — auto-publishing a new
+    /// drive-root event whenever the root CID changes. fs-events
+    /// trigger near-immediately (debounced); a periodic timer
+    /// provides a fallback in case any events get missed. Stops on
+    /// Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
         #[arg(long)]
         relay: Vec<String>,
-        /// Seconds between working-dir re-import scans. Set to 0 to
-        /// disable auto-publish entirely (subscribe-only mode).
-        #[arg(long, default_value_t = 15)]
+        /// Fallback periodic re-scan in seconds, in addition to
+        /// near-immediate fs-notify triggers. Set to 0 to disable the
+        /// periodic fallback (still get fs-notify). Set with no
+        /// `working_dir` to disable auto-publish entirely.
+        #[arg(long, default_value_t = 60)]
         watch_interval: u64,
+        /// Debounce window after the last fs-notify event before
+        /// kicking off a re-import, in milliseconds. Lower = faster
+        /// response; higher = fewer scans during bursts (e.g.,
+        /// editors that save via rename-on-temp).
+        #[arg(long, default_value_t = 500)]
+        watch_debounce_ms: u64,
     },
 }
 
@@ -226,7 +236,8 @@ fn main() -> ExitCode {
         Command::Daemon {
             relay,
             watch_interval,
-        } => cmd_daemon(&config_dir, &relay, watch_interval),
+            watch_debounce_ms,
+        } => cmd_daemon(&config_dir, &relay, watch_interval, watch_debounce_ms),
     };
 
     match result {
@@ -815,14 +826,17 @@ fn cmd_sync(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_daemon(
     config_dir: &std::path::Path,
     relay_override: &[String],
     watch_interval: u64,
+    watch_debounce_ms: u64,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
     use tokio::sync::broadcast::error::RecvError;
+    use tokio::sync::mpsc;
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -855,6 +869,21 @@ fn cmd_daemon(
             .context("opening subscription")?;
         let mut notifications = client.notifications();
 
+        // Spawn an fs-notify watcher on the working dir. Events get
+        // debounced (notify-debouncer-mini) then forwarded over an
+        // mpsc; the main select! loop wakes up and calls
+        // scan_and_publish near-immediately, instead of waiting on
+        // the periodic timer.
+        let (fs_tx, mut fs_rx) = mpsc::channel::<()>(8);
+        let _watcher_guard = if let Some(dir) = working_dir.as_ref() {
+            Some(
+                spawn_fs_watcher(dir, watch_debounce_ms, fs_tx)
+                    .context("spawning fs watcher")?,
+            )
+        } else {
+            None
+        };
+
         println!(
             "{}",
             json!({
@@ -862,6 +891,7 @@ fn cmd_daemon(
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
                 "watch_interval_secs": watch_interval,
+                "watch_debounce_ms": watch_debounce_ms,
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
             })
         );
@@ -870,13 +900,12 @@ fn cmd_daemon(
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
 
-        // Watch timer fires only if both an interval and a working dir
-        // are set; otherwise the daemon is subscribe-only.
+        // Periodic fallback in addition to fs-notify (some editor
+        // patterns produce events fs-notify can miss; this catches
+        // drift).
         let mut watch_timer = if watch_interval > 0 && working_dir.is_some() {
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_secs(watch_interval));
-            // Skip the immediate first tick — daemon startup already
-            // implies a recent import.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             Some(interval)
         } else {
@@ -907,6 +936,14 @@ fn cmd_daemon(
                         }
                     }
                 }
+                Some(()) = fs_rx.recv() => {
+                    if let Err(e) = scan_and_publish(&client, config_dir).await {
+                        println!(
+                            "{}",
+                            json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
+                        );
+                    }
+                }
                 () = async {
                     if let Some(timer) = watch_timer.as_mut() {
                         timer.tick().await;
@@ -917,7 +954,7 @@ fn cmd_daemon(
                     if let Err(e) = scan_and_publish(&client, config_dir).await {
                         println!(
                             "{}",
-                            json!({"event": "auto_publish_error", "error": e.to_string()})
+                            json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
                         );
                     }
                 }
@@ -926,6 +963,37 @@ fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+/// Spawn an fs-notify watcher on `dir`. The returned debouncer must be
+/// kept alive for the watcher to keep firing; drop it to stop.
+fn spawn_fs_watcher(
+    dir: &std::path::Path,
+    debounce_ms: u64,
+    tx: tokio::sync::mpsc::Sender<()>,
+) -> Result<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
+    use notify::RecursiveMode;
+    use notify_debouncer_mini::new_debouncer;
+    use std::time::Duration;
+
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(debounce_ms),
+        move |result: notify_debouncer_mini::DebounceEventResult| {
+            if let Ok(events) = result
+                && !events.is_empty()
+            {
+                // Coalesce a batch into a single nudge; the main loop
+                // re-reads disk state on each receive anyway.
+                let _ = tx.try_send(());
+            }
+        },
+    )
+    .context("creating notify debouncer")?;
+    debouncer
+        .watcher()
+        .watch(dir, RecursiveMode::Recursive)
+        .context("starting fs watch")?;
+    Ok(debouncer)
 }
 
 /// Re-import the configured working dir; if the new root CID differs

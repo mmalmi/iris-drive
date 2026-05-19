@@ -42,6 +42,8 @@ hashtree-blossom = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/
 hashtree-fs = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-fs" }
 hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"
+notify = "6"
+notify-debouncer-mini = "0.4"
 iris-drive-core = { version = "0.1.0", path = "crates/iris-drive-core" }
 
 [workspace.lints.clippy]

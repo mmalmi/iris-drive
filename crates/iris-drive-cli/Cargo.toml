@@ -23,6 +23,8 @@ iris-drive-core.workspace = true
 hashtree-core.workspace = true
 hashtree-fs.workspace = true
 nostr-sdk.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
