@@ -49,10 +49,16 @@ just smoke-macos
 ```
 
 The smoke test builds the macOS app, launches it through LaunchServices, waits
-for the app process, verifies the bundled `idrive daemon` starts, clicks the
-"Show Iris Drive" menu item, verifies a drive folder opens, then tears both
-down. It forces `IRIS_DRIVE_MACOS_SIGNING=none` and uses an isolated temporary
-app data directory so it does not mutate the normal app-group state.
+for the app process, verifies the bundled `idrive daemon` starts, then tears
+both down. It launches the app hidden, forces `IRIS_DRIVE_MACOS_SIGNING=none`,
+and uses an isolated temporary app data directory so it does not mutate the
+normal app-group state.
+
+The menu-click check is opt-in because it opens Finder on the active desktop:
+
+```bash
+IRIS_DRIVE_MACOS_SMOKE_UI=1 just smoke-macos
+```
 
 ## Entitlements
 

@@ -19,6 +19,13 @@ APP_PATH=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
 
+run_ui_smoke() {
+  case "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 terminate_app_process() {
   pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
   for _ in {1..40}; do
@@ -35,7 +42,8 @@ cleanup() {
     terminate_app_process
     pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
   fi
-  osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
+  if run_ui_smoke; then
+    osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
   set smokeRoot to item 1 of argv
   tell application "Finder"
@@ -48,6 +56,7 @@ on run argv
   end tell
 end run
 APPLESCRIPT
+  fi
   rm -rf "$SMOKE_DIR"
 }
 trap cleanup EXIT
@@ -128,6 +137,7 @@ fi
 terminate_app_process
 
 open \
+  -j \
   --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" \
   --stdout "$APP_STDOUT" \
   --stderr "$APP_STDERR" \
@@ -151,17 +161,23 @@ if ! wait_for_daemon 10; then
   exit 1
 fi
 
-if ! click_show_iris_drive; then
-  echo "FAIL: could not click the Show Iris Drive menu item." >&2
-  show_recent_logs >&2
-  exit 1
-fi
+if run_ui_smoke; then
+  if ! click_show_iris_drive; then
+    echo "FAIL: could not click the Show Iris Drive menu item." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
 
-if ! wait_for_log "Iris Drive drive folder opened" 10; then
-  echo "FAIL: Show Iris Drive did not open the drive folder." >&2
-  show_recent_logs >&2
-  exit 1
+  if ! wait_for_log "Iris Drive drive folder opened" 10; then
+    echo "FAIL: Show Iris Drive did not open the drive folder." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
 fi
 
 echo "MACOS_SMOKE_OK"
-echo "app launched, menu bar item installed, bundled daemon started, and Show Iris Drive opened the drive folder"
+if run_ui_smoke; then
+  echo "app launched, menu bar item installed, bundled daemon started, and Show Iris Drive opened the drive folder"
+else
+  echo "app launched hidden, menu bar item installed, and bundled daemon started"
+fi
