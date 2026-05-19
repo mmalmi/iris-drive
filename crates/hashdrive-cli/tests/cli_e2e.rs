@@ -110,6 +110,24 @@ fn drives_before_init_shows_empty_message() {
 }
 
 #[test]
+fn index_command_prints_root_cid_and_count() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), b"alpha").unwrap();
+    std::fs::write(dir.path().join("b.txt"), b"beta").unwrap();
+    let cfg = tempdir().unwrap();
+    let out = hdrive(cfg.path())
+        .arg("index")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let body = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["top_level_entries"], 2);
+    assert!(v["root_cid"].as_str().unwrap().len() > 10);
+}
+
+#[test]
 fn npub_is_stable_across_invocations() {
     let dir = tempdir().unwrap();
     hdrive(dir.path()).arg("init").assert().success();

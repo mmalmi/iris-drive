@@ -1,14 +1,18 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashdrive_core::{
     config::AppConfig,
     identity::Identity,
+    index_dir,
     paths::{config_path_in, default_config_dir, key_path_in},
     Drive,
 };
+use hashtree_core::{HashTree, HashTreeConfig, MemoryStore};
 use serde_json::json;
 
 #[derive(Debug, Parser)]
@@ -36,6 +40,13 @@ enum Command {
     Drives,
     /// Show the local identity (npub).
     Whoami,
+    /// Index a local directory into an in-memory hashtree and print the
+    /// root CID + summary. Useful for hands-on sanity checks against the
+    /// indexer.
+    Index {
+        /// Directory to index.
+        dir: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -57,6 +68,7 @@ fn main() -> ExitCode {
         Command::Status => cmd_status(&config_dir),
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),
+        Command::Index { dir } => cmd_index(&dir),
     };
 
     match result {
@@ -155,6 +167,32 @@ fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
         .with_context(|| format!("loading identity from {}", key_path.display()))?;
     println!("{}", identity.pubkey_bech32());
     Ok(())
+}
+
+fn cmd_index(dir: &std::path::Path) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+        let cid = index_dir(&tree, dir)
+            .await
+            .with_context(|| format!("indexing {}", dir.display()))?;
+        let listing = tree
+            .list_directory(&cid)
+            .await
+            .context("listing top-level entries")?;
+        println!(
+            "{}",
+            json!({
+                "dir": dir.display().to_string(),
+                "root_cid": cid.to_string(),
+                "top_level_entries": listing.len(),
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 fn short_pubkey(pk: &str) -> String {

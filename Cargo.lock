@@ -876,6 +876,7 @@ dependencies = [
  "dirs",
  "futures",
  "hashtree-core",
+ "hashtree-provider",
  "hex",
  "nostr-sdk",
  "serde",
@@ -892,8 +893,6 @@ dependencies = [
 [[package]]
 name = "hashtree-core"
 version = "0.2.51"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b442218dda379030ce4c4125c1cdfe0a79441ee3b7a17bb640183c7dd824ffc"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -911,6 +910,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashtree-provider"
+version = "0.2.51"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hashtree-core",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "hdrive"
 version = "0.1.0"
 dependencies = [
@@ -919,6 +929,7 @@ dependencies = [
  "clap",
  "dirs",
  "hashdrive-core",
+ "hashtree-core",
  "predicates",
  "serde",
  "serde_json",

@@ -33,7 +33,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
-hashtree-core = "0.2"
+# In-flight hashtree worktree path deps — the hashtree-provider crate
+# hasn't shipped to crates.io yet, and pinning hashtree-core to a
+# single source avoids two versions in the dep graph. Swap both to
+# crates.io once hashtree-provider publishes.
+hashtree-core = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-core" }
+hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"
 hashdrive-core = { version = "0.1.0", path = "crates/hashdrive-core" }
 
