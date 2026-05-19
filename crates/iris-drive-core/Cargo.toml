@@ -15,6 +15,7 @@ base64.workspace = true
 dirs.workspace = true
 futures.workspace = true
 hashtree-core.workspace = true
+hashtree-fs.workspace = true
 hashtree-provider.workspace = true
 nostr-sdk.workspace = true
 serde.workspace = true

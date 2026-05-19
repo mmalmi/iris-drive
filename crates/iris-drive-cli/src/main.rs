@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iris_drive_core::{
     config::AppConfig,
+    daemon::Daemon,
     identity::Identity,
     index_dir,
     paths::{config_path_in, default_config_dir, key_path_in},
@@ -47,6 +48,13 @@ enum Command {
         /// Directory to index.
         dir: PathBuf,
     },
+    /// Index a local directory into the persistent on-disk store and
+    /// stamp the resulting root CID onto the primary drive. Survives
+    /// across daemon restarts (blocks live under <config-dir>/blocks/).
+    Import {
+        /// Working directory to import.
+        dir: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -69,6 +77,7 @@ fn main() -> ExitCode {
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
+        Command::Import { dir } => cmd_import(&config_dir, &dir),
     };
 
     match result {
@@ -167,6 +176,31 @@ fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
         .with_context(|| format!("loading identity from {}", key_path.display()))?;
     println!("{}", identity.pubkey_bech32());
     Ok(())
+}
+
+fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let report = daemon
+            .import_working_dir(working_dir)
+            .await
+            .with_context(|| format!("importing {}", working_dir.display()))?;
+        println!(
+            "{}",
+            json!({
+                "working_dir": report.working_dir.display().to_string(),
+                "root_cid": report.root_cid,
+                "top_level_entries": report.top_level_entries,
+                "blocks_dir": daemon.blocks_dir().display().to_string(),
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 fn cmd_index(dir: &std::path::Path) -> Result<()> {

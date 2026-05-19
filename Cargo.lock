@@ -873,6 +873,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashtree-fs"
+version = "0.2.51"
+dependencies = [
+ "async-trait",
+ "hashtree-core",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "hashtree-provider"
 version = "0.2.51"
 dependencies = [
@@ -1130,6 +1142,7 @@ dependencies = [
  "dirs",
  "futures",
  "hashtree-core",
+ "hashtree-fs",
  "hashtree-provider",
  "hex",
  "nostr-sdk",

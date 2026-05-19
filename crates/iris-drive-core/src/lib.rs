@@ -1,5 +1,6 @@
 pub mod config;
 pub mod conflict;
+pub mod daemon;
 pub mod identity;
 pub mod indexer;
 pub mod paths;
@@ -7,6 +8,7 @@ pub mod sync;
 
 pub use config::{AppConfig, ConfigError, Drive, DriveRole};
 pub use conflict::{conflict_filename, resolve as resolve_conflict, FileSnapshot, SyncAction};
+pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use identity::{Identity, IdentityError};
 pub use indexer::{index_dir, IndexError};
 pub use sync::{sync as run_sync, ConflictResolution, SyncError, SyncReport};

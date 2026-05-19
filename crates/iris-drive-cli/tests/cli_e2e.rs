@@ -128,6 +128,45 @@ fn index_command_prints_root_cid_and_count() {
 }
 
 #[test]
+fn import_persists_to_blocks_dir_and_advances_root() {
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("hello.txt"), b"hi there").unwrap();
+
+    let cfg = tempdir().unwrap();
+    idrive(cfg.path()).arg("init").assert().success();
+
+    let out = idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let root_cid = v["root_cid"].as_str().unwrap();
+    assert_eq!(v["top_level_entries"], 1);
+    assert!(cfg.path().join("blocks").is_dir());
+    assert!(!root_cid.is_empty());
+
+    // status now reports the recorded root CID on the primary drive.
+    let status_out = idrive(cfg.path()).arg("status").output().unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(status_out.stdout).unwrap()).unwrap();
+    assert_eq!(v["drives"][0]["last_root_cid"], root_cid);
+}
+
+#[test]
+fn import_before_init_errors() {
+    let work = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .failure();
+}
+
+#[test]
 fn npub_is_stable_across_invocations() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
