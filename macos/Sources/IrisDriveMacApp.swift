@@ -13,13 +13,8 @@ struct IrisDriveMacApp: App {
 
     var body: some Scene {
         WindowGroup(irisDriveDisplayName) {
-            VStack(spacing: 12) {
-                Text(irisDriveDisplayName)
-                    .font(.title2)
-                Text(status.message)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 420, height: 180)
+            IrisDriveControlPanel(status: status, controller: appDelegate)
+                .frame(minWidth: 780, minHeight: 520)
         }
     }
 }
@@ -28,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemon: Process?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var copyLinkMenuItem: NSMenuItem?
+    private var openLinkMenuItem: NSMenuItem?
+    private var startSyncMenuItem: NSMenuItem?
+    private var stopSyncMenuItem: NSMenuItem?
     private var runtimePathsForMenu: IrisDriveRuntimePaths?
     private var fileProviderDomainState = FileProviderDomainState.unknown
 
@@ -44,16 +43,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         updateStatus("Stopping sync")
-        daemon?.terminate()
-        daemon = nil
+        stopSync()
     }
 
-    @objc private func showDriveFolder() {
+    @objc func showDriveFolder() {
         let paths = runtimePathsForMenu ?? runtimePaths()
         showMountedDriveFolder(fallbackURL: paths.workingDirectory)
     }
 
-    @objc private func quitApp() {
+    @objc func copyDriveLink() {
+        guard let link = IrisDriveStatus.shared.filesIrisURL, !link.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
+        IrisDriveStatus.shared.copyStatus = "Copied"
+        NSLog("Iris Drive private link copied")
+    }
+
+    @objc func openDriveLink() {
+        guard let link = IrisDriveStatus.shared.filesIrisURL,
+              let url = URL(string: link)
+        else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc func openConfigFolder() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        NSWorkspace.shared.open(paths.configDirectory)
+    }
+
+    @objc func startSync() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        startDaemon(idriveExecutableURL(), paths: paths)
+    }
+
+    @objc func stopSync() {
+        guard let daemon else {
+            setDaemonRunning(false)
+            return
+        }
+        daemon.terminate()
+        self.daemon = nil
+        setDaemonRunning(false)
+        updateStatus("Sync stopped")
+    }
+
+    @objc func restartSync() {
+        stopSync()
+        startSync()
+    }
+
+    @objc func quitApp() {
         NSApp.terminate(nil)
     }
 
@@ -75,6 +121,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showItem.target = self
         menu.addItem(showItem)
 
+        let copyItem = NSMenuItem(
+            title: "Copy Private Link",
+            action: #selector(copyDriveLink),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        copyItem.isEnabled = false
+        menu.addItem(copyItem)
+
+        let openLinkItem = NSMenuItem(
+            title: "Open Private Link",
+            action: #selector(openDriveLink),
+            keyEquivalent: ""
+        )
+        openLinkItem.target = self
+        openLinkItem.isEnabled = false
+        menu.addItem(openLinkItem)
+
+        menu.addItem(.separator())
+        let startItem = NSMenuItem(
+            title: "Start Sync",
+            action: #selector(startSync),
+            keyEquivalent: ""
+        )
+        startItem.target = self
+        startItem.isEnabled = false
+        menu.addItem(startItem)
+
+        let stopItem = NSMenuItem(
+            title: "Stop Sync",
+            action: #selector(stopSync),
+            keyEquivalent: ""
+        )
+        stopItem.target = self
+        menu.addItem(stopItem)
+
+        let restartItem = NSMenuItem(
+            title: "Restart Sync",
+            action: #selector(restartSync),
+            keyEquivalent: ""
+        )
+        restartItem.target = self
+        menu.addItem(restartItem)
+
+        let configItem = NSMenuItem(
+            title: "Show Config Folder",
+            action: #selector(openConfigFolder),
+            keyEquivalent: ""
+        )
+        configItem.target = self
+        menu.addItem(configItem)
+
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(
             title: "Quit",
             action: #selector(quitApp),
@@ -86,6 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
         statusMenuItem = status
+        copyLinkMenuItem = copyItem
+        openLinkMenuItem = openLinkItem
+        startSyncMenuItem = startItem
+        stopSyncMenuItem = stopItem
         NSLog("Iris Drive menu bar item installed")
     }
 
@@ -117,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
 
             let status = try runIDrive(idrive, arguments: ["status"], paths: paths)
+            applyStatusData(status)
             let initialized = statusJSON(from: status)["initialized"] as? Bool ?? false
             if !initialized {
                 _ = try runIDrive(idrive, arguments: ["init"], paths: paths)
@@ -125,12 +229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let latestStatus = initialized
                 ? status
                 : try runIDrive(idrive, arguments: ["status"], paths: paths)
+            applyStatusData(latestStatus)
             if primaryDriveRootCID(from: latestStatus) == nil {
                 _ = try runIDrive(
                     idrive,
                     arguments: ["import", paths.workingDirectory.path],
                     paths: paths
                 )
+                applyStatusData(try runIDrive(idrive, arguments: ["status"], paths: paths))
             }
 
             startDaemon(idrive, paths: paths)
@@ -213,10 +319,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try process.run()
             daemon = process
             NSLog("Iris Drive sync daemon started")
+            setDaemonRunning(true)
             updateStatus("Sync running")
+            refreshStatus()
         } catch {
             NSLog("Iris Drive daemon failed to start: \(error)")
             updateStatus("Sync failed")
+            setDaemonRunning(false)
         }
     }
 
@@ -284,6 +393,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 NSLog("\(label): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+                for line in text.split(whereSeparator: \.isNewline) {
+                    self.handleDaemonLogLine(String(line))
+                }
+            }
+        }
+
+        process.terminationHandler = { [weak self, weak process] _ in
+            DispatchQueue.main.async {
+                guard let self, self.daemon === process else { return }
+                self.daemon = nil
+                self.setDaemonRunning(false)
+                self.updateStatus("Sync stopped")
             }
         }
     }
@@ -327,6 +448,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
+    private func applyStatusData(_ data: Data) {
+        applyStatusPayload(statusJSON(from: data))
+    }
+
+    private func applyStatusPayload(_ json: [String: Any]) {
+        DispatchQueue.main.async {
+            let status = IrisDriveStatus.shared
+            status.initialized = json["initialized"] as? Bool ?? false
+            status.configDirectory = json["config_dir"] as? String
+
+            if let account = json["account"] as? [String: Any] {
+                status.ownerNpub = account["owner_npub"] as? String
+                status.deviceNpub = account["device_npub"] as? String
+                status.authorizationState = account["authorization_state"] as? String
+                status.rosterSize = Self.intValue(account["roster_size"]) ?? 0
+            }
+
+            if let drives = json["drives"] as? [[String: Any]],
+               let primary = drives.first(where: { $0["drive_id"] as? String == "main" }) {
+                status.driveName = primary["display_name"] as? String ?? "My Drive"
+                status.workingDirectory = primary["working_dir"] as? String
+                status.rootCID = primary["last_root_cid"] as? String
+            }
+
+            if let hashtree = json["hashtree"] as? [String: Any] {
+                status.blocksDirectory = hashtree["blocks_dir"] as? String
+                status.localBlockCount = Self.intValue(hashtree["local_block_count"]) ?? 0
+                status.localBlockBytes = Self.int64Value(hashtree["local_block_bytes"]) ?? 0
+                status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
+                status.rootIsPrivate = hashtree["current_root_private"] as? Bool
+                status.filesIrisURL = hashtree["files_iris_to_url"] as? String
+                status.topLevelEntries = Self.intValue(hashtree["top_level_entries"])
+            }
+
+            if let network = json["network"] as? [String: Any] {
+                status.relays = network["relays"] as? [String] ?? []
+                status.blossomServers = network["blossom_servers"] as? [String] ?? []
+                status.authorizedDeviceCount =
+                    Self.intValue(network["authorized_device_count"]) ?? 0
+                status.publishedDeviceRoots =
+                    Self.intValue(network["published_device_roots"]) ?? 0
+            }
+
+            if let peers = json["peers"] as? [[String: Any]] {
+                status.peers = peers.map(IrisDrivePeerStatus.init)
+            }
+
+            self.updateLinkMenuState()
+            NSLog("Iris Drive control panel updated")
+        }
+    }
+
+    private func handleDaemonLogLine(_ line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{",
+              let data = trimmed.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return
+        }
+        handleDaemonPayload(json)
+    }
+
+    private func handleDaemonPayload(_ json: [String: Any]) {
+        DispatchQueue.main.async {
+            let status = IrisDriveStatus.shared
+            if let event = json["event"] as? String {
+                status.lastEvent = event
+                switch event {
+                case "subscribed":
+                    self.updateStatus("Sync running")
+                    status.relays = json["relays"] as? [String] ?? status.relays
+                    status.workingDirectory =
+                        json["working_dir"] as? String ?? status.workingDirectory
+                case "initial_import":
+                    self.updateStatus("Imported drive")
+                case "initial_publish":
+                    self.updateStatus("Sync running")
+                case "auto_published":
+                    self.updateStatus("Synced")
+                case "app_keys":
+                    self.updateStatus("Device roster updated")
+                case "drive_root":
+                    self.updateStatus("Peer root updated")
+                case "blossom_downloaded":
+                    self.updateStatus("Fetched blocks")
+                case "shutdown":
+                    self.updateStatus("Sync stopped")
+                case "initial_publish_error", "auto_publish_error", "apply_error":
+                    self.updateStatus("Sync needs attention")
+                default:
+                    break
+                }
+            }
+
+            if let rootCID = json["root_cid"] as? String {
+                status.rootCID = rootCID
+            }
+            if let link = json["files_iris_to_url"] as? String {
+                status.filesIrisURL = link
+            }
+            if let entries = Self.intValue(json["top_level_entries"])
+                ?? Self.intValue(json["entries"]) {
+                status.topLevelEntries = entries
+            }
+            if let upload = json["blossom_upload"] as? [String: Any] {
+                status.lastUpload = IrisDriveUploadStatus(json: upload)
+            }
+
+            self.updateLinkMenuState()
+        }
+        refreshStatus()
+    }
+
     private func primaryDriveRootCID(from data: Data) -> String? {
         let json = statusJSON(from: data)
         guard let drives = json["drives"] as? [[String: Any]] else {
@@ -342,6 +577,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusMenuItem?.title = message
         }
     }
+
+    private func refreshStatus() {
+        guard let paths = runtimePathsForMenu else { return }
+        let idrive = idriveExecutableURL()
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let data = try self.runIDrive(idrive, arguments: ["status"], paths: paths)
+                self.applyStatusData(data)
+            } catch {
+                NSLog("Iris Drive status refresh failed: \(error)")
+            }
+        }
+    }
+
+    private func setDaemonRunning(_ running: Bool) {
+        IrisDriveStatus.shared.daemonRunning = running
+        startSyncMenuItem?.isEnabled = !running
+        stopSyncMenuItem?.isEnabled = running
+    }
+
+    private func updateLinkMenuState() {
+        let hasLink = !(IrisDriveStatus.shared.filesIrisURL ?? "").isEmpty
+        copyLinkMenuItem?.isEnabled = hasLink
+        openLinkMenuItem?.isEnabled = hasLink
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+        return (value as? NSNumber)?.intValue
+    }
+
+    private static func int64Value(_ value: Any?) -> Int64? {
+        if let value = value as? Int64 {
+            return value
+        }
+        return (value as? NSNumber)?.int64Value
+    }
 }
 
 private struct IrisDriveRuntimePaths {
@@ -353,12 +627,6 @@ private enum FileProviderDomainState {
     case unknown
     case registered
     case unavailable
-}
-
-private final class IrisDriveStatus: ObservableObject {
-    static let shared = IrisDriveStatus()
-
-    @Published var message = "Starting sync"
 }
 
 private func registerFileProviderDomain(_ completion: @escaping (FileProviderDomainState) -> Void) {

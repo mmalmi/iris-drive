@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
 use iris_drive_core::{
     AccountState, Drive, DriveRole,
     account::Account,
@@ -385,6 +385,35 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let initialized = already_initialized(config_dir);
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .with_context(|| format!("reading config at {}", config_path_in(config_dir).display()))?;
+    let blocks_dir = config_dir.join("blocks");
+    let block_stats = collect_file_stats(&blocks_dir)
+        .with_context(|| format!("reading block store stats at {}", blocks_dir.display()))?;
+    let current_root_cid = config
+        .account
+        .as_ref()
+        .and_then(|state| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.device_roots.get(&state.device_pubkey))
+                .map(|root| root.root_cid.clone())
+        })
+        .or_else(|| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.last_root_cid.clone())
+        });
+    let current_root_private = current_root_cid.as_deref().and_then(root_is_private);
+    let files_iris_to_url = current_root_cid
+        .as_deref()
+        .and_then(files_iris_to_url_for_root);
+    let top_level_entries = current_root_cid
+        .as_deref()
+        .and_then(|root| root_top_level_entries(config_dir, root));
+    let peers = peer_statuses(&config);
+    let authorized_device_count = peers.len();
+    let published_device_roots = config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .map_or(0, |drive| drive.device_roots.len());
     let account_block = config.account.as_ref().map(|state| {
         json!({
             "owner_npub": account_npub(&state.owner_pubkey),
@@ -407,10 +436,137 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "owner_pubkey": d.owner_pubkey,
                 "role": drive_role_label(d.role),
                 "last_root_cid": d.last_root_cid,
+                "working_dir": d.working_dir.as_ref().map(|p| p.display().to_string()),
+                "device_root_count": d.device_roots.len(),
             })).collect::<Vec<_>>(),
+            "hashtree": {
+                "blocks_dir": blocks_dir.display().to_string(),
+                "local_block_count": block_stats.file_count,
+                "local_block_bytes": block_stats.total_bytes,
+                "current_root_cid": current_root_cid,
+                "current_root_private": current_root_private,
+                "files_iris_to_url": files_iris_to_url,
+                "top_level_entries": top_level_entries,
+            },
+            "network": {
+                "relays": config.relays,
+                "blossom_servers": config.blossom_servers,
+                "authorized_device_count": authorized_device_count,
+                "published_device_roots": published_device_roots,
+            },
+            "peers": peers,
         })
     );
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct FileStats {
+    file_count: u64,
+    total_bytes: u64,
+}
+
+fn collect_file_stats(path: &Path) -> Result<FileStats> {
+    if !path.exists() {
+        return Ok(FileStats::default());
+    }
+
+    let metadata = std::fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(FileStats {
+            file_count: 1,
+            total_bytes: metadata.len(),
+        });
+    }
+    if !metadata.is_dir() {
+        return Ok(FileStats::default());
+    }
+
+    let mut stats = FileStats::default();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                stack.push(path);
+            } else if metadata.is_file() {
+                stats.file_count += 1;
+                stats.total_bytes += metadata.len();
+            }
+        }
+    }
+    Ok(stats)
+}
+
+fn root_is_private(root_cid: &str) -> Option<bool> {
+    Cid::parse(root_cid).ok().map(|cid| cid.key.is_some())
+}
+
+fn files_iris_to_url_for_root(root_cid: &str) -> Option<String> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let nhash = nhash_encode_full(&NHashData {
+        hash: cid.hash,
+        decrypt_key: cid.key,
+    })
+    .ok()?;
+    Some(format!("https://files.iris.to/#/{nhash}"))
+}
+
+fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Option<usize> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let daemon = Daemon::open(config_dir).ok()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime.block_on(async {
+        daemon
+            .tree()
+            .list_directory(&cid)
+            .await
+            .ok()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| entry.name != iris_drive_core::META_DIR)
+                    .count()
+            })
+    })
+}
+
+fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
+    let Some(account) = config.account.as_ref() else {
+        return Vec::new();
+    };
+    let Some(snapshot) = account.app_keys.as_ref() else {
+        return Vec::new();
+    };
+    let primary_drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID);
+
+    snapshot
+        .devices
+        .iter()
+        .map(|device| {
+            let root = primary_drive.and_then(|drive| drive.device_roots.get(&device.pubkey));
+            let root_cid = root.map(|root| root.root_cid.clone());
+            let root_private = root_cid.as_deref().and_then(root_is_private);
+            json!({
+                "device_pubkey": device.pubkey,
+                "device_npub": account_npub(&device.pubkey),
+                "label": device.label,
+                "authorized": true,
+                "is_current_device": device.pubkey == account.device_pubkey,
+                "added_at": device.added_at,
+                "has_root": root.is_some(),
+                "root_cid": root_cid,
+                "root_private": root_private,
+                "published_at": root.map(|root| root.published_at),
+                "dck_generation": root.map(|root| root.dck_generation),
+            })
+        })
+        .collect()
 }
 
 fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
@@ -465,6 +621,7 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
             json!({
                 "working_dir": report.working_dir.display().to_string(),
                 "root_cid": report.root_cid,
+                "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
                 "top_level_entries": report.top_level_entries,
                 "blocks_dir": daemon.blocks_dir().display().to_string(),
             })
@@ -873,6 +1030,7 @@ fn cmd_daemon(
                     json!({
                         "event": "initial_import",
                         "root_cid": report.root_cid,
+                        "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
                         "working_dir": report.working_dir.display().to_string(),
                         "entries": report.top_level_entries,
                     })
@@ -940,6 +1098,10 @@ fn cmd_daemon(
         // silent until its first edit.
         match publish_current_state(&client, config_dir, &config, &state).await {
             Ok(report) => {
+                let files_iris_to_url = report
+                    .root_cid
+                    .as_deref()
+                    .and_then(files_iris_to_url_for_root);
                 println!(
                     "{}",
                     json!({
@@ -947,6 +1109,7 @@ fn cmd_daemon(
                         "published_app_keys": report.published_app_keys,
                         "published_drive_root": report.published_drive_root,
                         "root_cid": report.root_cid,
+                        "files_iris_to_url": files_iris_to_url,
                         "blossom_upload": report.blossom_upload.map(|r| json!({
                             "total_hashes": r.total_hashes,
                             "uploaded": r.uploaded,
@@ -1137,6 +1300,7 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
         json!({
             "event": "auto_published",
             "root_cid": report.root_cid,
+            "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
             "top_level_entries": report.top_level_entries,
             "blossom_upload": upload_report.map(|r| json!({
                 "total_hashes": r.total_hashes,

@@ -379,6 +379,13 @@ fn status_before_init_reports_uninitialized() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["initialized"], false);
     assert!(v["drives"].as_array().unwrap().is_empty());
+    assert_eq!(v["hashtree"]["local_block_count"], 0);
+    assert_eq!(v["hashtree"]["local_block_bytes"], 0);
+    assert_eq!(
+        v["network"]["blossom_servers"],
+        serde_json::json!(["https://upload.iris.to"])
+    );
+    assert!(v["peers"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -394,6 +401,13 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives.len(), 1);
     assert_eq!(drives[0]["drive_id"], "main");
     assert_eq!(drives[0]["role"], "owner");
+    assert_eq!(v["network"]["authorized_device_count"], 1);
+    assert_eq!(v["network"]["published_device_roots"], 0);
+    let peers = v["peers"].as_array().unwrap();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0]["is_current_device"], true);
+    assert_eq!(peers[0]["authorized"], true);
+    assert_eq!(peers[0]["has_root"], false);
 }
 
 #[test]
@@ -467,6 +481,25 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(status_out.stdout).unwrap()).unwrap();
     assert_eq!(v["drives"][0]["last_root_cid"], root_cid);
+    assert_eq!(
+        v["drives"][0]["working_dir"],
+        work.path().display().to_string()
+    );
+    assert_eq!(v["hashtree"]["current_root_cid"], root_cid);
+    assert_eq!(v["hashtree"]["current_root_private"], true);
+    assert!(
+        v["hashtree"]["files_iris_to_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://files.iris.to/#/nhash1")
+    );
+    assert_eq!(v["hashtree"]["top_level_entries"], 1);
+    assert!(v["hashtree"]["local_block_count"].as_u64().unwrap() > 0);
+    assert!(v["hashtree"]["local_block_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(v["network"]["published_device_roots"], 1);
+    assert_eq!(v["peers"][0]["has_root"], true);
+    assert_eq!(v["peers"][0]["root_cid"], root_cid);
+    assert_eq!(v["peers"][0]["root_private"], true);
 }
 
 #[test]

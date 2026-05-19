@@ -155,6 +155,12 @@ if ! wait_for_log "Iris Drive menu bar item installed" 10; then
   exit 1
 fi
 
+if ! wait_for_log "Iris Drive control panel updated" 10; then
+  echo "FAIL: Iris Drive did not load control panel status." >&2
+  show_recent_logs >&2
+  exit 1
+fi
+
 if ! wait_for_daemon 10; then
   echo "FAIL: bundled idrive daemon did not start." >&2
   show_recent_logs >&2
@@ -179,5 +185,5 @@ echo "MACOS_SMOKE_OK"
 if run_ui_smoke; then
   echo "app launched, menu bar item installed, bundled daemon started, and Show Iris Drive opened the drive folder"
 else
-  echo "app launched hidden, menu bar item installed, and bundled daemon started"
+  echo "app launched hidden, menu bar item installed, control panel status loaded, and bundled daemon started"
 fi

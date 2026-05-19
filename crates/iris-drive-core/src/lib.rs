@@ -33,8 +33,8 @@ pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir};
 pub use merge::{
-    DeviceFileEntry, DeviceSnapshot, DeviceTombstone, MergedEntry, MergedView, TOMBSTONE_PREFIX,
-    merge_drives, original_path_from_tombstone, tombstone_path,
+    DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedEntry, MergedView,
+    TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone, tombstone_path,
 };
 pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};
 

@@ -166,8 +166,8 @@ impl Daemon {
             index_dir_with_history(&self.tree, working_dir, previous_root.as_ref(), unix_now())
                 .await?;
 
-        // Live-file count excludes the .tombstones subtree from the
-        // report (it's an internal-only annotation).
+        // Live-file count excludes the internal metadata directory from the
+        // report.
         let listing = self
             .tree
             .list_directory(&root_cid)
@@ -175,7 +175,7 @@ impl Daemon {
             .map_err(|e| DaemonError::Store(e.to_string()))?;
         let top_level_entries = listing
             .iter()
-            .filter(|e| e.name != crate::merge::TOMBSTONE_PREFIX)
+            .filter(|e| e.name != crate::merge::META_DIR)
             .count();
 
         self.update_primary_drive(&root_cid, Some(working_dir))?;
