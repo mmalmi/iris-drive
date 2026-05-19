@@ -32,7 +32,7 @@ encrypted blocks to Blossom, and run a long-lived daemon.
 ## Getting started
 
 ```bash
-./tools/run-macos
+just run
 ```
 
 That launches the Rust macOS menu-bar wrapper. On first launch it creates
@@ -43,18 +43,18 @@ Blossom server.
 For a terminal-only daemon, initialize/import once first:
 
 ```bash
-cargo run -p idrive -- init
+just run-cli init
 mkdir -p "$HOME/Iris Drive"
-cargo run -p idrive -- import "$HOME/Iris Drive"
-./tools/run-daemon
+just run-cli import "$HOME/Iris Drive"
+just run-daemon
 ```
 
 Useful CLI probes:
 
 ```bash
-cargo run -p idrive -- status
-cargo run -p idrive -- whoami
-cargo run -p idrive -- list
+just run-cli status
+just run-cli whoami
+just run-cli list
 ```
 
 ## Layout
