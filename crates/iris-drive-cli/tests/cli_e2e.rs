@@ -424,6 +424,54 @@ fn npub_is_stable_across_invocations() {
 }
 
 #[test]
+fn list_after_import_shows_merged_view() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("alpha.txt"), b"alpha").unwrap();
+    std::fs::write(work.path().join("beta.txt"), b"beta-bytes").unwrap();
+
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    let out = idrive(cfg.path()).arg("list").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["authorized_devices"], 1);
+    assert_eq!(v["device_roots_present"], 1);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, vec!["alpha.txt", "beta.txt"]);
+    // Sizes recorded.
+    assert_eq!(files[0]["size"], 5);
+    assert_eq!(files[1]["size"], 10);
+}
+
+#[test]
+fn list_before_import_is_empty() {
+    let cfg = tempdir().unwrap();
+    idrive(cfg.path()).arg("init").assert().success();
+    let out = idrive(cfg.path()).arg("list").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["authorized_devices"], 1);
+    assert_eq!(v["device_roots_present"], 0);
+    assert_eq!(v["files"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn list_before_init_errors() {
+    let cfg = tempdir().unwrap();
+    idrive(cfg.path()).arg("list").assert().failure();
+}
+
+#[test]
 fn restore_after_init_errors_without_force_path() {
     // For now restore refuses to overwrite an existing install.
     let dir = tempdir().unwrap();

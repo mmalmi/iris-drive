@@ -6,6 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use std::collections::BTreeMap;
+
 use crate::account::AccountState;
 use crate::CONFIG_SCHEMA_VERSION;
 
@@ -120,12 +122,38 @@ pub struct Drive {
     pub drive_id: String,
     pub display_name: String,
     pub role: DriveRole,
-    /// Most recently synced htree root CID, if known.
+    /// Per-device drive roots, keyed by `device_pubkey` (hex). Every
+    /// authorized device publishes its own root tree; the merged view
+    /// is computed by LWW across all entries (see
+    /// [`crate::merge::merge_drives`]). Single-device installs carry
+    /// exactly one entry here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub device_roots: BTreeMap<String, DeviceRootRef>,
+    /// Deprecated: this device's most-recent root CID. Retained as a
+    /// flat scalar for compatibility with existing tooling that hasn't
+    /// learned `device_roots` yet. New code should read
+    /// `device_roots[my_device_pubkey].root_cid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_root_cid: Option<String>,
     /// Symmetric key for encrypted drives, hex-encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_hex: Option<String>,
+}
+
+/// One device's contribution to a drive. Each authorized device
+/// publishes its own root tree; the merged drive view aggregates
+/// across all entries via LWW per path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceRootRef {
+    /// htree root CID the device most recently published.
+    pub root_cid: String,
+    /// Unix-seconds publication time. Drives LWW ordering at merge
+    /// time: among writers for the same path, the device with the
+    /// most recent `published_at` wins.
+    pub published_at: i64,
+    /// DCK generation this root was sealed with. Lets readers detect
+    /// stale device roots that pre-date a rotation.
+    pub dck_generation: u64,
 }
 
 impl Drive {
@@ -135,6 +163,7 @@ impl Drive {
             drive_id: "main".into(),
             display_name: "My Drive".into(),
             role: DriveRole::Owner,
+            device_roots: BTreeMap::new(),
             last_root_cid: None,
             key_hex: None,
         }
@@ -162,6 +191,7 @@ mod tests {
             drive_id: "shared-photos".into(),
             display_name: "Photos from Alice".into(),
             role: DriveRole::Reader,
+            device_roots: BTreeMap::new(),
             last_root_cid: Some("Q123abc".into()),
             key_hex: Some("deadbeef".into()),
         });

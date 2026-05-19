@@ -15,7 +15,7 @@ use hashtree_core::{Cid, HashTree, HashTreeConfig};
 use hashtree_fs::FsBlobStore;
 use thiserror::Error;
 
-use crate::config::{AppConfig, ConfigError, Drive};
+use crate::config::{AppConfig, ConfigError};
 use crate::indexer::{index_dir, IndexError};
 use crate::paths::{config_path_in, key_path_in};
 
@@ -139,14 +139,39 @@ impl Daemon {
             Some(d) => d.clone(),
             None => return Err(DaemonError::PrimaryDriveMissing),
         };
-        let updated = Drive {
-            last_root_cid: Some(root_cid.to_string()),
-            ..drive
-        };
+        let mut updated = drive;
+        updated.last_root_cid = Some(root_cid.to_string());
+
+        // Per-device root entry, keyed by this device's pubkey.
+        // Falls back to no-op when there is no account yet (legacy
+        // installs from before the multi-device split).
+        if let Some(account) = self.config.account.as_ref() {
+            let now = unix_now();
+            let dck_generation = account
+                .app_keys
+                .as_ref()
+                .map_or(0, |snap| snap.dck_generation);
+            updated.device_roots.insert(
+                account.device_pubkey.clone(),
+                crate::config::DeviceRootRef {
+                    root_cid: root_cid.to_string(),
+                    published_at: now,
+                    dck_generation,
+                },
+            );
+        }
+
         self.config.upsert_drive(updated);
         self.config.save(config_path_in(&self.config_dir))?;
         Ok(())
     }
+}
+
+fn unix_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 #[cfg(test)]
@@ -163,6 +188,41 @@ mod tests {
         cfg.upsert_drive(Drive::primary(identity.pubkey_hex()));
         cfg.save(config_path_in(dir)).unwrap();
         identity
+    }
+
+    /// Spin up a real `Account` via the create flow, then save the
+    /// `AccountState` into `AppConfig`. Used to exercise the per-device
+    /// root code path.
+    fn init_config_with_account(dir: &Path) -> crate::account::Account {
+        let account = crate::account::Account::create(dir, Some("test-device".into())).unwrap();
+        let mut cfg = AppConfig {
+            account: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        cfg.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
+        cfg.save(config_path_in(dir)).unwrap();
+        account
+    }
+
+    #[tokio::test]
+    async fn import_records_per_device_root_when_account_present() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("hello.txt"), b"hi").unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+
+        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
+        assert_eq!(drive.device_roots.len(), 1);
+        let entry = drive
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .expect("per-device root for this device");
+        assert_eq!(entry.root_cid, report.root_cid);
+        assert!(entry.published_at > 0);
+        assert_eq!(entry.dck_generation, 1); // create-flow seeds DCK gen 1
     }
 
     #[tokio::test]

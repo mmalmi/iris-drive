@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{HashTree, HashTreeConfig, MemoryStore};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, LinkType, MemoryStore};
 use iris_drive_core::{
     account::Account,
     config::AppConfig,
     daemon::Daemon,
     index_dir,
+    merge::{merge_drives, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, TOMBSTONE_PREFIX},
     paths::{config_path_in, default_config_dir, key_path_in},
     AccountState, Drive, DriveRole,
 };
@@ -96,6 +97,10 @@ enum Command {
         /// Working directory to import.
         dir: PathBuf,
     },
+    /// List the merged view of the primary drive — files across every
+    /// authorized device's tree with LWW resolution applied. On a
+    /// single-device install this is just that device's tree.
+    List,
 }
 
 fn main() -> ExitCode {
@@ -126,6 +131,7 @@ fn main() -> ExitCode {
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
+        Command::List => cmd_list(&config_dir),
     };
 
     match result {
@@ -362,6 +368,144 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
             })
         );
         Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn cmd_list(config_dir: &std::path::Path) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let config = daemon.config();
+        let drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
+        let account = config
+            .account
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
+        let authorized = account
+            .app_keys
+            .as_ref()
+            .map(|s| {
+                s.devices
+                    .iter()
+                    .map(|d| d.pubkey.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Fetch each authorized device's tree + tombstones from htree.
+        let mut snapshots_data = Vec::new();
+        for device_pubkey in &authorized {
+            let Some(root) = drive.device_roots.get(device_pubkey) else {
+                continue; // device hasn't published its root yet
+            };
+            let cid = Cid::parse(&root.root_cid)
+                .with_context(|| format!("parsing root CID for device {device_pubkey}"))?;
+            let (files, tombstones) = walk_device_tree(daemon.tree(), &cid).await?;
+            snapshots_data.push((device_pubkey.clone(), root.clone(), files, tombstones));
+        }
+
+        let authorized_refs: Vec<&str> = authorized.iter().map(String::as_str).collect();
+        let snapshots: Vec<DeviceSnapshot> = snapshots_data
+            .iter()
+            .map(|(pk, root, files, tombs)| DeviceSnapshot {
+                device_pubkey: pk.as_str(),
+                root,
+                files: files.clone(),
+                tombstones: tombs.clone(),
+            })
+            .collect();
+
+        let view = merge_drives(&authorized_refs, &snapshots);
+
+        println!(
+            "{}",
+            json!({
+                "drive_id": drive.drive_id,
+                "authorized_devices": authorized.len(),
+                "device_roots_present": snapshots.len(),
+                "files": view
+                    .files
+                    .iter()
+                    .map(|e| json!({
+                        "path": e.path,
+                        "size": e.size,
+                        "source_device": e.source_device,
+                        "published_at": e.published_at,
+                    }))
+                    .collect::<Vec<_>>(),
+                "suppressed_by_tombstone": view.suppressed_by_tombstone,
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+async fn walk_device_tree(
+    tree: &HashTree<hashtree_fs::FsBlobStore>,
+    root: &Cid,
+) -> Result<(Vec<DeviceFileEntry>, Vec<DeviceTombstone>)> {
+    let mut files = Vec::new();
+    let mut tombstones = Vec::new();
+    walk_dir(tree, root, "", &mut files, &mut tombstones).await?;
+    Ok((files, tombstones))
+}
+
+fn walk_dir<'a>(
+    tree: &'a HashTree<hashtree_fs::FsBlobStore>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    files: &'a mut Vec<DeviceFileEntry>,
+    tombstones: &'a mut Vec<DeviceTombstone>,
+) -> futures::future::BoxFuture<'a, Result<()>> {
+    Box::pin(async move {
+        let entries = tree
+            .list_directory(dir_cid)
+            .await
+            .with_context(|| format!("listing directory at {dir_cid}"))?;
+        for entry in entries {
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            if entry.link_type == LinkType::Dir {
+                walk_dir(tree, &child_cid, &path, files, tombstones).await?;
+            } else if let Some(orig_path) = path.strip_prefix(TOMBSTONE_PREFIX) {
+                // Tombstone leaf — content is the unix-seconds timestamp,
+                // stored as raw text.
+                let raw = tree
+                    .read_file_range(&entry.hash, 0, None)
+                    .await
+                    .with_context(|| format!("reading tombstone {path}"))?
+                    .unwrap_or_default();
+                let ts_str = String::from_utf8_lossy(&raw);
+                let tombstoned_at: i64 = ts_str.trim().parse().with_context(|| {
+                    format!("parsing tombstone timestamp at {path}: {ts_str:?}")
+                })?;
+                let cleaned = orig_path.strip_prefix('/').unwrap_or(orig_path);
+                tombstones.push(DeviceTombstone {
+                    path: cleaned.to_string(),
+                    tombstoned_at,
+                });
+            } else {
+                files.push(DeviceFileEntry {
+                    path,
+                    hash: entry.hash,
+                    size: entry.size,
+                });
+            }
+        }
+        Ok(())
     })
 }
 
