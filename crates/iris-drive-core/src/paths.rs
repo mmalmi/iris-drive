@@ -15,9 +15,16 @@ pub fn key_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("key")
 }
 
-#[must_use] 
+#[must_use]
 pub fn config_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("config.toml")
+}
+
+/// Owner signing key. Only present on devices with owner authority
+/// (create / restore flows). Linked devices never have this file.
+#[must_use]
+pub fn owner_key_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("owner_key")
 }
 
 #[cfg(test)]
@@ -34,5 +41,9 @@ mod tests {
         let base = std::path::Path::new("/tmp/x");
         assert_eq!(key_path_in(base), PathBuf::from("/tmp/x/key"));
         assert_eq!(config_path_in(base), PathBuf::from("/tmp/x/config.toml"));
+        assert_eq!(
+            owner_key_path_in(base),
+            PathBuf::from("/tmp/x/owner_key")
+        );
     }
 }

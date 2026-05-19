@@ -1,8 +1,18 @@
-//! Nostr-key identity management.
+//! Per-device and owner Nostr keypairs.
 //!
-//! Each iris-drive install has one Nostr keypair stored in `key` under
-//! the config dir. Generation is deferred until first use so the file is
-//! never created accidentally.
+//! Iris Drive has two key kinds, persisted to separate files:
+//!
+//! - [`DeviceIdentity`] (`<config>/key`) — generated on every install,
+//!   present on every device. Identifies this machine. Used to sign
+//!   per-device drive-tree roots.
+//! - [`OwnerKey`] (`<config>/owner_key`) — the user's long-lived
+//!   identity key. Present only on devices that have owner-signing
+//!   authority (i.e. the user clicked "Create" or "Restore" rather
+//!   than "Link this device"). Used to sign the `AppKeys` roster.
+//!
+//! Single-device mode is the v1 default: `idrive init` generates both
+//! keys, the same install holds both files, and the `AppKeys` roster
+//! lists this one device. Linked devices skip the owner key.
 
 use std::fs;
 use std::io::Write;
@@ -20,89 +30,118 @@ pub enum IdentityError {
     InvalidKey(String),
 }
 
-/// A loaded identity. Wraps `nostr_sdk::Keys` and adds the path the key
-/// came from / would be persisted to.
-#[derive(Debug, Clone)]
-pub struct Identity {
-    keys: Keys,
-    key_path: PathBuf,
+macro_rules! keypair_struct {
+    ($name:ident) => {
+        /// A persisted Nostr keypair. See module docs for which file it lives in.
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            keys: Keys,
+            path: PathBuf,
+        }
+
+        impl $name {
+            pub fn new(keys: Keys, path: impl Into<PathBuf>) -> Self {
+                Self {
+                    keys,
+                    path: path.into(),
+                }
+            }
+
+            #[must_use]
+            pub fn keys(&self) -> &Keys {
+                &self.keys
+            }
+
+            #[must_use]
+            pub fn path(&self) -> &Path {
+                &self.path
+            }
+
+            #[must_use]
+            pub fn pubkey_hex(&self) -> String {
+                self.keys.public_key().to_hex()
+            }
+
+            #[must_use]
+            pub fn pubkey_bech32(&self) -> String {
+                self.keys.public_key().to_bech32().unwrap_or_default()
+            }
+
+            /// Generate a fresh keypair in memory, without persisting.
+            pub fn generate(path: impl Into<PathBuf>) -> Self {
+                Self::new(Keys::generate(), path)
+            }
+
+            /// Load from disk. Errors if the file is missing or unrecognized.
+            pub fn load(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
+                let path = path.as_ref();
+                let raw = fs::read_to_string(path)?;
+                let secret = parse_secret_key(raw.trim())?;
+                Ok(Self::new(Keys::new(secret), path.to_path_buf()))
+            }
+
+            /// Construct from a bech32 nsec1 (or 64-char hex) string.
+            pub fn from_secret(
+                raw: &str,
+                path: impl Into<PathBuf>,
+            ) -> Result<Self, IdentityError> {
+                let secret = parse_secret_key(raw.trim())?;
+                Ok(Self::new(Keys::new(secret), path))
+            }
+
+            /// Persist to `self.path()` with owner-only mode on Unix.
+            pub fn save(&self) -> Result<(), IdentityError> {
+                if let Some(parent) = self.path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let bech = self
+                    .keys
+                    .secret_key()
+                    .to_bech32()
+                    .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
+                write_secret_file(&self.path, bech.as_bytes())?;
+                Ok(())
+            }
+        }
+    };
 }
 
-impl Identity {
-    pub fn new(keys: Keys, key_path: impl Into<PathBuf>) -> Self {
-        Self {
-            keys,
-            key_path: key_path.into(),
+keypair_struct!(DeviceIdentity);
+keypair_struct!(OwnerKey);
+
+impl DeviceIdentity {
+    /// Load or generate the device's per-machine identity. Creates the
+    /// parent dir if missing. Persisted to disk on first generate.
+    pub fn load_or_generate(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
+        let path = path.as_ref();
+        if path.exists() {
+            return Self::load(path);
         }
-    }
-
-    pub fn keys(&self) -> &Keys {
-        &self.keys
-    }
-
-    pub fn key_path(&self) -> &Path {
-        &self.key_path
-    }
-
-    /// Hex-encoded public key (32 bytes).
-    pub fn pubkey_hex(&self) -> String {
-        self.keys.public_key().to_hex()
-    }
-
-    /// Bech32-encoded npub for human-facing display.
-    pub fn pubkey_bech32(&self) -> String {
-        self.keys.public_key().to_bech32().unwrap_or_default()
-    }
-
-    /// Generate a fresh keypair without persisting anything.
-    pub fn generate(key_path: impl Into<PathBuf>) -> Self {
-        Self::new(Keys::generate(), key_path)
-    }
-
-    /// Load an identity from disk. Errors if the file does not exist or
-    /// contains an unrecognized key format.
-    pub fn load(key_path: impl AsRef<Path>) -> Result<Self, IdentityError> {
-        let key_path = key_path.as_ref();
-        let raw = fs::read_to_string(key_path)?;
-        let trimmed = raw.trim();
-        let secret = parse_secret_key(trimmed)?;
-        Ok(Self::new(Keys::new(secret), key_path.to_path_buf()))
-    }
-
-    /// Load an identity if one exists at `key_path`; otherwise generate
-    /// a fresh one and persist it. The parent dir is created if missing.
-    pub fn load_or_generate(key_path: impl AsRef<Path>) -> Result<Self, IdentityError> {
-        let key_path = key_path.as_ref();
-        if key_path.exists() {
-            return Self::load(key_path);
-        }
-        let identity = Self::generate(key_path.to_path_buf());
+        let identity = Self::generate(path.to_path_buf());
         identity.save()?;
         Ok(identity)
     }
+}
 
-    /// Persist the secret key in bech32 form to `key_path`. Restricts file
-    /// mode to owner-only on Unix.
-    pub fn save(&self) -> Result<(), IdentityError> {
-        if let Some(parent) = self.key_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let bech = self
-            .keys
-            .secret_key()
-            .to_bech32()
-            .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
-        write_secret_file(&self.key_path, bech.as_bytes())?;
-        Ok(())
+impl OwnerKey {
+    /// Owner key creation is deliberately explicit — there's no
+    /// `load_or_generate`. Use `OwnerKey::generate(path).save()?` for the
+    /// "Create" flow or `OwnerKey::from_secret(nsec, path)?.save()?` for
+    /// "Restore". Linked devices never call either.
+    pub fn exists_at(path: impl AsRef<Path>) -> bool {
+        path.as_ref().exists()
     }
 }
+
+/// Back-compat alias for the historical name. New code should use
+/// `DeviceIdentity` directly.
+pub type Identity = DeviceIdentity;
 
 fn parse_secret_key(raw: &str) -> Result<SecretKey, IdentityError> {
     if raw.starts_with("nsec1") {
         return SecretKey::from_bech32(raw)
             .map_err(|e| IdentityError::InvalidKey(format!("bech32: {e}")));
     }
-    // Accept raw 64-char hex too, for cases where someone hand-edits.
     if raw.len() == 64 && raw.chars().all(|c| c.is_ascii_hexdigit()) {
         return SecretKey::from_hex(raw)
             .map_err(|e| IdentityError::InvalidKey(format!("hex: {e}")));
@@ -142,43 +181,72 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn generate_produces_distinct_keys() {
+    fn device_generate_produces_distinct_keys() {
         let dir = tempdir().unwrap();
-        let a = Identity::generate(dir.path().join("a"));
-        let b = Identity::generate(dir.path().join("b"));
+        let a = DeviceIdentity::generate(dir.path().join("a"));
+        let b = DeviceIdentity::generate(dir.path().join("b"));
         assert_ne!(a.pubkey_hex(), b.pubkey_hex());
     }
 
     #[test]
-    fn round_trip_through_disk() {
+    fn device_round_trip_through_disk() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
-        let original = Identity::generate(&path);
+        let original = DeviceIdentity::generate(&path);
         original.save().unwrap();
-        let loaded = Identity::load(&path).unwrap();
+        let loaded = DeviceIdentity::load(&path).unwrap();
         assert_eq!(original.pubkey_hex(), loaded.pubkey_hex());
     }
 
     #[test]
-    fn load_or_generate_creates_when_missing() {
+    fn device_load_or_generate_creates_when_missing() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nested").join("key");
         assert!(!path.exists());
-        let id = Identity::load_or_generate(&path).unwrap();
+        let id = DeviceIdentity::load_or_generate(&path).unwrap();
         assert!(path.exists());
-        // calling again returns the same identity
-        let again = Identity::load_or_generate(&path).unwrap();
+        let again = DeviceIdentity::load_or_generate(&path).unwrap();
         assert_eq!(id.pubkey_hex(), again.pubkey_hex());
     }
 
     #[test]
-    fn load_or_generate_respects_existing_key() {
+    fn owner_does_not_auto_generate() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("key");
-        let id_a = Identity::generate(&path);
-        id_a.save().unwrap();
-        let id_b = Identity::load_or_generate(&path).unwrap();
-        assert_eq!(id_a.pubkey_hex(), id_b.pubkey_hex());
+        let path = dir.path().join("owner_key");
+        let owner = OwnerKey::generate(&path);
+        owner.save().unwrap();
+        let loaded = OwnerKey::load(&path).unwrap();
+        assert_eq!(owner.pubkey_hex(), loaded.pubkey_hex());
+    }
+
+    #[test]
+    fn owner_exists_at_reports_correctly() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("owner_key");
+        assert!(!OwnerKey::exists_at(&path));
+        OwnerKey::generate(&path).save().unwrap();
+        assert!(OwnerKey::exists_at(&path));
+    }
+
+    #[test]
+    fn from_secret_accepts_bech32_nsec() {
+        let dir = tempdir().unwrap();
+        let path_a = dir.path().join("a");
+        let path_b = dir.path().join("b");
+        let original = OwnerKey::generate(path_a.clone());
+        original.save().unwrap();
+        let nsec = original.keys().secret_key().to_bech32().unwrap();
+        let recovered = OwnerKey::from_secret(&nsec, path_b).unwrap();
+        assert_eq!(original.pubkey_hex(), recovered.pubkey_hex());
+    }
+
+    #[test]
+    fn from_secret_accepts_64_char_hex() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("k");
+        let hex = "aa".repeat(32);
+        let owner = OwnerKey::from_secret(&hex, &path).unwrap();
+        assert_eq!(owner.keys().secret_key().to_secret_hex(), hex);
     }
 
     #[test]
@@ -186,13 +254,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
         std::fs::write(&path, "this is not a key").unwrap();
-        assert!(Identity::load(&path).is_err());
+        assert!(DeviceIdentity::load(&path).is_err());
+        assert!(OwnerKey::load(&path).is_err());
     }
 
     #[test]
     fn pubkey_bech32_starts_with_npub1() {
         let dir = tempdir().unwrap();
-        let id = Identity::generate(dir.path().join("k"));
+        let id = DeviceIdentity::generate(dir.path().join("k"));
         assert!(id.pubkey_bech32().starts_with("npub1"));
     }
 
@@ -202,7 +271,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
-        Identity::generate(&path).save().unwrap();
+        DeviceIdentity::generate(&path).save().unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "got {:o}", mode & 0o777);
     }

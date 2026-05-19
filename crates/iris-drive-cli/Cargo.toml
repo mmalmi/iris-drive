@@ -21,6 +21,7 @@ tracing-subscriber.workspace = true
 
 iris-drive-core.workspace = true
 hashtree-core.workspace = true
+nostr-sdk.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

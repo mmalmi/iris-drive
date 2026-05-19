@@ -23,7 +23,153 @@ fn init_creates_key_and_config() {
         .stdout(contains("npub1"))
         .stdout(contains("main"));
     assert!(dir.path().join("key").exists());
+    assert!(dir.path().join("owner_key").exists()); // create flow also writes owner
     assert!(dir.path().join("config.toml").exists());
+}
+
+#[test]
+fn init_yields_authorized_owner_capable_account() {
+    let dir = tempdir().unwrap();
+    let out = idrive(dir.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["has_owner_signing_authority"], true);
+    assert_eq!(v["authorization_state"], "authorized");
+    assert!(v["owner_npub"].as_str().unwrap().starts_with("npub1"));
+    assert!(v["device_npub"].as_str().unwrap().starts_with("npub1"));
+}
+
+#[test]
+fn restore_uses_provided_nsec_and_grants_owner_authority() {
+    // Capture original owner npub from an init.
+    let dir_a = tempdir().unwrap();
+    idrive(dir_a.path()).arg("init").assert().success();
+    // Read the persisted owner nsec from disk to drive `restore`.
+    let nsec = std::fs::read_to_string(dir_a.path().join("owner_key"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let original_owner = String::from_utf8(
+        idrive(dir_a.path())
+            .arg("whoami")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let original_v: serde_json::Value = serde_json::from_str(&original_owner).unwrap();
+    let original_owner_npub = original_v["owner_npub"].as_str().unwrap().to_string();
+
+    let dir_b = tempdir().unwrap();
+    let out = idrive(dir_b.path()).args(["restore", &nsec]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["owner_npub"], original_owner_npub);
+    assert_eq!(v["has_owner_signing_authority"], true);
+    // Device key must differ.
+    assert_ne!(v["device_npub"], original_v["device_npub"]);
+    assert!(dir_b.path().join("owner_key").exists());
+}
+
+#[test]
+fn link_creates_awaiting_device_with_no_owner_key() {
+    let dir = tempdir().unwrap();
+    // Use the test owner's npub from a separate init.
+    let owner_dir = tempdir().unwrap();
+    let init_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(idrive(owner_dir.path()).arg("init").output().unwrap().stdout).unwrap(),
+    )
+    .unwrap();
+    let owner_npub = init_v["owner_npub"].as_str().unwrap().to_string();
+
+    let out = idrive(dir.path()).args(["link", &owner_npub]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["owner_npub"], owner_npub);
+    assert_eq!(v["has_owner_signing_authority"], false);
+    assert_eq!(v["authorization_state"], "awaiting_approval");
+    assert!(dir.path().join("key").exists());
+    assert!(!dir.path().join("owner_key").exists()); // never on a linked device
+}
+
+#[test]
+fn link_then_approve_authorizes_the_linked_device() {
+    // Set up owner-capable install + a separate linked install.
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner_npub = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["owner_npub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let linked_dir = tempdir().unwrap();
+    let linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_npub])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let linked_device_npub = linked_v["device_npub"].as_str().unwrap().to_string();
+
+    // Owner approves the linked device.
+    let approve = idrive(owner_dir.path())
+        .args(["approve", &linked_device_npub])
+        .output()
+        .unwrap();
+    assert!(approve.status.success(), "{approve:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(approve.stdout).unwrap()).unwrap();
+    assert_eq!(v["roster_size"], 2);
+
+    // Roster on the owner side now has 2 devices.
+    let roster = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("roster").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(roster["app_keys"]["devices"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn approve_without_owner_authority_errors() {
+    // Linked-only device tries to approve.
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner_npub = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(idrive(owner_dir.path()).arg("whoami").output().unwrap().stdout)
+            .unwrap(),
+    )
+    .unwrap()["owner_npub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let linked_dir = tempdir().unwrap();
+    idrive(linked_dir.path())
+        .args(["link", &owner_npub])
+        .assert()
+        .success();
+    idrive(linked_dir.path())
+        .args(["approve", &"ff".repeat(32)])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn roster_before_init_errors() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("roster").assert().failure();
 }
 
 #[test]
@@ -45,14 +191,16 @@ fn double_init_with_force_succeeds() {
 }
 
 #[test]
-fn whoami_after_init_prints_npub() {
+fn whoami_after_init_reports_owner_and_device() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
-    idrive(dir.path())
-        .arg("whoami")
-        .assert()
-        .success()
-        .stdout(predicates::str::starts_with("npub1"));
+    let out = idrive(dir.path()).arg("whoami").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert!(v["owner_npub"].as_str().unwrap().starts_with("npub1"));
+    assert!(v["device_npub"].as_str().unwrap().starts_with("npub1"));
+    assert_eq!(v["has_owner_signing_authority"], true);
 }
 
 #[test]
@@ -173,4 +321,16 @@ fn npub_is_stable_across_invocations() {
     let one = String::from_utf8(idrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
     let two = String::from_utf8(idrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
     assert_eq!(one, two);
+}
+
+#[test]
+fn restore_after_init_errors_without_force_path() {
+    // For now restore refuses to overwrite an existing install.
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let nsec = std::fs::read_to_string(dir.path().join("owner_key"))
+        .unwrap()
+        .trim()
+        .to_string();
+    idrive(dir.path()).args(["restore", &nsec]).assert().failure();
 }

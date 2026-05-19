@@ -6,6 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::account::AccountState;
 use crate::CONFIG_SCHEMA_VERSION;
 
 #[derive(Debug, Error)]
@@ -24,6 +25,10 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
+    /// Account state. `None` until the user has run a create / restore
+    /// / link flow.
+    #[serde(default)]
+    pub account: Option<AccountState>,
     #[serde(default)]
     pub drives: Vec<Drive>,
 }
@@ -32,6 +37,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
+            account: None,
             drives: Vec::new(),
         }
     }

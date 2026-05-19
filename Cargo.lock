@@ -1075,6 +1075,7 @@ dependencies = [
  "dirs",
  "hashtree-core",
  "iris-drive-core",
+ "nostr-sdk",
  "predicates",
  "serde",
  "serde_json",
