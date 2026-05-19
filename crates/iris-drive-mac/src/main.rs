@@ -279,9 +279,8 @@ fn spawn_daemon() -> std::io::Result<Child> {
 }
 
 /// Build a simple 22×22 placeholder menu-bar icon. The real product
-/// would ship per-state icons (synced / syncing / error); a flat
-/// colour blob lets us ship the wrapper today without bundling
-/// assets.
+/// would ship per-state icons (synced / syncing / error); a plain
+/// white glyph keeps the dev wrapper visible on the macOS menu bar.
 fn make_icon() -> tray_icon::Icon {
     const SIZE: u32 = 22;
     const HALF: u32 = SIZE / 2;
@@ -289,12 +288,12 @@ fn make_icon() -> tray_icon::Icon {
     let radius_sq = (HALF - 1) * (HALF - 1);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            // Filled circle: transparent at corners, blue inside.
+            // Filled circle: transparent at corners, white inside.
             let dx = x.abs_diff(HALF);
             let dy = y.abs_diff(HALF);
             let r2 = dx * dx + dy * dy;
             if r2 < radius_sq {
-                data.extend_from_slice(&[60, 120, 220, 255]);
+                data.extend_from_slice(&[255, 255, 255, 255]);
             } else {
                 data.extend_from_slice(&[0, 0, 0, 0]);
             }
