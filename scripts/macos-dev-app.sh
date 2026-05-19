@@ -3,6 +3,40 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+load_env_file_defaults() {
+  local env_file="$1"
+  local line
+  local key
+  local value
+
+  [[ -f "$env_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+
+    key="${line%%=*}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key:-}" ]] && continue
+
+    value="${line#*=}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$env_file"
+}
+
+load_env_file_defaults "$ROOT/.env.local"
+
 PROJECT="$ROOT/macos/IrisDriveMac.xcodeproj"
 SCHEME="IrisDriveMac"
 CONFIGURATION="${IRIS_DRIVE_MACOS_XCODE_CONFIGURATION:-Debug}"
@@ -17,11 +51,18 @@ usage() {
 usage: scripts/macos-dev-app.sh build|run
 
 Environment:
+  .env.local
+      Local defaults are auto-loaded when present. Shell environment variables
+      take precedence over .env.local values.
   IRIS_DRIVE_MACOS_SIGNING=auto|none|development
       auto/default launches without restricted entitlements unless a development
       team is supplied. development requires Xcode account/profiles.
   IRIS_DRIVE_DEVELOPMENT_TEAM=<team id>
       Team id used for development signing.
+  IRIS_DRIVE_ASC_AUTH_KEY_PATH / IRIS_DRIVE_ASC_AUTH_KEY_ID /
+  IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID
+      Optional App Store Connect API key for provisioning updates when Xcode
+      has no signed-in account.
 EOF
 }
 
@@ -31,6 +72,14 @@ log() {
 
 development_team() {
   printf '%s' "${IRIS_DRIVE_DEVELOPMENT_TEAM:-}"
+}
+
+require_env_var() {
+  local name="$1"
+  if [[ -z "${!name:-}" ]]; then
+    echo "$name is required." >&2
+    exit 2
+  fi
 }
 
 signing_mode() {
@@ -85,6 +134,7 @@ resolve_app_path() {
 
 build_xcode_app() {
   local mode="$1"
+  local auth_args=()
   local args=(
     -project "$PROJECT"
     -scheme "$SCHEME"
@@ -92,6 +142,19 @@ build_xcode_app() {
     -derivedDataPath "$DERIVED_DATA"
     -destination "platform=macOS,arch=$HOST_ARCH"
   )
+
+  if [[ -n "${IRIS_DRIVE_ASC_AUTH_KEY_PATH:-}" \
+    || -n "${IRIS_DRIVE_ASC_AUTH_KEY_ID:-}" \
+    || -n "${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
+    require_env_var IRIS_DRIVE_ASC_AUTH_KEY_PATH
+    require_env_var IRIS_DRIVE_ASC_AUTH_KEY_ID
+    require_env_var IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID
+    auth_args=(
+      -authenticationKeyPath "$IRIS_DRIVE_ASC_AUTH_KEY_PATH"
+      -authenticationKeyID "$IRIS_DRIVE_ASC_AUTH_KEY_ID"
+      -authenticationKeyIssuerID "$IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID"
+    )
+  fi
 
   if [[ "$mode" == "development" ]]; then
     local team
@@ -102,7 +165,7 @@ build_xcode_app() {
     fi
     args+=(DEVELOPMENT_TEAM="$team")
     if [[ "${IRIS_DRIVE_ALLOW_PROVISIONING_UPDATES:-1}" != "0" ]]; then
-      args+=(-allowProvisioningUpdates)
+      args+=("${auth_args[@]}" -allowProvisioningUpdates)
     fi
   else
     args+=(CODE_SIGNING_ALLOWED=NO)
@@ -112,12 +175,26 @@ build_xcode_app() {
   xcodebuild "${args[@]}" build >"$BUILD_LOG"
 }
 
+signing_identity_for_app() {
+  local app_path="$1"
+  local identity="${IRIS_DRIVE_CODESIGN_IDENTITY:-}"
+
+  if [[ -z "$identity" ]]; then
+    identity="$(
+      codesign -dv --verbose=4 "$app_path" 2>&1 \
+        | awk -F= '/^Authority=Apple Development:/ { print $2; exit }'
+    )"
+  fi
+
+  printf '%s\n' "${identity:-Apple Development}"
+}
+
 sign_helper() {
   local helper="$1"
   local mode="$2"
+  local identity="${3:-}"
 
   if [[ "$mode" == "development" ]]; then
-    local identity="${IRIS_DRIVE_CODESIGN_IDENTITY:-Apple Development}"
     codesign --force --sign "$identity" --entitlements "$ROOT/macos/IrisDriveMac.entitlements" "$helper" >&2
   else
     codesign --force --sign - "$helper" >&2
@@ -127,9 +204,9 @@ sign_helper() {
 finalize_app_signature() {
   local app_path="$1"
   local mode="$2"
+  local identity="${3:-}"
 
   if [[ "$mode" == "development" ]]; then
-    local identity="${IRIS_DRIVE_CODESIGN_IDENTITY:-Apple Development}"
     codesign --force --sign "$identity" --entitlements "$ROOT/macos/IrisDriveMac.entitlements" "$app_path" >&2
     codesign --verify --strict --deep "$app_path" >&2
   fi
@@ -152,6 +229,7 @@ build_app() {
   local mode
   local target_dir
   local app_path
+  local signing_identity=""
 
   mode="$(signing_mode)"
   log "Generating macOS project"
@@ -168,10 +246,14 @@ build_app() {
     exit 1
   fi
 
+  if [[ "$mode" == "development" ]]; then
+    signing_identity="$(signing_identity_for_app "$app_path")"
+  fi
+
   cp "$target_dir/debug/idrive" "$app_path/Contents/MacOS/idrive"
   chmod +x "$app_path/Contents/MacOS/idrive"
-  sign_helper "$app_path/Contents/MacOS/idrive" "$mode"
-  finalize_app_signature "$app_path" "$mode"
+  sign_helper "$app_path/Contents/MacOS/idrive" "$mode" "$signing_identity"
+  finalize_app_signature "$app_path" "$mode" "$signing_identity"
 
   touch "$app_path"
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \

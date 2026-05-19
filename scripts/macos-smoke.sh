@@ -19,16 +19,20 @@ APP_PATH=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
 
+terminate_app_process() {
+  pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
+  for _ in {1..40}; do
+    if ! pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
+}
+
 cleanup() {
   if [[ -n "$APP_PATH" ]]; then
-    pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
-    for _ in {1..40}; do
-      if ! pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
-    pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
+    terminate_app_process
     pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
   fi
   osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
@@ -115,11 +119,13 @@ end tell
 APPLESCRIPT
 }
 
-APP_PATH="$("$ROOT/scripts/macos-dev-app.sh" build)"
+APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: macOS app was not built." >&2
   exit 1
 fi
+
+terminate_app_process
 
 open \
   --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" \

@@ -26,6 +26,14 @@ entitled path, run with a configured Xcode account:
 IRIS_DRIVE_DEVELOPMENT_TEAM=<team-id> IRIS_DRIVE_MACOS_SIGNING=development just run
 ```
 
+For normal local development, copy `.env.local.example` to `.env.local` and set
+the same values there. `scripts/macos-dev-app.sh` auto-loads `.env.local` as
+defaults, while explicit shell variables still win. Keep `.env.local` for
+machine-local development settings; keep `.env.release.local` for future
+release-only signing or notarization inputs. If Xcode has no account signed in,
+`.env.local` can also hold the optional `IRIS_DRIVE_ASC_AUTH_KEY_*` values for
+`xcodebuild -allowProvisioningUpdates`.
+
 `just macos-build` still exists as a compile-only check and passes
 `CODE_SIGNING_ALLOWED=NO`, so it verifies the Swift target and plist structure
 without requiring a local provisioning profile.
@@ -41,9 +49,10 @@ just smoke-macos
 ```
 
 The smoke test builds the macOS app, launches it through LaunchServices, waits
-for the app process, verifies the bundled `idrive daemon` starts, then tears both
-down. It uses an isolated temporary app data directory so it does not mutate the
-normal app-group state.
+for the app process, verifies the bundled `idrive daemon` starts, clicks the
+"Show Iris Drive" menu item, verifies a drive folder opens, then tears both
+down. It forces `IRIS_DRIVE_MACOS_SIGNING=none` and uses an isolated temporary
+app data directory so it does not mutate the normal app-group state.
 
 ## Entitlements
 
