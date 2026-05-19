@@ -15,6 +15,8 @@ info:
     @echo "Build"
     @echo "  just build"
     @echo "  just release"
+    @echo "  just macos-xcodeproj"
+    @echo "  just macos-build"
     @echo
     @echo "Checks"
     @echo "  just test"
@@ -63,6 +65,12 @@ run-cli *args:
 
 build:
     cargo build --workspace
+
+macos-xcodeproj:
+    cd macos && xcodegen generate
+
+macos-build:
+    xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug CODE_SIGNING_ALLOWED=NO build
 
 release:
     cargo build --workspace --release

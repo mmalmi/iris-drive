@@ -1,0 +1,435 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		091F9412CA8E5A1BB39C82A9 /* IrisDriveFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		299FD436F79DE19CD1813197 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */; };
+		47C8C9305C692805883C114C /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A13E19A7BB747CF4257EEA /* FileProviderExtension.swift */; };
+		70911C15097C83604960C147 /* IrisDriveMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */; };
+		71E8FA43E039C6C1E396633A /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA12F04B63DF84E4683B43B /* FileProviderItem.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		59B4F355A95EE72B3D63B9B0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 42DB8B5A2211A2B4CE21F7B3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 23EBF978BA5A298193FB684E;
+			remoteInfo = IrisDriveFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F968DB9789D4755FDD0BF310 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				091F9412CA8E5A1BB39C82A9 /* IrisDriveFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMacApp.swift; sourceTree = "<group>"; };
+		42A13E19A7BB747CF4257EEA /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		4493910AE56DEB7D7C232AC6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		619AD1C2E5EB3EE378D09C90 /* IrisDriveMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IrisDriveMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		666B6EE136256FF350040546 /* Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Release.entitlements; sourceTree = "<group>"; };
+		7BA12F04B63DF84E4683B43B /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
+		BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		D5D3EC3900BAF6B43532C7E9 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		06BA351AC01CF53A09FC07CC /* FileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				D5D3EC3900BAF6B43532C7E9 /* FileProvider.entitlements */,
+				BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */,
+				42A13E19A7BB747CF4257EEA /* FileProviderExtension.swift */,
+				7BA12F04B63DF84E4683B43B /* FileProviderItem.swift */,
+				4493910AE56DEB7D7C232AC6 /* Info.plist */,
+				666B6EE136256FF350040546 /* Release.entitlements */,
+			);
+			path = FileProvider;
+			sourceTree = "<group>";
+		};
+		44A4BFF93CB5B602E66EE85E /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		AA7639AB3285E4D6D6D3507F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */,
+				619AD1C2E5EB3EE378D09C90 /* IrisDriveMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E699C722389EEA6EA40C81DB = {
+			isa = PBXGroup;
+			children = (
+				06BA351AC01CF53A09FC07CC /* FileProvider */,
+				44A4BFF93CB5B602E66EE85E /* Sources */,
+				AA7639AB3285E4D6D6D3507F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		23EBF978BA5A298193FB684E /* IrisDriveFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9AC5F862F356F59C10531EE2 /* Build configuration list for PBXNativeTarget "IrisDriveFileProvider" */;
+			buildPhases = (
+				1B382E7B7B03EBC366A21D92 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = IrisDriveFileProvider;
+			packageProductDependencies = (
+			);
+			productName = IrisDriveFileProvider;
+			productReference = D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		425B89F0E65570D72FE6C24D /* IrisDriveMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F8BA67A428B6245E8AEC7EC6 /* Build configuration list for PBXNativeTarget "IrisDriveMac" */;
+			buildPhases = (
+				E499A794425BF2BACCF6E668 /* Sources */,
+				F968DB9789D4755FDD0BF310 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CDD1648C86F3F33F75238C86 /* PBXTargetDependency */,
+			);
+			name = IrisDriveMac;
+			packageProductDependencies = (
+			);
+			productName = IrisDriveMac;
+			productReference = 619AD1C2E5EB3EE378D09C90 /* IrisDriveMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		42DB8B5A2211A2B4CE21F7B3 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					23EBF978BA5A298193FB684E = {
+						ProvisioningStyle = Automatic;
+					};
+					425B89F0E65570D72FE6C24D = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 9519F4E98403745B97C9E351 /* Build configuration list for PBXProject "IrisDriveMac" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E699C722389EEA6EA40C81DB;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				23EBF978BA5A298193FB684E /* IrisDriveFileProvider */,
+				425B89F0E65570D72FE6C24D /* IrisDriveMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1B382E7B7B03EBC366A21D92 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				299FD436F79DE19CD1813197 /* FileProviderEnumerator.swift in Sources */,
+				47C8C9305C692805883C114C /* FileProviderExtension.swift in Sources */,
+				71E8FA43E039C6C1E396633A /* FileProviderItem.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E499A794425BF2BACCF6E668 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				70911C15097C83604960C147 /* IrisDriveMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CDD1648C86F3F33F75238C86 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 23EBF978BA5A298193FB684E /* IrisDriveFileProvider */;
+			targetProxy = 59B4F355A95EE72B3D63B9B0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0147F05B032FBABEB4DC5534 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = IrisDriveMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_MODULE_NAME = IrisDriveMac;
+				PRODUCT_NAME = "Iris Drive";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		42963B7FDA0AA2C9FEE23A6F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.macos.FileProvider;
+				PRODUCT_MODULE_NAME = IrisDriveFileProvider;
+				PRODUCT_NAME = IrisDriveFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		58827E2F243E20F190F3AF59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		725990924EE2245937911CD5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Release.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_MODULE_NAME = IrisDriveMac;
+				PRODUCT_NAME = "Iris Drive";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		DDA81DC19C8C2AA0DF6CF5E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/Release.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.macos.FileProvider;
+				PRODUCT_MODULE_NAME = IrisDriveFileProvider;
+				PRODUCT_NAME = IrisDriveFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		E3F1DCC04D5975D9DDE02414 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9519F4E98403745B97C9E351 /* Build configuration list for PBXProject "IrisDriveMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				58827E2F243E20F190F3AF59 /* Debug */,
+				E3F1DCC04D5975D9DDE02414 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9AC5F862F356F59C10531EE2 /* Build configuration list for PBXNativeTarget "IrisDriveFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				42963B7FDA0AA2C9FEE23A6F /* Debug */,
+				DDA81DC19C8C2AA0DF6CF5E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F8BA67A428B6245E8AEC7EC6 /* Build configuration list for PBXNativeTarget "IrisDriveMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0147F05B032FBABEB4DC5534 /* Debug */,
+				725990924EE2245937911CD5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 42DB8B5A2211A2B4CE21F7B3 /* Project object */;
+}

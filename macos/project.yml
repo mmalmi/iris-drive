@@ -1,0 +1,51 @@
+name: IrisDriveMac
+options:
+  bundleIdPrefix: to.iris.drive
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.macos
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    VERSIONING_SYSTEM: apple-generic
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: 5.0
+
+targets:
+  IrisDriveMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_NAME: Iris Drive
+        PRODUCT_MODULE_NAME: IrisDriveMac
+        CODE_SIGN_ENTITLEMENTS: IrisDriveMac.entitlements
+        INFOPLIST_FILE: Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Iris Drive
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Release.entitlements
+    dependencies:
+      - target: IrisDriveFileProvider
+
+  IrisDriveFileProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: FileProvider
+    settings:
+      base:
+        PRODUCT_NAME: IrisDriveFileProvider
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.macos.FileProvider
+        PRODUCT_MODULE_NAME: IrisDriveFileProvider
+        CODE_SIGN_ENTITLEMENTS: FileProvider/FileProvider.entitlements
+        INFOPLIST_FILE: FileProvider/Info.plist
+        SKIP_INSTALL: YES
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: FileProvider/Release.entitlements
