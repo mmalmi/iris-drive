@@ -194,7 +194,7 @@ run_app() {
 
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
-    IRIS_DRIVE_APP_BASE_DIR="$app_base_dir" open "$app_path"
+    open --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" "$app_path"
     echo "macOS app data: $app_base_dir"
   else
     open "$app_path"

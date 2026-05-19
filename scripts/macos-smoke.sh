@@ -69,16 +69,42 @@ wait_for_daemon() {
   return 1
 }
 
+wait_for_log() {
+  local pattern="$1"
+  local seconds="$2"
+  local end_time
+
+  for _ in $(seq 1 "$((seconds * 2))"); do
+    end_time="$(date '+%Y-%m-%d %H:%M:%S')"
+    if /usr/bin/log show \
+      --start "$START_TIME" \
+      --end "$end_time" \
+      --style compact \
+      --predicate "eventMessage CONTAINS[c] \"$pattern\"" \
+      2>/dev/null | grep -F "$pattern" >/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 APP_PATH="$("$ROOT/scripts/macos-dev-app.sh" build)"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: macOS app was not built." >&2
   exit 1
 fi
 
-IRIS_DRIVE_APP_BASE_DIR="$SMOKE_DIR/AppData" open "$APP_PATH"
+open --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" "$APP_PATH"
 
 if ! wait_for_process "$APP_PROCESS_NAME" 10; then
   echo "FAIL: Iris Drive did not launch." >&2
+  show_recent_logs >&2
+  exit 1
+fi
+
+if ! wait_for_log "Iris Drive menu bar item installed" 10; then
+  echo "FAIL: Iris Drive menu bar item was not installed." >&2
   show_recent_logs >&2
   exit 1
 fi
@@ -90,4 +116,4 @@ if ! wait_for_daemon 10; then
 fi
 
 echo "MACOS_SMOKE_OK"
-echo "app launched and bundled idrive daemon started"
+echo "app launched, menu bar item installed, and bundled idrive daemon started"

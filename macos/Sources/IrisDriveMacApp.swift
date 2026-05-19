@@ -1,3 +1,4 @@
+import AppKit
 import FileProvider
 import SwiftUI
 
@@ -25,8 +26,11 @@ struct IrisDriveMacApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemon: Process?
+    private var statusItem: NSStatusItem?
+    private var statusMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installStatusItem()
         updateStatus("Starting sync")
         registerFileProviderDomain()
         bootstrapAndStartDaemon()
@@ -36,6 +40,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatus("Stopping sync")
         daemon?.terminate()
         daemon = nil
+    }
+
+    @objc private func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
+    }
+
+    private func installStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = statusIcon()
+        item.button?.toolTip = irisDriveDisplayName
+
+        let menu = NSMenu()
+        let status = NSMenuItem(title: IrisDriveStatus.shared.message, action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        menu.addItem(.separator())
+        let showItem = NSMenuItem(
+            title: "Show Iris Drive",
+            action: #selector(showMainWindow),
+            keyEquivalent: ""
+        )
+        showItem.target = self
+        menu.addItem(showItem)
+
+        let quitItem = NSMenuItem(
+            title: "Quit",
+            action: #selector(quitApp),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        item.menu = menu
+        statusItem = item
+        statusMenuItem = status
+        NSLog("Iris Drive menu bar item installed")
+    }
+
+    private func statusIcon() -> NSImage {
+        let image = NSImage(
+            systemSymbolName: "externaldrive.fill",
+            accessibilityDescription: irisDriveDisplayName
+        ) ?? NSImage(size: NSSize(width: 18, height: 18))
+        image.isTemplate = true
+        return image
     }
 
     private func bootstrapAndStartDaemon() {
@@ -216,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatus(_ message: String) {
         DispatchQueue.main.async {
             IrisDriveStatus.shared.message = message
+            self.statusMenuItem?.title = message
         }
     }
 }
