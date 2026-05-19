@@ -7,12 +7,12 @@
 //! (`DeviceRootRef::published_at`).
 //!
 //! Tombstones are stored alongside regular files under a reserved
-//! `.tombstones/` subtree in each device's root. A tombstone is a leaf
-//! whose path is `.tombstones/<mirror of original path>` and whose
-//! content is the unix-seconds timestamp at which the file was
-//! removed. Tombstones participate in LWW: if the newest action across
-//! all devices for a path is a tombstone, the path is absent from the
-//! merged view.
+//! `.hashtree/tombstones/` subtree in each device's root. A tombstone
+//! is a leaf whose path is `.hashtree/tombstones/<mirror of original
+//! path>` and whose content is the unix-seconds timestamp at which
+//! the file was removed. Tombstones participate in LWW: if the newest
+//! action across all devices for a path is a tombstone, the path is
+//! absent from the merged view.
 //!
 //! This module is pure logic — it takes pre-fetched per-device entry
 //! and tombstone lists and produces a `MergedView`. The actual htree
@@ -26,10 +26,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::DeviceRootRef;
 
-/// Reserved path prefix for the tombstone subtree inside each device
-/// root. Files written under this prefix by the indexer are not part
-/// of the user-visible drive; only the merge engine reads them.
-pub const TOMBSTONE_PREFIX: &str = ".tombstones";
+/// Reserved top-level subdirectory inside any hashtree directory for
+/// htree-format metadata. Everything iris-drive (and future htree
+/// consumers) stashes structurally goes under here, so only one name
+/// is ever reserved at the user-visible top level. Currently used for:
+///
+/// - `.hashtree/prev` — back-link to the prior version of this dir
+/// - `.hashtree/tombstones/<path>` — deletion markers
+pub const META_DIR: &str = ".hashtree";
+
+/// Reserved path prefix for the tombstone subtree (inside `META_DIR`).
+/// Files written under this prefix by the indexer are not part of the
+/// user-visible drive; only the merge engine reads them.
+pub const TOMBSTONE_PREFIX: &str = ".hashtree/tombstones";
+
+/// Reserved entry path for the directory-revision back-link. A
+/// directory whose contents have a prior version stores that previous
+/// version's `Cid` (hash + key) at this path. Walking the chain
+/// backwards through history is just following `.hashtree/prev` from
+/// each `TreeNode` to the next.
+///
+/// The capability follows naturally: the link's `Cid` carries the
+/// decryption key for the prior `TreeNode`, so any reader who can
+/// decrypt the current root can decrypt all of history (until either
+/// the chain terminates or a block is GC'd).
+pub const PREV_LINK_PATH: &str = ".hashtree/prev";
 
 /// One entry from a device's tree, as observed by the merge engine.
 /// Hash + size are enough to identify content; the merge does not
@@ -44,8 +65,8 @@ pub struct DeviceFileEntry {
 /// One tombstone from a device's tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceTombstone {
-    /// Original path that was removed (the `.tombstones/` prefix has
-    /// been stripped).
+    /// Original path that was removed (the `.hashtree/tombstones/`
+    /// prefix has been stripped).
     pub path: String,
     /// Unix-seconds when this device removed the file.
     pub tombstoned_at: i64,
@@ -162,8 +183,8 @@ pub fn merge_drives(
     view
 }
 
-/// Encode a file path into the path under `.tombstones/` used to
-/// store the tombstone leaf in htree.
+/// Encode a file path into the path under `.hashtree/tombstones/`
+/// used to store the tombstone leaf in htree.
 #[must_use]
 pub fn tombstone_path(file_path: &str) -> String {
     format!("{TOMBSTONE_PREFIX}/{file_path}")
@@ -192,6 +213,39 @@ pub async fn walk_device_tree<S: Store>(
     Ok((files, tombstones))
 }
 
+/// Walk inside `.hashtree/` collecting tombstones and ignoring `prev`.
+/// Lifted out so the main walker doesn't need to know `META_DIR`
+/// internals.
+fn walk_meta_dir<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    files: &'a mut Vec<DeviceFileEntry>,
+    tombstones: &'a mut Vec<DeviceTombstone>,
+) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir_cid).await?;
+        for entry in entries {
+            let path = format!("{prefix}/{}", entry.name);
+            // The revision back-link is structural metadata — not
+            // user-visible content, not a tombstone.
+            if path == PREV_LINK_PATH {
+                continue;
+            }
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            if entry.link_type == LinkType::Dir {
+                // The tombstones subtree mirrors original paths; recurse
+                // and let the tombstone-leaf check below pick them up.
+                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
+            }
+        }
+        Ok(())
+    })
+}
+
 fn walk_dir_recursive<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir_cid: &'a Cid,
@@ -211,6 +265,14 @@ fn walk_dir_recursive<'a, S: Store>(
                 hash: entry.hash,
                 key: entry.key,
             };
+            if entry.name == META_DIR && prefix.is_empty() {
+                // `.hashtree/` subtree carries htree-format metadata
+                // (revision back-link, tombstones, ...). Recurse so the
+                // tombstone walker can pick up entries under
+                // `.hashtree/tombstones/`, but skip the `prev` link.
+                walk_meta_dir(tree, &child_cid, META_DIR, files, tombstones).await?;
+                continue;
+            }
             if entry.link_type == LinkType::Dir {
                 walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
             } else if let Some(orig_path) = original_path_from_tombstone(&path) {
@@ -477,13 +539,13 @@ mod tests {
     fn tombstone_path_round_trip() {
         let original = "Photos/IMG_001.heic";
         let encoded = tombstone_path(original);
-        assert_eq!(encoded, ".tombstones/Photos/IMG_001.heic");
+        assert_eq!(encoded, ".hashtree/tombstones/Photos/IMG_001.heic");
         assert_eq!(original_path_from_tombstone(&encoded), Some(original));
     }
 
     #[test]
     fn original_path_from_non_tombstone_is_none() {
         assert!(original_path_from_tombstone("notes.txt").is_none());
-        assert!(original_path_from_tombstone(".tombstones").is_none());
+        assert!(original_path_from_tombstone(".hashtree/tombstones").is_none());
     }
 }

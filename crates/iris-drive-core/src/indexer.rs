@@ -13,7 +13,7 @@ use std::path::Path;
 use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store};
 use thiserror::Error;
 
-use crate::merge::{walk_device_tree, TOMBSTONE_PREFIX};
+use crate::merge::{walk_device_tree, PREV_LINK_PATH, TOMBSTONE_PREFIX};
 
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -90,7 +90,34 @@ pub async fn index_dir_with_history<S: Store>(
     if !tombstones.is_empty() {
         root = layer_tombstones(tree, root, &tombstones).await?;
     }
+
+    // Add the revision back-link: a `._prev` entry at the root pointing
+    // at the prior root's Cid (hash + key). Capability propagates
+    // automatically when readers decrypt the new TreeNode — the prior
+    // TreeNode is now navigable from the current one.
+    root = attach_prev_link(tree, root, prev).await?;
+
     Ok(root)
+}
+
+async fn attach_prev_link<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    previous: &Cid,
+) -> Result<Cid, IndexError> {
+    let segments: Vec<&str> = PREV_LINK_PATH.split('/').filter(|s| !s.is_empty()).collect();
+    let (name, parent_segs) = segments
+        .split_last()
+        .expect("PREV_LINK_PATH is non-empty");
+    // Ensure each ancestor (just `.hashtree/` for now) exists.
+    for depth in 1..=parent_segs.len() {
+        let dir_path: Vec<String> = parent_segs[..depth].iter().map(|s| (*s).to_string()).collect();
+        root = ensure_dir(tree, &root, &dir_path).await?;
+    }
+    let new_root = tree
+        .set_entry(&root, parent_segs, name, previous, 0, LinkType::Dir)
+        .await?;
+    Ok(new_root)
 }
 
 fn collect_local_file_paths(

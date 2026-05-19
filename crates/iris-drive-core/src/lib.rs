@@ -19,6 +19,7 @@ pub mod daemon;
 pub mod identity;
 pub mod indexer;
 pub mod merge;
+pub mod history;
 pub mod nostr_events;
 pub mod paths;
 pub mod relay_sync;

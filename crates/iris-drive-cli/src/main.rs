@@ -101,7 +101,21 @@ enum Command {
     /// List the merged view of the primary drive — files across every
     /// authorized device's tree with LWW resolution applied. On a
     /// single-device install this is just that device's tree.
-    List,
+    List {
+        /// Walk back N revisions on this device's tree before merging
+        /// (0 = current = default, 1 = previous, ...). History comes
+        /// from the `.hashtree/prev` chain stored in each directory's `TreeNode`.
+        #[arg(long, default_value_t = 0)]
+        at: usize,
+    },
+    /// Walk this device's `.hashtree/prev` revision chain and print each root
+    /// CID + top-level entry count, newest-first. Blocks GC'd from
+    /// the local store terminate the walk silently.
+    History {
+        /// Maximum number of revisions to walk back. Defaults to 50.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Build + print Nostr events ready to broadcast to relays.
     #[command(subcommand)]
     Event(EventCmd),
@@ -199,7 +213,8 @@ fn main() -> ExitCode {
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
-        Command::List => cmd_list(&config_dir),
+        Command::List { at } => cmd_list(&config_dir, at),
+        Command::History { limit } => cmd_history(&config_dir, limit),
         Command::Event(ev) => match ev {
             EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
@@ -451,7 +466,7 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
     })
 }
 
-fn cmd_list(config_dir: &std::path::Path) -> Result<()> {
+fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -479,13 +494,21 @@ fn cmd_list(config_dir: &std::path::Path) -> Result<()> {
             .unwrap_or_default();
 
         // Fetch each authorized device's tree + tombstones from htree.
+        // With `--at N`, this device's own root walks back N revisions
+        // via the `.hashtree/prev` chain; other devices' roots stay at their
+        // current state.
         let mut snapshots_data = Vec::new();
         for device_pubkey in &authorized {
             let Some(root) = drive.device_roots.get(device_pubkey) else {
                 continue; // device hasn't published its root yet
             };
-            let cid = Cid::parse(&root.root_cid)
+            let mut cid = Cid::parse(&root.root_cid)
                 .with_context(|| format!("parsing root CID for device {device_pubkey}"))?;
+            if at > 0 && *device_pubkey == account.device_pubkey {
+                cid = iris_drive_core::history::revision_at(daemon.tree(), &cid, at)
+                    .await
+                    .with_context(|| format!("revision -{at} not in chain"))?;
+            }
             let (files, tombstones) = walk_device_tree(daemon.tree(), &cid).await?;
             snapshots_data.push((device_pubkey.clone(), root.clone(), files, tombstones));
         }
@@ -507,6 +530,7 @@ fn cmd_list(config_dir: &std::path::Path) -> Result<()> {
             "{}",
             json!({
                 "drive_id": drive.drive_id,
+                "at_revision": at,
                 "authorized_devices": authorized.len(),
                 "device_roots_present": snapshots.len(),
                 "files": view
@@ -1074,6 +1098,63 @@ fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<String> {
     } else {
         override_list.to_vec()
     }
+}
+
+fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let config = daemon.config();
+        let account = config
+            .account
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
+        let drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
+        let Some(root_ref) = drive.device_roots.get(&account.device_pubkey) else {
+            println!("{}", json!({"revisions": [], "note": "no imports yet"}));
+            return Ok::<_, anyhow::Error>(());
+        };
+        let root_cid = Cid::parse(&root_ref.root_cid)
+            .with_context(|| format!("parsing root cid {}", root_ref.root_cid))?;
+        let chain = iris_drive_core::history::walk_history(daemon.tree(), &root_cid, limit)
+            .await
+            .context("walking history chain")?;
+
+        let mut revisions = Vec::new();
+        for (idx, cid) in chain.iter().enumerate() {
+            // Count user-visible top-level entries (skip the .hashtree meta dir).
+            let entries = daemon
+                .tree()
+                .list_directory(cid)
+                .await
+                .with_context(|| format!("listing rev {idx}"))?;
+            let user_visible = entries
+                .iter()
+                .filter(|e| e.name != iris_drive_core::merge::META_DIR)
+                .count();
+            revisions.push(json!({
+                "rev": idx,
+                "root_cid": cid.to_string(),
+                "top_level_entries": user_visible,
+            }));
+        }
+        println!(
+            "{}",
+            json!({
+                "device_pubkey": account.device_pubkey,
+                "limit": limit,
+                "chain_length": revisions.len(),
+                "revisions": revisions,
+            })
+        );
+        Ok(())
+    })
 }
 
 fn cmd_event_app_keys(config_dir: &std::path::Path) -> Result<()> {
