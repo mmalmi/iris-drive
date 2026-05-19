@@ -193,6 +193,36 @@ pub async fn fetch_latest_app_keys(
     Ok(latest)
 }
 
+/// Build the filter set covering all events relevant to a single
+/// account's primary drive: the owner's `AppKeys` + any drive-root for
+/// `(owner, drive_id)`.
+///
+/// The drive-root filter intentionally does **not** narrow by author:
+/// the d-tag `iris-drive/<owner>/<drive>/root` already pins the drive,
+/// and `apply_remote_drive_root_event` rejects events from
+/// unauthorized devices. Skipping the author filter means the daemon
+/// doesn't need to re-subscribe every time the roster changes — newly
+/// approved devices' events flow in automatically.
+#[must_use]
+pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filter> {
+    let mut filters = Vec::new();
+    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
+        filters.push(
+            Filter::new()
+                .author(owner)
+                .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
+                .identifier(D_TAG_APP_KEYS),
+        );
+    }
+    let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    filters.push(
+        Filter::new()
+            .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
+            .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
+    );
+    filters
+}
+
 /// Fetch drive-root events from any of `authorized_devices` for
 /// `(owner_pubkey, drive_id)`. Returns the latest event from each
 /// device (one event per device).

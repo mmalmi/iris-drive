@@ -128,6 +128,16 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         timeout: u64,
     },
+    /// Run a long-running subscriber. Maintains open subscriptions for
+    /// `AppKeys` + drive-root events for this account, applies each
+    /// event in real time, and persists the resulting config. Stops on
+    /// Ctrl+C. Use with `idrive publish` from other devices to see
+    /// updates arrive within milliseconds.
+    Daemon {
+        /// Override config relays with these URLs.
+        #[arg(long)]
+        relay: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -177,6 +187,7 @@ fn main() -> ExitCode {
         Command::Relays => cmd_relays(&config_dir),
         Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
         Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
+        Command::Daemon { relay } => cmd_daemon(&config_dir, &relay),
     };
 
     match result {
@@ -660,6 +671,122 @@ fn cmd_sync(
         );
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn cmd_daemon(config_dir: &std::path::Path, relay_override: &[String]) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    use nostr_sdk::RelayPoolNotification;
+    use tokio::sync::broadcast::error::RecvError;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let state = config
+            .account
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+        let relays = pick_relays(&config, relay_override);
+        let filters = relay_sync::subscription_filters(
+            &state.owner_pubkey,
+            iris_drive_core::PRIMARY_DRIVE_ID,
+        );
+        let authorized_devices: Vec<String> = state
+            .app_keys
+            .as_ref()
+            .map(|s| s.devices.iter().map(|d| d.pubkey.clone()).collect())
+            .unwrap_or_default();
+        if filters.is_empty() {
+            return Err(anyhow::anyhow!("no filters to subscribe to"));
+        }
+
+        let client = relay_sync::connect(&relays)
+            .await
+            .context("connecting to relays")?;
+        client
+            .subscribe(filters, None)
+            .await
+            .context("opening subscription")?;
+        let mut notifications = client.notifications();
+
+        println!(
+            "{}",
+            json!({
+                "event": "subscribed",
+                "relays": relays,
+                "owner_npub": account_npub(&state.owner_pubkey),
+                "roster_size": authorized_devices.len(),
+            })
+        );
+        println!("(running — Ctrl+C to stop)");
+
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
+        loop {
+            tokio::select! {
+                _ = &mut ctrl_c => {
+                    println!("{}", json!({ "event": "shutdown" }));
+                    break;
+                }
+                recv = notifications.recv() => {
+                    match recv {
+                        Ok(RelayPoolNotification::Event { event, .. }) => {
+                            if let Err(e) = apply_one_event(config_dir, &event) {
+                                println!(
+                                    "{}",
+                                    json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
+                                );
+                            }
+                        }
+                        Ok(RelayPoolNotification::Shutdown)
+                        | Err(RecvError::Closed) => break,
+                        Ok(_) => {}
+                        Err(RecvError::Lagged(n)) => {
+                            println!("{}", json!({"event": "lagged", "skipped": n}));
+                        }
+                    }
+                }
+            }
+        }
+        let _ = client.disconnect().await;
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let kind = event.kind.as_u16();
+    if kind == iris_drive_core::nostr_events::KIND_APP_KEYS {
+        let outcome = relay_sync::apply_remote_app_keys_event(&mut config, event)?;
+        println!(
+            "{}",
+            json!({
+                "event": "app_keys",
+                "event_id": event.id.to_hex(),
+                "outcome": format!("{outcome:?}"),
+            })
+        );
+    } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
+        let outcome = relay_sync::apply_remote_drive_root_event(&mut config, event)?;
+        println!(
+            "{}",
+            json!({
+                "event": "drive_root",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+            })
+        );
+    } else {
+        // Unknown kind; ignore.
+        return Ok(());
+    }
+    config.save(config_path_in(config_dir))?;
+    Ok(())
 }
 
 fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<String> {
