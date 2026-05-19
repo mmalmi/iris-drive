@@ -1,0 +1,46 @@
+[workspace]
+members = [
+  "crates/hashdrive-core",
+  "crates/hashdrive-cli",
+  "crates/hashdrive-app-core",
+]
+exclude = ["linux"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Hashdrive contributors"]
+repository = "htree://self/hashdrive"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive", "env"] }
+dirs = "6"
+futures = "0.3"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uniffi = "0.29"
+uuid = { version = "1", features = ["v4", "serde"] }
+nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
+hashdrive-core = { version = "0.1.0", path = "crates/hashdrive-core" }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

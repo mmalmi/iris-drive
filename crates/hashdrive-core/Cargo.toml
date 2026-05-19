@@ -1,0 +1,28 @@
+[package]
+name = "hashdrive-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Shared Hashdrive configuration, sync state, htree client, and share model"
+repository.workspace = true
+readme = "README.md"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+dirs.workspace = true
+nostr-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+hex.workspace = true
+
+[lints]
+workspace = true
