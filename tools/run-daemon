@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="${IRIS_DRIVE_PROFILE:-debug}"
+
+usage() {
+  cat <<'EOF'
+usage: ./tools/run-daemon [-- idrive-daemon-args...]
+
+Builds idrive and runs `idrive daemon`.
+
+Set IRIS_DRIVE_PROFILE=release to run a release build.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
+cd "$ROOT"
+
+build_args=()
+profile_dir="debug"
+if [[ "$PROFILE" == "release" ]]; then
+  build_args+=(--release)
+  profile_dir="release"
+elif [[ "$PROFILE" != "debug" ]]; then
+  echo "IRIS_DRIVE_PROFILE must be 'debug' or 'release'." >&2
+  exit 2
+fi
+
+target_dir="$(
+  cargo metadata --no-deps --format-version 1 |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])'
+)"
+
+cargo build "${build_args[@]}" -p idrive
+
+exec "$target_dir/$profile_dir/idrive" daemon "$@"

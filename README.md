@@ -17,6 +17,7 @@ render. Native shells follow the same Rust-core / native-front pattern used in
 | `idrive` | CLI/daemon: sync engine, share controls, htree-daemon supervisor |
 | `iris-drive-core` | Shared library: config, sync state, htree client, share model |
 | `iris-drive-app-core` | Native app state/action contract + UniFFI bridge for the native shells |
+| `iris-drive-mac` | Rust macOS menu-bar dev wrapper around `idrive daemon` |
 | `macos` | SwiftUI/AppKit native shell over `iris-drive-app-core` |
 | `linux` | GTK/libadwaita native shell over the shared app core |
 | `windows` | WPF native shell + installer over the shared app core |
@@ -24,13 +25,36 @@ render. Native shells follow the same Rust-core / native-front pattern used in
 
 ## Status
 
-Project scaffold. No working sync engine yet — the workspace compiles and the
-CLI prints `idrive` help.
+Early working sync engine and macOS menu-bar wrapper. The CLI can initialize an
+account, import a working directory, publish private drive roots, upload
+encrypted blocks to Blossom, and run a long-lived daemon.
 
 ## Getting started
 
 ```bash
-cargo run -p idrive -- --help
+./tools/run-macos
+```
+
+That launches the Rust macOS menu-bar wrapper. On first launch it creates
+`~/Iris Drive`, initializes the local account/device, starts `idrive daemon`,
+publishes the private drive root, and uploads encrypted blocks to the default
+Blossom server.
+
+For a terminal-only daemon, initialize/import once first:
+
+```bash
+cargo run -p idrive -- init
+mkdir -p "$HOME/Iris Drive"
+cargo run -p idrive -- import "$HOME/Iris Drive"
+./tools/run-daemon
+```
+
+Useful CLI probes:
+
+```bash
+cargo run -p idrive -- status
+cargo run -p idrive -- whoami
+cargo run -p idrive -- list
 ```
 
 ## Layout
@@ -40,9 +64,10 @@ crates/
   iris-drive-core/        shared library
   iris-drive-cli/         `idrive` CLI + daemon
   iris-drive-app-core/    UniFFI bridge + native app state/actions
+  iris-drive-mac/         Rust macOS menu-bar dev wrapper
 macos/ linux/ windows/ android/ ios/   native shell placeholders
 docs/                   protocol notes, experiments
-scripts/                build / release helpers
+tools/                  local run helpers
 ```
 
 ## License
