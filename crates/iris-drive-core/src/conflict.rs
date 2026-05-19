@@ -1,6 +1,6 @@
 //! File-level conflict resolution.
 //!
-//! Hashdrive uses last-writer-wins by published timestamp with a rename
+//! Iris Drive uses last-writer-wins by published timestamp with a rename
 //! fallback on irreconcilable conflicts — same model Drive and Dropbox
 //! ship. CRDTs are not used in v1.
 //!

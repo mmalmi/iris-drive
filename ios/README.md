@@ -1,3 +1,3 @@
 # ios
 
-Native SwiftUI shell over `hashdrive-app-core`. Not started yet.
+Native SwiftUI shell over `iris-drive-app-core`. Not started yet.

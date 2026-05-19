@@ -854,43 +854,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "hashdrive-app-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hashdrive-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uniffi",
-]
-
-[[package]]
-name = "hashdrive-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "dirs",
- "futures",
- "hashtree-core",
- "hashtree-provider",
- "hex",
- "nostr-sdk",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "hashtree-core"
 version = "0.2.51"
 dependencies = [
@@ -918,26 +881,6 @@ dependencies = [
  "hashtree-core",
  "thiserror 1.0.69",
  "tokio",
-]
-
-[[package]]
-name = "hdrive"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "clap",
- "dirs",
- "hashdrive-core",
- "hashtree-core",
- "predicates",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1111,6 +1054,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "idrive"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "dirs",
+ "hashtree-core",
+ "iris-drive-core",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1142,6 +1105,43 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "iris-drive-app-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iris-drive-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uniffi",
+]
+
+[[package]]
+name = "iris-drive-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "dirs",
+ "futures",
+ "hashtree-core",
+ "hashtree-provider",
+ "hex",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

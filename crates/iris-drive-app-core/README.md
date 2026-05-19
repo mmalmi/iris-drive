@@ -1,4 +1,4 @@
-# hashdrive-app-core
+# iris-drive-app-core
 
 Native shells use this crate as the shared app contract.
 

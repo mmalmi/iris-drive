@@ -5,11 +5,11 @@ operator instructions outside the repository.
 
 ## Project shape
 
-`hashdrive` is a Google-Drive-style file sync app built on top of the local
+`iris-drive` is a Google-Drive-style file sync app built on top of the local
 `htree` daemon (see `~/src/hashtree`). Structure mirrors `~/src/nostr-vpn`:
 shared Rust core + per-platform native shells over a UniFFI app-core crate.
 
-Hashdrive does not run its own storage protocol — it consumes hashtree for
+Iris Drive does not run its own storage protocol — it consumes hashtree for
 content-addressed storage and uses Nostr for identity, peer discovery, and
 share invites.
 
@@ -33,10 +33,10 @@ share invites.
 - Never `git pull` or `git rebase` from `htree://self/*` — it is publish-only
   storage, not an integration upstream.
 - Commit after relevant tests/build/lint pass, then push to the htree remote
-  (`htree://self/hashdrive`).
+  (`htree://self/iris-drive`).
 
 ## Naming
 
-CLI binary is `hdrive`. The hashtree CLI is `htree`; do not collide. The
-hashdrive daemon is "the hashdrive daemon," distinct from "the hashtree
+CLI binary is `idrive`. The hashtree CLI is `htree`; do not collide. The
+iris-drive daemon is "the iris-drive daemon," distinct from "the hashtree
 daemon" which is what we wrap.

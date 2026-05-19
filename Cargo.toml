@@ -1,8 +1,8 @@
 [workspace]
 members = [
-  "crates/hashdrive-core",
-  "crates/hashdrive-cli",
-  "crates/hashdrive-app-core",
+  "crates/iris-drive-core",
+  "crates/iris-drive-cli",
+  "crates/iris-drive-app-core",
 ]
 exclude = ["linux"]
 resolver = "2"
@@ -11,8 +11,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-authors = ["Hashdrive contributors"]
-repository = "htree://self/hashdrive"
+authors = ["Iris Drive contributors"]
+repository = "htree://self/iris-drive"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -40,7 +40,7 @@ nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
 hashtree-core = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-core" }
 hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"
-hashdrive-core = { version = "0.1.0", path = "crates/hashdrive-core" }
+iris-drive-core = { version = "0.1.0", path = "crates/iris-drive-core" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

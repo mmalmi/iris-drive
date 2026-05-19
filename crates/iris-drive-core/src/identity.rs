@@ -1,6 +1,6 @@
 //! Nostr-key identity management.
 //!
-//! Each hashdrive install has one Nostr keypair stored in `key` under
+//! Each iris-drive install has one Nostr keypair stored in `key` under
 //! the config dir. Generation is deferred until first use so the file is
 //! never created accidentally.
 

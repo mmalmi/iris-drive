@@ -1,7 +1,7 @@
 //! Walk a local directory and build the equivalent hashtree directory.
 //!
 //! Used in two situations:
-//! - First-time import: a user points hashdrive at an existing folder.
+//! - First-time import: a user points iris-drive at an existing folder.
 //! - Sync engine: compute the local CID before publishing a new root.
 //!
 //! The indexer is deterministic — the same on-disk tree always produces

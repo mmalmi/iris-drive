@@ -1,4 +1,4 @@
-//! End-to-end tests for the `hdrive` CLI.
+//! End-to-end tests for the `idrive` CLI.
 //!
 //! These exercise the actual compiled binary against a temp config dir,
 //! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
@@ -7,16 +7,16 @@ use assert_cmd::Command;
 use predicates::str::contains;
 use tempfile::tempdir;
 
-fn hdrive(dir: &std::path::Path) -> Command {
-    let mut cmd = Command::cargo_bin("hdrive").unwrap();
-    cmd.env("HASHDRIVE_CONFIG_DIR", dir);
+fn idrive(dir: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("idrive").unwrap();
+    cmd.env("IRIS_DRIVE_CONFIG_DIR", dir);
     cmd
 }
 
 #[test]
 fn init_creates_key_and_config() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path())
+    idrive(dir.path())
         .arg("init")
         .assert()
         .success()
@@ -29,15 +29,15 @@ fn init_creates_key_and_config() {
 #[test]
 fn double_init_errors_without_force() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    hdrive(dir.path()).arg("init").assert().failure();
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path()).arg("init").assert().failure();
 }
 
 #[test]
 fn double_init_with_force_succeeds() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    hdrive(dir.path())
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path())
         .args(["init", "--force"])
         .assert()
         .success()
@@ -47,8 +47,8 @@ fn double_init_with_force_succeeds() {
 #[test]
 fn whoami_after_init_prints_npub() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    hdrive(dir.path())
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path())
         .arg("whoami")
         .assert()
         .success()
@@ -58,13 +58,13 @@ fn whoami_after_init_prints_npub() {
 #[test]
 fn whoami_before_init_errors() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("whoami").assert().failure();
+    idrive(dir.path()).arg("whoami").assert().failure();
 }
 
 #[test]
 fn status_before_init_reports_uninitialized() {
     let dir = tempdir().unwrap();
-    let out = hdrive(dir.path()).arg("status").output().unwrap();
+    let out = idrive(dir.path()).arg("status").output().unwrap();
     assert!(out.status.success());
     let body = String::from_utf8(out.stdout).unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -75,8 +75,8 @@ fn status_before_init_reports_uninitialized() {
 #[test]
 fn status_after_init_reports_initialized() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    let out = hdrive(dir.path()).arg("status").output().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let out = idrive(dir.path()).arg("status").output().unwrap();
     let v: serde_json::Value = serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["initialized"], true);
     assert!(v["pubkey_npub"].as_str().unwrap().starts_with("npub1"));
@@ -89,8 +89,8 @@ fn status_after_init_reports_initialized() {
 #[test]
 fn drives_lists_primary_after_init() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    hdrive(dir.path())
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path())
         .arg("drives")
         .assert()
         .success()
@@ -102,11 +102,11 @@ fn drives_lists_primary_after_init() {
 #[test]
 fn drives_before_init_shows_empty_message() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path())
+    idrive(dir.path())
         .arg("drives")
         .assert()
         .success()
-        .stdout(contains("hdrive init"));
+        .stdout(contains("idrive init"));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn index_command_prints_root_cid_and_count() {
     std::fs::write(dir.path().join("a.txt"), b"alpha").unwrap();
     std::fs::write(dir.path().join("b.txt"), b"beta").unwrap();
     let cfg = tempdir().unwrap();
-    let out = hdrive(cfg.path())
+    let out = idrive(cfg.path())
         .arg("index")
         .arg(dir.path())
         .output()
@@ -130,8 +130,8 @@ fn index_command_prints_root_cid_and_count() {
 #[test]
 fn npub_is_stable_across_invocations() {
     let dir = tempdir().unwrap();
-    hdrive(dir.path()).arg("init").assert().success();
-    let one = String::from_utf8(hdrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
-    let two = String::from_utf8(hdrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let one = String::from_utf8(idrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
+    let two = String::from_utf8(idrive(dir.path()).arg("whoami").output().unwrap().stdout).unwrap();
     assert_eq!(one, two);
 }

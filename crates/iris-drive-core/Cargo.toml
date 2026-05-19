@@ -1,10 +1,10 @@
 [package]
-name = "hashdrive-core"
+name = "iris-drive-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Shared Hashdrive configuration, sync state, htree client, and share model"
+description = "Shared Iris Drive configuration, sync state, htree client, and share model"
 repository.workspace = true
 readme = "README.md"
 

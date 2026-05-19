@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashdrive_core::{
+use iris_drive_core::{
     config::AppConfig,
     identity::Identity,
     index_dir,
@@ -16,10 +16,10 @@ use hashtree_core::{HashTree, HashTreeConfig, MemoryStore};
 use serde_json::json;
 
 #[derive(Debug, Parser)]
-#[command(name = "hdrive", version, about = "Hashdrive CLI / daemon")]
+#[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
 struct Cli {
-    /// Override the config dir (default: OS config dir / hashdrive).
-    #[arg(long, env = "HASHDRIVE_CONFIG_DIR", global = true)]
+    /// Override the config dir (default: OS config dir / iris-drive).
+    #[arg(long, env = "IRIS_DRIVE_CONFIG_DIR", global = true)]
     config_dir: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -28,7 +28,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Initialize a hashdrive config: generate an identity and a primary drive.
+    /// Initialize a iris-drive config: generate an identity and a primary drive.
     Init {
         /// Don't error if config already exists; print the existing state.
         #[arg(long)]
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
     let Some(config_dir) = cli.config_dir.clone().or_else(default_config_dir) else {
-        eprintln!("error: could not determine a config dir; set --config-dir or HASHDRIVE_CONFIG_DIR");
+        eprintln!("error: could not determine a config dir; set --config-dir or IRIS_DRIVE_CONFIG_DIR");
         return ExitCode::from(2);
     };
 
@@ -86,7 +86,7 @@ fn cmd_init(config_dir: &std::path::Path, force: bool) -> Result<()> {
 
     let already = key_path.exists() && config_path.exists();
     if already && !force {
-        eprintln!("hashdrive already initialized at {}", config_dir.display());
+        eprintln!("iris-drive already initialized at {}", config_dir.display());
         eprintln!("use --force to print the existing state instead of erroring");
         return Err(anyhow::anyhow!("already initialized"));
     }
@@ -129,7 +129,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "pubkey_npub": identity.as_ref().map(hashdrive_core::Identity::pubkey_bech32),
+            "pubkey_npub": identity.as_ref().map(iris_drive_core::Identity::pubkey_bech32),
             "drives": config.drives.iter().map(|d| json!({
                 "drive_id": d.drive_id,
                 "display_name": d.display_name,
@@ -146,7 +146,7 @@ fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
     let config_path = config_path_in(config_dir);
     let config = AppConfig::load_or_default(&config_path)?;
     if config.drives.is_empty() {
-        println!("(no drives — run `hdrive init`)");
+        println!("(no drives — run `idrive init`)");
         return Ok(());
     }
     for d in &config.drives {

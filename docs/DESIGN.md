@@ -1,4 +1,4 @@
-# Hashdrive design
+# Iris Drive design
 
 End-user file sync with Google-Drive-/Dropbox-style UX, built on
 content-addressed storage (hashtree) with a Nostr-based identity and
@@ -18,7 +18,7 @@ discovery layer. P2P as far as each OS allows.
 
 ## Architecture
 
-Single in-process hashtree daemon (`hashtree-embedded`) inside the hashdrive
+Single in-process hashtree daemon (`hashtree-embedded`) inside the iris-drive
 app holds the blocks, maintains the index, publishes the user's mutable root
 over Nostr, and seeds those blocks to peers. The user's "drive" is **one
 hashtree root they own**, served to the OS through whichever presentation
@@ -27,9 +27,9 @@ backend the platform supports (FileProvider / WinFsp / FUSE / DocumentsProvider)
 Multiple devices owned by the same user reconcile their drive root via Nostr;
 shares are extra roots from other pubkeys mounted as additional drives.
 
-No separate daemon process, no IPC — `hashdrive-app-core` links
+No separate daemon process, no IPC — `iris-drive-app-core` links
 `hashtree-embedded` as a library and the app extensions / shells link
-`hashdrive-app-core` via UniFFI.
+`iris-drive-app-core` via UniFFI.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -39,11 +39,11 @@ No separate daemon process, no IPC — `hashdrive-app-core` links
        ▼               ▼                 ▼
 ┌────────────────────────────────────────────────────────────┐
 │  Native shell (Swift / WPF / GTK / Compose)                 │
-│  ⇄ hashdrive-app-core (UniFFI)                              │
+│  ⇄ iris-drive-app-core (UniFFI)                              │
 └──────────────────────────┬─────────────────────────────────┘
                            ▼
 ┌────────────────────────────────────────────────────────────┐
-│  hashdrive-core                                             │
+│  iris-drive-core                                             │
 │   - drive model, indexer, sync engine, share manager        │
 │   - reconciler + conflict resolution                        │
 └──────────────────────────┬─────────────────────────────────┘
@@ -58,10 +58,10 @@ No separate daemon process, no IPC — `hashdrive-app-core` links
 ## External project relationships
 
 - **`~/src/hashtree`** — supplies the storage primitive and all OS-mount
-  adapters (see "Where adapter crates live" below). hashdrive does not fork
+  adapters (see "Where adapter crates live" below). iris-drive does not fork
   hashtree; it consumes it and contributes upstream.
 - **`~/src/fips`** — peer-to-peer transport. WebRTC and other transports will
-  be migrated to fips's concern. Hashdrive should consume the transport
+  be migrated to fips's concern. Iris Drive should consume the transport
   layer through hashtree, not pin a specific transport. Treat any direct
   WebRTC reference as a temporary measure pending the fips transition.
 - **`~/src/squirreldisk`** — disk-usage pie chart analyzer. Reference only for
@@ -71,7 +71,7 @@ No separate daemon process, no IPC — `hashdrive-app-core` links
 ## Where adapter crates live
 
 Rust adapters live in **hashtree**. App-specific shells (with bundle IDs,
-installer wiring, sidebar labels) live in **hashdrive**.
+installer wiring, sidebar labels) live in **iris-drive**.
 
 ```
 hashtree/rust/crates/
@@ -80,12 +80,12 @@ hashtree/rust/crates/
 ├── hashtree-fileprovider      macOS + iOS shared Rust core (new)
 └── hashtree-saf               Android DocumentsProvider Rust core (new)
 
-hashdrive/
-├── linux/                            systemd user unit, mount at ~/Hashdrive
+iris-drive/
+├── linux/                            systemd user unit, mount at ~/Iris Drive
 ├── windows/                          installer bundles WinFsp
-├── macos/HashdriveFileProvider/      Swift extension target
-├── ios/HashdriveFileProvider/        Swift extension (shares code w/ macos)
-└── android/.../HashdriveDocumentsProvider.kt
+├── macos/Iris DriveFileProvider/      Swift extension target
+├── ios/Iris DriveFileProvider/        Swift extension (shares code w/ macos)
+└── android/.../Iris DriveDocumentsProvider.kt
 ```
 
 ## Phases
@@ -104,12 +104,12 @@ Weeks are rough.
 - **Block-level streaming reads**: confirm `read_file_range` doesn't force
   whole-file materialization anywhere.
 
-All four are hashtree's concern, not hashdrive's. No hashdrive feature code yet.
+All four are hashtree's concern, not iris-drive's. No iris-drive feature code yet.
 
-### Phase 1 — `hashdrive-core` brain, headless (weeks 2–4)
+### Phase 1 — `iris-drive-core` brain, headless (weeks 2–4)
 
-- **Identity**: `hdrive init` creates a Nostr keypair under
-  `~/.config/hashdrive/key`.
+- **Identity**: `idrive init` creates a Nostr keypair under
+  `~/.config/iris-drive/key`.
 - **Drive model**: `Drive { owner_pubkey, drive_id, key, role }`. Primary
   drive is `{ owner = self, drive_id = "main", role = Owner }`.
 - **Embedded daemon**: link `hashtree-embedded`, start on app launch with the
@@ -123,7 +123,7 @@ All four are hashtree's concern, not hashdrive's. No hashdrive feature code yet.
 - **Conflict resolution**: last-writer-wins by published timestamp,
   conflicted local file renamed `file (conflict from <device>).ext`.
 
-Deliverable: `hdrive` CLI can create a drive, add files, see another device's
+Deliverable: `idrive` CLI can create a drive, add files, see another device's
 edits appear, republish. No OS mount yet.
 
 ### Phase 2 — First desktop platform end-to-end (weeks 4–7)
@@ -132,8 +132,8 @@ Start with **Linux**: `hashtree-fuse` already exists, fewest unknowns, easiest
 e2e in Docker. Validates the full app loop fastest. macOS follows knowing the
 trait surface is right.
 
-- `hashdrive-fuse` adapter consumes `ProviderFs`.
-- `hdrive` daemon mode mounts `~/Hashdrive` on startup, runs sync engine,
+- `iris-drive-fuse` adapter consumes `ProviderFs`.
+- `idrive` daemon mode mounts `~/Iris Drive` on startup, runs sync engine,
   exposes status over unix socket.
 - e2e: two Docker containers, same identity, file in container A appears in
   container B's mount.
@@ -147,27 +147,27 @@ Two parallel tracks:
   `com.apple.developer.fileprovider.testing-mode` or self-enable the dev
   capability in the developer portal).
 - **Extension build**:
-  - `macos/HashdriveFileProvider/` Swift target subclassing
+  - `macos/Iris DriveFileProvider/` Swift target subclassing
     `NSFileProviderReplicatedExtension`.
   - Links `hashtree-fileprovider` as an xcframework via UniFFI.
-  - Containing app `macos/Hashdrive.app` registers the provider via
+  - Containing app `macos/Iris Drive.app` registers the provider via
     `NSFileProviderManager`.
   - Maps `item`, `fetchContents`, `createItem`, `modifyItem`, `deleteItem`,
     `enumerator`, `evict` to `ProviderFs` ops.
   - Sync anchor = htree root CID; changes-since-anchor = Phase 0 diff API.
 
-Validation: drive mounts at `~/Library/CloudStorage/Hashdrive-<account>/`,
+Validation: drive mounts at `~/Library/CloudStorage/Iris Drive-<account>/`,
 Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 ### Phase 4 — Sharing (weeks 11–13)
 
-- **Send invite**: `hdrive share ./Photos --with npub1xxx --role reader`.
+- **Send invite**: `idrive share ./Photos --with npub1xxx --role reader`.
   Creates a child htree root for `./Photos`, publishes under a derived
   `drive_id`, encrypts access key with NIP-44 to recipient.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
   (no timed fetches — see CLAUDE.md rule), surfaces "X shared 'Photos'."
 - **Mount the share** as a sibling drive —
-  `~/Library/CloudStorage/Hashdrive-<account>/Shared/<owner-display>/Photos/`.
+  `~/Library/CloudStorage/Iris Drive-<account>/Shared/<owner-display>/Photos/`.
   Reuses every Phase 1 mechanism with a different `Drive { owner, role }`.
 - **Revoke / leave**: owner publishes new key wrapped only to remaining
   members. Prior content can't be recalled (content-addressed); matches
@@ -176,16 +176,16 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 ### Phase 5 — Windows + remaining desktop (weeks 13–16)
 
 - `hashtree-winfsp` Rust crate using the `winfsp` Rust binding.
-- `windows/Hashdrive/` WPF installer bundles the WinFsp runtime.
-- Mount under `%USERPROFILE%\Hashdrive` for parity with mac/linux.
+- `windows/Iris Drive/` WPF installer bundles the WinFsp runtime.
+- Mount under `%USERPROFILE%\Iris Drive` for parity with mac/linux.
 - WPF status UI + tray icon mirroring the macOS shell.
 
 ### Phase 6 — Mobile (weeks 16–22)
 
-- **iOS** first (Rust crate shared with macOS): `ios/HashdriveFileProvider/`
+- **iOS** first (Rust crate shared with macOS): `ios/Iris DriveFileProvider/`
   reuses most macOS Swift code. Silent push for remote-change wake.
   Materialization budget honored. TestFlight beta.
-- **Android**: `hashtree-saf` Rust crate, `HashdriveDocumentsProvider` Kotlin
+- **Android**: `hashtree-saf` Rust crate, `Iris DriveDocumentsProvider` Kotlin
   class, foreground service for sync engine. Picker integration via
   Files-by-Google.
 
@@ -205,7 +205,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 1. **Identity model**: device key vs user key. Recommendation — single user
    key copied to each device for v1 (matches Drive UX). Revisit with NIP-46 /
-   hashdrive-specific delegation once multi-device threat model justifies it.
+   iris-drive-specific delegation once multi-device threat model justifies it.
 2. **Drive granularity**: one root per "drive" (My Drive + each share), not
    one root per user. Clean for sharing, mirrors Drive/Dropbox sidebar.
 3. **Conflict resolution**: last-writer-wins + rename. No CRDT in v1.
@@ -221,7 +221,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 - **Apple FileProvider App Store entitlement** can be denied or take 6+ weeks.
   Development on own devices is unaffected (dev capability self-enables). Have
-  a fallback: FUSE-T mount under `~/Hashdrive` on macOS shippable through
+  a fallback: FUSE-T mount under `~/Iris Drive` on macOS shippable through
   Developer-ID signed + notarized distribution while waiting on App Store.
 - **Background sync on iOS** is famously restrictive. Plan for "syncs when app
   is foreground or when iOS feels like waking the extension." Same constraint
@@ -235,7 +235,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - **Cold-start materialization**: first open of a 10 GB file on a new device
   blocks `open(2)` until fetched. Progress UI is required, not optional.
 
-## Why "Hashdrive"
+## Why "Iris Drive"
 
 Trademark-safe: "Drive" is descriptive in cloud-storage (iCloud Drive,
 OneDrive, pCloud, etc.); the distinctive element is "Hash-." Avoids tying the

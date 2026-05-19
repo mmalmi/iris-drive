@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-/// Resolve the platform config dir for hashdrive, honouring `HASHDRIVE_CONFIG_DIR`
+/// Resolve the platform config dir for iris-drive, honouring `IRIS_DRIVE_CONFIG_DIR`
 /// as an override (mainly for tests).
 #[must_use] 
 pub fn default_config_dir() -> Option<PathBuf> {
-    if let Ok(override_dir) = std::env::var("HASHDRIVE_CONFIG_DIR") {
+    if let Ok(override_dir) = std::env::var("IRIS_DRIVE_CONFIG_DIR") {
         return Some(PathBuf::from(override_dir));
     }
-    dirs::config_dir().map(|p| p.join("hashdrive"))
+    dirs::config_dir().map(|p| p.join("iris-drive"))
 }
 
 #[must_use] 
@@ -24,8 +24,8 @@ pub fn config_path_in(config_dir: &std::path::Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    // The `HASHDRIVE_CONFIG_DIR` override is exercised end-to-end by the
-    // hdrive CLI tests; we don't unit-test it here because mutating
+    // The `IRIS_DRIVE_CONFIG_DIR` override is exercised end-to-end by the
+    // idrive CLI tests; we don't unit-test it here because mutating
     // process env in 2024-edition Rust requires `unsafe`, which is
     // forbidden workspace-wide.
 

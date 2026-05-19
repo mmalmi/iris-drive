@@ -4,7 +4,7 @@ default:
     @just --list
 
 info:
-    @echo "Hashdrive commands"
+    @echo "Iris Drive commands"
     @echo
     @echo "Run"
     @echo "  just run"
@@ -19,7 +19,7 @@ info:
     @echo "  just clippy"
 
 run *args:
-    cargo run -p hdrive -- {{args}}
+    cargo run -p idrive -- {{args}}
 
 build:
     cargo build --workspace
