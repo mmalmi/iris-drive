@@ -1,9 +1,38 @@
 use std::path::PathBuf;
 
+/// Resolve the platform config dir for hashdrive, honouring `HASHDRIVE_CONFIG_DIR`
+/// as an override (mainly for tests).
+#[must_use] 
 pub fn default_config_dir() -> Option<PathBuf> {
-    dirs_config().map(|p| p.join("hashdrive"))
+    if let Ok(override_dir) = std::env::var("HASHDRIVE_CONFIG_DIR") {
+        return Some(PathBuf::from(override_dir));
+    }
+    dirs::config_dir().map(|p| p.join("hashdrive"))
 }
 
-fn dirs_config() -> Option<PathBuf> {
-    dirs::config_dir()
+#[must_use] 
+pub fn key_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("key")
+}
+
+#[must_use] 
+pub fn config_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("config.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The `HASHDRIVE_CONFIG_DIR` override is exercised end-to-end by the
+    // hdrive CLI tests; we don't unit-test it here because mutating
+    // process env in 2024-edition Rust requires `unsafe`, which is
+    // forbidden workspace-wide.
+
+    #[test]
+    fn key_and_config_paths_are_inside_dir() {
+        let base = std::path::Path::new("/tmp/x");
+        assert_eq!(key_path_in(base), PathBuf::from("/tmp/x/key"));
+        assert_eq!(config_path_in(base), PathBuf::from("/tmp/x/config.toml"));
+    }
 }

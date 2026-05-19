@@ -21,6 +21,11 @@ tracing-subscriber.workspace = true
 
 hashdrive-core.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+assert_cmd = "2"
+predicates = "3"
+
 [[bin]]
 name = "hdrive"
 path = "src/main.rs"

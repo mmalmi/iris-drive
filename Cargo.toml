@@ -33,6 +33,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
+hashtree-core = "0.2"
+tempfile = "3"
 hashdrive-core = { version = "0.1.0", path = "crates/hashdrive-core" }
 
 [workspace.lints.clippy]
