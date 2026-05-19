@@ -101,6 +101,20 @@ enum Command {
     /// authorized device's tree with LWW resolution applied. On a
     /// single-device install this is just that device's tree.
     List,
+    /// Build + print Nostr events ready to broadcast to relays.
+    #[command(subcommand)]
+    Event(EventCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum EventCmd {
+    /// Owner-signed `AppKeys` roster event (kind 30078).
+    /// Requires owner-signing authority on this install.
+    AppKeys,
+    /// Device-signed drive-root event (kind 30079) for the primary
+    /// drive. Requires a previous `idrive import` so there's a CID
+    /// to publish.
+    DriveRoot,
 }
 
 fn main() -> ExitCode {
@@ -132,6 +146,10 @@ fn main() -> ExitCode {
         Command::Index { dir } => cmd_index(&dir),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
         Command::List => cmd_list(&config_dir),
+        Command::Event(ev) => match ev {
+            EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
+            EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
+        },
     };
 
     match result {
@@ -453,6 +471,60 @@ async fn walk_device_tree(
     iris_drive_core::merge::walk_device_tree(tree, root)
         .await
         .map_err(anyhow::Error::from)
+}
+
+fn cmd_event_app_keys(config_dir: &std::path::Path) -> Result<()> {
+    let state = load_account_state(config_dir)?;
+    let snap = state
+        .app_keys
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no AppKeys snapshot yet (run `idrive init` first)"))?;
+    if !state.has_owner_signing_authority {
+        return Err(anyhow::anyhow!(
+            "this device does not have owner-signing authority — only owner-capable installs can publish AppKeys"
+        ));
+    }
+    let account = Account::load(state.clone(), config_dir).context("loading account")?;
+    let owner_keys = account
+        .owner_key
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+        .keys();
+    let event = iris_drive_core::nostr_events::build_app_keys_event(owner_keys, snap)
+        .context("building AppKeys event")?;
+    println!("{}", serde_json::to_string_pretty(&event)?);
+    Ok(())
+}
+
+fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
+    let state = load_account_state(config_dir)?;
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let drive = config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
+    let root_ref = drive
+        .device_roots
+        .get(&state.device_pubkey)
+        .ok_or_else(|| {
+            anyhow::anyhow!("no root for this device yet — run `idrive import <dir>` first")
+        })?;
+    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    let event = iris_drive_core::nostr_events::build_drive_root_event(
+        device.keys(),
+        &state.owner_pubkey,
+        &drive.drive_id,
+        root_ref,
+    )
+    .context("building drive-root event")?;
+    println!("{}", serde_json::to_string_pretty(&event)?);
+    Ok(())
+}
+
+fn load_account_state(config_dir: &std::path::Path) -> Result<AccountState> {
+    AppConfig::load_or_default(config_path_in(config_dir))?
+        .account
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))
 }
 
 fn cmd_index(dir: &std::path::Path) -> Result<()> {

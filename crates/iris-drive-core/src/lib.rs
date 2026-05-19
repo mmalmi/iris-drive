@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod identity;
 pub mod indexer;
 pub mod merge;
+pub mod nostr_events;
 pub mod paths;
 pub mod sync;
 
