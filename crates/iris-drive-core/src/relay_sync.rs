@@ -1,0 +1,458 @@
+//! Relay-layer sync: publish + fetch + apply.
+//!
+//! Two layers:
+//!
+//! - **Apply (offline)** — `apply_remote_app_keys_event` and
+//!   `apply_remote_drive_root_event` take a parsed Nostr event and an
+//!   `AppConfig` and apply the event's effect onto the config. These are
+//!   pure functions over data, fully covered by unit tests.
+//!
+//! - **Network (live)** — `publish_app_keys`, `publish_drive_root`,
+//!   `fetch_latest_app_keys`, `fetch_drive_roots` wrap nostr-sdk's
+//!   `Client` for actual relay I/O. Tested manually against real relays;
+//!   the wire/apply layers below them are what we cover automatically.
+
+use std::collections::BTreeSet;
+use std::time::Duration;
+
+use nostr_sdk::{Client, Event, Filter, Keys, PublicKey, SingleLetterTag};
+use thiserror::Error;
+
+use crate::app_keys::ApplyDecision;
+use crate::config::{AppConfig, DeviceRootRef};
+use crate::nostr_events::{
+    build_app_keys_event, build_drive_root_event, drive_root_d_tag, parse_app_keys_event,
+    parse_drive_root_event, D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT,
+};
+use crate::AppKeysSnapshot;
+
+#[derive(Debug, Error)]
+pub enum RelayError {
+    #[error("wire: {0}")]
+    Wire(#[from] crate::nostr_events::WireError),
+    #[error("nostr client: {0}")]
+    Client(String),
+    #[error("config has no account; run `idrive init` first")]
+    NoAccount,
+    #[error("not initialized as owner-capable; cannot sign AppKeys events")]
+    NoOwnerAuthority,
+    #[error("invalid pubkey: {0}")]
+    InvalidPubkey(String),
+}
+
+/// Result of applying a remote `AppKeys` event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppKeysApply {
+    /// Event from someone other than our owner — silently ignored.
+    NotOurOwner,
+    /// Applied to the local state; carries the apply decision so callers
+    /// can log "first snapshot adopted", "newer snapshot replaced", etc.
+    Applied(ApplyDecision),
+}
+
+/// Apply a remote `AppKeys` event to `config`. If the event's author
+/// matches the local account's `owner_pubkey`, the snapshot is parsed
+/// and fed through the standard `apply_snapshot` rules. Foreign
+/// authors are silently ignored — protects against `Filter::author`
+/// not narrowing on the relay side.
+pub fn apply_remote_app_keys_event(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<AppKeysApply, RelayError> {
+    let snapshot = parse_app_keys_event(event)?;
+    let Some(account) = config.account.as_mut() else {
+        return Err(RelayError::NoAccount);
+    };
+    if snapshot.owner_pubkey != account.owner_pubkey {
+        return Ok(AppKeysApply::NotOurOwner);
+    }
+    let decision = account.apply_app_keys(snapshot);
+    Ok(AppKeysApply::Applied(decision))
+}
+
+/// Result of applying a remote drive-root event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriveRootApply {
+    /// Owner pubkey in the d-tag doesn't match our account — ignored.
+    NotOurOwner,
+    /// Drive id in the d-tag isn't configured locally — ignored.
+    UnknownDrive,
+    /// Device pubkey isn't in the current `AppKeys` roster — ignored.
+    /// Protects against forged events from unauthorized devices.
+    UnauthorizedDevice,
+    /// Older or equal-timestamp than what we already have for this
+    /// device — ignored (LWW).
+    StaleTimestamp,
+    /// Applied; the device's root entry was updated/inserted.
+    Applied,
+}
+
+/// Apply a remote drive-root event to `config`. Drops events from
+/// foreign owners, unknown drives, unauthorized devices, or that are
+/// older than what's already recorded.
+pub fn apply_remote_drive_root_event(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<DriveRootApply, RelayError> {
+    let (device_hex, owner_hex, drive_id, incoming_root) = parse_drive_root_event(event)?;
+    let Some(account) = config.account.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if owner_hex != account.owner_pubkey {
+        return Ok(DriveRootApply::NotOurOwner);
+    }
+    let authorized: BTreeSet<&str> = account
+        .app_keys
+        .as_ref()
+        .map(|s| s.devices.iter().map(|d| d.pubkey.as_str()).collect())
+        .unwrap_or_default();
+    if !authorized.contains(device_hex.as_str()) {
+        return Ok(DriveRootApply::UnauthorizedDevice);
+    }
+    let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == drive_id) else {
+        return Ok(DriveRootApply::UnknownDrive);
+    };
+    if let Some(existing) = drive.device_roots.get(&device_hex)
+        && existing.published_at >= incoming_root.published_at
+    {
+        return Ok(DriveRootApply::StaleTimestamp);
+    }
+    drive.device_roots.insert(device_hex, incoming_root);
+    Ok(DriveRootApply::Applied)
+}
+
+// ----- Live relay layer -----
+
+/// Connect a fresh client to the given relays. Caller manages the
+/// client's lifecycle (disconnect when done).
+pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
+    let client = Client::default();
+    for url in relay_urls {
+        client
+            .add_relay(url)
+            .await
+            .map_err(|e| RelayError::Client(format!("add_relay {url}: {e}")))?;
+    }
+    client.connect().await;
+    Ok(client)
+}
+
+/// Publish a signed `AppKeys` event for the current snapshot.
+pub async fn publish_app_keys(
+    client: &Client,
+    owner_keys: &Keys,
+    snapshot: &AppKeysSnapshot,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let event = build_app_keys_event(owner_keys, snapshot)?;
+    let output = client
+        .send_event(event)
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(*output.id())
+}
+
+/// Publish a signed drive-root event for this device's current root.
+pub async fn publish_drive_root(
+    client: &Client,
+    device_keys: &Keys,
+    owner_pubkey_hex: &str,
+    drive_id: &str,
+    root: &DeviceRootRef,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let event = build_drive_root_event(device_keys, owner_pubkey_hex, drive_id, root)?;
+    let output = client
+        .send_event(event)
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(*output.id())
+}
+
+/// Fetch the latest `AppKeys` event for `owner_pubkey_hex` across all
+/// connected relays. Returns `Ok(None)` if no event found within the
+/// timeout. The returned event has been signature-verified by the
+/// apply step.
+pub async fn fetch_latest_app_keys(
+    client: &Client,
+    owner_pubkey_hex: &str,
+    timeout: Duration,
+) -> Result<Option<Event>, RelayError> {
+    let owner = PublicKey::from_hex(owner_pubkey_hex)
+        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
+    let filter = Filter::new()
+        .author(owner)
+        .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
+        .identifier(D_TAG_APP_KEYS);
+    let events = client
+        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    // Among returned events, pick the one with the highest created_at.
+    let latest = events
+        .into_iter()
+        .max_by_key(|e| e.created_at.as_u64());
+    Ok(latest)
+}
+
+/// Fetch drive-root events from any of `authorized_devices` for
+/// `(owner_pubkey, drive_id)`. Returns the latest event from each
+/// device (one event per device).
+pub async fn fetch_drive_roots(
+    client: &Client,
+    owner_pubkey_hex: &str,
+    drive_id: &str,
+    authorized_devices: &[String],
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    if authorized_devices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut authors = Vec::with_capacity(authorized_devices.len());
+    for hex in authorized_devices {
+        authors.push(
+            PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?,
+        );
+    }
+    let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    let filter = Filter::new()
+        .authors(authors)
+        .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
+        .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]);
+    let events = client
+        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    // Pick the latest event per author.
+    let mut latest_per_author: std::collections::HashMap<PublicKey, Event> =
+        std::collections::HashMap::new();
+    for ev in events {
+        latest_per_author
+            .entry(ev.pubkey)
+            .and_modify(|cur| {
+                if ev.created_at.as_u64() > cur.created_at.as_u64() {
+                    *cur = ev.clone();
+                }
+            })
+            .or_insert(ev);
+    }
+    Ok(latest_per_author.into_values().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account::{Account, DeviceAuthorizationState};
+    use crate::config::Drive;
+    use crate::nostr_events::{build_app_keys_event, build_drive_root_event};
+    use tempfile::tempdir;
+
+    fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Account) {
+        let acct = Account::create(dir, None).unwrap();
+        let mut cfg = AppConfig {
+            account: Some(acct.state.clone()),
+            ..AppConfig::default()
+        };
+        cfg.upsert_drive(Drive::primary(acct.state.owner_pubkey.clone()));
+        (cfg, acct)
+    }
+
+    #[test]
+    fn apply_app_keys_event_from_our_owner_replaces() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+
+        // Owner approves a fake device — produces a newer snapshot.
+        let new_device = Keys::generate().public_key().to_hex();
+        acct.approve_device(new_device, None).unwrap();
+        let newer_snap = acct.state.app_keys.clone().unwrap();
+        let event =
+            build_app_keys_event(acct.owner_key.as_ref().unwrap().keys(), &newer_snap).unwrap();
+
+        // Older state in config.
+        let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
+        let applied = matches!(
+            outcome,
+            AppKeysApply::Applied(ApplyDecision::Replaced | ApplyDecision::Adopted)
+        );
+        assert!(applied, "unexpected outcome {outcome:?}");
+        assert_eq!(
+            cfg.account.as_ref().unwrap().app_keys.as_ref().unwrap().devices.len(),
+            2,
+        );
+    }
+
+    #[test]
+    fn apply_app_keys_event_from_attacker_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, _) = config_with_owner_account(dir.path());
+        let attacker = Keys::generate();
+        // Attacker publishes their own AppKeys claiming to be the owner —
+        // we ignore because their pubkey isn't our owner.
+        let mut snap = cfg.account.as_ref().unwrap().app_keys.clone().unwrap();
+        snap.owner_pubkey = attacker.public_key().to_hex();
+        snap.created_at = i64::MAX;
+        let event = build_app_keys_event(&attacker, &snap).unwrap();
+        let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
+        assert_eq!(outcome, AppKeysApply::NotOurOwner);
+    }
+
+    #[test]
+    fn apply_drive_root_event_from_authorized_device_applies() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+
+        // Approve a second device whose Keys we control end-to-end.
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        acct.approve_device(device_b_hex.clone(), None).unwrap();
+        cfg.account = Some(acct.state.clone());
+
+        // Device B publishes a drive-root event.
+        let root = DeviceRootRef {
+            root_cid: "abc123".into(),
+            published_at: 0,
+            dck_generation: 1,
+        };
+        let event =
+            build_drive_root_event(&device_b, &acct.state.owner_pubkey, "main", &root).unwrap();
+        let outcome = apply_remote_drive_root_event(&mut cfg, &event).unwrap();
+        assert_eq!(outcome, DriveRootApply::Applied);
+
+        let drive = cfg.drive("main").unwrap();
+        let entry = drive.device_roots.get(&device_b_hex).unwrap();
+        assert_eq!(entry.root_cid, "abc123");
+        assert!(entry.published_at > 0); // came from event.created_at
+    }
+
+    #[test]
+    fn apply_drive_root_event_from_unauthorized_device_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, _) = config_with_owner_account(dir.path());
+        let stranger = Keys::generate(); // not in roster
+
+        let root = DeviceRootRef {
+            root_cid: "evil".into(),
+            published_at: 0,
+            dck_generation: 99,
+        };
+        let owner_hex = cfg.account.as_ref().unwrap().owner_pubkey.clone();
+        let event = build_drive_root_event(&stranger, &owner_hex, "main", &root).unwrap();
+        let outcome = apply_remote_drive_root_event(&mut cfg, &event).unwrap();
+        assert_eq!(outcome, DriveRootApply::UnauthorizedDevice);
+        assert!(cfg.drive("main").unwrap().device_roots.is_empty());
+    }
+
+    #[test]
+    fn apply_drive_root_event_for_foreign_owner_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, _) = config_with_owner_account(dir.path());
+        let other_owner = Keys::generate().public_key().to_hex();
+        let device_key = Keys::generate();
+        let root = DeviceRootRef {
+            root_cid: "foreign".into(),
+            published_at: 0,
+            dck_generation: 1,
+        };
+        let event =
+            build_drive_root_event(&device_key, &other_owner, "main", &root).unwrap();
+        let outcome = apply_remote_drive_root_event(&mut cfg, &event).unwrap();
+        assert_eq!(outcome, DriveRootApply::NotOurOwner);
+    }
+
+    #[test]
+    fn apply_drive_root_event_for_unknown_drive_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        acct.approve_device(device_b_hex.clone(), None).unwrap();
+        cfg.account = Some(acct.state.clone());
+        let root = DeviceRootRef {
+            root_cid: "x".into(),
+            published_at: 0,
+            dck_generation: 1,
+        };
+        let event = build_drive_root_event(
+            &device_b,
+            &acct.state.owner_pubkey,
+            "nonexistent",
+            &root,
+        )
+        .unwrap();
+        let outcome = apply_remote_drive_root_event(&mut cfg, &event).unwrap();
+        assert_eq!(outcome, DriveRootApply::UnknownDrive);
+    }
+
+    #[test]
+    fn apply_drive_root_event_stale_timestamp_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        acct.approve_device(device_b_hex.clone(), None).unwrap();
+        cfg.account = Some(acct.state.clone());
+
+        // First publish — applied.
+        let root_1 = DeviceRootRef {
+            root_cid: "v1".into(),
+            published_at: 0,
+            dck_generation: 1,
+        };
+        let event_1 =
+            build_drive_root_event(&device_b, &acct.state.owner_pubkey, "main", &root_1).unwrap();
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &event_1).unwrap(),
+            DriveRootApply::Applied
+        );
+        let first_published_at = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&device_b_hex)
+            .unwrap()
+            .published_at;
+
+        // Replay the same event — same created_at, should be StaleTimestamp.
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &event_1).unwrap(),
+            DriveRootApply::StaleTimestamp
+        );
+        // device_roots entry unchanged.
+        assert_eq!(
+            cfg.drive("main").unwrap().device_roots.get(&device_b_hex).unwrap().root_cid,
+            "v1"
+        );
+        assert_eq!(
+            cfg.drive("main").unwrap().device_roots.get(&device_b_hex).unwrap().published_at,
+            first_published_at
+        );
+    }
+
+    #[test]
+    fn apply_app_keys_event_revokes_authorized_state_when_we_get_removed() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+        assert_eq!(
+            cfg.account.as_ref().unwrap().authorization_state,
+            DeviceAuthorizationState::Authorized
+        );
+        // Owner publishes a new snapshot removing this device.
+        let other_device = Keys::generate().public_key().to_hex();
+        acct.approve_device(other_device, None).unwrap();
+        acct.revoke_device(&cfg.account.as_ref().unwrap().device_pubkey)
+            .unwrap();
+        let event = build_app_keys_event(
+            acct.owner_key.as_ref().unwrap().keys(),
+            acct.state.app_keys.as_ref().unwrap(),
+        )
+        .unwrap();
+        let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
+        assert!(
+            matches!(outcome, AppKeysApply::Applied(_)),
+            "expected Applied, got {outcome:?}"
+        );
+        assert_eq!(
+            cfg.account.as_ref().unwrap().authorization_state,
+            DeviceAuthorizationState::Revoked
+        );
+    }
+}

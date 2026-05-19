@@ -80,11 +80,16 @@ pub fn build_app_keys_event(
     };
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
+    // The snapshot's created_at IS the canonical timestamp for the
+    // event; preserve it across build/parse so applying the same
+    // snapshot produces a stable, idempotent result.
+    let ts = u64::try_from(snapshot.created_at).unwrap_or(0);
     let builder = EventBuilder::new(
         Kind::from(KIND_APP_KEYS),
         content_json,
         [Tag::identifier(D_TAG_APP_KEYS)],
-    );
+    )
+    .custom_created_at(nostr_sdk::Timestamp::from(ts));
     let event = builder
         .to_event(owner_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
@@ -148,11 +153,22 @@ pub fn build_drive_root_event(
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    // If the caller hasn't set published_at, fall back to wall-clock
+    // now so the event carries a meaningful timestamp; otherwise echo
+    // the application-level value to keep build/parse stable.
+    let ts = if root.published_at > 0 {
+        u64::try_from(root.published_at).unwrap_or(0)
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    };
     let builder = EventBuilder::new(
         Kind::from(KIND_DRIVE_ROOT),
         content_json,
         [Tag::identifier(d_tag)],
-    );
+    )
+    .custom_created_at(nostr_sdk::Timestamp::from(ts));
     let event = builder
         .to_event(device_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
@@ -237,14 +253,14 @@ mod tests {
     #[test]
     fn app_keys_event_roundtrip() {
         let owner = Keys::generate();
-        let mut snap = fake_snapshot(&owner.public_key().to_hex());
-        snap.created_at = 0; // will be overridden by event.created_at
+        let snap = fake_snapshot(&owner.public_key().to_hex());
         let event = build_app_keys_event(&owner, &snap).unwrap();
         let parsed = parse_app_keys_event(&event).unwrap();
 
         // owner_pubkey comes from the event author.
         assert_eq!(parsed.owner_pubkey, owner.public_key().to_hex());
-        assert!(parsed.created_at > 0);
+        // The snapshot's created_at IS the event's created_at — round-trip stable.
+        assert_eq!(parsed.created_at, snap.created_at);
         assert_eq!(parsed.devices, snap.devices);
         assert_eq!(parsed.dck_generation, snap.dck_generation);
         assert_eq!(parsed.wrapped_dck, snap.wrapped_dck);
@@ -311,7 +327,8 @@ mod tests {
         let owner_hex = owner.public_key().to_hex();
         let root = DeviceRootRef {
             root_cid: "0123abcdef".into(),
-            published_at: 0,
+            // Set an explicit published_at so roundtrip is stable.
+            published_at: 1_700_000_000,
             dck_generation: 7,
         };
         let event = build_drive_root_event(&device, &owner_hex, "main", &root).unwrap();
@@ -322,7 +339,22 @@ mod tests {
         assert_eq!(drive_id, "main");
         assert_eq!(parsed_root.root_cid, root.root_cid);
         assert_eq!(parsed_root.dck_generation, root.dck_generation);
-        assert!(parsed_root.published_at > 0);
+        assert_eq!(parsed_root.published_at, root.published_at);
+    }
+
+    #[test]
+    fn drive_root_event_with_zero_published_at_falls_back_to_wall_clock() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root = DeviceRootRef {
+            root_cid: "x".into(),
+            published_at: 0, // caller hasn't stamped — should fall back
+            dck_generation: 1,
+        };
+        let event = build_drive_root_event(&device, &owner, "main", &root).unwrap();
+        let (_, _, _, parsed_root) = parse_drive_root_event(&event).unwrap();
+        // Should be roughly now, not 0.
+        assert!(parsed_root.published_at > 1_500_000_000);
     }
 
     #[test]

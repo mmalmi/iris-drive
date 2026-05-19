@@ -23,6 +23,10 @@ pub enum ConfigError {
     SchemaMismatch { found: u32, expected: u32 },
 }
 
+/// Default Nostr relays for new installs. Users override via config or
+/// `--relay` flags. Public, write-friendly, no auth — fine for v1.
+pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
+
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -33,6 +37,14 @@ pub struct AppConfig {
     pub account: Option<AccountState>,
     #[serde(default)]
     pub drives: Vec<Drive>,
+    /// Relays to publish to and subscribe from. Defaults to
+    /// [`DEFAULT_RELAYS`] on a fresh install.
+    #[serde(default = "default_relays")]
+    pub relays: Vec<String>,
+}
+
+fn default_relays() -> Vec<String> {
+    DEFAULT_RELAYS.iter().map(|s| (*s).to_string()).collect()
 }
 
 impl Default for AppConfig {
@@ -41,6 +53,7 @@ impl Default for AppConfig {
             schema_version: CONFIG_SCHEMA_VERSION,
             account: None,
             drives: Vec::new(),
+            relays: default_relays(),
         }
     }
 }

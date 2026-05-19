@@ -104,6 +104,30 @@ enum Command {
     /// Build + print Nostr events ready to broadcast to relays.
     #[command(subcommand)]
     Event(EventCmd),
+    /// Print configured relay URLs.
+    Relays,
+    /// Publish current state (`AppKeys` + this device's drive root) to
+    /// all configured relays. Skips `AppKeys` on linked devices that
+    /// lack owner-signing authority.
+    Publish {
+        /// Override config relays with these URLs.
+        #[arg(long)]
+        relay: Vec<String>,
+        /// Per-relay connect timeout (seconds).
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+    },
+    /// Pull latest `AppKeys` + drive-root events from relays and apply
+    /// them locally. After this, `idrive list` reflects every
+    /// authorized device's contribution.
+    Sync {
+        /// Override config relays with these URLs.
+        #[arg(long)]
+        relay: Vec<String>,
+        /// Seconds to wait for relay responses.
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -150,6 +174,9 @@ fn main() -> ExitCode {
             EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
         },
+        Command::Relays => cmd_relays(&config_dir),
+        Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
+        Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
     };
 
     match result {
@@ -471,6 +498,176 @@ async fn walk_device_tree(
     iris_drive_core::merge::walk_device_tree(tree, root)
         .await
         .map_err(anyhow::Error::from)
+}
+
+fn cmd_relays(config_dir: &std::path::Path) -> Result<()> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    println!("{}", serde_json::to_string_pretty(&config.relays)?);
+    Ok(())
+}
+
+fn cmd_publish(
+    config_dir: &std::path::Path,
+    relay_override: &[String],
+    timeout_secs: u64,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let state = config
+            .account
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+        let relays = pick_relays(&config, relay_override);
+        let _ = timeout_secs; // connect timeout not used by add_relay; kept for future
+        let client = relay_sync::connect(&relays)
+            .await
+            .context("connecting to relays")?;
+
+        let mut published_app_keys = false;
+        let mut published_drive_root = false;
+
+        if state.has_owner_signing_authority
+            && let Some(snap) = state.app_keys.as_ref()
+        {
+            let account =
+                Account::load(state.clone(), config_dir).context("loading account")?;
+            let owner_keys = account
+                .owner_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+                .keys();
+            relay_sync::publish_app_keys(&client, owner_keys, snap)
+                .await
+                .context("publishing AppKeys")?;
+            published_app_keys = true;
+        }
+
+        if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+        {
+            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+                .context("loading device key")?;
+            relay_sync::publish_drive_root(
+                &client,
+                device.keys(),
+                &state.owner_pubkey,
+                &drive.drive_id,
+                root,
+            )
+            .await
+            .context("publishing drive root")?;
+            published_drive_root = true;
+        }
+
+        let _ = client.disconnect().await;
+        println!(
+            "{}",
+            json!({
+                "relays": relays,
+                "published_app_keys": published_app_keys,
+                "published_drive_root": published_drive_root,
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn cmd_sync(
+    config_dir: &std::path::Path,
+    relay_override: &[String],
+    timeout_secs: u64,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let state = config
+            .account
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+        let relays = pick_relays(&config, relay_override);
+        let client = relay_sync::connect(&relays)
+            .await
+            .context("connecting to relays")?;
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        // 1) Pull latest AppKeys and apply.
+        let mut app_keys_applied = "none";
+        if let Some(ev) = relay_sync::fetch_latest_app_keys(&client, &state.owner_pubkey, timeout)
+            .await
+            .context("fetching AppKeys")?
+        {
+            let outcome = relay_sync::apply_remote_app_keys_event(&mut config, &ev)
+                .context("applying AppKeys event")?;
+            app_keys_applied = match outcome {
+                relay_sync::AppKeysApply::NotOurOwner => "not_our_owner",
+                relay_sync::AppKeysApply::Applied(d) => match d {
+                    iris_drive_core::ApplyDecision::Adopted => "adopted",
+                    iris_drive_core::ApplyDecision::Replaced => "replaced",
+                    iris_drive_core::ApplyDecision::Merged => "merged",
+                    iris_drive_core::ApplyDecision::Rejected => "rejected",
+                },
+            };
+        }
+
+        // 2) Pull drive roots for every authorized device.
+        let authorized_devices: Vec<String> = config
+            .account
+            .as_ref()
+            .and_then(|s| s.app_keys.as_ref())
+            .map(|s| s.devices.iter().map(|d| d.pubkey.clone()).collect())
+            .unwrap_or_default();
+        let drive_root_events = relay_sync::fetch_drive_roots(
+            &client,
+            &state.owner_pubkey,
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            &authorized_devices,
+            timeout,
+        )
+        .await
+        .context("fetching drive roots")?;
+        let mut drive_roots_applied = 0usize;
+        let mut drive_roots_skipped = 0usize;
+        for ev in &drive_root_events {
+            match relay_sync::apply_remote_drive_root_event(&mut config, ev)
+                .context("applying drive-root event")?
+            {
+                relay_sync::DriveRootApply::Applied => drive_roots_applied += 1,
+                _ => drive_roots_skipped += 1,
+            }
+        }
+
+        config.save(config_path_in(config_dir))?;
+        let _ = client.disconnect().await;
+
+        println!(
+            "{}",
+            json!({
+                "relays": relays,
+                "app_keys_event_applied": app_keys_applied,
+                "drive_root_events_seen": drive_root_events.len(),
+                "drive_root_events_applied": drive_roots_applied,
+                "drive_root_events_skipped": drive_roots_skipped,
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<String> {
+    if override_list.is_empty() {
+        config.relays.clone()
+    } else {
+        override_list.to_vec()
+    }
 }
 
 fn cmd_event_app_keys(config_dir: &std::path::Path) -> Result<()> {

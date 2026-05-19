@@ -8,6 +8,7 @@ pub mod indexer;
 pub mod merge;
 pub mod nostr_events;
 pub mod paths;
+pub mod relay_sync;
 pub mod sync;
 
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
