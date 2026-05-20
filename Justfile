@@ -8,6 +8,7 @@ info:
     @echo
     @echo "Run"
     @echo "  just run"
+    @echo "  just dev"
     @echo "  just run-cli --help"
     @echo
     @echo "Build"
@@ -28,6 +29,12 @@ run:
         Darwin) ./scripts/macos-dev-app.sh run ;; \
         Linux) just _run-daemon ;; \
         *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
+    esac
+
+dev:
+    @case "$(uname -s)" in \
+        Darwin) ./scripts/macos-dev-watch.sh ;; \
+        *) echo "No local dev watcher for $(uname -s)." >&2; exit 1 ;; \
     esac
 
 smoke:

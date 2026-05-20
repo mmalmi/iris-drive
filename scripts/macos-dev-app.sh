@@ -268,12 +268,12 @@ run_app() {
   local mode
 
   mode="$(signing_mode)"
-  terminate_running_app
   app_path="$(build_app)"
   if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi
 
+  terminate_running_app
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
     open --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" "$app_path"
