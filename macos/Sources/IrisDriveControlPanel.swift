@@ -244,19 +244,27 @@ private struct SidebarRow: View {
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.callout.weight(selected ? .semibold : .regular))
-                .padding(.vertical, 6)
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    selected
-                        ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.18)
-                        : .clear
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            HStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .frame(width: 16)
+                Text(title)
+                Spacer(minLength: 0)
+            }
+            .font(.callout.weight(selected ? .semibold : .regular))
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            selected
+                ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.18)
+                : .clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
