@@ -3,9 +3,12 @@ import Foundation
 
 final class IrisDriveStatus: ObservableObject {
     static let shared = IrisDriveStatus()
+    static let closeToMenuBarOnCloseKey = "closeToMenuBarOnClose"
 
     @Published var message = "Starting sync"
     @Published var daemonRunning = false
+    @Published var closeToMenuBarOnClose =
+        UserDefaults.standard.object(forKey: closeToMenuBarOnCloseKey) as? Bool ?? true
     @Published var initialized = false
     @Published var driveName = "My Drive"
     @Published var ownerNpub: String?

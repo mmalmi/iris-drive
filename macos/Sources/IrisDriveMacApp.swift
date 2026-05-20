@@ -4,22 +4,29 @@ import SwiftUI
 
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
+private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveAppGroupIdentifier = "group.to.iris.drive"
 
 @main
 struct IrisDriveMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var status = IrisDriveStatus.shared
 
     var body: some Scene {
-        WindowGroup(irisDriveDisplayName) {
+        WindowGroup(irisDriveDisplayName, id: irisDriveControlPanelWindowID) {
             IrisDriveControlPanel(status: status, controller: appDelegate)
                 .frame(minWidth: 780, minHeight: 520)
+                .onAppear {
+                    appDelegate.configureOpenControlPanelWindow {
+                        openWindow(id: irisDriveControlPanelWindowID)
+                    }
+                }
         }
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var daemon: Process?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
@@ -29,9 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopSyncMenuItem: NSMenuItem?
     private var runtimePathsForMenu: IrisDriveRuntimePaths?
     private var fileProviderDomainState = FileProviderDomainState.unknown
+    private var windowObserver: NSObjectProtocol?
+    private var openControlPanelWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
+        installWindowObserver()
+        observeWindows()
         updateStatus("Starting sync")
         registerFileProviderDomain { [weak self] state in
             DispatchQueue.main.async {
@@ -44,6 +55,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         updateStatus("Stopping sync")
         stopSync()
+        if let windowObserver {
+            NotificationCenter.default.removeObserver(windowObserver)
+        }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showControlPanel()
+        return false
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender.title == irisDriveDisplayName,
+              IrisDriveStatus.shared.closeToMenuBarOnClose
+        else {
+            return true
+        }
+        sender.orderOut(nil)
+        NSLog("Iris Drive control panel hidden to menu bar")
+        return false
+    }
+
+    @objc func showControlPanel() {
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        observeWindows()
+        if let window = mainWindow() {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        openControlPanelWindow?()
+        DispatchQueue.main.async { [weak self] in
+            self?.observeWindows()
+            self?.mainWindow()?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func configureOpenControlPanelWindow(_ openWindow: @escaping () -> Void) {
+        openControlPanelWindow = openWindow
+    }
+
+    @objc func setCloseToMenuBarOnClose(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: IrisDriveStatus.closeToMenuBarOnCloseKey)
+        IrisDriveStatus.shared.closeToMenuBarOnClose = enabled
+        NSLog("Iris Drive menu bar on close set to \(enabled)")
     }
 
     @objc func showDriveFolder() {
@@ -113,13 +171,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        let showItem = NSMenuItem(
-            title: "Show Iris Drive",
+        let controlPanelItem = NSMenuItem(
+            title: "Open Control Panel",
+            action: #selector(showControlPanel),
+            keyEquivalent: ""
+        )
+        controlPanelItem.target = self
+        menu.addItem(controlPanelItem)
+
+        let showDriveItem = NSMenuItem(
+            title: "Show Drive Folder",
             action: #selector(showDriveFolder),
             keyEquivalent: ""
         )
-        showItem.target = self
-        menu.addItem(showItem)
+        showDriveItem.target = self
+        menu.addItem(showDriveItem)
 
         let copyItem = NSMenuItem(
             title: "Copy Private Link",
@@ -190,6 +256,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startSyncMenuItem = startItem
         stopSyncMenuItem = stopItem
         NSLog("Iris Drive menu bar item installed")
+    }
+
+    private func installWindowObserver() {
+        guard windowObserver == nil else { return }
+        windowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeMainNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.observeWindows()
+        }
+    }
+
+    private func observeWindows() {
+        for window in NSApp.windows where window.title == irisDriveDisplayName {
+            window.delegate = self
+        }
+    }
+
+    private func mainWindow() -> NSWindow? {
+        NSApp.windows.first(where: { $0.title == irisDriveDisplayName }) ?? NSApp.windows.first
     }
 
     private func statusIcon() -> NSImage {

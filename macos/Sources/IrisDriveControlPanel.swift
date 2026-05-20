@@ -1,9 +1,50 @@
 import AppKit
 import SwiftUI
 
+private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
+    case drive
+    case peers
+    case network
+    case hashtree
+    case settings
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .drive:
+            return "My Drive"
+        case .peers:
+            return "Peers"
+        case .network:
+            return "Network"
+        case .hashtree:
+            return "Hashtree"
+        case .settings:
+            return "Settings"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .drive:
+            return "externaldrive.fill"
+        case .peers:
+            return "person.2.fill"
+        case .network:
+            return "network"
+        case .hashtree:
+            return "shippingbox.fill"
+        case .settings:
+            return "gearshape.fill"
+        }
+    }
+}
+
 struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
+    @State private var selectedTab = IrisDrivePanelTab.drive
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .topLeading)
@@ -17,10 +58,7 @@ struct IrisDriveControlPanel: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     actions
-                    overview
-                    peers
-                    network
-                    hashtree
+                    selectedContent
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -30,10 +68,15 @@ struct IrisDriveControlPanel: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SidebarRow(symbol: "externaldrive.fill", title: "My Drive", selected: true)
-            SidebarRow(symbol: "person.2.fill", title: "Peers")
-            SidebarRow(symbol: "network", title: "Network")
-            SidebarRow(symbol: "shippingbox.fill", title: "Hashtree")
+            ForEach(IrisDrivePanelTab.allCases) { tab in
+                SidebarRow(
+                    symbol: tab.symbol,
+                    title: tab.title,
+                    selected: selectedTab == tab
+                ) {
+                    selectedTab = tab
+                }
+            }
             Spacer()
         }
         .padding(.vertical, 18)
@@ -88,6 +131,22 @@ struct IrisDriveControlPanel: View {
         .buttonStyle(.bordered)
     }
 
+    @ViewBuilder
+    private var selectedContent: some View {
+        switch selectedTab {
+        case .drive:
+            overview
+        case .peers:
+            peers
+        case .network:
+            network
+        case .hashtree:
+            hashtree
+        case .settings:
+            settings
+        }
+    }
+
     private var overview: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             StatTile(title: "Files", value: optionalCount(status.topLevelEntries))
@@ -113,6 +172,20 @@ struct IrisDriveControlPanel: View {
                     PeerRow(peer: peer)
                 }
             }
+        }
+    }
+
+    private var settings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Settings")
+            Toggle(
+                "Menu bar on close",
+                isOn: Binding(
+                    get: { status.closeToMenuBarOnClose },
+                    set: { controller.setCloseToMenuBarOnClose($0) }
+                )
+            )
+            .toggleStyle(.checkbox)
         }
     }
 
@@ -167,19 +240,23 @@ private struct SidebarRow: View {
     let symbol: String
     let title: String
     var selected = false
+    let action: () -> Void
 
     var body: some View {
-        Label(title, systemImage: symbol)
-            .font(.callout.weight(selected ? .semibold : .regular))
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                selected
-                    ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.18)
-                    : .clear
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.callout.weight(selected ? .semibold : .regular))
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    selected
+                        ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.18)
+                        : .clear
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
     }
 }
 

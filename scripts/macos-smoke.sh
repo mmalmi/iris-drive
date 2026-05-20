@@ -116,13 +116,13 @@ wait_for_log() {
   return 1
 }
 
-click_show_iris_drive() {
+click_show_drive_folder() {
   osascript >/dev/null <<'APPLESCRIPT'
 tell application "System Events"
   tell process "Iris Drive"
     click menu bar item 1 of menu bar 2
     delay 0.2
-    click menu item "Show Iris Drive" of menu 1 of menu bar item 1 of menu bar 2
+    click menu item "Show Drive Folder" of menu 1 of menu bar item 1 of menu bar 2
   end tell
 end tell
 APPLESCRIPT
@@ -168,14 +168,14 @@ if ! wait_for_daemon 10; then
 fi
 
 if run_ui_smoke; then
-  if ! click_show_iris_drive; then
-    echo "FAIL: could not click the Show Iris Drive menu item." >&2
+  if ! click_show_drive_folder; then
+    echo "FAIL: could not click the Show Drive Folder menu item." >&2
     show_recent_logs >&2
     exit 1
   fi
 
   if ! wait_for_log "Iris Drive drive folder opened" 10; then
-    echo "FAIL: Show Iris Drive did not open the drive folder." >&2
+    echo "FAIL: Show Drive Folder did not open the drive folder." >&2
     show_recent_logs >&2
     exit 1
   fi
@@ -183,7 +183,7 @@ fi
 
 echo "MACOS_SMOKE_OK"
 if run_ui_smoke; then
-  echo "app launched, menu bar item installed, bundled daemon started, and Show Iris Drive opened the drive folder"
+  echo "app launched, menu bar item installed, bundled daemon started, and Show Drive Folder opened the drive folder"
 else
   echo "app launched hidden, menu bar item installed, control panel status loaded, and bundled daemon started"
 fi
