@@ -157,6 +157,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         startSync()
     }
 
+    func addRelay(_ value: String) {
+        mutateRelayConfig(arguments: ["relays", "add", value])
+    }
+
+    func updateRelay(_ oldValue: String, newValue: String) {
+        mutateRelayConfig(arguments: ["relays", "update", oldValue, newValue])
+    }
+
+    func removeRelay(_ value: String) {
+        mutateRelayConfig(arguments: ["relays", "remove", value])
+    }
+
+    func resetRelays() {
+        mutateRelayConfig(arguments: ["relays", "reset"])
+    }
+
     @objc func quitApp() {
         NSApp.terminate(nil)
     }
@@ -256,6 +272,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         startSyncMenuItem = startItem
         stopSyncMenuItem = stopItem
         NSLog("Iris Drive menu bar item installed")
+    }
+
+    private func mutateRelayConfig(arguments: [String]) {
+        guard let paths = runtimePathsForMenu else {
+            NSSound.beep()
+            return
+        }
+        let idrive = idriveExecutableURL()
+        let shouldRestart = IrisDriveStatus.shared.daemonRunning
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let data = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                self.applyRelaysData(data)
+                if shouldRestart {
+                    DispatchQueue.main.async {
+                        self.restartSync()
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive relay update failed: \(error)")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
     }
 
     private func installWindowObserver() {
@@ -571,6 +612,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if let network = json["network"] as? [String: Any] {
                 status.relays = network["relays"] as? [String] ?? []
+                if let relayStatuses = network["relay_statuses"] as? [[String: Any]] {
+                    status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
+                } else {
+                    status.relayStatuses = Self.mergeRelayStatuses(
+                        relays: status.relays,
+                        statuses: status.relayStatuses
+                    )
+                }
                 status.blossomServers = network["blossom_servers"] as? [String] ?? []
                 status.authorizedDeviceCount =
                     Self.intValue(network["authorized_device_count"]) ?? 0
@@ -607,8 +656,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case "subscribed":
                     self.updateStatus("Sync running")
                     status.relays = json["relays"] as? [String] ?? status.relays
+                    if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
+                        status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
+                    } else {
+                        status.relayStatuses = Self.mergeRelayStatuses(
+                            relays: status.relays,
+                            statuses: status.relayStatuses
+                        )
+                    }
                     status.workingDirectory =
                         json["working_dir"] as? String ?? status.workingDirectory
+                case "relay_status":
+                    if let url = json["url"] as? String,
+                       let relayStatus = json["status"] as? String {
+                        status.relayStatuses = Self.upsertRelayStatus(
+                            IrisDriveRelayStatus(url: url, status: relayStatus),
+                            into: status.relayStatuses,
+                            relays: status.relays
+                        )
+                    }
+                case "relay_statuses":
+                    if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
+                        status.relayStatuses = Self.mergeRelayStatuses(
+                            relays: status.relays,
+                            statuses: relayStatuses.map(IrisDriveRelayStatus.init)
+                        )
+                    }
                 case "initial_import":
                     self.updateStatus("Imported drive")
                 case "initial_publish":
@@ -647,6 +720,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.updateLinkMenuState()
         }
         refreshStatus()
+    }
+
+    private func applyRelaysData(_ data: Data) {
+        let relays = (try? JSONSerialization.jsonObject(with: data) as? [String]) ?? []
+        DispatchQueue.main.async {
+            let status = IrisDriveStatus.shared
+            status.relays = relays
+            status.relayStatuses = Self.mergeRelayStatuses(
+                relays: relays,
+                statuses: status.relayStatuses
+            )
+            NSLog("Iris Drive relays updated")
+        }
     }
 
     private func primaryDriveRootCID(from data: Data) -> String? {
@@ -688,6 +774,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hasLink = !(IrisDriveStatus.shared.filesIrisURL ?? "").isEmpty
         copyLinkMenuItem?.isEnabled = hasLink
         openLinkMenuItem?.isEnabled = hasLink
+    }
+
+    private static func mergeRelayStatuses(
+        relays: [String],
+        statuses: [IrisDriveRelayStatus]
+    ) -> [IrisDriveRelayStatus] {
+        let byURL = statuses.reduce(into: [String: String]()) { partial, relay in
+            partial[relay.url] = relay.status
+        }
+        return relays.map { relay in
+            IrisDriveRelayStatus(url: relay, status: byURL[relay] ?? "configured")
+        }
+    }
+
+    private static func upsertRelayStatus(
+        _ relayStatus: IrisDriveRelayStatus,
+        into statuses: [IrisDriveRelayStatus],
+        relays: [String]
+    ) -> [IrisDriveRelayStatus] {
+        var next = statuses.filter { $0.url != relayStatus.url }
+        next.append(relayStatus)
+        let knownRelays = relays.isEmpty ? next.map(\.url) : relays
+        return mergeRelayStatuses(relays: knownRelays, statuses: next)
     }
 
     private static func intValue(_ value: Any?) -> Int? {

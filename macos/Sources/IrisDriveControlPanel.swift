@@ -45,6 +45,9 @@ struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
     @State private var selectedTab = IrisDrivePanelTab.drive
+    @State private var relayInput = ""
+    @State private var editingRelayURL: String?
+    @State private var editingRelayDraft = ""
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .topLeading)
@@ -193,7 +196,101 @@ struct IrisDriveControlPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Network")
             EndpointGroup(title: "Blossom", values: status.blossomServers)
-            EndpointGroup(title: "Relays", values: status.relays)
+            relayEditor
+        }
+    }
+
+    private var relayEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Relays")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(relayRows) { relay in
+                    relayRow(relay)
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("wss://relay.example", text: $relayInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { addRelayFromInput() }
+                Button {
+                    addRelayFromInput()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .disabled(relayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Button {
+                controller.resetRelays()
+            } label: {
+                Label("Reset", systemImage: "arrow.counterclockwise")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private var relayRows: [IrisDriveRelayStatus] {
+        let byURL = status.relayStatuses.reduce(into: [String: IrisDriveRelayStatus]()) {
+            partial, relay in
+            partial[relay.url] = relay
+        }
+        return status.relays.map { relay in
+            byURL[relay] ?? IrisDriveRelayStatus(url: relay, status: "configured")
+        }
+    }
+
+    @ViewBuilder
+    private func relayRow(_ relay: IrisDriveRelayStatus) -> some View {
+        if editingRelayURL == relay.url {
+            HStack(spacing: 8) {
+                TextField("Relay URL", text: $editingRelayDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { saveRelayEdit(relay.url) }
+                Button {
+                    saveRelayEdit(relay.url)
+                } label: {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.borderless)
+                Button {
+                    editingRelayURL = nil
+                    editingRelayDraft = ""
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+            }
+        } else {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(relayStatusColor(relay.status))
+                    .frame(width: 8, height: 8)
+                Text(relay.url)
+                    .font(.system(.body, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(relayStatusLabel(relay.status))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    editingRelayURL = relay.url
+                    editingRelayDraft = relay.url
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                Button(role: .destructive) {
+                    controller.removeRelay(relay.url)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -233,6 +330,38 @@ struct IrisDriveControlPanel: View {
 
     private func byteString(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func addRelayFromInput() {
+        let value = relayInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        controller.addRelay(value)
+        relayInput = ""
+    }
+
+    private func saveRelayEdit(_ oldURL: String) {
+        let value = editingRelayDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        controller.updateRelay(oldURL, newValue: value)
+        editingRelayURL = nil
+        editingRelayDraft = ""
+    }
+
+    private func relayStatusColor(_ status: String) -> Color {
+        switch status {
+        case "connected":
+            return .green
+        case "connecting":
+            return .yellow
+        case "blocked", "offline", "terminated":
+            return .red.opacity(0.85)
+        default:
+            return .secondary.opacity(0.65)
+        }
+    }
+
+    private func relayStatusLabel(_ status: String) -> String {
+        status == "configured" ? "saved" : status
     }
 }
 

@@ -15,8 +15,8 @@ use iris_drive_core::{
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, key_path_in},
 };
-use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::FromBech32;
+use nostr_sdk::{PublicKey, RelayStatus};
 use serde_json::json;
 
 #[derive(Debug, Parser)]
@@ -119,8 +119,11 @@ enum Command {
     /// Build + print Nostr events ready to broadcast to relays.
     #[command(subcommand)]
     Event(EventCmd),
-    /// Print configured relay URLs.
-    Relays,
+    /// List or modify configured Nostr relays.
+    Relays {
+        #[command(subcommand)]
+        command: Option<RelaysCmd>,
+    },
     /// List or modify configured Blossom HTTP blob servers used for
     /// block replication.
     #[command(subcommand)]
@@ -185,6 +188,20 @@ enum BlossomServersCmd {
 }
 
 #[derive(Debug, Subcommand)]
+enum RelaysCmd {
+    /// Print current relay URLs as JSON.
+    List,
+    /// Append a relay URL to the configured list.
+    Add { url: String },
+    /// Replace an existing relay URL.
+    Update { old_url: String, new_url: String },
+    /// Remove a relay URL from the configured list.
+    Remove { url: String },
+    /// Restore the default relay list.
+    Reset,
+}
+
+#[derive(Debug, Subcommand)]
 enum EventCmd {
     /// Owner-signed `AppKeys` roster event (kind 30078).
     /// Requires owner-signing authority on this install.
@@ -229,7 +246,7 @@ fn main() -> ExitCode {
             EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
         },
-        Command::Relays => cmd_relays(&config_dir),
+        Command::Relays { command } => cmd_relays(&config_dir, command),
         Command::BlossomServers(sub) => cmd_blossom_servers(&config_dir, sub),
         Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
         Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
@@ -745,10 +762,64 @@ async fn walk_device_tree(
         .map_err(anyhow::Error::from)
 }
 
-fn cmd_relays(config_dir: &std::path::Path) -> Result<()> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    match sub.unwrap_or(RelaysCmd::List) {
+        RelaysCmd::List => {}
+        RelaysCmd::Add { url } => {
+            let url = normalize_relay_url(&url);
+            if !config.relays.contains(&url) {
+                config.relays.push(url);
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+        RelaysCmd::Update { old_url, new_url } => {
+            let old_url = normalize_relay_url(&old_url);
+            let new_url = normalize_relay_url(&new_url);
+            let mut changed = false;
+            for relay in &mut config.relays {
+                if relay == &old_url {
+                    *relay = new_url.clone();
+                    changed = true;
+                }
+            }
+            dedupe_relays(&mut config.relays);
+            if changed {
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+        RelaysCmd::Remove { url } => {
+            let url = normalize_relay_url(&url);
+            let before = config.relays.len();
+            config.relays.retain(|s| s != &url);
+            if config.relays.len() != before {
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+        RelaysCmd::Reset => {
+            config.relays = iris_drive_core::config::DEFAULT_RELAYS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            config.save(config_path_in(config_dir))?;
+        }
+    }
     println!("{}", serde_json::to_string_pretty(&config.relays)?);
     Ok(())
+}
+
+fn normalize_relay_url(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
+        trimmed.to_string()
+    } else {
+        format!("wss://{trimmed}")
+    }
+}
+
+fn dedupe_relays(relays: &mut Vec<String>) {
+    let mut seen = std::collections::BTreeSet::new();
+    relays.retain(|relay| seen.insert(relay.clone()));
 }
 
 fn cmd_blossom_servers(config_dir: &std::path::Path, sub: BlossomServersCmd) -> Result<()> {
@@ -1100,6 +1171,7 @@ fn cmd_daemon(
         let client = relay_sync::connect(&relays)
             .await
             .context("connecting to relays")?;
+        let relay_statuses = relay_status_payload(&client).await;
         client
             .subscribe(filters, None)
             .await
@@ -1130,6 +1202,7 @@ fn cmd_daemon(
                 "watch_interval_secs": watch_interval,
                 "watch_debounce_ms": watch_debounce_ms,
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
+                "relay_statuses": relay_statuses,
             })
         );
 
@@ -1188,6 +1261,8 @@ fn cmd_daemon(
         } else {
             None
         };
+        let mut relay_status_timer = tokio::time::interval(std::time::Duration::from_secs(2));
+        relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -1221,6 +1296,15 @@ fn cmd_daemon(
                         );
                     }
                 }
+                _ = relay_status_timer.tick() => {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "relay_statuses",
+                            "relay_statuses": relay_status_payload(&client).await,
+                        })
+                    );
+                }
                 () = async {
                     if let Some(timer) = watch_timer.as_mut() {
                         timer.tick().await;
@@ -1240,6 +1324,27 @@ fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Value> {
+    let relays = client.relays().await;
+    let mut payload = Vec::with_capacity(relays.len());
+    for (url, relay) in relays {
+        payload.push(json!({
+            "url": url.to_string(),
+            "status": relay_status_label(relay.status().await),
+        }));
+    }
+    payload
+}
+
+fn relay_status_label(status: RelayStatus) -> &'static str {
+    match status {
+        RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting => "connecting",
+        RelayStatus::Connected => "connected",
+        RelayStatus::Disconnected => "offline",
+        RelayStatus::Terminated => "terminated",
+    }
 }
 
 /// Spawn an fs-notify watcher on `dir`. The returned debouncer must be

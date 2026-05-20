@@ -27,11 +27,31 @@ final class IrisDriveStatus: ObservableObject {
     @Published var localBlockCount = 0
     @Published var localBlockBytes: Int64 = 0
     @Published var relays: [String] = []
+    @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var blossomServers: [String] = []
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
     @Published var lastEvent: String?
     @Published var copyStatus: String?
+}
+
+struct IrisDriveRelayStatus: Identifiable, Equatable {
+    let id: String
+    let url: String
+    let status: String
+
+    init(url: String, status: String) {
+        id = url
+        self.url = url
+        self.status = status
+    }
+
+    init(json: [String: Any]) {
+        let url = json["url"] as? String ?? UUID().uuidString
+        id = url
+        self.url = url
+        status = json["status"] as? String ?? "unknown"
+    }
 }
 
 struct IrisDrivePeerStatus: Identifiable, Equatable {

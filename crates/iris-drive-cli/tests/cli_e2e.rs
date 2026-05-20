@@ -411,6 +411,66 @@ fn status_after_init_reports_initialized() {
 }
 
 #[test]
+fn relays_can_be_edited_from_cli() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+
+    idrive(dir.path())
+        .args(["relays", "add", "relay.example"])
+        .assert()
+        .success();
+    let added: serde_json::Value =
+        serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
+    assert_eq!(
+        added.as_array().unwrap().last().unwrap(),
+        "wss://relay.example"
+    );
+
+    idrive(dir.path())
+        .args(["relays", "update", "relay.example", "wss://relay2.example"])
+        .assert()
+        .success();
+    let updated: serde_json::Value =
+        serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
+    assert!(
+        updated
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("wss://relay2.example"))
+    );
+    assert!(
+        !updated
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("wss://relay.example"))
+    );
+
+    idrive(dir.path())
+        .args(["relays", "remove", "wss://relay2.example"])
+        .assert()
+        .success();
+    let removed: serde_json::Value =
+        serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
+    assert!(
+        !removed
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("wss://relay2.example"))
+    );
+
+    idrive(dir.path())
+        .args(["relays", "reset"])
+        .assert()
+        .success();
+    let reset: serde_json::Value =
+        serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
+    assert_eq!(
+        reset,
+        serde_json::json!(["wss://relay.damus.io", "wss://nos.lol"])
+    );
+}
+
+#[test]
 fn drives_lists_primary_after_init() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
