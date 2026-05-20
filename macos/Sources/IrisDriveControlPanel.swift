@@ -17,7 +17,6 @@ struct IrisDriveControlPanel: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     actions
-                    linkBlock
                     overview
                     peers
                     network
@@ -87,26 +86,6 @@ struct IrisDriveControlPanel: View {
             .disabled(status.daemonRunning)
         }
         .buttonStyle(.bordered)
-    }
-
-    @ViewBuilder
-    private var linkBlock: some View {
-        if let link = status.filesIrisURL {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Private link")
-                    .font(.headline)
-                Text(link)
-                    .font(.system(.callout, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-        }
     }
 
     private var overview: some View {
