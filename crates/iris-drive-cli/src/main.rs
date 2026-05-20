@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
 use iris_drive_core::{
     AccountState, Drive, DriveRole,
     account::Account,
@@ -404,8 +404,8 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         });
     let current_root_private = current_root_cid.as_deref().and_then(root_is_private);
     let files_iris_to_url = current_root_cid
-        .as_deref()
-        .and_then(files_iris_to_url_for_root);
+        .as_ref()
+        .and_then(|_| files_iris_to_url_for_primary_drive(&config));
     let top_level_entries = current_root_cid
         .as_deref()
         .and_then(|root| root_top_level_entries(config_dir, root));
@@ -504,14 +504,36 @@ fn root_is_private(root_cid: &str) -> Option<bool> {
     Cid::parse(root_cid).ok().map(|cid| cid.key.is_some())
 }
 
-fn files_iris_to_url_for_root(root_cid: &str) -> Option<String> {
-    let cid = Cid::parse(root_cid).ok()?;
-    let nhash = nhash_encode_full(&NHashData {
-        hash: cid.hash,
-        decrypt_key: cid.key,
-    })
-    .ok()?;
-    Some(format!("https://files.iris.to/#/{nhash}"))
+fn files_iris_to_url_for_primary_drive(config: &AppConfig) -> Option<String> {
+    let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
+    Some(files_iris_to_url_for_drive(
+        &drive.owner_pubkey,
+        &drive.drive_id,
+    ))
+}
+
+fn files_iris_to_url_for_drive(owner_pubkey_hex: &str, drive_id: &str) -> String {
+    format!(
+        "https://files.iris.to/#/{}/{}",
+        account_npub(owner_pubkey_hex),
+        percent_encode_path_segment(drive_id)
+    )
+}
+
+fn percent_encode_path_segment(segment: &str) -> String {
+    let mut encoded = String::new();
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(&mut encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }
 
 fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Option<usize> {
@@ -621,7 +643,7 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
             json!({
                 "working_dir": report.working_dir.display().to_string(),
                 "root_cid": report.root_cid,
-                "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
+                "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
                 "top_level_entries": report.top_level_entries,
                 "blocks_dir": daemon.blocks_dir().display().to_string(),
             })
@@ -776,6 +798,10 @@ fn cmd_publish(
         let report = publish_current_state(&client, config_dir, &config, &state).await?;
 
         let _ = client.disconnect().await;
+        let files_iris_to_url = report
+            .root_cid
+            .as_ref()
+            .and_then(|_| files_iris_to_url_for_primary_drive(&config));
         println!(
             "{}",
             json!({
@@ -783,6 +809,8 @@ fn cmd_publish(
                 "blossom_servers": config.blossom_servers,
                 "published_app_keys": report.published_app_keys,
                 "published_drive_root": report.published_drive_root,
+                "published_files_root": report.published_files_root,
+                "files_iris_to_url": files_iris_to_url,
                 "blossom_upload": report.blossom_upload.map(|r| json!({
                     "total_hashes": r.total_hashes,
                     "uploaded": r.uploaded,
@@ -798,6 +826,7 @@ fn cmd_publish(
 struct PublishStateReport {
     published_app_keys: bool,
     published_drive_root: bool,
+    published_files_root: bool,
     root_cid: Option<String>,
     blossom_upload: Option<UploadReport>,
 }
@@ -843,6 +872,19 @@ async fn publish_current_state(
         .context("publishing drive root")?;
         report.published_drive_root = true;
         report.root_cid = Some(root.root_cid.clone());
+
+        if state.has_owner_signing_authority {
+            let account = Account::load(state.clone(), config_dir).context("loading account")?;
+            let owner_keys = account
+                .owner_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+                .keys();
+            relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, root)
+                .await
+                .context("publishing files.iris.to root")?;
+            report.published_files_root = true;
+        }
 
         if !config.blossom_servers.is_empty() {
             let bclient = iris_drive_core::blossom_sync_client(
@@ -1030,7 +1072,7 @@ fn cmd_daemon(
                     json!({
                         "event": "initial_import",
                         "root_cid": report.root_cid,
-                        "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
+                        "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
                         "working_dir": report.working_dir.display().to_string(),
                         "entries": report.top_level_entries,
                     })
@@ -1100,14 +1142,15 @@ fn cmd_daemon(
             Ok(report) => {
                 let files_iris_to_url = report
                     .root_cid
-                    .as_deref()
-                    .and_then(files_iris_to_url_for_root);
+                    .as_ref()
+                    .and_then(|_| files_iris_to_url_for_primary_drive(&config));
                 println!(
                     "{}",
                     json!({
                         "event": "initial_publish",
                         "published_app_keys": report.published_app_keys,
                         "published_drive_root": report.published_drive_root,
+                        "published_files_root": report.published_files_root,
                         "root_cid": report.root_cid,
                         "files_iris_to_url": files_iris_to_url,
                         "blossom_upload": report.blossom_upload.map(|r| json!({
@@ -1280,6 +1323,25 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
     .await
     .context("publishing drive root")?;
 
+    let mut published_files_root = false;
+    if state.has_owner_signing_authority {
+        let account = Account::load(state.clone(), config_dir).context("loading account")?;
+        let owner_keys = account
+            .owner_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+            .keys();
+        relay_sync::publish_files_root(
+            client,
+            owner_keys,
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            &new_root,
+        )
+        .await
+        .context("publishing files.iris.to root")?;
+        published_files_root = true;
+    }
+
     // Upload blocks to Blossom (best-effort; logged on failure).
     let mut upload_report: Option<UploadReport> = None;
     if !config.blossom_servers.is_empty() {
@@ -1300,7 +1362,8 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
         json!({
             "event": "auto_published",
             "root_cid": report.root_cid,
-            "files_iris_to_url": files_iris_to_url_for_root(&report.root_cid),
+            "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
+            "published_files_root": published_files_root,
             "top_level_entries": report.top_level_entries,
             "blossom_upload": upload_report.map(|r| json!({
                 "total_hashes": r.total_hashes,

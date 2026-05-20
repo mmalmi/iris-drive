@@ -23,8 +23,8 @@ use crate::app_keys::ApplyDecision;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
     D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, build_app_keys_event, build_drive_root_event,
-    drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
-    parse_drive_root_event_for_device, parse_drive_root_event_header,
+    build_private_hashtree_root_event, drive_root_d_tag, parse_app_keys_event,
+    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_header,
 };
 
 #[derive(Debug, Error)]
@@ -174,6 +174,21 @@ pub async fn publish_drive_root(
         root,
         authorized_device_pubkeys,
     )?;
+    let output = client
+        .send_event(event)
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(*output.id())
+}
+
+/// Publish the owner-private files.iris.to-compatible mutable tree root.
+pub async fn publish_files_root(
+    client: &Client,
+    owner_keys: &Keys,
+    tree_name: &str,
+    root: &DeviceRootRef,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let event = build_private_hashtree_root_event(owner_keys, tree_name, root)?;
     let output = client
         .send_event(event)
         .await

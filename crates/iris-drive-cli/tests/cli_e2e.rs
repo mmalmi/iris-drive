@@ -487,11 +487,10 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     );
     assert_eq!(v["hashtree"]["current_root_cid"], root_cid);
     assert_eq!(v["hashtree"]["current_root_private"], true);
-    assert!(
-        v["hashtree"]["files_iris_to_url"]
-            .as_str()
-            .unwrap()
-            .starts_with("https://files.iris.to/#/nhash1")
+    let owner_npub = v["account"]["owner_npub"].as_str().unwrap();
+    assert_eq!(
+        v["hashtree"]["files_iris_to_url"],
+        format!("https://files.iris.to/#/{owner_npub}/main")
     );
     assert_eq!(v["hashtree"]["top_level_entries"], 1);
     assert!(v["hashtree"]["local_block_count"].as_u64().unwrap() > 0);

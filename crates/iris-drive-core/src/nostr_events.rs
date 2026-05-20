@@ -19,7 +19,9 @@
 
 use hashtree_core::{Cid, from_hex, to_hex};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
+use nostr_sdk::{
+    Alphabet, Event, EventBuilder, Keys, Kind, PublicKey, SingleLetterTag, Tag, TagKind,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -32,7 +34,13 @@ pub const KIND_APP_KEYS: u16 = 30078;
 /// NIP-78 parameterized-replaceable kind for device-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30079;
 
+/// Standard hashtree mutable-root kind used by files.iris.to.
+pub const KIND_HASHTREE_ROOT: u16 = 30078;
+
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
+pub const HASHTREE_LABEL: &str = "hashtree";
+pub const TAG_HASH: &str = "hash";
+pub const TAG_SELF_ENCRYPTED_KEY: &str = "selfEncryptedKey";
 
 #[derive(Debug, Error)]
 pub enum WireError {
@@ -216,6 +224,61 @@ pub fn build_drive_root_event(
     Ok(event)
 }
 
+/// Build a standard private hashtree mutable-root event for files.iris.to.
+///
+/// Iris Drive keeps its richer multi-device drive-root event, but the files
+/// app already understands kind 30078 tree roots with `#l=hashtree`, `hash`,
+/// and `selfEncryptedKey` tags. This event points `npub/tree_name` at the
+/// current root without publishing the root key in cleartext.
+pub fn build_private_hashtree_root_event(
+    owner_keys: &Keys,
+    tree_name: &str,
+    root: &DeviceRootRef,
+) -> Result<Event, WireError> {
+    let root_cid =
+        Cid::parse(&root.root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    let Some(root_key) = root_cid.key else {
+        return Err(WireError::InvalidRootCid(
+            "hashtree root is unencrypted".into(),
+        ));
+    };
+    let root_key_hex = hex::encode(root_key);
+    let self_encrypted_key = nip44::encrypt(
+        owner_keys.secret_key(),
+        &owner_keys.public_key(),
+        root_key_hex,
+        Nip44Version::V2,
+    )
+    .map_err(|e| WireError::Event(format!("self-encrypted root key: {e}")))?;
+
+    let ts = if root.published_at > 0 {
+        u64::try_from(root.published_at).unwrap_or(0)
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    };
+    let tags = vec![
+        Tag::identifier(tree_name.to_string()),
+        Tag::custom(
+            TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::L)),
+            vec![HASHTREE_LABEL],
+        ),
+        Tag::custom(
+            TagKind::Custom(TAG_HASH.into()),
+            vec![to_hex(&root_cid.hash)],
+        ),
+        Tag::custom(
+            TagKind::Custom(TAG_SELF_ENCRYPTED_KEY.into()),
+            vec![self_encrypted_key],
+        ),
+    ];
+    EventBuilder::new(Kind::from(KIND_HASHTREE_ROOT), "", tags)
+        .custom_created_at(nostr_sdk::Timestamp::from(ts))
+        .to_event(owner_keys)
+        .map_err(|e| WireError::Event(e.to_string()))
+}
+
 /// Parse + verify a drive-root event. Returns
 /// `(device_pubkey_hex, owner_pubkey_hex, drive_id, DeviceRootRef)`.
 /// The device pubkey is the event's author; the owner pubkey and
@@ -341,6 +404,7 @@ fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr_sdk::JsonUtil;
     use std::collections::BTreeMap;
 
     fn fake_snapshot(owner_pubkey: &str) -> AppKeysSnapshot {
@@ -355,6 +419,17 @@ mod tests {
             dck_generation: 5,
             wrapped_dck: BTreeMap::from([("ab".repeat(32), "base64ciphertext".into())]),
         }
+    }
+
+    fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
+        event.tags.iter().find_map(|tag| {
+            let fields = tag.as_slice();
+            if fields.first().is_some_and(|name| name == tag_name) {
+                fields.get(1).cloned()
+            } else {
+                None
+            }
+        })
     }
 
     #[test]
@@ -476,6 +551,33 @@ mod tests {
 
         let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
         assert_eq!(parsed_root.root_cid, root.root_cid);
+    }
+
+    #[test]
+    fn private_hashtree_root_event_is_files_app_compatible() {
+        let owner = Keys::generate();
+        let root_key = [0x44; 32];
+        let root_hash = [0x33; 32];
+        let root = DeviceRootRef {
+            root_cid: Cid::encrypted(root_hash, root_key).to_string(),
+            published_at: 1_700_000_000,
+            dck_generation: 1,
+        };
+
+        let event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
+        assert_eq!(event.kind.as_u16(), 30078);
+        assert_eq!(event.pubkey, owner.public_key());
+        assert_eq!(event.identifier(), Some("main"));
+        assert_eq!(event.content, "");
+        assert_eq!(tag_value(&event, "l").as_deref(), Some("hashtree"));
+        assert_eq!(tag_value(&event, "hash"), Some(hex::encode(root_hash)));
+        assert!(tag_value(&event, "key").is_none());
+        assert!(!event.as_json().contains(&hex::encode(root_key)));
+
+        let self_encrypted_key = tag_value(&event, "selfEncryptedKey").unwrap();
+        let plaintext =
+            nip44::decrypt(owner.secret_key(), &owner.public_key(), self_encrypted_key).unwrap();
+        assert_eq!(plaintext, hex::encode(root_key));
     }
 
     #[test]
