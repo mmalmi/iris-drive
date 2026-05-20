@@ -15,7 +15,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         case .drive:
             return "My Drive"
         case .peers:
-            return "Peers"
+            return "Devices"
         case .network:
             return "Network"
         case .hashtree:
@@ -59,8 +59,8 @@ struct IrisDriveControlPanel: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    header
                     actions
+                    header
                     selectedContent
                 }
                 .padding(24)
@@ -166,7 +166,7 @@ struct IrisDriveControlPanel: View {
 
     private var peers: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle("Peers")
+            SectionTitle("Devices")
             if status.peers.isEmpty {
                 Text("No authorized devices")
                     .foregroundStyle(.secondary)
