@@ -36,7 +36,8 @@ const LOCAL_PORTAL_HOST: &str = "sites.iris.localhost";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
 const HASH_HOST_SUFFIX: &str = ".hash.localhost";
 const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";
-const SHORT_DRIVE_HOST_SUFFIX: &str = ".iris.localhost";
+const IRIS_LOCALHOST_SUFFIX: &str = ".iris.localhost";
+const IRIS_LOCAL_SUFFIX: &str = ".iris.local";
 const KEY_COOKIE: &str = "iris_htree_key";
 
 #[derive(Debug, Error)]
@@ -284,7 +285,13 @@ fn resolve_gateway_request(
         return drive_host_request(state, drive_id, path_segments);
     }
 
-    if let Some(drive_id) = host.strip_suffix(SHORT_DRIVE_HOST_SUFFIX)
+    if let Some(nhash) = nhash_from_split_host(&host, IRIS_LOCALHOST_SUFFIX)
+        .or_else(|| nhash_from_split_host(&host, IRIS_LOCAL_SUFFIX))
+    {
+        return nhash_request(&nhash, uri, headers, path_segments);
+    }
+
+    if let Some(drive_id) = host.strip_suffix(IRIS_LOCALHOST_SUFFIX)
         && drive_id == PRIMARY_DRIVE_ID
     {
         return drive_host_request(state, drive_id, path_segments);
@@ -315,17 +322,24 @@ fn request_from_path_route(
 ) -> Result<GatewayRequest, GatewayError> {
     match route {
         PathRoute::Drive(drive_id) => drive_host_request(state, &drive_id, path_segments),
-        PathRoute::Nhash(nhash) => {
-            let cid = cid_from_nhash(&nhash)?;
-            let (cid, set_key_cookie) = cid_with_request_key(cid, uri, headers)?;
-            Ok(GatewayRequest {
-                root: cid,
-                path_segments,
-                cache_policy: CachePolicy::Immutable,
-                set_key_cookie,
-            })
-        }
+        PathRoute::Nhash(nhash) => nhash_request(&nhash, uri, headers, path_segments),
     }
+}
+
+fn nhash_request(
+    nhash: &str,
+    uri: &Uri,
+    headers: &HeaderMap,
+    path_segments: Vec<String>,
+) -> Result<GatewayRequest, GatewayError> {
+    let cid = cid_from_nhash(nhash)?;
+    let (cid, set_key_cookie) = cid_with_request_key(cid, uri, headers)?;
+    Ok(GatewayRequest {
+        root: cid,
+        path_segments,
+        cache_policy: CachePolicy::Immutable,
+        set_key_cookie,
+    })
 }
 
 fn immutable_host_request(
@@ -922,6 +936,37 @@ fn is_safe_drive_id(value: &str) -> bool {
             .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
 }
 
+fn nhash_from_split_host(host: &str, suffix: &str) -> Option<String> {
+    let labels = host.strip_suffix(suffix)?;
+    if labels.is_empty() {
+        return None;
+    }
+    let mut nhash = String::new();
+    for label in labels.split('.') {
+        if label.is_empty()
+            || label.len() > 63
+            || !label
+                .bytes()
+                .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9'))
+        {
+            return None;
+        }
+        nhash.push_str(label);
+    }
+    nhash.starts_with("nhash1").then_some(nhash)
+}
+
+fn split_dns_labels(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + value.len() / 63);
+    for (index, chunk) in value.as_bytes().chunks(63).enumerate() {
+        if index > 0 {
+            out.push('.');
+        }
+        out.push_str(std::str::from_utf8(chunk).expect("ascii"));
+    }
+    out
+}
+
 fn percent_encode_path_segment(segment: &str) -> String {
     let mut encoded = String::new();
     for byte in segment.bytes() {
@@ -1018,6 +1063,16 @@ pub fn local_immutable_url(port: u16, cid: &Cid) -> String {
         Some(_) => format!("http://{label}.sites.iris.localhost:{port}/{key}"),
         None => format!("http://{label}.sites.iris.localhost:{port}/"),
     }
+}
+
+#[must_use]
+pub fn local_nhash_url(port: u16, nhash: &str, filename_hint: Option<&str>) -> String {
+    let host = split_dns_labels(&nhash.to_ascii_lowercase());
+    let path = filename_hint.filter(|hint| !hint.is_empty()).map_or_else(
+        || "/".to_string(),
+        |hint| format!("/{}", percent_encode_path_segment(hint)),
+    );
+    format!("http://{host}.iris.localhost:{port}{path}")
 }
 
 #[cfg(test)]
@@ -1136,6 +1191,58 @@ mod tests {
         assert!(response.contains("content-type: image/webp"), "{response}");
         assert!(response.contains("webp-bytes"), "{response}");
         server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_accepts_split_nhash_hostname() {
+        let cfg_dir = tempdir().unwrap();
+        init_account_config(cfg_dir.path());
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("stored-name.bin"), b"webp-bytes").unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let root = Cid::parse(&report.root_cid).unwrap();
+        let entries = daemon.tree_handle().list_directory(&root).await.unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.name == "stored-name.bin")
+            .unwrap();
+        let nhash = nhash_encode_full(&NHashData {
+            hash: entry.hash,
+            decrypt_key: entry.key,
+        })
+        .unwrap();
+        let host = format!("{}.iris.localhost", split_dns_labels(&nhash));
+
+        let server = GatewayServer::bind_with_tree(
+            cfg_dir.path(),
+            daemon.tree_handle(),
+            GatewayBind::loopback_v4(0),
+        )
+        .await
+        .unwrap();
+        let response = http_get(server.local_addr(), &host, "/Aragorn.webp").await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("content-type: image/webp"), "{response}");
+        assert!(response.contains("webp-bytes"), "{response}");
+        server.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn local_nhash_url_splits_long_host_labels() {
+        let nhash = "nhash1qqsvmfqp5hk00w9nerl4x5009ce5z7gj480g0z4zhq2pkvxl0vezprs9yr0u7t0w95k937aldt699ax2u29lpev8y50ewpsllp5e5kv5ta6vk26rfge";
+        let url = local_nhash_url(17_321, nhash, Some("Aragorn.webp"));
+        assert_eq!(
+            url,
+            "http://nhash1qqsvmfqp5hk00w9nerl4x5009ce5z7gj480g0z4zhq2pkvxl0vezprs9y.r0u7t0w95k937aldt699ax2u29lpev8y50ewpsllp5e5kv5ta6vk26rfge.iris.localhost:17321/Aragorn.webp"
+        );
+        let host = url
+            .strip_prefix("http://")
+            .and_then(|rest| rest.split_once(':'))
+            .map(|(host, _)| host)
+            .unwrap();
+        assert!(host.split('.').all(|label| label.len() <= 63));
     }
 
     #[tokio::test]
