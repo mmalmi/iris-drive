@@ -88,8 +88,7 @@ where
             (Some(_), Some(_)) => {
                 // Both present, hashes differ — conflict.
                 let original_path = parse_conflict_filename(path)
-                    .map(|parsed| parsed.original_path)
-                    .unwrap_or_else(|| path.clone());
+                    .map_or_else(|| path.clone(), |parsed| parsed.original_path);
                 let conflict_path =
                     next_conflict_filename(&original_path, "peer", &occupied_paths)?;
                 copy_file(remote, path, local, &conflict_path).await?;

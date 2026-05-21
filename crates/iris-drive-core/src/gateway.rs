@@ -392,17 +392,24 @@ async fn resolve_content(
     root: &Cid,
     segments: &[String],
 ) -> Result<Option<ResolvedContent>, GatewayError> {
+    for segment in segments {
+        if segment == ".hashtree" {
+            return Err(GatewayError::InvalidRequest(
+                "internal metadata is not served".into(),
+            ));
+        }
+    }
+
+    if let Some(file) = resolve_root_file(tree, root, segments).await? {
+        return Ok(Some(file));
+    }
+
     let mut current = root.clone();
     if segments.is_empty() {
         return resolve_directory_or_index(tree, current, "").await;
     }
 
     for (index, segment) in segments.iter().enumerate() {
-        if segment == ".hashtree" {
-            return Err(GatewayError::InvalidRequest(
-                "internal metadata is not served".into(),
-            ));
-        }
         let Some(entry) = find_entry(tree, &current, segment).await? else {
             return Ok(None);
         };
@@ -425,6 +432,64 @@ async fn resolve_content(
     }
 
     Ok(None)
+}
+
+async fn resolve_root_file(
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
+    segments: &[String],
+) -> Result<Option<ResolvedContent>, GatewayError> {
+    let is_dir = tree
+        .is_dir(root)
+        .await
+        .map_err(|e| GatewayError::Hashtree(e.to_string()))?;
+    if is_dir {
+        return Ok(None);
+    }
+
+    let Some(size) = file_size_for_cid(tree, root).await? else {
+        return Ok(None);
+    };
+    let path = file_hint_path(segments);
+    let mime_type = mime_type_for_path(&path, None);
+    Ok(Some(ResolvedContent::File {
+        cid: root.clone(),
+        size,
+        path,
+        mime_type,
+    }))
+}
+
+async fn file_size_for_cid(
+    tree: &HashTree<FsBlobStore>,
+    cid: &Cid,
+) -> Result<Option<u64>, GatewayError> {
+    if let Some(node) = tree
+        .get_node(cid)
+        .await
+        .map_err(|e| GatewayError::Hashtree(e.to_string()))?
+    {
+        return match node.node_type {
+            LinkType::File => Ok(Some(node.links.iter().map(|link| link.size).sum())),
+            LinkType::Dir | LinkType::Blob => Ok(None),
+        };
+    }
+
+    let Some(bytes) = tree
+        .read_file_range_cid(cid, 0, None)
+        .await
+        .map_err(|e| GatewayError::Hashtree(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(u64::try_from(bytes.len()).unwrap_or(u64::MAX)))
+}
+
+fn file_hint_path(segments: &[String]) -> String {
+    segments
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "download".to_string())
 }
 
 async fn resolve_directory_or_index(
@@ -1034,6 +1099,42 @@ mod tests {
             "{response}"
         );
         assert!(response.contains("console.log('iris')"), "{response}");
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_treats_nhash_file_path_as_filename_hint() {
+        let cfg_dir = tempdir().unwrap();
+        init_account_config(cfg_dir.path());
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("stored-name.bin"), b"webp-bytes").unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let root = Cid::parse(&report.root_cid).unwrap();
+        let entries = daemon.tree_handle().list_directory(&root).await.unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.name == "stored-name.bin")
+            .unwrap();
+        let nhash = nhash_encode_full(&NHashData {
+            hash: entry.hash,
+            decrypt_key: entry.key,
+        })
+        .unwrap();
+        let path = format!("/nhash/{nhash}/Aragorn.webp");
+
+        let server = GatewayServer::bind_with_tree(
+            cfg_dir.path(),
+            daemon.tree_handle(),
+            GatewayBind::loopback_v4(0),
+        )
+        .await
+        .unwrap();
+        let response = http_get(server.local_addr(), "localhost", &path).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("content-type: image/webp"), "{response}");
+        assert!(response.contains("webp-bytes"), "{response}");
         server.shutdown().await.unwrap();
     }
 
