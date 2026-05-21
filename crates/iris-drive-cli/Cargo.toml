@@ -21,11 +21,13 @@ tracing-subscriber.workspace = true
 
 iris-drive-core.workspace = true
 hashtree-core.workspace = true
+hashtree-embedded.workspace = true
 hashtree-fs.workspace = true
 nostr-sdk.workspace = true
 notify.workspace = true
 notify-debouncer-mini.workspace = true
 futures.workspace = true
+rustls.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

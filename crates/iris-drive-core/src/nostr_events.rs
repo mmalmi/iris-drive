@@ -104,6 +104,7 @@ struct DriveRootWireContent {
     observed: std::collections::BTreeMap<String, RootObservation>,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &u64) -> bool {
     *value == 0
 }

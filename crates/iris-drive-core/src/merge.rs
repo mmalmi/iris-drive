@@ -474,32 +474,35 @@ fn root_relation(
 }
 
 fn root_observes(
-    observer_device: &str,
-    observer: &DeviceRootRef,
-    observed_device: &str,
-    observed: &DeviceRootRef,
+    newer_device_id: &str,
+    newer_root: &DeviceRootRef,
+    candidate_device_id: &str,
+    candidate_root: &DeviceRootRef,
 ) -> bool {
-    if observer.root_cid == observed.root_cid {
+    if newer_root.root_cid == candidate_root.root_cid {
         return true;
     }
-    if observer_device == observed_device
-        && observer.device_seq > 0
-        && observed.device_seq > 0
-        && observer.device_seq > observed.device_seq
+    if newer_device_id == candidate_device_id
+        && newer_root.device_seq > 0
+        && candidate_root.device_seq > 0
+        && newer_root.device_seq > candidate_root.device_seq
     {
         return true;
     }
-    if observer.parents.iter().any(|parent| {
-        parent.device_id == observed_device
-            && (parent.root_cid == observed.root_cid
-                || (observed.device_seq > 0 && parent.device_seq > observed.device_seq))
+    if newer_root.parents.iter().any(|parent| {
+        parent.device_id == candidate_device_id
+            && (parent.root_cid == candidate_root.root_cid
+                || (candidate_root.device_seq > 0 && parent.device_seq > candidate_root.device_seq))
     }) {
         return true;
     }
-    observer.observed.get(observed_device).is_some_and(|o| {
-        o.root_cid == observed.root_cid
-            || (observed.device_seq > 0 && o.device_seq > observed.device_seq)
-    })
+    newer_root
+        .observed
+        .get(candidate_device_id)
+        .is_some_and(|o| {
+            o.root_cid == candidate_root.root_cid
+                || (candidate_root.device_seq > 0 && o.device_seq > candidate_root.device_seq)
+        })
 }
 
 fn roots_are_causal(root: &DeviceRootRef) -> bool {
@@ -619,7 +622,7 @@ fn walk_dir_recursive<'a, S: Store>(
                     path,
                     hash: entry.hash,
                     size: entry.size,
-                    whole_file_hash: whole_file_hash_from_meta(&entry.meta),
+                    whole_file_hash: whole_file_hash_from_meta(entry.meta.as_ref()),
                 });
             }
         }
@@ -628,10 +631,9 @@ fn walk_dir_recursive<'a, S: Store>(
 }
 
 fn whole_file_hash_from_meta(
-    meta: &Option<std::collections::HashMap<String, serde_json::Value>>,
+    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
 ) -> Option<[u8; 32]> {
-    meta.as_ref()
-        .and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
+    meta.and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
         .and_then(serde_json::Value::as_str)
         .and_then(|s| from_hex(s).ok())
 }

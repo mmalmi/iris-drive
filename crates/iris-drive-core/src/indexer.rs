@@ -20,6 +20,8 @@ use crate::merge::{
 };
 use crate::root_meta::DriveRootMeta;
 
+const IGNORED_NAMES: &[&str] = &[".DS_Store", ".hashtree", "Thumbs.db", "desktop.ini"];
+
 #[derive(Debug, Error)]
 pub enum IndexError {
     #[error("io: {0}")]
@@ -34,6 +36,16 @@ pub enum IndexError {
     RootMeta(String),
     #[error("conflict record: {0}")]
     ConflictRecord(String),
+}
+
+fn should_ignore_name(name: &str) -> bool {
+    IGNORED_NAMES.contains(&name)
+        || name.starts_with("._")
+        || name.ends_with('~')
+        || (name.starts_with('#') && name.ends_with('#'))
+        || Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("sbak"))
 }
 
 /// Index a directory recursively, returning the root htree CID.
@@ -360,6 +372,9 @@ fn collect_local_file_paths(
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, path) in entries {
+        if should_ignore_name(&name) {
+            continue;
+        }
         let metadata = std::fs::symlink_metadata(&path)?;
         if metadata.file_type().is_symlink() {
             continue;
@@ -481,6 +496,9 @@ fn index_dir_inner<'a, S: Store>(
         children.sort_by(|a, b| a.0.cmp(&b.0));
 
         for (name, path) in children {
+            if should_ignore_name(&name) {
+                continue;
+            }
             let metadata = match std::fs::symlink_metadata(&path) {
                 Ok(m) => m,
                 Err(e) => return Err(IndexError::Io(e)),
@@ -614,6 +632,49 @@ mod tests {
         // isn't created so we also expect just one entry. Either way:
         assert_eq!(listing.len(), 1);
         assert_eq!(listing[0].name, "real.txt");
+    }
+
+    #[tokio::test]
+    async fn built_in_noise_files_are_ignored() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("real.txt"), b"real").unwrap();
+        std::fs::write(dir.path().join(".DS_Store"), b"finder state").unwrap();
+        std::fs::write(dir.path().join("._real.txt"), b"resource fork").unwrap();
+        std::fs::write(dir.path().join("Thumbs.db"), b"windows state").unwrap();
+        std::fs::write(dir.path().join("desktop.ini"), b"windows metadata").unwrap();
+        std::fs::write(dir.path().join("draft~"), b"editor backup").unwrap();
+        std::fs::write(dir.path().join("#draft#"), b"emacs temp").unwrap();
+        std::fs::write(dir.path().join("backup.sbak"), b"seafile backup").unwrap();
+        std::fs::create_dir(dir.path().join(".hashtree")).unwrap();
+        std::fs::write(dir.path().join(".hashtree").join("prev"), b"internal").unwrap();
+
+        let tree = new_tree();
+        let cid = index_dir(&tree, dir.path()).await.unwrap();
+        let listing = tree.list_directory(&cid).await.unwrap();
+
+        assert_eq!(listing.len(), 1);
+        assert_eq!(listing[0].name, "real.txt");
+    }
+
+    #[tokio::test]
+    async fn ignored_files_do_not_keep_removed_files_alive() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("removed.txt"), b"bye").unwrap();
+        std::fs::write(dir.path().join(".DS_Store"), b"finder state").unwrap();
+        let tree = new_tree();
+        let first = index_dir(&tree, dir.path()).await.unwrap();
+
+        std::fs::remove_file(dir.path().join("removed.txt")).unwrap();
+        let second = index_dir_with_history(&tree, dir.path(), Some(&first), 1234)
+            .await
+            .unwrap();
+
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+            .await
+            .unwrap();
+        assert!(files.is_empty());
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].path, "removed.txt");
     }
 
     #[tokio::test]

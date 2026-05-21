@@ -25,8 +25,9 @@ pub enum ConfigError {
 }
 
 /// Default Nostr relays for new installs. Users override via config or
-/// `--relay` flags. Public, write-friendly, no auth — fine for v1.
-pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
+/// `--relay` flags. Kept in sync with hashtree's shared defaults.
+pub const DEFAULT_RELAYS: &[&str] = hashtree_config::DEFAULT_RELAYS;
+const LEGACY_IRIS_DRIVE_DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 
 /// Default Blossom servers for new installs — HTTP blob hosts used to
 /// transfer the actual htree blocks between devices. Without at least
@@ -113,12 +114,16 @@ impl AppConfig {
             return Ok(Self::default());
         }
         let raw = fs::read_to_string(path)?;
-        let parsed: Self = toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let mut parsed: Self =
+            toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
         if parsed.schema_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::SchemaMismatch {
                 found: parsed.schema_version,
                 expected: CONFIG_SCHEMA_VERSION,
             });
+        }
+        if parsed.relays == LEGACY_IRIS_DRIVE_DEFAULT_RELAYS {
+            parsed.relays = default_relays();
         }
         Ok(parsed)
     }
@@ -210,6 +215,7 @@ pub struct DeviceRootRef {
     pub observed: BTreeMap<String, RootObservation>,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &u64) -> bool {
     *value == 0
 }
@@ -271,6 +277,24 @@ mod tests {
     fn default_blossom_server_is_upload_iris_to() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
+    }
+
+    #[test]
+    fn default_relays_match_hashtree_defaults() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.relays, hashtree_config::DEFAULT_RELAYS);
+    }
+
+    #[test]
+    fn legacy_iris_drive_default_relays_load_as_current_defaults() {
+        let raw = format!(
+            "schema_version = {CONFIG_SCHEMA_VERSION}\nrelays = [\"wss://relay.damus.io\", \"wss://nos.lol\"]\n"
+        );
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, raw).unwrap();
+        let cfg = AppConfig::load_or_default(&path).unwrap();
+        assert_eq!(cfg.relays, hashtree_config::DEFAULT_RELAYS);
     }
 
     #[test]

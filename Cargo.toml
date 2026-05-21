@@ -18,14 +18,18 @@ repository = "htree://self/iris-drive"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+axum = "0.7"
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 futures = "0.3"
 hex = "0.4"
+http = "1"
+mime_guess = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.9"
@@ -40,6 +44,8 @@ nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
 # crates.io once hashtree-provider publishes.
 hashtree-core = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-core" }
 hashtree-blossom = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-blossom", features = ["store"] }
+hashtree-config = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-config" }
+hashtree-embedded = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-embedded" }
 hashtree-fs = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-fs" }
 hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"

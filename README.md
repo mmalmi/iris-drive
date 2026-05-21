@@ -57,6 +57,18 @@ just run-cli whoami
 just run-cli list
 ```
 
+When `idrive daemon` is running it also starts a loopback browser gateway on
+port `17321` by default. Stock browsers treat `*.localhost` as a trustworthy
+local origin, so the current primary drive can be opened at:
+
+```text
+http://main.drive.iris.localhost:17321/
+```
+
+Immutable hashtree roots are served from per-root hosts under
+`*.sites.iris.localhost`; `idrive status` and `idrive import` print those local
+gateway URLs when a root is available.
+
 ## Layout
 
 ```

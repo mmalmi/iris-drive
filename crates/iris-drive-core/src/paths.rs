@@ -10,6 +10,21 @@ pub fn default_config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("iris-drive"))
 }
 
+/// Resolve the default user-visible working directory for the primary drive.
+///
+/// Most native shells keep config and synced files under one app-owned base:
+/// `<base>/Config` and `<base>/Drive`. Plain CLI installs use
+/// `<config_dir>/Drive`.
+#[must_use]
+pub fn default_working_dir_in(config_dir: &std::path::Path) -> PathBuf {
+    if config_dir.file_name().and_then(|s| s.to_str()) == Some("Config")
+        && let Some(parent) = config_dir.parent()
+    {
+        return parent.join("Drive");
+    }
+    config_dir.join("Drive")
+}
+
 #[must_use]
 pub fn key_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("key")
@@ -42,5 +57,21 @@ mod tests {
         assert_eq!(key_path_in(base), PathBuf::from("/tmp/x/key"));
         assert_eq!(config_path_in(base), PathBuf::from("/tmp/x/config.toml"));
         assert_eq!(owner_key_path_in(base), PathBuf::from("/tmp/x/owner_key"));
+    }
+
+    #[test]
+    fn default_working_dir_uses_config_sibling_for_native_layout() {
+        assert_eq!(
+            default_working_dir_in(std::path::Path::new("/tmp/IrisDrive/Config")),
+            PathBuf::from("/tmp/IrisDrive/Drive")
+        );
+    }
+
+    #[test]
+    fn default_working_dir_uses_child_for_plain_cli_layout() {
+        assert_eq!(
+            default_working_dir_in(std::path::Path::new("/tmp/iris-drive")),
+            PathBuf::from("/tmp/iris-drive/Drive")
+        );
     }
 }

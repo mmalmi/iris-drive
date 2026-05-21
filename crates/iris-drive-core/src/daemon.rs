@@ -11,8 +11,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use hashtree_core::{Cid, HashTree, HashTreeConfig};
 use hashtree_fs::FsBlobStore;
+use serde_json::json;
 use thiserror::Error;
 
 use crate::config::{AppConfig, ConfigError, DeviceRootRef};
@@ -21,6 +23,82 @@ use crate::paths::{config_path_in, key_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
+
+pub struct EmbeddedHashtreeHost {
+    runtime: hashtree_embedded::HostDaemonRuntime,
+    status: hashtree_embedded::HostDaemonStatus,
+}
+
+impl EmbeddedHashtreeHost {
+    pub fn start(config_dir: &Path, config: &AppConfig) -> Result<Self> {
+        let state_root = embedded_hashtree_state_root_in(config_dir);
+        let embedded_config_dir = state_root.join("config");
+        std::fs::create_dir_all(&embedded_config_dir)
+            .with_context(|| format!("creating {}", embedded_config_dir.display()))?;
+        let settings = json!({
+            "nostrRelays": config.relays.clone(),
+            "blossomReadServers": config.blossom_servers.clone(),
+            "blossomWriteServers": config.blossom_servers.clone(),
+            "enableWebrtc": false,
+            "enableMulticast": false,
+            "syncEnabled": false,
+            "syncOwn": true,
+            "syncFollowed": true,
+            "publicWrites": false,
+        });
+        let settings_path = embedded_config_dir.join("browser_settings.json");
+        std::fs::write(&settings_path, serde_json::to_vec_pretty(&settings)?)
+            .with_context(|| format!("writing {}", settings_path.display()))?;
+        let device_key_path = key_path_in(config_dir);
+        if device_key_path.exists() {
+            std::fs::copy(&device_key_path, embedded_config_dir.join("keys")).with_context(
+                || {
+                    format!(
+                        "copying Iris Drive device key from {}",
+                        device_key_path.display()
+                    )
+                },
+            )?;
+        }
+
+        let runtime = hashtree_embedded::HostDaemonRuntime::start(
+            hashtree_embedded::HostDaemonOptions::new(state_root),
+        )?;
+        let status = runtime.status();
+        Ok(Self { runtime, status })
+    }
+
+    #[must_use]
+    pub fn status(&self) -> &hashtree_embedded::HostDaemonStatus {
+        &self.status
+    }
+
+    #[must_use]
+    pub fn status_payload(&self) -> serde_json::Value {
+        json!({
+            "base_url": self.status.base_url.clone(),
+            "self_npub": self.status.self_npub.clone(),
+            "config_dir": self.status.config_dir.display().to_string(),
+            "data_dir": self.status.data_dir.display().to_string(),
+        })
+    }
+}
+
+impl Drop for EmbeddedHashtreeHost {
+    fn drop(&mut self) {
+        self.runtime.shutdown();
+    }
+}
+
+#[must_use]
+pub fn embedded_hashtree_state_root_in(config_dir: &Path) -> PathBuf {
+    if config_dir.file_name().and_then(|name| name.to_str()) == Some("Config")
+        && let Some(app_data_dir) = config_dir.parent()
+    {
+        return app_data_dir.join("Hashtree");
+    }
+    config_dir.join("Hashtree")
+}
 
 #[derive(Debug, Error)]
 pub enum DaemonError {
@@ -43,6 +121,7 @@ pub enum DaemonError {
 pub struct ImportReport {
     pub root_cid: String,
     pub working_dir: PathBuf,
+    pub file_count: usize,
     pub top_level_entries: usize,
 }
 
@@ -97,6 +176,11 @@ impl Daemon {
     #[must_use]
     pub fn tree(&self) -> &HashTree<FsBlobStore> {
         &self.tree
+    }
+
+    #[must_use]
+    pub fn tree_handle(&self) -> Arc<HashTree<FsBlobStore>> {
+        self.tree.clone()
     }
 
     /// CID currently recorded for the primary drive, if any.
@@ -185,12 +269,16 @@ impl Daemon {
             .iter()
             .filter(|e| e.name != crate::merge::META_DIR)
             .count();
+        let (files, _tombstones) = crate::merge::walk_device_tree(&self.tree, &root_cid)
+            .await
+            .map_err(|e| DaemonError::Store(e.to_string()))?;
 
         self.update_primary_drive(&root_cid, Some(working_dir), root_meta.as_ref(), now)?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
             working_dir: working_dir.to_path_buf(),
+            file_count: files.len(),
             top_level_entries,
         })
     }
@@ -668,5 +756,21 @@ mod tests {
         assert!(daemon.blocks_dir().ends_with("blocks"));
         // Directory exists on disk.
         assert!(daemon.blocks_dir().is_dir());
+    }
+
+    #[test]
+    fn embedded_hashtree_state_uses_app_data_sibling_for_native_layout() {
+        assert_eq!(
+            embedded_hashtree_state_root_in(Path::new("/tmp/IrisDrive/AppData/Config")),
+            PathBuf::from("/tmp/IrisDrive/AppData/Hashtree")
+        );
+    }
+
+    #[test]
+    fn embedded_hashtree_state_uses_config_child_for_plain_cli_layout() {
+        assert_eq!(
+            embedded_hashtree_state_root_in(Path::new("/tmp/iris-drive")),
+            PathBuf::from("/tmp/iris-drive/Hashtree")
+        );
     }
 }

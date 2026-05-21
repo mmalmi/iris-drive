@@ -4,7 +4,7 @@
 //! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
 
 use assert_cmd::Command;
-use hashtree_core::Cid;
+use hashtree_core::{Cid, nhash_decode};
 use predicates::str::contains;
 use tempfile::tempdir;
 
@@ -401,6 +401,10 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives.len(), 1);
     assert_eq!(drives[0]["drive_id"], "main");
     assert_eq!(drives[0]["role"], "owner");
+    assert_eq!(
+        drives[0]["working_dir"],
+        dir.path().join("Drive").display().to_string()
+    );
     assert_eq!(v["network"]["authorized_device_count"], 1);
     assert_eq!(v["network"]["published_device_roots"], 0);
     let peers = v["peers"].as_array().unwrap();
@@ -466,7 +470,13 @@ fn relays_can_be_edited_from_cli() {
         serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
     assert_eq!(
         reset,
-        serde_json::json!(["wss://relay.damus.io", "wss://nos.lol"])
+        serde_json::json!([
+            "wss://temp.iris.to",
+            "wss://relay.damus.io",
+            "wss://relay.snort.social",
+            "wss://relay.primal.net",
+            "wss://upload.iris.to/nostr"
+        ])
     );
 }
 
@@ -518,7 +528,9 @@ fn index_command_prints_root_cid_and_count() {
 #[test]
 fn import_persists_to_blocks_dir_and_advances_root() {
     let work = tempdir().unwrap();
-    std::fs::write(work.path().join("hello.txt"), b"hi there").unwrap();
+    std::fs::create_dir(work.path().join("junk")).unwrap();
+    std::fs::write(work.path().join("junk").join("hello.txt"), b"hi there").unwrap();
+    std::fs::write(work.path().join("junk").join("again.txt"), b"still here").unwrap();
 
     let cfg = tempdir().unwrap();
     idrive(cfg.path()).arg("init").assert().success();
@@ -552,6 +564,16 @@ fn import_persists_to_blocks_dir_and_advances_root() {
         v["hashtree"]["files_iris_to_url"],
         format!("https://files.iris.to/#/{owner_npub}/main")
     );
+    let snapshot_url = v["hashtree"]["snapshot_url"].as_str().unwrap();
+    assert_eq!(v["hashtree"]["permalink_url"], snapshot_url);
+    let nhash = snapshot_url
+        .strip_prefix("https://files.iris.to/#/")
+        .expect("snapshot link should use files.iris.to nhash route");
+    let decoded = nhash_decode(nhash).expect("decode snapshot link nhash");
+    let cid = Cid::parse(root_cid).expect("parse root cid");
+    assert_eq!(decoded.hash, cid.hash);
+    assert_eq!(decoded.decrypt_key, cid.key);
+    assert_eq!(v["hashtree"]["file_count"], 2);
     assert_eq!(v["hashtree"]["top_level_entries"], 1);
     assert!(v["hashtree"]["local_block_count"].as_u64().unwrap() > 0);
     assert!(v["hashtree"]["local_block_bytes"].as_u64().unwrap() > 0);

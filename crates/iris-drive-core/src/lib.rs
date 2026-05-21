@@ -16,6 +16,7 @@ pub fn blossom_sync_client(
 }
 pub mod conflict;
 pub mod daemon;
+pub mod gateway;
 pub mod history;
 pub mod identity;
 pub mod indexer;
@@ -34,6 +35,7 @@ pub use conflict::{
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,
 };
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
+pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use merge::{

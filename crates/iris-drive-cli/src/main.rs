@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
 use iris_drive_core::{
-    AccountState, Drive, DriveRole,
+    AccountState, Drive, DriveRole, PRIMARY_DRIVE_ID,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
-    daemon::Daemon,
+    daemon::{Daemon, EmbeddedHashtreeHost},
+    gateway::{GatewayBind, GatewayServer},
     index_dir,
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, key_path_in},
@@ -18,6 +19,8 @@ use iris_drive_core::{
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{PublicKey, RelayStatus};
 use serde_json::json;
+
+const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 
 #[derive(Debug, Parser)]
 #[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
@@ -174,6 +177,12 @@ enum Command {
         /// editors that save via rename-on-temp).
         #[arg(long, default_value_t = 500)]
         watch_debounce_ms: u64,
+        /// Start the loopback browser gateway on this port.
+        #[arg(long, default_value_t = DEFAULT_GATEWAY_PORT)]
+        gateway_port: u16,
+        /// Disable the loopback browser gateway.
+        #[arg(long)]
+        no_gateway: bool,
     },
 }
 
@@ -213,11 +222,13 @@ enum EventCmd {
 }
 
 fn main() -> ExitCode {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
@@ -254,7 +265,16 @@ fn main() -> ExitCode {
             relay,
             watch_interval,
             watch_debounce_ms,
-        } => cmd_daemon(&config_dir, &relay, watch_interval, watch_debounce_ms),
+            gateway_port,
+            no_gateway,
+        } => cmd_daemon(
+            &config_dir,
+            &relay,
+            watch_interval,
+            watch_debounce_ms,
+            gateway_port,
+            !no_gateway,
+        ),
     };
 
     match result {
@@ -302,8 +322,10 @@ fn cmd_link(config_dir: &std::path::Path, owner: &str, label: Option<String>) ->
 fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     config.account = Some(account.state.clone());
-    if config.drive("main").is_none() {
-        config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+    if config.drive(PRIMARY_DRIVE_ID).is_none() {
+        let mut drive = Drive::primary(&account.state.owner_pubkey);
+        drive.working_dir = Some(iris_drive_core::paths::default_working_dir_in(config_dir));
+        config.upsert_drive(drive);
     }
     config.save(config_path_in(config_dir))?;
     println!(
@@ -423,10 +445,19 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let files_iris_to_url = current_root_cid
         .as_ref()
         .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+    let snapshot_url = current_root_cid
+        .as_deref()
+        .and_then(files_iris_to_snapshot_url_for_root);
+    let browser_gateway_urls =
+        local_gateway_urls_for_root(current_root_cid.as_deref(), DEFAULT_GATEWAY_PORT);
     let top_level_entries = current_root_cid
         .as_deref()
         .and_then(|root| root_top_level_entries(config_dir, root));
+    let file_count = current_root_cid
+        .as_deref()
+        .and_then(|root| root_file_count(config_dir, root));
     let peers = peer_statuses(&config);
+    let default_working_dir = iris_drive_core::paths::default_working_dir_in(config_dir);
     let authorized_device_count = peers.len();
     let published_device_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
@@ -445,6 +476,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
+            "default_working_dir": default_working_dir.display().to_string(),
             "pubkey_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
             "account": account_block,
             "drives": config.drives.iter().map(|d| json!({
@@ -463,6 +495,10 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "current_root_cid": current_root_cid,
                 "current_root_private": current_root_private,
                 "files_iris_to_url": files_iris_to_url,
+                "snapshot_url": snapshot_url,
+                "permalink_url": snapshot_url,
+                "local_gateway": browser_gateway_urls,
+                "file_count": file_count,
                 "top_level_entries": top_level_entries,
             },
             "network": {
@@ -537,6 +573,30 @@ fn files_iris_to_url_for_drive(owner_pubkey_hex: &str, drive_id: &str) -> String
     )
 }
 
+fn files_iris_to_snapshot_url_for_root(root_cid: &str) -> Option<String> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let nhash = nhash_encode_full(&NHashData {
+        hash: cid.hash,
+        decrypt_key: cid.key,
+    })
+    .ok()?;
+    Some(format!("https://files.iris.to/#/{nhash}"))
+}
+
+fn local_gateway_urls_for_root(root_cid: Option<&str>, port: u16) -> serde_json::Value {
+    let immutable_url = root_cid
+        .and_then(|root| Cid::parse(root).ok())
+        .map(|cid| iris_drive_core::gateway::local_immutable_url(port, &cid));
+    json!({
+        "portal_url": format!("http://sites.iris.localhost:{port}/"),
+        "primary_drive_url": iris_drive_core::gateway::local_drive_url(
+            port,
+            iris_drive_core::PRIMARY_DRIVE_ID,
+        ),
+        "immutable_url": immutable_url,
+    })
+}
+
 fn percent_encode_path_segment(segment: &str) -> String {
     let mut encoded = String::new();
     for byte in segment.bytes() {
@@ -573,6 +633,18 @@ fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Option<usize> {
                     .count()
             })
     })
+}
+
+fn root_file_count(config_dir: &Path, root_cid: &str) -> Option<usize> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let daemon = Daemon::open(config_dir).ok()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime
+        .block_on(async { walk_device_tree(daemon.tree(), &cid).await.ok() })
+        .map(|(files, _tombstones)| files.len())
 }
 
 fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
@@ -661,6 +733,13 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
                 "working_dir": report.working_dir.display().to_string(),
                 "root_cid": report.root_cid,
                 "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
+                "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                "local_gateway": local_gateway_urls_for_root(
+                    Some(&report.root_cid),
+                    DEFAULT_GATEWAY_PORT,
+                ),
+                "file_count": report.file_count,
                 "top_level_entries": report.top_level_entries,
                 "blocks_dir": daemon.blocks_dir().display().to_string(),
             })
@@ -779,7 +858,7 @@ fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -> Result<()
             let mut changed = false;
             for relay in &mut config.relays {
                 if relay == &old_url {
-                    *relay = new_url.clone();
+                    relay.clone_from(&new_url);
                     changed = true;
                 }
             }
@@ -809,7 +888,7 @@ fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -> Result<()
 }
 
 fn normalize_relay_url(value: &str) -> String {
-    let trimmed = value.trim();
+    let trimmed = value.trim().trim_end_matches('/');
     if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
         trimmed.to_string()
     } else {
@@ -873,15 +952,25 @@ fn cmd_publish(
             .root_cid
             .as_ref()
             .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+        let snapshot_url = report
+            .root_cid
+            .as_deref()
+            .and_then(files_iris_to_snapshot_url_for_root);
         println!(
             "{}",
             json!({
                 "relays": relays,
                 "blossom_servers": config.blossom_servers,
                 "published_app_keys": report.published_app_keys,
+                "app_keys_publish_error": report.app_keys_publish_error,
                 "published_drive_root": report.published_drive_root,
+                "drive_root_publish_error": report.drive_root_publish_error,
                 "published_files_root": report.published_files_root,
+                "files_root_publish_error": report.files_root_publish_error,
+                "root_cid": report.root_cid,
                 "files_iris_to_url": files_iris_to_url,
+                "snapshot_url": snapshot_url,
+                "permalink_url": snapshot_url,
                 "blossom_upload": report.blossom_upload.map(|r| json!({
                     "total_hashes": r.total_hashes,
                     "uploaded": r.uploaded,
@@ -896,10 +985,32 @@ fn cmd_publish(
 #[derive(Debug, Default)]
 struct PublishStateReport {
     published_app_keys: bool,
+    app_keys_publish_error: Option<String>,
     published_drive_root: bool,
+    drive_root_publish_error: Option<String>,
     published_files_root: bool,
+    files_root_publish_error: Option<String>,
     root_cid: Option<String>,
     blossom_upload: Option<UploadReport>,
+}
+
+async fn upload_tree_to_blossom_with_hashtree(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    device: &iris_drive_core::DeviceIdentity,
+    root_cid: Cid,
+    _previous_root_cid: Option<Cid>,
+) -> Result<UploadReport> {
+    if config.blossom_servers.is_empty() {
+        return Err(anyhow::anyhow!("no blossom servers configured"));
+    }
+
+    let bclient =
+        iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
+    let daemon = Daemon::open(config_dir).context("opening daemon for blossom upload")?;
+    iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &root_cid, &bclient)
+        .await
+        .context("uploading tree to blossom")
 }
 
 async fn publish_current_state(
@@ -920,10 +1031,10 @@ async fn publish_current_state(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
             .keys();
-        relay_sync::publish_app_keys(client, owner_keys, snap)
-            .await
-            .context("publishing AppKeys")?;
-        report.published_app_keys = true;
+        match relay_sync::publish_app_keys(client, owner_keys, snap).await {
+            Ok(_) => report.published_app_keys = true,
+            Err(error) => report.app_keys_publish_error = Some(error.to_string()),
+        }
     }
 
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
@@ -931,7 +1042,18 @@ async fn publish_current_state(
     {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
-        relay_sync::publish_drive_root(
+        report.root_cid = Some(root.root_cid.clone());
+        if !config.blossom_servers.is_empty() {
+            let cid = Cid::parse(&root.root_cid)
+                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+            report.blossom_upload = Some(
+                upload_tree_to_blossom_with_hashtree(config_dir, config, &device, cid, None)
+                    .await
+                    .context("uploading tree to blossom")?,
+            );
+        }
+
+        match relay_sync::publish_drive_root(
             client,
             device.keys(),
             &state.owner_pubkey,
@@ -940,9 +1062,10 @@ async fn publish_current_state(
             &authorized_device_pubkeys(state),
         )
         .await
-        .context("publishing drive root")?;
-        report.published_drive_root = true;
-        report.root_cid = Some(root.root_cid.clone());
+        {
+            Ok(_) => report.published_drive_root = true,
+            Err(error) => report.drive_root_publish_error = Some(error.to_string()),
+        }
 
         if state.has_owner_signing_authority {
             let account = Account::load(state.clone(), config_dir).context("loading account")?;
@@ -951,25 +1074,12 @@ async fn publish_current_state(
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
                 .keys();
-            relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, root)
-                .await
-                .context("publishing files.iris.to root")?;
-            report.published_files_root = true;
-        }
-
-        if !config.blossom_servers.is_empty() {
-            let bclient = iris_drive_core::blossom_sync_client(
-                device.keys().clone(),
-                &config.blossom_servers,
-            );
-            let daemon = Daemon::open(config_dir).context("opening daemon")?;
-            let cid = Cid::parse(&root.root_cid)
-                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
-            report.blossom_upload = Some(
-                iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &cid, &bclient)
-                    .await
-                    .context("uploading tree to blossom")?,
-            );
+            match relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, root).await {
+                Ok(_) => report.published_files_root = true,
+                Err(error) => {
+                    report.files_root_publish_error = Some(error.to_string());
+                }
+            }
         }
     }
 
@@ -1116,58 +1226,90 @@ fn cmd_daemon(
     relay_override: &[String],
     watch_interval: u64,
     watch_debounce_ms: u64,
+    gateway_port: u16,
+    enable_gateway: bool,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
     use tokio::sync::broadcast::error::RecvError;
     use tokio::sync::mpsc;
 
+    let _daemon_lock = DaemonProcessLock::acquire(config_dir)?;
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("building tokio runtime")?;
+
+    // Zero-config bootstrap: if the tray app (or a future installer)
+    // staged an account + working_dir but never ran an initial import,
+    // do that now before we start the embedded hashtree host.
     runtime.block_on(async {
-        // Zero-config bootstrap: if the tray app (or a future installer)
-        // staged an account + working_dir but never ran an initial
-        // import, do that now so the first launch produces a root
-        // before we open the relay subscription.
-        if key_path_in(config_dir).exists() {
-            let mut daemon = Daemon::open(config_dir).context("opening daemon for bootstrap")?;
-            if let Some(report) = daemon
-                .ensure_initial_import()
-                .await
-                .context("initial import")?
-            {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "initial_import",
-                        "root_cid": report.root_cid,
-                        "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
-                        "working_dir": report.working_dir.display().to_string(),
-                        "entries": report.top_level_entries,
-                    })
-                );
-            }
+        if !key_path_in(config_dir).exists() {
+            return Ok::<_, anyhow::Error>(());
         }
-
-        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-        let state = config
-            .account
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-        let relays = pick_relays(&config, relay_override);
-        let filters = relay_sync::subscription_filters(
-            &state.owner_pubkey,
-            iris_drive_core::PRIMARY_DRIVE_ID,
-        );
-        if filters.is_empty() {
-            return Err(anyhow::anyhow!("no filters to subscribe to"));
+        let mut daemon = Daemon::open(config_dir).context("opening daemon for bootstrap")?;
+        if let Some(report) = daemon
+            .ensure_initial_import()
+            .await
+            .context("initial import")?
+        {
+            println!(
+                "{}",
+                json!({
+                    "event": "initial_import",
+                    "root_cid": report.root_cid,
+                    "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
+                    "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                    "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                    "working_dir": report.working_dir.display().to_string(),
+                    "file_count": report.file_count,
+                    "entries": report.top_level_entries,
+                })
+            );
         }
-        let working_dir = config
-            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-            .and_then(|d| d.working_dir.clone());
+        Ok::<_, anyhow::Error>(())
+    })?;
 
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let relays = pick_relays(&config, relay_override);
+    let filters =
+        relay_sync::subscription_filters(&state.owner_pubkey, iris_drive_core::PRIMARY_DRIVE_ID);
+    if filters.is_empty() {
+        return Err(anyhow::anyhow!("no filters to subscribe to"));
+    }
+    let working_dir = config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .and_then(|d| d.working_dir.clone());
+    let embedded_hashtree =
+        EmbeddedHashtreeHost::start(config_dir, &config).context("starting embedded hashtree")?;
+    let embedded_hashtree_status = embedded_hashtree.status_payload();
+
+    runtime.block_on(async {
+        let gateway = if enable_gateway {
+            Some(
+                GatewayServer::bind(config_dir, GatewayBind::loopback_v4(gateway_port))
+                    .await
+                    .context("starting browser gateway")?,
+            )
+        } else {
+            None
+        };
+        let gateway_status = gateway.as_ref().map(|server| {
+            let port = server.local_addr().port();
+            json!({
+                "bind": server.local_addr().to_string(),
+                "portal_url": format!("http://sites.iris.localhost:{port}/"),
+                "primary_drive_url": iris_drive_core::gateway::local_drive_url(
+                    port,
+                    iris_drive_core::PRIMARY_DRIVE_ID,
+                ),
+            })
+        });
         let client = relay_sync::connect(&relays)
             .await
             .context("connecting to relays")?;
@@ -1203,6 +1345,8 @@ fn cmd_daemon(
                 "watch_debounce_ms": watch_debounce_ms,
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
                 "relay_statuses": relay_statuses,
+                "embedded_hashtree": embedded_hashtree_status,
+                "browser_gateway": gateway_status,
             })
         );
 
@@ -1217,15 +1361,24 @@ fn cmd_daemon(
                     .root_cid
                     .as_ref()
                     .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+                let snapshot_url = report
+                    .root_cid
+                    .as_deref()
+                    .and_then(files_iris_to_snapshot_url_for_root);
                 println!(
                     "{}",
                     json!({
                         "event": "initial_publish",
                         "published_app_keys": report.published_app_keys,
+                        "app_keys_publish_error": report.app_keys_publish_error,
                         "published_drive_root": report.published_drive_root,
+                        "drive_root_publish_error": report.drive_root_publish_error,
                         "published_files_root": report.published_files_root,
+                        "files_root_publish_error": report.files_root_publish_error,
                         "root_cid": report.root_cid,
                         "files_iris_to_url": files_iris_to_url,
+                        "snapshot_url": snapshot_url,
+                        "permalink_url": snapshot_url,
                         "blossom_upload": report.blossom_upload.map(|r| json!({
                             "total_hashes": r.total_hashes,
                             "uploaded": r.uploaded,
@@ -1244,11 +1397,24 @@ fn cmd_daemon(
                 );
             }
         }
+        if working_dir.is_some()
+            && let Err(error) = scan_and_publish(&client, config_dir).await
+        {
+            println!(
+                "{}",
+                json!({
+                    "event": "startup_scan_error",
+                    "error": error.to_string(),
+                })
+            );
+        }
 
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
+        let parent_exit = parent_exit_signal();
+        tokio::pin!(parent_exit);
 
         // Periodic fallback in addition to fs-notify (some editor
         // patterns produce events fs-notify can miss; this catches
@@ -1268,6 +1434,10 @@ fn cmd_daemon(
             tokio::select! {
                 _ = &mut ctrl_c => {
                     println!("{}", json!({ "event": "shutdown" }));
+                    break;
+                }
+                () = &mut parent_exit => {
+                    println!("{}", json!({ "event": "shutdown", "reason": "parent_exit" }));
                     break;
                 }
                 recv = notifications.recv() => {
@@ -1330,8 +1500,9 @@ async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Val
     let relays = client.relays().await;
     let mut payload = Vec::with_capacity(relays.len());
     for (url, relay) in relays {
+        let url = normalize_relay_url(url.as_ref());
         payload.push(json!({
-            "url": url.to_string(),
+            "url": url,
             "status": relay_status_label(relay.status().await),
         }));
     }
@@ -1344,6 +1515,89 @@ fn relay_status_label(status: RelayStatus) -> &'static str {
         RelayStatus::Connected => "connected",
         RelayStatus::Disconnected => "offline",
         RelayStatus::Terminated => "terminated",
+    }
+}
+
+struct DaemonProcessLock {
+    path: PathBuf,
+}
+
+impl DaemonProcessLock {
+    fn acquire(config_dir: &std::path::Path) -> Result<Self> {
+        std::fs::create_dir_all(config_dir)
+            .with_context(|| format!("creating config dir {}", config_dir.display()))?;
+        let path = config_dir.join("daemon.lock");
+        match Self::try_create(&path) {
+            Ok(lock) => return Ok(lock),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("creating daemon lock {}", path.display()));
+            }
+        }
+
+        if let Ok(contents) = std::fs::read_to_string(&path)
+            && let Ok(pid) = contents.trim().parse::<u32>()
+            && !process_is_running(pid)
+        {
+            let _ = std::fs::remove_file(&path);
+            return Self::try_create(&path)
+                .with_context(|| format!("replacing stale daemon lock {}", path.display()));
+        }
+
+        Err(anyhow::anyhow!(
+            "iris-drive daemon already appears to be running for {}",
+            config_dir.display()
+        ))
+    }
+
+    fn try_create(path: &Path) -> std::io::Result<Self> {
+        use std::io::Write;
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        writeln!(file, "{}", std::process::id())?;
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for DaemonProcessLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn process_is_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    std::process::Command::new("/bin/kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+async fn parent_exit_signal() {
+    let Some(parent_pid) = std::env::var("IRIS_DRIVE_PARENT_PID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    else {
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if !process_is_running(parent_pid) {
+            return;
+        }
     }
 }
 
@@ -1381,6 +1635,7 @@ fn spawn_fs_watcher(
 /// Re-import the configured working dir; if the new root CID differs
 /// from what's already recorded for this device, publish a new
 /// drive-root event. No-op when the root hasn't changed.
+#[allow(clippy::too_many_lines)]
 async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Path) -> Result<()> {
     use iris_drive_core::relay_sync;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -1417,7 +1672,26 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
 
     let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
         .context("loading device key")?;
-    relay_sync::publish_drive_root(
+    let mut upload_report: Option<UploadReport> = None;
+    if !config.blossom_servers.is_empty() {
+        let cid = Cid::parse(&new_root.root_cid)
+            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
+        let previous = previous_root_cid
+            .as_deref()
+            .and_then(|root| Cid::parse(root).ok());
+        match upload_tree_to_blossom_with_hashtree(config_dir, &config, &device, cid, previous)
+            .await
+        {
+            Ok(r) => upload_report = Some(r),
+            Err(e) => println!(
+                "{}",
+                json!({"event": "blossom_upload_error", "error": e.to_string()})
+            ),
+        }
+    }
+
+    let mut published_drive_root = false;
+    match relay_sync::publish_drive_root(
         client,
         device.keys(),
         &state.owner_pubkey,
@@ -1426,7 +1700,13 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
         &authorized_device_pubkeys(state),
     )
     .await
-    .context("publishing drive root")?;
+    {
+        Ok(_) => published_drive_root = true,
+        Err(e) => println!(
+            "{}",
+            json!({"event": "drive_root_publish_error", "error": e.to_string()})
+        ),
+    }
 
     let mut published_files_root = false;
     if state.has_owner_signing_authority {
@@ -1436,39 +1716,33 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
             .keys();
-        relay_sync::publish_files_root(
+        match relay_sync::publish_files_root(
             client,
             owner_keys,
             iris_drive_core::PRIMARY_DRIVE_ID,
             &new_root,
         )
         .await
-        .context("publishing files.iris.to root")?;
-        published_files_root = true;
-    }
-
-    // Upload blocks to Blossom (best-effort; logged on failure).
-    let mut upload_report: Option<UploadReport> = None;
-    if !config.blossom_servers.is_empty() {
-        let cid = Cid::parse(&new_root.root_cid)
-            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
-        let bclient =
-            iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
-        match iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &cid, &bclient).await {
-            Ok(r) => upload_report = Some(r),
+        {
+            Ok(_) => published_files_root = true,
             Err(e) => println!(
                 "{}",
-                json!({"event": "blossom_upload_error", "error": e.to_string()})
+                json!({"event": "files_root_publish_error", "error": e.to_string()})
             ),
         }
     }
+
     println!(
         "{}",
         json!({
             "event": "auto_published",
             "root_cid": report.root_cid,
             "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
+            "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+            "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+            "published_drive_root": published_drive_root,
             "published_files_root": published_files_root,
+            "file_count": report.file_count,
             "top_level_entries": report.top_level_entries,
             "blossom_upload": upload_report.map(|r| json!({
                 "total_hashes": r.total_hashes,
@@ -1784,5 +2058,27 @@ fn short_pubkey(pk: &str) -> String {
         format!("{}…{}", &pk[..6], &pk[pk.len() - 6..])
     } else {
         pk.to_string()
+    }
+}
+
+#[cfg(test)]
+mod daemon_lock_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn daemon_lock_allows_only_one_process_per_config_dir() {
+        let dir = tempdir().unwrap();
+        let first = DaemonProcessLock::acquire(dir.path()).unwrap();
+        assert!(DaemonProcessLock::acquire(dir.path()).is_err());
+        drop(first);
+        assert!(DaemonProcessLock::acquire(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn daemon_lock_replaces_stale_pid_file() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("daemon.lock"), "99999999\n").unwrap();
+        assert!(DaemonProcessLock::acquire(dir.path()).is_ok());
     }
 }
