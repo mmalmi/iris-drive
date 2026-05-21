@@ -1,8 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -10,6 +12,10 @@ use serde_json::Value;
 
 const APP_ID: &str = "to.iris.drive";
 const GATEWAY_URL: &str = "http://main.drive.iris.localhost:17321/";
+
+thread_local! {
+    static TRAY_APP_HOLD: RefCell<Option<gio::ApplicationHoldGuard>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone)]
 struct Ui {
@@ -33,6 +39,7 @@ struct Ui {
     blocks_path: gtk::Label,
     drive_path: gtk::Label,
     root_path: gtk::Label,
+    tray_on_close: gtk::Label,
     relay_entry: gtk::Entry,
     init_button: gtk::Button,
     folder_button: gtk::Button,
@@ -42,12 +49,24 @@ struct Ui {
 }
 
 struct AppModel {
+    application: adw::Application,
     ui: Ui,
     daemon: RefCell<Option<Child>>,
     setup_screen: RefCell<SetupScreen>,
+    tray: RefCell<Option<TrayServiceHandle>>,
+    tray_available: Cell<bool>,
+    closed_to_tray: Cell<bool>,
+    retired: Cell<bool>,
+    quit_requested: Cell<bool>,
 }
 
 type AppRef = Rc<AppModel>;
+
+#[cfg(target_os = "linux")]
+type TrayServiceHandle = ksni::blocking::Handle<IrisDriveTray>;
+
+#[cfg(not(target_os = "linux"))]
+type TrayServiceHandle = ();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SetupScreen {
@@ -55,6 +74,16 @@ enum SetupScreen {
     Create,
     Restore,
     Link,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrayCommand {
+    Show,
+    OpenDriveFolder,
+    StartSync,
+    StopSync,
+    Quit,
 }
 
 fn main() -> glib::ExitCode {
@@ -229,8 +258,12 @@ fn build_ui(app: &adw::Application) {
     let sync_on_open = gtk::Label::new(Some("On"));
     sync_on_open.add_css_class("iris-value");
     sync_on_open.set_xalign(0.0);
+    let tray_on_close = gtk::Label::new(Some("Unavailable"));
+    tray_on_close.add_css_class("iris-value");
+    tray_on_close.set_xalign(0.0);
     add_field(&settings_grid, 0, 0, "Single instance", &single_instance);
     add_field(&settings_grid, 1, 0, "Sync on open", &sync_on_open);
+    add_field(&settings_grid, 2, 0, "Tray on close", &tray_on_close);
     settings_page.append(&settings_grid);
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
@@ -247,6 +280,7 @@ fn build_ui(app: &adw::Application) {
     window.set_content(Some(&root));
 
     let model = Rc::new(AppModel {
+        application: app.clone(),
         ui: Ui {
             setup,
             main,
@@ -268,6 +302,7 @@ fn build_ui(app: &adw::Application) {
             blocks_path,
             drive_path,
             root_path,
+            tray_on_close,
             relay_entry,
             init_button,
             folder_button,
@@ -277,6 +312,11 @@ fn build_ui(app: &adw::Application) {
         },
         daemon: RefCell::new(None),
         setup_screen: RefCell::new(SetupScreen::Welcome),
+        tray: RefCell::new(None),
+        tray_available: Cell::new(false),
+        closed_to_tray: Cell::new(false),
+        retired: Cell::new(false),
+        quit_requested: Cell::new(false),
     });
 
     {
@@ -316,9 +356,14 @@ fn build_ui(app: &adw::Application) {
         reset_relays_button.connect_clicked(move |_| reset_relays(&model));
     }
 
+    connect_tray(&model, &window);
+
     {
         let model = Rc::clone(&model);
         glib::timeout_add_seconds_local(5, move || {
+            if model.retired.get() {
+                return glib::ControlFlow::Break;
+            }
             if model.ui.main.is_visible() {
                 refresh(&model);
             }
@@ -328,9 +373,37 @@ fn build_ui(app: &adw::Application) {
 
     {
         let model = Rc::clone(&model);
-        window.connect_close_request(move |_| {
+        window.connect_close_request(move |window| {
+            if !model.quit_requested.get() && model.tray_available.get() {
+                model.closed_to_tray.set(true);
+                let window = window.clone();
+                glib::idle_add_local_once(move || window.minimize());
+                return glib::Propagation::Stop;
+            }
+
+            model.quit_requested.set(true);
+            window.set_hide_on_close(false);
+            shutdown_tray(&model);
             stop_daemon(&model);
             glib::Propagation::Proceed
+        });
+    }
+
+    {
+        let model = Rc::clone(&model);
+        window.connect_unrealize(move |_| {
+            if !model.quit_requested.get() && model.tray_available.get() {
+                model.closed_to_tray.set(true);
+            }
+        });
+    }
+
+    {
+        let model = Rc::clone(&model);
+        window.connect_unmap(move |_| {
+            if !model.quit_requested.get() && model.tray_available.get() {
+                model.closed_to_tray.set(true);
+            }
         });
     }
 
@@ -397,6 +470,253 @@ fn add_field(grid: &gtk::Grid, row: i32, column: i32, name: &str, value: &gtk::L
     label.set_xalign(0.0);
     grid.attach(&label, column * 2, row, 1, 1);
     grid.attach(value, column * 2 + 1, row, 1, 1);
+}
+
+fn connect_tray(model: &AppRef, window: &adw::ApplicationWindow) {
+    let (sender, receiver) = mpsc::channel();
+    let tray = install_tray(sender);
+    let available = tray.is_some();
+
+    model.tray_available.set(available);
+    if available
+        && let Some(app) = window.application()
+    {
+        TRAY_APP_HOLD.with(|hold| {
+            *hold.borrow_mut() = Some(app.hold());
+        });
+    }
+    model
+        .ui
+        .tray_on_close
+        .set_text(if available { "On" } else { "Unavailable" });
+    *model.tray.borrow_mut() = tray;
+
+    if !available {
+        return;
+    }
+
+    let model = Rc::clone(model);
+    let window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(150), move || {
+        if model.retired.get() {
+            return glib::ControlFlow::Break;
+        }
+        while let Ok(command) = receiver.try_recv() {
+            handle_tray_command(&model, &window, command);
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+fn handle_tray_command(model: &AppRef, window: &adw::ApplicationWindow, command: TrayCommand) {
+    match command {
+        TrayCommand::Show => show_window(model, window),
+        TrayCommand::OpenDriveFolder => open_drive_folder(model),
+        TrayCommand::StartSync => {
+            start_daemon(model);
+            refresh(model);
+        }
+        TrayCommand::StopSync => {
+            stop_daemon(model);
+            refresh(model);
+        }
+        TrayCommand::Quit => quit_application(model, window),
+    }
+}
+
+fn show_window(model: &AppRef, window: &adw::ApplicationWindow) {
+    if !visible_app_window_exists().unwrap_or_else(|| {
+        !model.closed_to_tray.get()
+            && window.application().is_some()
+            && window.is_mapped()
+            && window.is_realized()
+            && window.surface().is_some()
+    }) {
+        model.retired.set(true);
+        shutdown_tray(model);
+        build_ui(&model.application);
+        return;
+    }
+
+    window.set_visible(true);
+    window.unminimize();
+    window.present();
+    refresh(model);
+}
+
+fn visible_app_window_exists() -> Option<bool> {
+    if std::env::var_os("DISPLAY").is_none() {
+        return None;
+    }
+
+    let status = Command::new("xdotool")
+        .args(["search", "--onlyvisible", "--name", "^Iris Drive$"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    Some(status.success())
+}
+
+fn quit_application(model: &AppRef, window: &adw::ApplicationWindow) {
+    model.quit_requested.set(true);
+    window.set_hide_on_close(false);
+    shutdown_tray(model);
+    stop_daemon(model);
+
+    if let Some(app) = window.application() {
+        TRAY_APP_HOLD.with(|hold| {
+            hold.borrow_mut().take();
+        });
+        app.quit();
+    } else {
+        window.close();
+    }
+}
+
+fn shutdown_tray(model: &AppRef) {
+    let tray = model.tray.borrow_mut().take();
+    model.tray_available.set(false);
+    model.ui.tray_on_close.set_text("Unavailable");
+    if let Some(tray) = tray {
+        shutdown_tray_handle(tray);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn shutdown_tray_handle(tray: TrayServiceHandle) {
+    tray.shutdown().wait();
+}
+
+#[cfg(not(target_os = "linux"))]
+fn shutdown_tray_handle(_tray: TrayServiceHandle) {}
+
+#[cfg(target_os = "linux")]
+fn install_tray(sender: mpsc::Sender<TrayCommand>) -> Option<TrayServiceHandle> {
+    use ksni::blocking::TrayMethods;
+
+    let tray = IrisDriveTray { sender };
+    match tray.spawn() {
+        Ok(handle) => Some(handle),
+        Err(error) => {
+            eprintln!("Could not start system tray: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_tray(_sender: mpsc::Sender<TrayCommand>) -> Option<TrayServiceHandle> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+struct IrisDriveTray {
+    sender: mpsc::Sender<TrayCommand>,
+}
+
+#[cfg(target_os = "linux")]
+impl IrisDriveTray {
+    fn send(&self, command: TrayCommand) {
+        let _ = self.sender.send(command);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for IrisDriveTray {
+    fn id(&self) -> String {
+        APP_ID.to_string()
+    }
+
+    fn title(&self) -> String {
+        "Iris Drive".to_string()
+    }
+
+    fn icon_name(&self) -> String {
+        "iris-drive".to_string()
+    }
+
+    fn icon_theme_path(&self) -> String {
+        if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(path).join("icons").display().to_string();
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join(".local/share/icons")
+                .display()
+                .to_string();
+        }
+        String::new()
+    }
+
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip {
+            icon_name: "iris-drive".to_string(),
+            title: "Iris Drive".to_string(),
+            description: "Sync active".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        self.send(TrayCommand::Show);
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        vec![
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::Show,
+                "Show Iris Drive",
+                "window-new",
+            ),
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::OpenDriveFolder,
+                "Open Drive Folder",
+                "folder-open",
+            ),
+            ksni::MenuItem::Separator,
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::StartSync,
+                "Start Sync",
+                "media-playback-start",
+            ),
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::StopSync,
+                "Stop Sync",
+                "media-playback-stop",
+            ),
+            ksni::MenuItem::Separator,
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::Quit,
+                "Quit",
+                "application-exit",
+            ),
+        ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn tray_menu_item(
+    sender: &mpsc::Sender<TrayCommand>,
+    command: TrayCommand,
+    label: &str,
+    icon_name: &str,
+) -> ksni::MenuItem<IrisDriveTray> {
+    let sender = sender.clone();
+    ksni::menu::StandardItem {
+        label: label.to_string(),
+        icon_name: icon_name.to_string(),
+        activate: Box::new(move |_| {
+            let _ = sender.send(command);
+        }),
+        ..Default::default()
+    }
+    .into()
 }
 
 fn refresh(model: &AppRef) {
