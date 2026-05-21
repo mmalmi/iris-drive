@@ -1,0 +1,1372 @@
+use std::cell::RefCell;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::rc::Rc;
+
+use adw::prelude::*;
+use gtk::{gio, glib};
+use serde_json::Value;
+
+const APP_ID: &str = "to.iris.drive";
+const GATEWAY_URL: &str = "http://main.drive.iris.localhost:17321/";
+
+#[derive(Clone)]
+struct Ui {
+    setup: gtk::Box,
+    main: gtk::Box,
+    status: gtk::Label,
+    folder: gtk::Label,
+    owner: gtk::Label,
+    device: gtk::Label,
+    snapshot: gtk::Label,
+    files: gtk::Label,
+    blocks: gtk::Label,
+    storage: gtk::Label,
+    devices: gtk::Label,
+    notice: gtk::Label,
+    drives: gtk::ListBox,
+    peers: gtk::ListBox,
+    relays: gtk::ListBox,
+    blossom: gtk::ListBox,
+    config_path: gtk::Label,
+    blocks_path: gtk::Label,
+    drive_path: gtk::Label,
+    root_path: gtk::Label,
+    relay_entry: gtk::Entry,
+    init_button: gtk::Button,
+    folder_button: gtk::Button,
+    gateway_button: gtk::Button,
+    start_button: gtk::Button,
+    stop_button: gtk::Button,
+}
+
+struct AppModel {
+    ui: Ui,
+    daemon: RefCell<Option<Child>>,
+    setup_screen: RefCell<SetupScreen>,
+}
+
+type AppRef = Rc<AppModel>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SetupScreen {
+    Welcome,
+    Create,
+    Restore,
+    Link,
+}
+
+fn main() -> glib::ExitCode {
+    let _app_lock = match AppInstanceLock::acquire() {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("{error}");
+            return glib::ExitCode::SUCCESS;
+        }
+    };
+
+    let app = adw::Application::builder().application_id(APP_ID).build();
+    app.connect_startup(|_| {
+        gtk::Window::set_default_icon_name("iris-drive");
+        install_css();
+    });
+    app.connect_activate(build_ui);
+    app.run()
+}
+
+fn build_ui(app: &adw::Application) {
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Iris Drive")
+        .default_width(760)
+        .default_height(560)
+        .build();
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new("Iris Drive", "")));
+
+    let refresh_button = icon_button("view-refresh-symbolic", "Refresh");
+    let folder_button = icon_button("folder-open-symbolic", "Open drive folder");
+    let gateway_button = icon_button("web-browser-symbolic", "Open gateway");
+    let init_button = text_button("Initialize");
+    let start_button = icon_button("media-playback-start-symbolic", "Start sync");
+    let stop_button = icon_button("media-playback-stop-symbolic", "Stop sync");
+
+    header.pack_start(&refresh_button);
+    header.pack_start(&folder_button);
+    header.pack_start(&gateway_button);
+    header.pack_end(&stop_button);
+    header.pack_end(&start_button);
+    header.pack_end(&init_button);
+    root.append(&header);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.add_css_class("iris-content");
+    content.set_margin_top(14);
+    content.set_margin_bottom(14);
+    content.set_margin_start(14);
+    content.set_margin_end(14);
+    content.set_vexpand(true);
+
+    let setup = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    setup.set_hexpand(true);
+    setup.set_vexpand(true);
+
+    let main = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    main.set_hexpand(true);
+    main.set_vexpand(true);
+
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_halign(gtk::Align::Start);
+
+    let stack = gtk::Stack::new();
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    switcher.set_stack(Some(&stack));
+
+    let dashboard = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    dashboard.set_hexpand(true);
+    dashboard.set_vexpand(true);
+
+    let summary = gtk::Grid::new();
+    summary.add_css_class("iris-summary");
+    summary.set_column_spacing(18);
+    summary.set_row_spacing(10);
+    summary.set_hexpand(true);
+
+    let status = value_label();
+    let folder = value_label();
+    let owner = value_label();
+    let device = value_label();
+    let snapshot = value_label();
+    let files = value_label();
+    let blocks = value_label();
+    let storage = value_label();
+    let devices = value_label();
+
+    add_field(&summary, 0, 0, "Status", &status);
+    add_field(&summary, 0, 1, "Files", &files);
+    add_field(&summary, 1, 0, "Folder", &folder);
+    add_field(&summary, 1, 1, "Snapshot", &snapshot);
+    add_field(&summary, 2, 0, "Owner", &owner);
+    add_field(&summary, 2, 1, "Device", &device);
+    add_field(&summary, 3, 0, "Blocks", &blocks);
+    add_field(&summary, 3, 1, "Storage", &storage);
+    add_field(&summary, 3, 2, "Devices", &devices);
+    dashboard.append(&summary);
+
+    let drives_title = gtk::Label::new(Some("Drives"));
+    drives_title.add_css_class("iris-section-title");
+    drives_title.set_xalign(0.0);
+    dashboard.append(&drives_title);
+
+    let drives = gtk::ListBox::new();
+    drives.add_css_class("iris-drive-list");
+    drives.set_selection_mode(gtk::SelectionMode::None);
+    dashboard.append(&drives);
+
+    let notice = gtk::Label::new(None);
+    notice.add_css_class("iris-notice");
+    notice.set_xalign(0.0);
+    notice.set_wrap(true);
+    dashboard.append(&notice);
+
+    let peers_page = page_box();
+    peers_page.append(&section_title("Devices"));
+    let peers = gtk::ListBox::new();
+    peers.add_css_class("iris-drive-list");
+    peers.set_selection_mode(gtk::SelectionMode::None);
+    peers_page.append(&peers);
+
+    let network_page = page_box();
+    network_page.append(&section_title("Relays"));
+    let relays = gtk::ListBox::new();
+    relays.add_css_class("iris-drive-list");
+    relays.set_selection_mode(gtk::SelectionMode::None);
+    network_page.append(&relays);
+    let relay_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let relay_entry = setup_entry("wss://relay.example");
+    relay_entry.set_hexpand(true);
+    let add_relay_button = icon_button("list-add-symbolic", "Add relay");
+    let reset_relays_button = icon_button("edit-undo-symbolic", "Reset relays");
+    relay_controls.append(&relay_entry);
+    relay_controls.append(&add_relay_button);
+    relay_controls.append(&reset_relays_button);
+    network_page.append(&relay_controls);
+    network_page.append(&section_title("Blossom"));
+    let blossom = gtk::ListBox::new();
+    blossom.add_css_class("iris-drive-list");
+    blossom.set_selection_mode(gtk::SelectionMode::None);
+    network_page.append(&blossom);
+
+    let hashtree_page = page_box();
+    hashtree_page.append(&section_title("Hashtree"));
+    let paths = gtk::Grid::new();
+    paths.add_css_class("iris-summary");
+    paths.set_column_spacing(12);
+    paths.set_row_spacing(10);
+    let config_path = value_label();
+    let blocks_path = value_label();
+    let drive_path = value_label();
+    let root_path = value_label();
+    add_field(&paths, 0, 0, "Config", &config_path);
+    add_field(&paths, 1, 0, "Blocks", &blocks_path);
+    add_field(&paths, 2, 0, "Drive", &drive_path);
+    add_field(&paths, 3, 0, "Root", &root_path);
+    hashtree_page.append(&paths);
+
+    let settings_page = page_box();
+    settings_page.append(&section_title("Settings"));
+    let settings_grid = gtk::Grid::new();
+    settings_grid.add_css_class("iris-summary");
+    settings_grid.set_column_spacing(12);
+    settings_grid.set_row_spacing(10);
+    let single_instance = gtk::Label::new(Some("On"));
+    single_instance.add_css_class("iris-value");
+    single_instance.set_xalign(0.0);
+    let sync_on_open = gtk::Label::new(Some("On"));
+    sync_on_open.add_css_class("iris-value");
+    sync_on_open.set_xalign(0.0);
+    add_field(&settings_grid, 0, 0, "Single instance", &single_instance);
+    add_field(&settings_grid, 1, 0, "Sync on open", &sync_on_open);
+    settings_page.append(&settings_grid);
+
+    stack.add_titled(&dashboard, Some("drive"), "My Drive");
+    stack.add_titled(&peers_page, Some("devices"), "Devices");
+    stack.add_titled(&network_page, Some("network"), "Network");
+    stack.add_titled(&hashtree_page, Some("hashtree"), "Hashtree");
+    stack.add_titled(&settings_page, Some("settings"), "Settings");
+    main.append(&switcher);
+    main.append(&stack);
+
+    content.append(&setup);
+    content.append(&main);
+    root.append(&content);
+    window.set_content(Some(&root));
+
+    let model = Rc::new(AppModel {
+        ui: Ui {
+            setup,
+            main,
+            status,
+            folder,
+            owner,
+            device,
+            snapshot,
+            files,
+            blocks,
+            storage,
+            devices,
+            notice,
+            drives,
+            peers,
+            relays,
+            blossom,
+            config_path,
+            blocks_path,
+            drive_path,
+            root_path,
+            relay_entry,
+            init_button,
+            folder_button,
+            gateway_button,
+            start_button,
+            stop_button,
+        },
+        daemon: RefCell::new(None),
+        setup_screen: RefCell::new(SetupScreen::Welcome),
+    });
+
+    {
+        let model = Rc::clone(&model);
+        refresh_button.connect_clicked(move |_| refresh(&model));
+    }
+    {
+        let button = model.ui.init_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| initialize_drive(&model));
+    }
+    {
+        let button = model.ui.start_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| start_daemon(&model));
+    }
+    {
+        let button = model.ui.stop_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| stop_daemon(&model));
+    }
+    {
+        let button = model.ui.folder_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| open_drive_folder(&model));
+    }
+    model
+        .ui
+        .gateway_button
+        .connect_clicked(|_| open_uri(GATEWAY_URL));
+    {
+        let model = Rc::clone(&model);
+        add_relay_button.connect_clicked(move |_| add_relay(&model));
+    }
+    {
+        let model = Rc::clone(&model);
+        reset_relays_button.connect_clicked(move |_| reset_relays(&model));
+    }
+
+    {
+        let model = Rc::clone(&model);
+        glib::timeout_add_seconds_local(5, move || {
+            if model.ui.main.is_visible() {
+                refresh(&model);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+
+    {
+        let model = Rc::clone(&model);
+        window.connect_close_request(move |_| {
+            stop_daemon(&model);
+            glib::Propagation::Proceed
+        });
+    }
+
+    refresh(&model);
+    window.present();
+}
+
+fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
+    let button = gtk::Button::from_icon_name(icon);
+    button.set_tooltip_text(Some(tooltip));
+    button
+}
+
+fn text_button(label: &str) -> gtk::Button {
+    gtk::Button::with_label(label)
+}
+
+fn page_box() -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_hexpand(true);
+    page.set_vexpand(true);
+    page
+}
+
+fn section_title(title: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(title));
+    label.add_css_class("iris-section-title");
+    label.set_xalign(0.0);
+    label
+}
+
+fn pill_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.add_css_class("pill");
+    button.set_height_request(44);
+    button
+}
+
+fn primary_button(label: &str) -> gtk::Button {
+    let button = pill_button(label);
+    button.add_css_class("suggested-action");
+    button
+}
+
+fn setup_entry(placeholder: &str) -> gtk::Entry {
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some(placeholder));
+    entry.set_height_request(40);
+    entry
+}
+
+fn value_label() -> gtk::Label {
+    let label = gtk::Label::new(Some("..."));
+    label.add_css_class("iris-value");
+    label.set_xalign(0.0);
+    label.set_selectable(true);
+    label.set_wrap(true);
+    label
+}
+
+fn add_field(grid: &gtk::Grid, row: i32, column: i32, name: &str, value: &gtk::Label) {
+    let label = gtk::Label::new(Some(name));
+    label.add_css_class("iris-field-name");
+    label.set_xalign(0.0);
+    grid.attach(&label, column * 2, row, 1, 1);
+    grid.attach(value, column * 2 + 1, row, 1, 1);
+}
+
+fn refresh(model: &AppRef) {
+    match status_with_local_import() {
+        Ok((json, scan_notice)) => {
+            let initialized = json
+                .get("initialized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let sync_running = initialized && ensure_daemon_running(model, &json);
+            set_view_mode(model, initialized, sync_running);
+            if !initialized {
+                render_setup(model);
+                return;
+            }
+            model
+                .ui
+                .status
+                .set_text(if sync_running { "Syncing" } else { "Ready" });
+            model.ui.folder.set_text(&working_dir(&json).display().to_string());
+            model.ui.owner.set_text(&short_value(find_string(&json, &["owner", "owner_npub"])));
+            model
+                .ui
+                .device
+                .set_text(&short_value(find_string(&json, &["device", "device_npub"])));
+            model.ui.snapshot.set_text(&snapshot_value(&json));
+            model.ui.files.set_text(&file_count_value(&json));
+            model.ui.blocks.set_text(&block_count_value(&json));
+            model.ui.storage.set_text(&storage_value(&json));
+            model.ui.devices.set_text(&device_count_value(&json));
+            model
+                .ui
+                .config_path
+                .set_text(find_string(&json, &["config_dir"]).unwrap_or("-"));
+            model
+                .ui
+                .blocks_path
+                .set_text(find_string(json.get("hashtree").unwrap_or(&Value::Null), &["blocks_dir"]).unwrap_or("-"));
+            model.ui.drive_path.set_text(&working_dir(&json).display().to_string());
+            model
+                .ui
+                .root_path
+                .set_text(find_string(json.get("hashtree").unwrap_or(&Value::Null), &["current_root_cid"]).unwrap_or("-"));
+            if let Some(scan_notice) = scan_notice {
+                model.ui.notice.set_text(&scan_notice);
+            }
+            render_drives(&model.ui.drives, &json);
+            render_peers(&model.ui.peers, &json);
+            render_network(&model.ui.relays, &model.ui.blossom, &json);
+        }
+        Err(error) => {
+            set_view_mode(model, true, daemon_is_running(model));
+            model.ui.status.set_text("Unavailable");
+            model.ui.folder.set_text(&default_drive_dir().display().to_string());
+            model.ui.owner.set_text("-");
+            model.ui.device.set_text("-");
+            model.ui.snapshot.set_text("-");
+            model.ui.files.set_text("0");
+            model.ui.blocks.set_text("0");
+            model.ui.storage.set_text("0 B");
+            model.ui.devices.set_text("0/0");
+            model.ui.notice.set_text(&error);
+            clear_list(&model.ui.drives);
+            clear_list(&model.ui.peers);
+            clear_list(&model.ui.relays);
+            clear_list(&model.ui.blossom);
+        }
+    }
+}
+
+fn status_with_local_import() -> Result<(Value, Option<String>), String> {
+    let mut status = run_idrive_json(["status"])?;
+    let initialized = status
+        .get("initialized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !initialized {
+        return Ok((status, None));
+    }
+
+    match import_drive_folder(&working_dir(&status)) {
+        Ok(()) => {
+            if let Ok(updated) = run_idrive_json(["status"]) {
+                status = updated;
+            }
+            Ok((status, None))
+        }
+        Err(error) => Ok((status, Some(format!("Could not scan drive folder: {error}")))),
+    }
+}
+
+fn set_view_mode(model: &AppRef, initialized: bool, sync_running: bool) {
+    model.ui.setup.set_visible(!initialized);
+    model.ui.main.set_visible(initialized);
+    model.ui.init_button.set_visible(false);
+    model.ui.folder_button.set_visible(initialized);
+    model.ui.gateway_button.set_visible(initialized);
+    model
+        .ui
+        .start_button
+        .set_visible(initialized && !sync_running);
+    model
+        .ui
+        .stop_button
+        .set_visible(initialized && sync_running && model.daemon.borrow().is_some());
+}
+
+fn render_setup(model: &AppRef) {
+    clear_box(&model.ui.setup);
+    match *model.setup_screen.borrow() {
+        SetupScreen::Welcome => render_setup_welcome(model),
+        SetupScreen::Create => render_create_profile(model),
+        SetupScreen::Restore => render_restore_profile(model),
+        SetupScreen::Link => render_link_device(model),
+    }
+}
+
+fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    container.set_halign(gtk::Align::Center);
+    container.set_valign(gtk::Align::Center);
+    container.set_width_request(340);
+
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.set_tooltip_text(Some("Back"));
+    back.set_halign(gtk::Align::Start);
+    {
+        let model = Rc::clone(model);
+        back.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+            render_setup(&model);
+        });
+    }
+    container.append(&back);
+
+    let header = gtk::Label::new(Some(title));
+    header.add_css_class("title-2");
+    header.set_halign(gtk::Align::Start);
+    container.append(&header);
+
+    container
+}
+
+fn render_setup_welcome(model: &AppRef) {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    container.set_halign(gtk::Align::Center);
+    container.set_width_request(340);
+
+    let icon = gtk::Image::from_icon_name("iris-drive");
+    icon.set_pixel_size(96);
+    icon.set_margin_bottom(4);
+    container.append(&icon);
+
+    let title = gtk::Label::new(Some("Iris Drive"));
+    title.add_css_class("title-1");
+    title.set_halign(gtk::Align::Center);
+    title.set_margin_bottom(10);
+    container.append(&title);
+
+    let create = welcome_button("Create profile", "list-add-symbolic", true);
+    {
+        let model = Rc::clone(model);
+        create.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Create;
+            render_setup(&model);
+        });
+    }
+    container.append(&create);
+
+    let restore = welcome_button("Restore profile", "dialog-password-symbolic", false);
+    {
+        let model = Rc::clone(model);
+        restore.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Restore;
+            render_setup(&model);
+        });
+    }
+    container.append(&restore);
+
+    let link = welcome_button("Link this device", "computer-symbolic", false);
+    {
+        let model = Rc::clone(model);
+        link.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Link;
+            render_setup(&model);
+        });
+    }
+    container.append(&link);
+
+    append_centered_setup(model, &container);
+}
+
+fn welcome_button(label: &str, icon_name: &str, primary: bool) -> gtk::Button {
+    let button = if primary {
+        primary_button(label)
+    } else {
+        pill_button(label)
+    };
+    button.set_width_request(340);
+
+    let content = adw::ButtonContent::builder()
+        .icon_name(icon_name)
+        .label(label)
+        .build();
+    button.set_child(Some(&content));
+    button
+}
+
+fn render_create_profile(model: &AppRef) {
+    let container = setup_container(model, "Create profile");
+    let label = setup_entry("Device label");
+    container.append(&label);
+
+    let notice = setup_notice();
+    let submit = primary_button("Create profile");
+    {
+        let model = Rc::clone(model);
+        let label = label.clone();
+        let notice = notice.clone();
+        submit.connect_clicked(move |button| {
+            button.set_sensitive(false);
+            match create_profile(label.text().trim()) {
+                Ok(()) => {
+                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                    refresh(&model);
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&submit);
+    container.append(&notice);
+    append_centered_setup(model, &container);
+
+    label.grab_focus();
+}
+
+fn render_restore_profile(model: &AppRef) {
+    let container = setup_container(model, "Restore profile");
+    let nsec = setup_entry("Secret key");
+    nsec.set_visibility(false);
+    nsec.set_input_purpose(gtk::InputPurpose::Password);
+    container.append(&nsec);
+
+    let label = setup_entry("Device label");
+    container.append(&label);
+
+    let notice = setup_notice();
+    let submit = primary_button("Restore profile");
+    {
+        let model = Rc::clone(model);
+        let nsec = nsec.clone();
+        let label = label.clone();
+        let notice = notice.clone();
+        submit.connect_clicked(move |button| {
+            let secret = nsec.text().trim().to_string();
+            if secret.is_empty() {
+                notice.set_text("Secret key is required.");
+                return;
+            }
+            button.set_sensitive(false);
+            match restore_profile(&secret, label.text().trim()) {
+                Ok(()) => {
+                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                    refresh(&model);
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&submit);
+    container.append(&notice);
+    append_centered_setup(model, &container);
+
+    nsec.grab_focus();
+}
+
+fn render_link_device(model: &AppRef) {
+    let container = setup_container(model, "Link this device");
+    let owner = setup_entry("Owner public key");
+    container.append(&owner);
+
+    let label = setup_entry("Device label");
+    container.append(&label);
+
+    let notice = setup_notice();
+    let submit = primary_button("Link device");
+    {
+        let model = Rc::clone(model);
+        let owner = owner.clone();
+        let label = label.clone();
+        let notice = notice.clone();
+        submit.connect_clicked(move |button| {
+            let owner_value = owner.text().trim().to_string();
+            if owner_value.is_empty() {
+                notice.set_text("Owner public key is required.");
+                return;
+            }
+            button.set_sensitive(false);
+            match link_device(&owner_value, label.text().trim()) {
+                Ok(()) => {
+                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                    refresh(&model);
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&submit);
+    container.append(&notice);
+    append_centered_setup(model, &container);
+
+    owner.grab_focus();
+}
+
+fn append_centered_setup(model: &AppRef, child: &gtk::Box) {
+    let top = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    top.set_vexpand(true);
+    let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    bottom.set_vexpand(true);
+    model.ui.setup.append(&top);
+    model.ui.setup.append(child);
+    model.ui.setup.append(&bottom);
+}
+
+fn setup_notice() -> gtk::Label {
+    let notice = gtk::Label::new(None);
+    notice.add_css_class("iris-notice");
+    notice.set_xalign(0.0);
+    notice.set_wrap(true);
+    notice
+}
+
+fn initialize_drive(model: &AppRef) {
+    match create_profile("") {
+        Ok(()) => {
+            model.ui.notice.set_text("Initialized");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn create_profile(label: &str) -> Result<(), String> {
+    let mut init_args = vec!["init".to_string(), "--force".to_string()];
+    let label = label.trim();
+    if !label.is_empty() {
+        init_args.push("--label".to_string());
+        init_args.push(label.to_string());
+    }
+
+    run_idrive_owned(&init_args)?;
+    import_default_drive()
+}
+
+fn restore_profile(secret: &str, label: &str) -> Result<(), String> {
+    let mut args = vec!["restore".to_string(), secret.to_string()];
+    let label = label.trim();
+    if !label.is_empty() {
+        args.push("--label".to_string());
+        args.push(label.to_string());
+    }
+    run_idrive_owned(&args)?;
+    import_default_drive()
+}
+
+fn link_device(owner: &str, label: &str) -> Result<(), String> {
+    let mut args = vec!["link".to_string(), owner.to_string()];
+    let label = label.trim();
+    if !label.is_empty() {
+        args.push("--label".to_string());
+        args.push(label.to_string());
+    }
+    run_idrive_owned(&args)?;
+    import_default_drive()
+}
+
+fn import_default_drive() -> Result<(), String> {
+    import_drive_folder(&default_drive_dir())
+}
+
+fn import_drive_folder(folder: &PathBuf) -> Result<(), String> {
+    if let Err(error) = std::fs::create_dir_all(folder) {
+        return Err(format!("Could not create drive folder: {error}"));
+    }
+
+    let folder_arg = folder.display().to_string();
+    run_idrive(["import", folder_arg.as_str()])
+}
+
+fn start_daemon(model: &AppRef) {
+    let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
+    if ensure_daemon_running(model, &status) {
+        model.ui.notice.set_text("Sync already running");
+        return;
+    }
+    model.ui.notice.set_text("Could not start sync");
+}
+
+fn ensure_daemon_running(model: &AppRef, status: &Value) -> bool {
+    if daemon_is_running(model) || daemon_lock_is_running(status) {
+        return true;
+    }
+
+    match spawn_daemon() {
+        Ok(child) => {
+            *model.daemon.borrow_mut() = Some(child);
+            model.ui.notice.set_text("Sync started");
+            true
+        }
+        Err(error) => {
+            model
+                .ui
+                .notice
+                .set_text(&format!("Could not start sync: {error}"));
+            false
+        }
+    }
+}
+
+fn spawn_daemon() -> Result<Child, std::io::Error> {
+    match Command::new(idrive_path())
+        .arg("daemon")
+        .arg("--watch-interval")
+        .arg("10")
+        .env("IRIS_DRIVE_PARENT_PID", std::process::id().to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => Ok(child),
+        Err(error) => Err(error),
+    }
+}
+
+fn daemon_is_running(model: &AppRef) -> bool {
+    let mut daemon = model.daemon.borrow_mut();
+    let Some(child) = daemon.as_mut() else {
+        return false;
+    };
+    match child.try_wait() {
+        Ok(None) => true,
+        Ok(Some(_)) | Err(_) => {
+            *daemon = None;
+            false
+        }
+    }
+}
+
+fn daemon_lock_is_running(status: &Value) -> bool {
+    let Some(config_dir) = status.get("config_dir").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(contents) = std::fs::read_to_string(PathBuf::from(config_dir).join("daemon.lock"))
+    else {
+        return false;
+    };
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        return false;
+    };
+    process_is_running(pid)
+}
+
+fn process_is_running(pid: u32) -> bool {
+    Command::new("/bin/kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+struct AppInstanceLock {
+    path: PathBuf,
+}
+
+impl AppInstanceLock {
+    fn acquire() -> Result<Self, String> {
+        let dir = app_config_dir();
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("Could not create config dir {}: {error}", dir.display()))?;
+        let path = dir.join("app.lock");
+
+        match Self::try_create(&path) {
+            Ok(lock) => Ok(lock),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Self::replace_stale_or_error(&path)
+            }
+            Err(error) => Err(format!("Could not create app lock {}: {error}", path.display())),
+        }
+    }
+
+    fn replace_stale_or_error(path: &Path) -> Result<Self, String> {
+        if let Ok(contents) = std::fs::read_to_string(path)
+            && let Ok(pid) = contents.trim().parse::<u32>()
+            && process_is_running(pid)
+        {
+            return Err("Iris Drive is already running.".to_string());
+        }
+
+        let _ = std::fs::remove_file(path);
+        Self::try_create(path)
+            .map_err(|error| format!("Could not replace stale app lock {}: {error}", path.display()))
+    }
+
+    fn try_create(path: &Path) -> std::io::Result<Self> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        writeln!(file, "{}", std::process::id())?;
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for AppInstanceLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn app_config_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("IRIS_DRIVE_CONFIG_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(path).join("iris-drive");
+    }
+    if let Some(path) = std::env::var_os("HOME") {
+        return PathBuf::from(path).join(".config/iris-drive");
+    }
+    PathBuf::from(".").join(".config/iris-drive")
+}
+
+fn stop_daemon(model: &AppRef) {
+    let Some(mut child) = model.daemon.borrow_mut().take() else {
+        return;
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    model.ui.notice.set_text("Sync stopped");
+    refresh(model);
+}
+
+fn add_relay(model: &AppRef) {
+    let relay = model.ui.relay_entry.text().trim().to_string();
+    if relay.is_empty() {
+        return;
+    }
+    match run_idrive_owned(&["relays".to_string(), "add".to_string(), relay]) {
+        Ok(()) => {
+            model.ui.relay_entry.set_text("");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn reset_relays(model: &AppRef) {
+    match run_idrive(["relays", "reset"]) {
+        Ok(()) => refresh(model),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn open_drive_folder(model: &AppRef) {
+    let folder = run_idrive_json(["status"])
+        .map(|json| working_dir(&json))
+        .unwrap_or_else(|_| default_drive_dir());
+    if let Err(error) = std::fs::create_dir_all(&folder) {
+        model
+            .ui
+            .notice
+            .set_text(&format!("Could not create drive folder: {error}"));
+        return;
+    }
+    open_path(&folder);
+}
+
+fn run_idrive_json<const N: usize>(args: [&str; N]) -> Result<Value, String> {
+    let output = Command::new(idrive_path())
+        .args(args)
+        .output()
+        .map_err(|error| format!("idrive failed to start: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid status JSON: {error}"))
+}
+
+fn run_idrive<const N: usize>(args: [&str; N]) -> Result<(), String> {
+    let output = Command::new(idrive_path())
+        .args(args)
+        .output()
+        .map_err(|error| format!("idrive failed to start: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn run_idrive_owned(args: &[String]) -> Result<(), String> {
+    let output = Command::new(idrive_path())
+        .args(args)
+        .output()
+        .map_err(|error| format!("idrive failed to start: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn idrive_path() -> PathBuf {
+    if let Ok(path) = std::env::var("IRIS_DRIVE_CLI") {
+        return PathBuf::from(path);
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for candidate in [
+        manifest.join("../target/debug/idrive"),
+        manifest.join("../target/release/idrive"),
+        manifest.join("../../target/debug/idrive"),
+        manifest.join("../../target/release/idrive"),
+    ] {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    PathBuf::from("idrive")
+}
+
+fn default_drive_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Iris Drive")
+}
+
+fn working_dir(json: &Value) -> PathBuf {
+    if let Some(path) = json
+        .get("drives")
+        .and_then(Value::as_array)
+        .and_then(|drives| {
+            drives
+                .iter()
+                .find(|drive| drive.get("drive_id").and_then(Value::as_str) == Some("main"))
+        })
+        .and_then(|drive| drive.get("working_dir"))
+        .and_then(Value::as_str)
+    {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = json.get("default_working_dir").and_then(Value::as_str) {
+        return PathBuf::from(path);
+    }
+    default_drive_dir()
+}
+
+fn snapshot_value(json: &Value) -> String {
+    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
+    find_string(hashtree, &["snapshot_url", "permalink_url", "current_root_cid"])
+        .map(short_text)
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn file_count_value(json: &Value) -> String {
+    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
+    find_number(hashtree, &["file_count", "top_level_entries"])
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn block_count_value(json: &Value) -> String {
+    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
+    find_number(hashtree, &["local_block_count"])
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn storage_value(json: &Value) -> String {
+    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
+    find_number(hashtree, &["local_block_bytes"])
+        .map(format_bytes)
+        .unwrap_or_else(|| "0 B".to_string())
+}
+
+fn device_count_value(json: &Value) -> String {
+    let network = json.get("network").unwrap_or(&Value::Null);
+    let published = find_number(network, &["published_device_roots"]).unwrap_or(0);
+    let authorized = find_number(network, &["authorized_device_count"]).unwrap_or(0);
+    format!("{published}/{authorized}")
+}
+
+fn render_drives(list: &gtk::ListBox, json: &Value) {
+    clear_list(list);
+    let Some(drives) = json.get("drives").and_then(Value::as_array) else {
+        list.append(&drive_row("main", &working_dir(json).display().to_string(), "-"));
+        return;
+    };
+    if drives.is_empty() {
+        list.append(&drive_row("main", &working_dir(json).display().to_string(), "-"));
+        return;
+    }
+    for drive in drives {
+        let name = find_string(drive, &["name", "drive_id"]).unwrap_or("main");
+        let path = find_string(drive, &["working_dir", "local_path"]).unwrap_or("-");
+        let status = find_string(drive, &["status", "root_cid"])
+            .map(short_text)
+            .unwrap_or_else(|| "configured".to_string());
+        list.append(&drive_row(name, path, &status));
+    }
+}
+
+fn render_peers(list: &gtk::ListBox, json: &Value) {
+    clear_list(list);
+    let Some(peers) = json.get("peers").and_then(Value::as_array) else {
+        list.append(&simple_row("No authorized devices", ""));
+        return;
+    };
+    if peers.is_empty() {
+        list.append(&simple_row("No authorized devices", ""));
+        return;
+    }
+    for peer in peers {
+        let title = find_string(peer, &["label", "device_npub", "device_pubkey"]).unwrap_or("Device");
+        let mut metadata = Vec::new();
+        if peer
+            .get("is_current_device")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            metadata.push("this device".to_string());
+        }
+        if let Some(root) = find_string(peer, &["root_cid"]) {
+            metadata.push(short_text(root));
+        }
+        if let Some(generation) = find_number(peer, &["dck_generation"]) {
+            metadata.push(format!("DCK {generation}"));
+        }
+        list.append(&simple_row(title, &metadata.join(" | ")));
+    }
+}
+
+fn render_network(relays_list: &gtk::ListBox, blossom_list: &gtk::ListBox, json: &Value) {
+    clear_list(relays_list);
+    clear_list(blossom_list);
+    let network = json.get("network").unwrap_or(&Value::Null);
+
+    if let Some(relays) = network.get("relays").and_then(Value::as_array) {
+        for relay in relays.iter().filter_map(Value::as_str) {
+            relays_list.append(&simple_row(relay, relay_status(relay, network)));
+        }
+    }
+    if relays_list.first_child().is_none() {
+        relays_list.append(&simple_row("No relays", ""));
+    }
+
+    if let Some(servers) = network.get("blossom_servers").and_then(Value::as_array) {
+        for server in servers.iter().filter_map(Value::as_str) {
+            blossom_list.append(&simple_row(server, ""));
+        }
+    }
+    if blossom_list.first_child().is_none() {
+        blossom_list.append(&simple_row("No Blossom servers", ""));
+    }
+}
+
+fn relay_status<'a>(relay: &str, network: &'a Value) -> &'a str {
+    network
+        .get("relay_statuses")
+        .and_then(Value::as_array)
+        .and_then(|statuses| {
+            statuses.iter().find_map(|status| {
+                let url = status.get("url").and_then(Value::as_str)?;
+                if url == relay {
+                    status.get("status").and_then(Value::as_str)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or("saved")
+}
+
+fn clear_list(list: &gtk::ListBox) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+}
+
+fn clear_box(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
+fn simple_row(title: &str, subtitle: &str) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    body.set_margin_top(10);
+    body.set_margin_bottom(10);
+    body.set_margin_start(12);
+    body.set_margin_end(12);
+
+    let title_label = gtk::Label::new(Some(title));
+    title_label.add_css_class("iris-row-title");
+    title_label.set_xalign(0.0);
+    title_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    body.append(&title_label);
+
+    if !subtitle.is_empty() {
+        let subtitle_label = gtk::Label::new(Some(subtitle));
+        subtitle_label.add_css_class("iris-row-subtitle");
+        subtitle_label.set_xalign(0.0);
+        subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        body.append(&subtitle_label);
+    }
+
+    row.set_child(Some(&body));
+    row
+}
+
+fn drive_row(name: &str, path: &str, status: &str) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    body.set_margin_top(10);
+    body.set_margin_bottom(10);
+    body.set_margin_start(12);
+    body.set_margin_end(12);
+
+    let icon = gtk::Image::from_icon_name("folder-symbolic");
+    body.append(&icon);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(name));
+    title.add_css_class("iris-row-title");
+    title.set_xalign(0.0);
+    let subtitle = gtk::Label::new(Some(path));
+    subtitle.add_css_class("iris-row-subtitle");
+    subtitle.set_xalign(0.0);
+    subtitle.set_hexpand(true);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    labels.append(&title);
+    labels.append(&subtitle);
+    body.append(&labels);
+
+    let state = gtk::Label::new(Some(status));
+    state.add_css_class("iris-row-state");
+    state.set_xalign(1.0);
+    body.append(&state);
+
+    row.set_child(Some(&body));
+    row
+}
+
+fn find_string<'a>(json: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| json.get(*key).and_then(Value::as_str))
+}
+
+fn find_number(json: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| json.get(*key).and_then(Value::as_u64))
+}
+
+fn short_value(value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "-".to_string();
+    };
+    short_text(value)
+}
+
+fn short_text(value: &str) -> String {
+    if value.chars().count() <= 32 {
+        return value.to_string();
+    }
+    let start = value.chars().take(14).collect::<String>();
+    let end = value
+        .chars()
+        .rev()
+        .take(10)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("{start}...{end}")
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn open_path(path: &PathBuf) {
+    let _ = Command::new("xdg-open").arg(path).spawn();
+}
+
+fn open_uri(uri: &str) {
+    let _ = gio::AppInfo::launch_default_for_uri(uri, None::<&gio::AppLaunchContext>);
+}
+
+fn install_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        r#"
+        window {
+          background: @window_bg_color;
+        }
+        .iris-content {
+          background: @window_bg_color;
+        }
+        .iris-summary {
+          padding: 12px;
+          border-radius: 8px;
+          background: #eef4f7;
+        }
+        .iris-field-name {
+          color: #5f6672;
+          font-size: 0.92em;
+        }
+        .iris-value {
+          font-weight: 600;
+        }
+        .iris-section-title {
+          font-weight: 700;
+        }
+        .iris-drive-list {
+          border-radius: 8px;
+          background: #ffffff;
+        }
+        .iris-row-title {
+          font-weight: 700;
+        }
+        .iris-row-subtitle,
+        .iris-row-state,
+        .iris-notice {
+          color: #5f6672;
+        }
+        "#
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}

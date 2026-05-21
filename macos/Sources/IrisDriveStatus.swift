@@ -23,6 +23,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var rootCID: String?
     @Published var rootIsPrivate: Bool?
     @Published var filesIrisURL: String?
+    @Published var snapshotURL: String?
+    @Published var fileCount: Int?
     @Published var topLevelEntries: Int?
     @Published var localBlockCount = 0
     @Published var localBlockBytes: Int64 = 0
@@ -33,6 +35,13 @@ final class IrisDriveStatus: ObservableObject {
     @Published var lastUpload: IrisDriveUploadStatus?
     @Published var lastEvent: String?
     @Published var copyStatus: String?
+
+    var snapshotLinkURL: String? {
+        guard let snapshotURL, !snapshotURL.isEmpty else {
+            return nil
+        }
+        return snapshotURL
+    }
 }
 
 struct IrisDriveRelayStatus: Identifiable, Equatable {

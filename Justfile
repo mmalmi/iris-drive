@@ -1,5 +1,7 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", env_var("HOME") + "/.cache/cargo-target")
+
 default:
     @just --list
 
@@ -9,10 +11,12 @@ info:
     @echo "Run"
     @echo "  just run"
     @echo "  just dev"
+    @echo "  just run-linux"
     @echo "  just run-cli --help"
     @echo
     @echo "Build"
     @echo "  just build"
+    @echo "  just linux-build"
     @echo "  just release"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
@@ -27,9 +31,12 @@ info:
 run:
     @case "$(uname -s)" in \
         Darwin) ./scripts/macos-dev-app.sh run ;; \
-        Linux) just _run-daemon ;; \
+        Linux) just run-linux ;; \
         *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
     esac
+
+run-linux:
+    ./tools/run-linux
 
 dev:
     @case "$(uname -s)" in \
@@ -66,6 +73,13 @@ run-cli *args:
 
 build:
     cargo build --workspace
+
+linux-build:
+    cargo build -p idrive
+    cd linux && cargo build
+
+linux-install-menu:
+    ./linux/scripts/install-dev-desktop.sh
 
 macos-xcodeproj:
     cd macos && xcodegen generate

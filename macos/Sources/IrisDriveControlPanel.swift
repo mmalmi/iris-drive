@@ -41,6 +41,13 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     }
 }
 
+private enum IrisDriveSetupMode {
+    case welcome
+    case create
+    case restore
+    case link
+}
+
 struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
@@ -48,12 +55,24 @@ struct IrisDriveControlPanel: View {
     @State private var relayInput = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
+    @State private var setupMode = IrisDriveSetupMode.welcome
+    @State private var setupLabel = ""
+    @State private var setupSecret = ""
+    @State private var setupOwner = ""
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .topLeading)
     ]
 
     var body: some View {
+        if !status.initialized {
+            setup
+        } else {
+            controlPanel
+        }
+    }
+
+    private var controlPanel: some View {
         HStack(spacing: 0) {
             sidebar
             Divider()
@@ -67,6 +86,106 @@ struct IrisDriveControlPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    @ViewBuilder
+    private var setup: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Image(systemName: "externaldrive.fill")
+                .font(.system(size: 72, weight: .semibold))
+                .foregroundStyle(.primary)
+            Text("Iris Drive")
+                .font(.title.weight(.semibold))
+            setupContent
+                .frame(width: 340)
+            if status.message != "Setup needed" {
+                Text(status.message)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(32)
+        .frame(minWidth: 520, minHeight: 420)
+    }
+
+    @ViewBuilder
+    private var setupContent: some View {
+        switch setupMode {
+        case .welcome:
+            VStack(spacing: 12) {
+                Button {
+                    setupMode = .create
+                } label: {
+                    Label("Create profile", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Button {
+                    setupMode = .restore
+                } label: {
+                    Label("Restore profile", systemImage: "key.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                Button {
+                    setupMode = .link
+                } label: {
+                    Label("Link this device", systemImage: "desktopcomputer")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        case .create:
+            setupForm(title: "Create profile") {
+                TextField("Device label", text: $setupLabel)
+                setupSubmit("Create profile") {
+                    controller.createProfile(label: setupLabel)
+                }
+            }
+        case .restore:
+            setupForm(title: "Restore profile") {
+                SecureField("Secret key", text: $setupSecret)
+                TextField("Device label", text: $setupLabel)
+                setupSubmit("Restore profile") {
+                    controller.restoreProfile(secretKey: setupSecret, label: setupLabel)
+                }
+                .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        case .link:
+            setupForm(title: "Link this device") {
+                TextField("Owner public key", text: $setupOwner)
+                TextField("Device label", text: $setupLabel)
+                setupSubmit("Link device") {
+                    controller.linkDevice(owner: setupOwner, label: setupLabel)
+                }
+                .disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func setupForm<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                setupMode = .welcome
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            Text(title)
+                .font(.title2.weight(.semibold))
+            content()
+        }
+        .textFieldStyle(.roundedBorder)
+    }
+
+    private func setupSubmit(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
     }
 
     private var sidebar: some View {
@@ -110,13 +229,13 @@ struct IrisDriveControlPanel: View {
                 Label("Drive", systemImage: "folder.fill")
             }
             Button(action: controller.copyDriveLink) {
-                Label("Copy Link", systemImage: "link")
+                Label("Copy Snapshot", systemImage: "link")
             }
-            .disabled(status.filesIrisURL == nil)
+            .disabled(status.snapshotLinkURL == nil)
             Button(action: controller.openDriveLink) {
-                Label("Open Link", systemImage: "safari.fill")
+                Label("Open Snapshot", systemImage: "safari.fill")
             }
-            .disabled(status.filesIrisURL == nil)
+            .disabled(status.snapshotLinkURL == nil)
             Divider()
                 .frame(height: 22)
             Button(action: controller.restartSync) {
@@ -152,15 +271,13 @@ struct IrisDriveControlPanel: View {
 
     private var overview: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            StatTile(title: "Files", value: optionalCount(status.topLevelEntries))
+            StatTile(title: "Files", value: optionalCount(status.fileCount ?? status.topLevelEntries))
             StatTile(title: "Blocks", value: "\(status.localBlockCount)")
             StatTile(title: "Storage", value: byteString(status.localBlockBytes))
             StatTile(
                 title: "Devices",
                 value: "\(status.publishedDeviceRoots)/\(status.authorizedDeviceCount)"
             )
-            StatTile(title: "Privacy", value: privacyLabel)
-            StatTile(title: "Upload", value: uploadLabel)
         }
     }
 
@@ -304,24 +421,6 @@ struct IrisDriveControlPanel: View {
                 PathRow(title: "Root", value: root)
             }
         }
-    }
-
-    private var privacyLabel: String {
-        switch status.rootIsPrivate {
-        case true:
-            return "Private"
-        case false:
-            return "Public"
-        case nil:
-            return "Pending"
-        }
-    }
-
-    private var uploadLabel: String {
-        guard let upload = status.lastUpload else {
-            return status.blossomServers.first ?? "None"
-        }
-        return "\(upload.uploaded) up, \(upload.alreadyPresent) cached"
     }
 
     private func optionalCount(_ value: Int?) -> String {

@@ -6,6 +6,8 @@ private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveAppGroupIdentifier = "group.to.iris.drive"
+private let irisDriveShowControlPanelNotification =
+    Notification.Name("to.iris.drive.showControlPanel")
 
 @main
 struct IrisDriveMacApp: App {
@@ -28,6 +30,8 @@ struct IrisDriveMacApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var daemon: Process?
+    private var userRequestedSyncStop = false
+    private var daemonRestartWorkItem: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var copyLinkMenuItem: NSMenuItem?
@@ -40,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var openControlPanelWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if handOffToExistingInstanceIfNeeded() {
+            return
+        }
+        installSingleInstanceNotificationObserver()
         installStatusItem()
         installWindowObserver()
         observeWindows()
@@ -58,6 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: irisDriveShowControlPanelNotification,
+            object: nil
+        )
     }
 
     func applicationShouldHandleReopen(
@@ -98,6 +111,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openControlPanelWindow = openWindow
     }
 
+    @objc private func handleShowControlPanelNotification(_ notification: Notification) {
+        showControlPanel()
+    }
+
+    private func installSingleInstanceNotificationObserver() {
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleShowControlPanelNotification),
+            name: irisDriveShowControlPanelNotification,
+            object: nil
+        )
+    }
+
+    private func handOffToExistingInstanceIfNeeded() -> Bool {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            return false
+        }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        guard let existing = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first(where: { !$0.isTerminated && $0.processIdentifier != currentPID })
+        else {
+            return false
+        }
+
+        DistributedNotificationCenter.default().postNotificationName(
+            irisDriveShowControlPanelNotification,
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+        existing.activate(options: [.activateAllWindows])
+        NSLog(
+            "Iris Drive instance already running at pid \(existing.processIdentifier); exiting duplicate pid \(currentPID)"
+        )
+        NSApp.terminate(nil)
+        return true
+    }
+
     @objc func setCloseToMenuBarOnClose(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: IrisDriveStatus.closeToMenuBarOnCloseKey)
         IrisDriveStatus.shared.closeToMenuBarOnClose = enabled
@@ -106,11 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func showDriveFolder() {
         let paths = runtimePathsForMenu ?? runtimePaths()
-        showMountedDriveFolder(fallbackURL: paths.workingDirectory)
+        openDriveFolder(currentWorkingDirectoryURL(fallback: paths.workingDirectory), source: "working")
     }
 
     @objc func copyDriveLink() {
-        guard let link = IrisDriveStatus.shared.filesIrisURL, !link.isEmpty else {
+        guard let link = currentSnapshotLink(), !link.isEmpty else {
             NSSound.beep()
             return
         }
@@ -121,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func openDriveLink() {
-        guard let link = IrisDriveStatus.shared.filesIrisURL,
+        guard let link = currentSnapshotLink(),
               let url = URL(string: link)
         else {
             NSSound.beep()
@@ -138,18 +190,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func startSync() {
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
+        userRequestedSyncStop = false
         startDaemon(idriveExecutableURL(), paths: paths)
     }
 
     @objc func stopSync() {
+        userRequestedSyncStop = true
+        daemonRestartWorkItem?.cancel()
+        daemonRestartWorkItem = nil
         guard let daemon else {
             setDaemonRunning(false)
             return
         }
-        daemon.terminate()
+        terminateDaemonProcess(daemon)
         self.daemon = nil
         setDaemonRunning(false)
         updateStatus("Sync stopped")
+    }
+
+    private func terminateDaemonProcess(_ process: Process) {
+        guard process.isRunning else { return }
+        let pid = process.processIdentifier
+        process.terminate()
+        let deadline = Date().addingTimeInterval(2)
+        while process.isRunning && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if process.isRunning {
+            let kill = Process()
+            kill.executableURL = URL(fileURLWithPath: "/bin/kill")
+            kill.arguments = ["-KILL", "\(pid)"]
+            try? kill.run()
+            kill.waitUntilExit()
+        }
     }
 
     @objc func restartSync() {
@@ -171,6 +244,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func resetRelays() {
         mutateRelayConfig(arguments: ["relays", "reset"])
+    }
+
+    func createProfile(label: String) {
+        let args = setupArguments(command: "init", label: label, extra: ["--force"])
+        finishSetup(arguments: args)
+    }
+
+    func restoreProfile(secretKey: String, label: String) {
+        let secret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty else {
+            updateStatus("Secret key required")
+            return
+        }
+        let args = setupArguments(command: "restore", label: label, extra: [secret])
+        finishSetup(arguments: args)
+    }
+
+    func linkDevice(owner: String, label: String) {
+        let owner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else {
+            updateStatus("Owner key required")
+            return
+        }
+        let args = setupArguments(command: "link", label: label, extra: [owner])
+        finishSetup(arguments: args)
     }
 
     @objc func quitApp() {
@@ -204,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(showDriveItem)
 
         let copyItem = NSMenuItem(
-            title: "Copy Private Link",
+            title: "Copy Snapshot Link",
             action: #selector(copyDriveLink),
             keyEquivalent: ""
         )
@@ -213,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(copyItem)
 
         let openLinkItem = NSMenuItem(
-            title: "Open Private Link",
+            title: "Open Snapshot Link",
             action: #selector(openDriveLink),
             keyEquivalent: ""
         )
@@ -342,26 +440,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 at: paths.configDirectory,
                 withIntermediateDirectories: true
             )
-            try FileManager.default.createDirectory(
-                at: paths.workingDirectory,
-                withIntermediateDirectories: true
-            )
-
             let status = try runIDrive(idrive, arguments: ["status"], paths: paths)
             applyStatusData(status)
+            let workingDirectory = workingDirectoryURL(from: status) ?? paths.workingDirectory
+            try FileManager.default.createDirectory(
+                at: workingDirectory,
+                withIntermediateDirectories: true
+            )
             let initialized = statusJSON(from: status)["initialized"] as? Bool ?? false
             if !initialized {
-                _ = try runIDrive(idrive, arguments: ["init"], paths: paths)
+                updateStatus("Setup needed")
+                return
             }
 
-            let latestStatus = initialized
-                ? status
-                : try runIDrive(idrive, arguments: ["status"], paths: paths)
-            applyStatusData(latestStatus)
-            if primaryDriveRootCID(from: latestStatus) == nil {
+            let latestWorkingDirectory = workingDirectoryURL(from: status) ?? workingDirectory
+            try FileManager.default.createDirectory(
+                at: latestWorkingDirectory,
+                withIntermediateDirectories: true
+            )
+            if primaryDriveRootCID(from: status) == nil {
                 _ = try runIDrive(
                     idrive,
-                    arguments: ["import", paths.workingDirectory.path],
+                    arguments: ["import", latestWorkingDirectory.path],
                     paths: paths
                 )
                 applyStatusData(try runIDrive(idrive, arguments: ["status"], paths: paths))
@@ -371,6 +471,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             updateStatus("Sync failed")
+        }
+    }
+
+    private func setupArguments(command: String, label: String, extra: [String]) -> [String] {
+        var arguments = [command] + extra
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty {
+            arguments += ["--label", label]
+        }
+        return arguments
+    }
+
+    private func finishSetup(arguments: [String]) {
+        let idrive = idriveExecutableURL()
+        let paths = runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus("Setting up")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try FileManager.default.createDirectory(
+                    at: paths.configDirectory,
+                    withIntermediateDirectories: true
+                )
+                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                try FileManager.default.createDirectory(
+                    at: paths.workingDirectory,
+                    withIntermediateDirectories: true
+                )
+                _ = try self.runIDrive(
+                    idrive,
+                    arguments: ["import", paths.workingDirectory.path],
+                    paths: paths
+                )
+                self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
+                DispatchQueue.main.async {
+                    self.userRequestedSyncStop = false
+                    self.startDaemon(idrive, paths: paths)
+                }
+            } catch {
+                NSLog("Iris Drive setup failed: \(error)")
+                self.updateStatus("Setup failed")
+            }
         }
     }
 
@@ -410,16 +552,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func openDriveFolder(_ url: URL, source: String) {
-        if source == "backing" {
-            do {
-                try FileManager.default.createDirectory(
-                    at: url,
-                    withIntermediateDirectories: true
-                )
-            } catch {
-                NSLog("Iris Drive failed to create backing drive folder: \(error)")
-                return
-            }
+        do {
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            NSLog("Iris Drive failed to create drive folder: \(error)")
+            return
         }
 
         let didStartSecurityScope = url.startAccessingSecurityScopedResource()
@@ -438,6 +578,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
         guard daemon == nil else { return }
+        daemonRestartWorkItem?.cancel()
+        daemonRestartWorkItem = nil
 
         let process = Process()
         configure(process, executable: idrive, arguments: ["daemon"], paths: paths)
@@ -454,7 +596,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive daemon failed to start: \(error)")
             updateStatus("Sync failed")
             setDaemonRunning(false)
+            scheduleDaemonRestart(paths: paths)
         }
+    }
+
+    private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
+        guard !userRequestedSyncStop else { return }
+        daemonRestartWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.daemon == nil, !self.userRequestedSyncStop else { return }
+            self.updateStatus("Restarting sync")
+            self.startDaemon(self.idriveExecutableURL(), paths: paths)
+        }
+        daemonRestartWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
     }
 
     private func runIDrive(
@@ -497,6 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) {
         var environment = ProcessInfo.processInfo.environment
         environment["IRIS_DRIVE_CONFIG_DIR"] = paths.configDirectory.path
+        if arguments.first == "daemon" {
+            environment["IRIS_DRIVE_PARENT_PID"] =
+                "\(ProcessInfo.processInfo.processIdentifier)"
+        }
         process.environment = environment
 
         if let executable {
@@ -532,7 +691,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self, self.daemon === process else { return }
                 self.daemon = nil
                 self.setDaemonRunning(false)
-                self.updateStatus("Sync stopped")
+                if self.userRequestedSyncStop {
+                    self.updateStatus("Sync stopped")
+                } else {
+                    self.updateStatus("Restarting sync")
+                    self.scheduleDaemonRestart(paths: self.runtimePathsForMenu ?? self.runtimePaths())
+                }
             }
         }
     }
@@ -576,6 +740,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
+    private func workingDirectoryURL(from data: Data) -> URL? {
+        let json = statusJSON(from: data)
+        if let drives = json["drives"] as? [[String: Any]],
+           let path = drives
+               .first(where: { $0["drive_id"] as? String == "main" })?["working_dir"] as? String,
+           !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        if let path = json["default_working_dir"] as? String, !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return nil
+    }
+
+    private func currentWorkingDirectoryURL(fallback: URL) -> URL {
+        if let path = IrisDriveStatus.shared.workingDirectory, !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return fallback
+    }
+
     private func applyStatusData(_ data: Data) {
         applyStatusPayload(statusJSON(from: data))
     }
@@ -607,6 +792,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
                 status.rootIsPrivate = hashtree["current_root_private"] as? Bool
                 status.filesIrisURL = hashtree["files_iris_to_url"] as? String
+                status.snapshotURL =
+                    hashtree["snapshot_url"] as? String
+                    ?? hashtree["permalink_url"] as? String
+                    ?? status.snapshotURL
+                status.fileCount = Self.intValue(hashtree["file_count"])
                 status.topLevelEntries = Self.intValue(hashtree["top_level_entries"])
             }
 
@@ -709,6 +899,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let link = json["files_iris_to_url"] as? String {
                 status.filesIrisURL = link
             }
+            if let link = json["snapshot_url"] as? String ?? json["permalink_url"] as? String {
+                status.snapshotURL = link
+            }
+            if let files = Self.intValue(json["file_count"]) {
+                status.fileCount = files
+            }
             if let entries = Self.intValue(json["top_level_entries"])
                 ?? Self.intValue(json["entries"]) {
                 status.topLevelEntries = entries
@@ -771,9 +967,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateLinkMenuState() {
-        let hasLink = !(IrisDriveStatus.shared.filesIrisURL ?? "").isEmpty
+        let status = IrisDriveStatus.shared
+        let hasLink = !(status.snapshotLinkURL ?? "").isEmpty || !(status.rootCID ?? "").isEmpty
         copyLinkMenuItem?.isEnabled = hasLink
         openLinkMenuItem?.isEnabled = hasLink
+    }
+
+    private func currentSnapshotLink() -> String? {
+        if let link = IrisDriveStatus.shared.snapshotLinkURL, !link.isEmpty {
+            return link
+        }
+        guard let paths = runtimePathsForMenu else {
+            return nil
+        }
+        do {
+            let data = try runIDrive(idriveExecutableURL(), arguments: ["status"], paths: paths)
+            applyStatusData(data)
+            return snapshotLink(from: data)
+        } catch {
+            NSLog("Iris Drive snapshot link refresh failed: \(error)")
+            return nil
+        }
+    }
+
+    private func snapshotLink(from data: Data) -> String? {
+        let json = statusJSON(from: data)
+        guard let hashtree = json["hashtree"] as? [String: Any] else {
+            return nil
+        }
+        return hashtree["snapshot_url"] as? String
+            ?? hashtree["permalink_url"] as? String
     }
 
     private static func mergeRelayStatuses(
@@ -781,10 +1004,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statuses: [IrisDriveRelayStatus]
     ) -> [IrisDriveRelayStatus] {
         let byURL = statuses.reduce(into: [String: String]()) { partial, relay in
-            partial[relay.url] = relay.status
+            partial[normalizedRelayURL(relay.url)] = relay.status
         }
         return relays.map { relay in
-            IrisDriveRelayStatus(url: relay, status: byURL[relay] ?? "configured")
+            IrisDriveRelayStatus(
+                url: relay,
+                status: byURL[normalizedRelayURL(relay)] ?? "configured"
+            )
         }
     }
 
@@ -793,10 +1019,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         into statuses: [IrisDriveRelayStatus],
         relays: [String]
     ) -> [IrisDriveRelayStatus] {
-        var next = statuses.filter { $0.url != relayStatus.url }
+        let normalized = normalizedRelayURL(relayStatus.url)
+        var next = statuses.filter { normalizedRelayURL($0.url) != normalized }
         next.append(relayStatus)
-        let knownRelays = relays.isEmpty ? next.map(\.url) : relays
+        let knownRelays = relays.isEmpty ? next.map { normalizedRelayURL($0.url) } : relays
         return mergeRelayStatuses(relays: knownRelays, statuses: next)
+    }
+
+    private static func normalizedRelayURL(_ url: String) -> String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private static func intValue(_ value: Any?) -> Int? {

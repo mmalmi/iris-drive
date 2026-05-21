@@ -1,6 +1,24 @@
-# linux
+# Linux Native Shell
 
-Native GTK/libadwaita shell over `iris-drive-app-core`. Not started yet.
+Rust GTK4/libadwaita shell for Iris Drive.
 
-Excluded from the root cargo workspace so the GTK toolchain doesn't block
-core builds; built separately via `cd linux && cargo build`.
+Run it from the repo root:
+
+```bash
+just run-linux
+```
+
+Useful commands:
+
+```bash
+just linux-build
+just linux-install-menu
+cd linux && cargo run
+```
+
+The app manages the local `idrive` CLI/daemon, opens the working folder, and
+opens the loopback gateway at `http://main.drive.iris.localhost:17321/`.
+Installed packages register `iris-drive://` links through the desktop entry.
+
+The crate is excluded from the root workspace so GTK toolchains do not block
+core builds.

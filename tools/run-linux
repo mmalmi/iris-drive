@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ "$#" -eq 0 ]]; then
+    "$ROOT/linux/scripts/install-dev-desktop.sh" >/dev/null
+    exec "$ROOT/linux/target/debug/iris-drive"
+fi
+
+cd "$ROOT/linux"
+exec "$@"
