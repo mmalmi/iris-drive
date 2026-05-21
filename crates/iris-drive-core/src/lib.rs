@@ -48,7 +48,7 @@ pub use merge::{
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{
     ConflictResolution, SyncBaseState, SyncError, SyncReport, sync as run_sync, sync_with_base,
-    sync_with_cache,
+    sync_with_base_anchor, sync_with_cache,
 };
 pub use sync_cache::{
     CachedBaseState, CachedPathState, CachedRoot, ContentNeed, SourceAvailability, SyncCache,

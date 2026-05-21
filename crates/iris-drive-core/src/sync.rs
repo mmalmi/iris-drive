@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hashtree_core::to_hex;
-use hashtree_provider::{EntryInfo, PathChange, ProviderError, ProviderFs};
+use hashtree_provider::{EntryInfo, PathChange, ProviderError, ProviderFs, SyncAnchor};
 use thiserror::Error;
 
 use crate::conflict::{
@@ -165,6 +165,99 @@ where
     Ok(report)
 }
 
+/// Run one bidirectional sync from a known base provider anchor.
+///
+/// This applies only paths that changed since `base_anchor`; unchanged
+/// side state is supplied by `base_state`. File bytes are read only for
+/// paths that actually need to be copied or preserved as conflicts.
+pub async fn sync_with_base_anchor<L, R>(
+    local: &L,
+    remote: &R,
+    base_state: &SyncBaseState,
+    base_anchor: &SyncAnchor,
+    remote_label: &str,
+) -> Result<SyncReport, SyncError>
+where
+    L: ProviderFs<ItemId = String>,
+    R: ProviderFs<ItemId = String>,
+{
+    let local_changes = file_changes_since(local, base_anchor).await?;
+    let remote_changes = file_changes_since(remote, base_anchor).await?;
+
+    let all_paths: BTreeSet<String> = local_changes
+        .keys()
+        .chain(remote_changes.keys())
+        .cloned()
+        .collect();
+    let mut occupied_paths: BTreeSet<String> = base_state.keys().cloned().collect();
+    reserve_present_changes(&mut occupied_paths, &local_changes);
+    reserve_present_changes(&mut occupied_paths, &remote_changes);
+
+    let mut report = SyncReport::default();
+    for path in &all_paths {
+        let local_snapshot = snapshot_after_change(path, &local_changes, base_state);
+        let remote_snapshot = snapshot_after_change(path, &remote_changes, base_state);
+        match resolve(
+            path,
+            base_state.get(path),
+            local_snapshot.as_ref(),
+            remote_snapshot.as_ref(),
+            remote_label,
+        ) {
+            SyncAction::NoOp => {}
+            SyncAction::ApplyRemote { new } => {
+                let _ = new;
+                if remote_snapshot.is_some() && local_snapshot != remote_snapshot {
+                    copy_file(remote, path, local, path).await?;
+                    occupied_paths.insert(path.clone());
+                    report.downloaded.push(path.clone());
+                }
+            }
+            SyncAction::KeepLocal => {
+                if local_snapshot.is_some() && local_snapshot != remote_snapshot {
+                    copy_file(local, path, remote, path).await?;
+                    occupied_paths.insert(path.clone());
+                    report.uploaded.push(path.clone());
+                }
+            }
+            SyncAction::DeleteLocal => {
+                if local_snapshot.is_some() {
+                    remove_file(local, path).await?;
+                    occupied_paths.remove(path);
+                    report.deleted_local.push(path.clone());
+                }
+            }
+            SyncAction::DeleteRemote => {
+                if remote_snapshot.is_some() {
+                    remove_file(remote, path).await?;
+                    report.deleted_remote.push(path.clone());
+                }
+            }
+            SyncAction::Conflict {
+                remote: remote_file,
+                conflict_name,
+            } => {
+                let _ = (remote_file, conflict_name);
+                let original_path = parse_conflict_filename(path)
+                    .map_or_else(|| path.clone(), |parsed| parsed.original_path);
+                let conflict_path =
+                    next_conflict_filename(&original_path, remote_label, &occupied_paths)?;
+                copy_file(remote, path, local, &conflict_path).await?;
+                occupied_paths.insert(conflict_path.clone());
+                report.conflicts.push(ConflictResolution {
+                    original_path,
+                    renamed_to: conflict_path,
+                });
+                copy_file(local, path, remote, path).await?;
+                occupied_paths.insert(path.clone());
+                report.uploaded.push(path.clone());
+            }
+        }
+    }
+
+    Ok(report)
+}
+
 /// Run one sync using the cache's durable base state, then refresh the
 /// accepted base from the converged local provider state when no conflicts
 /// were produced. Callers remain responsible for saving the cache.
@@ -180,24 +273,114 @@ where
     R: ProviderFs<ItemId = String>,
 {
     let base = cache.base_snapshots_for_drive(drive_id);
-    let report = sync_with_base(local, remote, &base, remote_label).await?;
+    let base_anchor = base_anchor_for_drive(cache, drive_id);
+    let report = if let Some(base_anchor) = base_anchor.as_ref() {
+        sync_with_base_anchor(local, remote, &base, base_anchor, remote_label).await?
+    } else {
+        sync_with_base(local, remote, &base, remote_label).await?
+    };
     if report.conflicts.is_empty() {
-        let anchor = local.anchor().await;
-        let base_root_cid = anchor.as_str().to_string();
-        let rows = enumerate_files(local)
-            .await?
-            .into_iter()
-            .map(|(path, entry)| CachedBaseState {
-                drive_id: drive_id.to_string(),
-                path,
-                base_root_cid: base_root_cid.clone(),
-                whole_file_hash: None,
-                content_cid_hash: to_hex(&entry.hash),
-                size: entry.size,
-            });
-        cache.replace_base_state_for_drive(drive_id, rows);
+        if let Some(base_anchor) = base_anchor.as_ref() {
+            refresh_base_state_from_anchor(local, cache, drive_id, base_anchor).await?;
+        } else {
+            refresh_base_state_from_full_enumeration(local, cache, drive_id).await?;
+        }
     }
     Ok(report)
+}
+
+fn base_anchor_for_drive(cache: &SyncCache, drive_id: &str) -> Option<SyncAnchor> {
+    let mut anchors = cache
+        .base_state
+        .iter()
+        .filter(|row| row.drive_id == drive_id)
+        .map(|row| row.base_root_cid.as_str());
+    let first = anchors.next()?;
+    if anchors.all(|anchor| anchor == first) {
+        Some(SyncAnchor(first.to_string()))
+    } else {
+        None
+    }
+}
+
+async fn refresh_base_state_from_full_enumeration<P>(
+    local: &P,
+    cache: &mut SyncCache,
+    drive_id: &str,
+) -> Result<(), SyncError>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let anchor = local.anchor().await;
+    let base_root_cid = anchor.as_str().to_string();
+    let rows = enumerate_files(local)
+        .await?
+        .into_iter()
+        .map(|(path, entry)| cached_base_row_from_entry(drive_id, path, &base_root_cid, entry));
+    cache.replace_base_state_for_drive(drive_id, rows);
+    Ok(())
+}
+
+async fn refresh_base_state_from_anchor<P>(
+    local: &P,
+    cache: &mut SyncCache,
+    drive_id: &str,
+    base_anchor: &SyncAnchor,
+) -> Result<(), SyncError>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let anchor = local.anchor().await;
+    let base_root_cid = anchor.as_str().to_string();
+    let mut rows: BTreeMap<String, CachedBaseState> = cache
+        .base_state
+        .iter()
+        .filter(|row| row.drive_id == drive_id)
+        .map(|row| {
+            let mut row = row.clone();
+            row.base_root_cid = base_root_cid.clone();
+            (row.path.clone(), row)
+        })
+        .collect();
+
+    for change in local.changes_since(Some(base_anchor)).await? {
+        match change {
+            PathChange::Added { path, entry }
+            | PathChange::Modified {
+                path, new: entry, ..
+            } if entry.link_type != hashtree_core::LinkType::Dir => {
+                rows.insert(
+                    path.clone(),
+                    cached_base_row_from_entry(drive_id, path, &base_root_cid, entry),
+                );
+            }
+            PathChange::Removed { path, entry }
+                if entry.link_type != hashtree_core::LinkType::Dir =>
+            {
+                rows.remove(&path);
+            }
+            _ => {}
+        }
+    }
+
+    cache.replace_base_state_for_drive(drive_id, rows.into_values());
+    Ok(())
+}
+
+fn cached_base_row_from_entry(
+    drive_id: &str,
+    path: String,
+    base_root_cid: &str,
+    entry: EntryInfo,
+) -> CachedBaseState {
+    CachedBaseState {
+        drive_id: drive_id.to_string(),
+        path,
+        base_root_cid: base_root_cid.to_string(),
+        whole_file_hash: None,
+        content_cid_hash: to_hex(&entry.hash),
+        size: entry.size,
+    }
 }
 
 fn hashes_match(l: &EntryInfo, r: &EntryInfo) -> bool {
@@ -208,6 +391,54 @@ fn snapshot_from_entry(entry: &EntryInfo) -> FileSnapshot {
     FileSnapshot {
         content_hash: to_hex(&entry.hash),
         mtime: 0,
+    }
+}
+
+async fn file_changes_since<P: ProviderFs<ItemId = String>>(
+    fs: &P,
+    anchor: &SyncAnchor,
+) -> Result<BTreeMap<String, Option<EntryInfo>>, SyncError> {
+    let changes = fs.changes_since(Some(anchor)).await?;
+    let mut out = BTreeMap::new();
+    for change in changes {
+        match change {
+            PathChange::Added { path, entry }
+            | PathChange::Modified {
+                path, new: entry, ..
+            } if entry.link_type != hashtree_core::LinkType::Dir => {
+                out.insert(path, Some(entry));
+            }
+            PathChange::Removed { path, entry }
+                if entry.link_type != hashtree_core::LinkType::Dir =>
+            {
+                out.insert(path, None);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn snapshot_after_change(
+    path: &str,
+    changes: &BTreeMap<String, Option<EntryInfo>>,
+    base_state: &SyncBaseState,
+) -> Option<FileSnapshot> {
+    match changes.get(path) {
+        Some(Some(entry)) => Some(snapshot_from_entry(entry)),
+        Some(None) => None,
+        None => base_state.get(path).cloned(),
+    }
+}
+
+fn reserve_present_changes(
+    occupied_paths: &mut BTreeSet<String>,
+    changes: &BTreeMap<String, Option<EntryInfo>>,
+) {
+    for (path, entry) in changes {
+        if entry.is_some() {
+            occupied_paths.insert(path.clone());
+        }
     }
 }
 
@@ -357,8 +588,9 @@ fn split_path(path: &str) -> (String, &str) {
 mod tests {
     use super::*;
     use hashtree_core::{HashTree, HashTreeConfig, MemoryStore};
-    use hashtree_provider::HashTreeProviderFs;
+    use hashtree_provider::{DirItem, HashTreeProviderFs, Item, SyncAnchor};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     async fn fresh_provider() -> HashTreeProviderFs<MemoryStore> {
         let tree = Arc::new(HashTree::new(
@@ -379,6 +611,133 @@ mod tests {
         let mut p: Vec<_> = enumerate_files(fs).await.unwrap().into_keys().collect();
         p.sort();
         p
+    }
+
+    struct NoFullEnumeration<P> {
+        inner: P,
+        full_enumerations: Arc<AtomicUsize>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl<P> NoFullEnumeration<P> {
+        fn new(inner: P) -> Self {
+            Self {
+                inner,
+                full_enumerations: Arc::new(AtomicUsize::new(0)),
+                reads: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn full_enumerations(&self) -> usize {
+            self.full_enumerations.load(Ordering::SeqCst)
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<P> ProviderFs for NoFullEnumeration<P>
+    where
+        P: ProviderFs<ItemId = String>,
+    {
+        type ItemId = String;
+
+        async fn root(&self) -> Self::ItemId {
+            self.inner.root().await
+        }
+
+        async fn lookup(
+            &self,
+            parent: &Self::ItemId,
+            name: &str,
+        ) -> Result<Item<Self::ItemId>, ProviderError> {
+            self.inner.lookup(parent, name).await
+        }
+
+        async fn item(&self, id: &Self::ItemId) -> Result<Item<Self::ItemId>, ProviderError> {
+            self.inner.item(id).await
+        }
+
+        async fn read(
+            &self,
+            id: &Self::ItemId,
+            offset: u64,
+            size: u64,
+        ) -> Result<Vec<u8>, ProviderError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.inner.read(id, offset, size).await
+        }
+
+        async fn read_dir(
+            &self,
+            id: &Self::ItemId,
+        ) -> Result<Vec<DirItem<Self::ItemId>>, ProviderError> {
+            self.inner.read_dir(id).await
+        }
+
+        async fn create_file(
+            &self,
+            parent: &Self::ItemId,
+            name: &str,
+        ) -> Result<Item<Self::ItemId>, ProviderError> {
+            self.inner.create_file(parent, name).await
+        }
+
+        async fn create_dir(
+            &self,
+            parent: &Self::ItemId,
+            name: &str,
+        ) -> Result<Item<Self::ItemId>, ProviderError> {
+            self.inner.create_dir(parent, name).await
+        }
+
+        async fn write(
+            &self,
+            id: &Self::ItemId,
+            offset: u64,
+            data: &[u8],
+        ) -> Result<u32, ProviderError> {
+            self.inner.write(id, offset, data).await
+        }
+
+        async fn truncate(&self, id: &Self::ItemId, size: u64) -> Result<(), ProviderError> {
+            self.inner.truncate(id, size).await
+        }
+
+        async fn remove(&self, parent: &Self::ItemId, name: &str) -> Result<(), ProviderError> {
+            self.inner.remove(parent, name).await
+        }
+
+        async fn rename(
+            &self,
+            old_parent: &Self::ItemId,
+            old_name: &str,
+            new_parent: &Self::ItemId,
+            new_name: &str,
+        ) -> Result<(), ProviderError> {
+            self.inner
+                .rename(old_parent, old_name, new_parent, new_name)
+                .await
+        }
+
+        async fn anchor(&self) -> SyncAnchor {
+            self.inner.anchor().await
+        }
+
+        async fn changes_since(
+            &self,
+            anchor: Option<&SyncAnchor>,
+        ) -> Result<Vec<PathChange>, ProviderError> {
+            if anchor.is_none() {
+                self.full_enumerations.fetch_add(1, Ordering::SeqCst);
+                return Err(ProviderError::Backend(
+                    "full enumeration disabled for this test".into(),
+                ));
+            }
+            self.inner.changes_since(anchor).await
+        }
     }
 
     async fn base_state<P: ProviderFs<ItemId = String>>(
@@ -603,6 +962,100 @@ mod tests {
 
         assert_eq!(report.conflicts.len(), 1);
         assert!(cache.base_snapshots_for_drive("main").is_empty());
+    }
+
+    #[tokio::test]
+    async fn cache_backed_sync_uses_anchor_diff_after_base_exists() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "shared.txt", b"v1").await;
+        sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        write_file(&r, "remote.txt", b"new from remote").await;
+        let l = NoFullEnumeration::new(l);
+        let r = NoFullEnumeration::new(r);
+
+        let report = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(report.downloaded, vec!["remote.txt".to_string()]);
+        assert_eq!(read_file(&l, "remote.txt").await, b"new from remote");
+        assert_eq!(l.full_enumerations(), 0);
+        assert_eq!(r.full_enumerations(), 0);
+        assert!(
+            cache
+                .base_snapshots_for_drive("main")
+                .contains_key("remote.txt")
+        );
+    }
+
+    #[tokio::test]
+    async fn anchored_sync_does_not_reuse_pending_delete_conflict_name() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "note", b"base").await;
+        write_file(&l, "note (conflict from peer)", b"old conflict").await;
+        sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        write_file(&l, "note", b"local").await;
+        write_file(&r, "note", b"remote").await;
+        let remote_root = r.root().await;
+        r.remove(&remote_root, "note (conflict from peer)")
+            .await
+            .unwrap();
+
+        let report = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            report.conflicts[0].renamed_to,
+            "note (conflict from peer 2)"
+        );
+        assert_eq!(
+            read_file(&l, "note (conflict from peer 2)").await,
+            b"remote"
+        );
+        assert!(
+            read_full(&l, "note (conflict from peer)").await.is_err(),
+            "old conflict copy should be deleted, not overwritten and kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn anchored_sync_same_content_change_does_not_read_file_bytes() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "same.txt", b"v1").await;
+        sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        write_file(&l, "same.txt", b"v2").await;
+        write_file(&r, "same.txt", b"v2").await;
+        let l = NoFullEnumeration::new(l);
+        let r = NoFullEnumeration::new(r);
+
+        let report = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(report, SyncReport::default());
+        assert_eq!(l.full_enumerations(), 0);
+        assert_eq!(r.full_enumerations(), 0);
+        assert_eq!(l.reads(), 0);
+        assert_eq!(r.reads(), 0);
     }
 
     #[tokio::test]
