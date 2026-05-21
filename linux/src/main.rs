@@ -154,7 +154,11 @@ fn build_ui(app: &adw::Application) {
     setup.set_vexpand(true);
 
     let main_view = gtk::ScrolledWindow::new();
-    main_view.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    main_view.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+    main_view.set_min_content_width(260);
+    main_view.set_min_content_height(220);
+    main_view.set_propagate_natural_width(false);
+    main_view.set_propagate_natural_height(false);
     main_view.set_hexpand(true);
     main_view.set_vexpand(true);
 
@@ -1937,52 +1941,24 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         r#"
-        window {
-          background: @window_bg_color;
-          color: @window_fg_color;
-        }
-        .iris-shell,
-        .iris-content {
-          background: @window_bg_color;
-        }
-        .iris-sidebar {
-          background: @window_bg_color;
-        }
-        .iris-content-separator {
-          background: @borders;
-        }
         .iris-sidebar-button {
           border-radius: 6px;
           padding: 6px 8px;
-          background: transparent;
-          color: @window_fg_color;
         }
-        .iris-sidebar-button:hover {
-          background: alpha(@window_fg_color, 0.06);
-        }
-        .iris-sidebar-button.selected {
-          background: alpha(@accent_bg_color, 0.18);
-          color: @accent_color;
-        }
-        .iris-sidebar-button label {
+        .iris-sidebar-button.selected label {
           font-weight: 500;
         }
         .iris-actions flowboxchild,
         .iris-metrics flowboxchild {
           padding: 0;
-          background: transparent;
         }
         .iris-actions button.iris-action-button {
           border-radius: 6px;
           padding: 3px 10px;
         }
-        .iris-drive-icon {
-          color: @window_fg_color;
-        }
         .iris-status-pill {
           border-radius: 999px;
           padding: 5px 9px;
-          background: @card_bg_color;
           font-size: 0.82em;
           font-weight: 700;
         }
@@ -1992,7 +1968,6 @@ fn install_css() {
         .iris-metric-card {
           padding: 16px 12px;
           border-radius: 8px;
-          background: @card_bg_color;
         }
         .iris-metric-value {
           font-size: 1.35em;
@@ -2001,15 +1976,9 @@ fn install_css() {
         .iris-summary {
           padding: 12px;
           border-radius: 8px;
-          background: @card_bg_color;
         }
         .iris-field-name {
-          color: @dim_label_color;
           font-size: 0.92em;
-        }
-        .iris-muted,
-        .iris-setting-check {
-          color: @dim_label_color;
         }
         .iris-value {
           font-weight: 600;
@@ -2019,15 +1988,9 @@ fn install_css() {
         }
         .iris-drive-list {
           border-radius: 8px;
-          background: @card_bg_color;
         }
         .iris-row-title {
           font-weight: 700;
-        }
-        .iris-row-subtitle,
-        .iris-row-state,
-        .iris-notice {
-          color: @dim_label_color;
         }
         "#,
     );
