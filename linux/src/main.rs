@@ -20,6 +20,7 @@ thread_local! {
 struct Ui {
     sidebar: gtk::Box,
     setup: gtk::Box,
+    main_view: gtk::ScrolledWindow,
     main: gtk::Box,
     drive_title: gtk::Label,
     drive_message: gtk::Label,
@@ -152,6 +153,11 @@ fn build_ui(app: &adw::Application) {
     setup.set_hexpand(true);
     setup.set_vexpand(true);
 
+    let main_view = gtk::ScrolledWindow::new();
+    main_view.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    main_view.set_hexpand(true);
+    main_view.set_vexpand(true);
+
     let main = gtk::Box::new(gtk::Orientation::Vertical, 20);
     main.set_margin_top(24);
     main.set_margin_bottom(24);
@@ -164,14 +170,11 @@ fn build_ui(app: &adw::Application) {
     stack.set_hexpand(true);
     stack.set_vexpand(true);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let actions = flow_section("iris-actions", 1, 6);
     actions.add_css_class("iris-actions");
     actions.append(&folder_button);
     actions.append(&copy_snapshot_button);
     actions.append(&open_snapshot_button);
-    let action_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    action_separator.add_css_class("iris-action-separator");
-    actions.append(&action_separator);
     actions.append(&restart_button);
     actions.append(&stop_button);
     actions.append(&start_button);
@@ -215,16 +218,11 @@ fn build_ui(app: &adw::Application) {
     let storage = metric_value_label();
     let devices = metric_value_label();
 
-    let metrics = gtk::Grid::new();
-    metrics.add_css_class("iris-metrics");
-    metrics.set_column_spacing(12);
-    metrics.set_row_spacing(12);
-    metrics.set_column_homogeneous(true);
-    metrics.set_hexpand(true);
-    metrics.attach(&metric_tile("Files", &files), 0, 0, 1, 1);
-    metrics.attach(&metric_tile("Blocks", &blocks), 1, 0, 1, 1);
-    metrics.attach(&metric_tile("Storage", &storage), 2, 0, 1, 1);
-    metrics.attach(&metric_tile("Devices", &devices), 3, 0, 1, 1);
+    let metrics = flow_section("iris-metrics", 1, 4);
+    metrics.append(&metric_tile("Files", &files));
+    metrics.append(&metric_tile("Blocks", &blocks));
+    metrics.append(&metric_tile("Storage", &storage));
+    metrics.append(&metric_tile("Devices", &devices));
     dashboard.append(&metrics);
 
     let drives = gtk::ListBox::new();
@@ -327,8 +325,9 @@ fn build_ui(app: &adw::Application) {
 
     main.append(&stack);
 
+    main_view.set_child(Some(&main));
     content.append(&setup);
-    content.append(&main);
+    content.append(&main_view);
     shell.append(&sidebar);
     let content_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     content_separator.add_css_class("iris-content-separator");
@@ -342,6 +341,7 @@ fn build_ui(app: &adw::Application) {
         ui: Ui {
             sidebar,
             setup,
+            main_view,
             main,
             drive_title,
             drive_message,
@@ -438,7 +438,7 @@ fn build_ui(app: &adw::Application) {
             if model.retired.get() {
                 return glib::ControlFlow::Break;
             }
-            if model.ui.main.is_visible() {
+            if model.ui.main_view.is_visible() {
                 refresh(&model);
             }
             glib::ControlFlow::Continue
@@ -493,6 +493,19 @@ fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
 
 fn text_button(label: &str) -> gtk::Button {
     gtk::Button::with_label(label)
+}
+
+fn flow_section(css_class: &str, min_children: u32, max_children: u32) -> gtk::FlowBox {
+    let flow = gtk::FlowBox::new();
+    flow.add_css_class(css_class);
+    flow.set_selection_mode(gtk::SelectionMode::None);
+    flow.set_activate_on_single_click(false);
+    flow.set_min_children_per_line(min_children);
+    flow.set_max_children_per_line(max_children);
+    flow.set_column_spacing(12);
+    flow.set_row_spacing(12);
+    flow.set_hexpand(true);
+    flow
 }
 
 fn action_button(icon: &str, label: &str) -> gtk::Button {
@@ -590,6 +603,7 @@ fn metric_tile(title: &str, value: &gtk::Label) -> gtk::Box {
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 7);
     tile.add_css_class("iris-metric-card");
     tile.set_hexpand(true);
+    tile.set_width_request(150);
     tile.set_margin_top(0);
     tile.set_margin_bottom(0);
 
@@ -994,6 +1008,7 @@ fn status_with_local_import() -> Result<(Value, Option<String>), String> {
 fn set_view_mode(model: &AppRef, initialized: bool, sync_running: bool) {
     model.ui.sidebar.set_visible(initialized);
     model.ui.setup.set_visible(!initialized);
+    model.ui.main_view.set_visible(initialized);
     model.ui.main.set_visible(initialized);
     model.ui.init_button.set_visible(false);
     model.ui.folder_button.set_visible(initialized);
@@ -1952,13 +1967,14 @@ fn install_css() {
         .iris-sidebar-button label {
           font-weight: 500;
         }
+        .iris-actions flowboxchild,
+        .iris-metrics flowboxchild {
+          padding: 0;
+          background: transparent;
+        }
         .iris-actions button.iris-action-button {
           border-radius: 6px;
           padding: 3px 10px;
-        }
-        .iris-action-separator {
-          margin-top: 4px;
-          margin-bottom: 4px;
         }
         .iris-drive-icon {
           color: @window_fg_color;
