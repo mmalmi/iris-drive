@@ -1960,8 +1960,11 @@ fn install_css() {
           border-radius: 6px;
           padding: 6px 8px;
         }
+        .iris-sidebar-button label {
+          font-weight: 400;
+        }
         .iris-sidebar-button.selected label {
-          font-weight: 500;
+          font-weight: 700;
         }
         .iris-actions flowboxchild,
         .iris-metrics flowboxchild {
