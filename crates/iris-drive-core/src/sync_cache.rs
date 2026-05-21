@@ -40,6 +40,8 @@ pub struct SyncCache {
     pub roots: Vec<CachedRoot>,
     pub path_state: Vec<CachedPathState>,
     pub base_state: Vec<CachedBaseState>,
+    #[serde(default)]
+    pub base_anchors: Vec<CachedBaseAnchor>,
     pub needs: Vec<ContentNeed>,
     pub source_availability: Vec<SourceAvailability>,
 }
@@ -60,6 +62,7 @@ impl SyncCache {
             roots: Vec::new(),
             path_state: Vec::new(),
             base_state: Vec::new(),
+            base_anchors: Vec::new(),
             needs: Vec::new(),
             source_availability: Vec::new(),
         }
@@ -133,6 +136,11 @@ impl SyncCache {
     }
 
     pub fn set_current_device_base(&mut self, drive_id: &str, device_id: &str) {
+        let root_cid = self
+            .roots
+            .iter()
+            .find(|row| row.drive_id == drive_id && row.device_id == device_id)
+            .map(|row| row.root_cid.clone());
         self.base_state.retain(|row| row.drive_id != drive_id);
         self.base_state.extend(
             self.path_state
@@ -147,6 +155,13 @@ impl SyncCache {
                     size: row.size,
                 }),
         );
+        self.base_anchors.retain(|row| row.drive_id != drive_id);
+        if let Some(root_cid) = root_cid {
+            self.base_anchors.push(CachedBaseAnchor {
+                drive_id: drive_id.to_string(),
+                base_root_cid: root_cid,
+            });
+        }
         self.sort_rows();
     }
 
@@ -155,12 +170,56 @@ impl SyncCache {
         drive_id: &str,
         rows: impl IntoIterator<Item = CachedBaseState>,
     ) {
-        self.base_state.retain(|row| row.drive_id != drive_id);
-        self.base_state.extend(rows.into_iter().map(|mut row| {
+        let rows: Vec<_> = rows
+            .into_iter()
+            .map(|mut row| {
+                row.drive_id = drive_id.to_string();
+                row
+            })
+            .collect();
+        let anchor = uniform_base_root_cid(&rows).map(str::to_string);
+        self.replace_base_state_for_drive_inner(drive_id, rows, anchor.as_deref());
+    }
+
+    pub fn replace_base_state_for_drive_at_anchor(
+        &mut self,
+        drive_id: &str,
+        base_root_cid: &str,
+        rows: impl IntoIterator<Item = CachedBaseState>,
+    ) {
+        let rows = rows.into_iter().map(|mut row| {
             row.drive_id = drive_id.to_string();
+            row.base_root_cid = base_root_cid.to_string();
             row
-        }));
+        });
+        self.replace_base_state_for_drive_inner(drive_id, rows, Some(base_root_cid));
+    }
+
+    fn replace_base_state_for_drive_inner(
+        &mut self,
+        drive_id: &str,
+        rows: impl IntoIterator<Item = CachedBaseState>,
+        base_root_cid: Option<&str>,
+    ) {
+        self.base_state.retain(|row| row.drive_id != drive_id);
+        self.base_state.extend(rows);
+        self.base_anchors.retain(|row| row.drive_id != drive_id);
+        if let Some(base_root_cid) = base_root_cid {
+            self.base_anchors.push(CachedBaseAnchor {
+                drive_id: drive_id.to_string(),
+                base_root_cid: base_root_cid.to_string(),
+            });
+        }
         self.sort_rows();
+    }
+
+    #[must_use]
+    pub fn base_anchor_for_drive(&self, drive_id: &str) -> Option<&str> {
+        self.base_anchors
+            .iter()
+            .find(|row| row.drive_id == drive_id)
+            .map(|row| row.base_root_cid.as_str())
+            .or_else(|| uniform_base_root_cid_for_drive(&self.base_state, drive_id))
     }
 
     #[must_use]
@@ -216,6 +275,8 @@ impl SyncCache {
                 &right.base_root_cid,
             ))
         });
+        self.base_anchors
+            .sort_by(|left, right| left.drive_id.cmp(&right.drive_id));
         self.needs.sort_by(|left, right| {
             (&left.hash_or_cid, left.priority).cmp(&(&right.hash_or_cid, right.priority))
         });
@@ -259,12 +320,44 @@ pub struct CachedBaseState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedBaseAnchor {
+    pub drive_id: String,
+    pub base_root_cid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentNeed {
     pub hash_or_cid: String,
     pub source_hint: Option<String>,
     pub priority: i32,
     pub first_seen_at: i64,
     pub last_attempt_at: Option<i64>,
+}
+
+fn uniform_base_root_cid(rows: &[CachedBaseState]) -> Option<&str> {
+    let mut roots = rows.iter().map(|row| row.base_root_cid.as_str());
+    let first = roots.next()?;
+    if roots.all(|root| root == first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn uniform_base_root_cid_for_drive<'a>(
+    rows: &'a [CachedBaseState],
+    drive_id: &str,
+) -> Option<&'a str> {
+    let mut roots = rows
+        .iter()
+        .filter(|row| row.drive_id == drive_id)
+        .map(|row| row.base_root_cid.as_str());
+    let first = roots.next()?;
+    if roots.all(|root| root == first) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,5 +473,41 @@ mod tests {
             paths,
             vec![("main", "a.txt"), ("main", "z.txt"), ("other", "other.txt")]
         );
+    }
+
+    #[test]
+    fn replace_base_state_for_drive_at_anchor_keeps_empty_anchor() {
+        let mut cache = SyncCache::empty();
+        cache.base_anchors = vec![CachedBaseAnchor {
+            drive_id: "other".into(),
+            base_root_cid: "root-other".into(),
+        }];
+
+        cache.replace_base_state_for_drive_at_anchor(
+            "main",
+            "root-empty",
+            Vec::<CachedBaseState>::new(),
+        );
+
+        assert!(cache.base_snapshots_for_drive("main").is_empty());
+        assert_eq!(cache.base_anchor_for_drive("main"), Some("root-empty"));
+        assert_eq!(cache.base_anchor_for_drive("other"), Some("root-other"));
+    }
+
+    #[test]
+    fn legacy_cache_without_base_anchors_deserializes() {
+        let raw = r#"{
+            "schema": 1,
+            "roots": [],
+            "path_state": [],
+            "base_state": [],
+            "needs": [],
+            "source_availability": []
+        }"#;
+
+        let cache: SyncCache = serde_json::from_str(raw).unwrap();
+
+        assert!(cache.base_anchors.is_empty());
+        assert!(cache.base_anchor_for_drive("main").is_none());
     }
 }

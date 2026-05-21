@@ -51,8 +51,8 @@ pub use sync::{
     sync_with_base_anchor, sync_with_cache,
 };
 pub use sync_cache::{
-    CachedBaseState, CachedPathState, CachedRoot, ContentNeed, SourceAvailability, SyncCache,
-    SyncCacheError,
+    CachedBaseAnchor, CachedBaseState, CachedPathState, CachedRoot, ContentNeed,
+    SourceAvailability, SyncCache, SyncCacheError,
 };
 
 /// Schema version for the iris-drive config file. Bump when fields are

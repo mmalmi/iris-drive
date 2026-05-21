@@ -1,11 +1,11 @@
 //! Bidirectional sync engine.
 //!
-//! Reconciles two `ProviderFs` instances by enumerating each side's
-//! state via `changes_since(None)` and feeding per-path snapshots
+//! Reconciles two `ProviderFs` instances by feeding per-path snapshots
 //! through the conflict resolver from [`crate::conflict`].
 //!
-//! Single-pass, no streaming. Suitable for v1 sync between two devices'
-//! drives or between the local working set and a peer's published root.
+//! `sync_with_cache` uses provider anchors and `changes_since(Some(_))`
+//! after the first accepted base; full enumeration remains the first-sync
+//! and explicit fallback path.
 //!
 //! Conflict policy: keep both sides. Local stays at the original path;
 //! the remote's bytes land in `name (conflict from peer).ext` on the
@@ -290,17 +290,9 @@ where
 }
 
 fn base_anchor_for_drive(cache: &SyncCache, drive_id: &str) -> Option<SyncAnchor> {
-    let mut anchors = cache
-        .base_state
-        .iter()
-        .filter(|row| row.drive_id == drive_id)
-        .map(|row| row.base_root_cid.as_str());
-    let first = anchors.next()?;
-    if anchors.all(|anchor| anchor == first) {
-        Some(SyncAnchor(first.to_string()))
-    } else {
-        None
-    }
+    cache
+        .base_anchor_for_drive(drive_id)
+        .map(|anchor| SyncAnchor(anchor.to_string()))
 }
 
 async fn refresh_base_state_from_full_enumeration<P>(
@@ -317,7 +309,7 @@ where
         .await?
         .into_iter()
         .map(|(path, entry)| cached_base_row_from_entry(drive_id, path, &base_root_cid, entry));
-    cache.replace_base_state_for_drive(drive_id, rows);
+    cache.replace_base_state_for_drive_at_anchor(drive_id, &base_root_cid, rows);
     Ok(())
 }
 
@@ -363,7 +355,7 @@ where
         }
     }
 
-    cache.replace_base_state_for_drive(drive_id, rows.into_values());
+    cache.replace_base_state_for_drive_at_anchor(drive_id, &base_root_cid, rows.into_values());
     Ok(())
 }
 
@@ -946,6 +938,38 @@ mod tests {
         assert_eq!(paths(&l).await, Vec::<String>::new());
         assert_eq!(paths(&r).await, Vec::<String>::new());
         assert!(cache.base_snapshots_for_drive("main").is_empty());
+    }
+
+    #[tokio::test]
+    async fn cache_backed_sync_keeps_anchor_after_drive_becomes_empty() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "shared.txt", b"v1").await;
+        sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        let root = l.root().await;
+        l.remove(&root, "shared.txt").await.unwrap();
+        sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+        assert!(cache.base_snapshots_for_drive("main").is_empty());
+
+        write_file(&r, "remote.txt", b"new after empty").await;
+        let l = NoFullEnumeration::new(l);
+        let r = NoFullEnumeration::new(r);
+
+        let report = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(report.downloaded, vec!["remote.txt".to_string()]);
+        assert_eq!(read_file(&l, "remote.txt").await, b"new after empty");
+        assert_eq!(l.full_enumerations(), 0);
+        assert_eq!(r.full_enumerations(), 0);
     }
 
     #[tokio::test]

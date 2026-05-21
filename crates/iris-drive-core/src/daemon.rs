@@ -573,6 +573,10 @@ mod tests {
         assert_eq!(cache.base_state.len(), 1);
         assert_eq!(cache.base_state[0].path, "note.txt");
         assert_eq!(cache.base_state[0].base_root_cid, report.root_cid);
+        assert_eq!(
+            cache.base_anchor_for_drive(PRIMARY_DRIVE_ID),
+            Some(report.root_cid.as_str())
+        );
 
         std::fs::remove_file(crate::paths::sync_cache_path_in(cfg_dir.path())).unwrap();
         let rebuilt = daemon.rebuild_sync_cache().await.unwrap();
