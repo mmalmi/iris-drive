@@ -26,6 +26,7 @@ pub mod paths;
 pub mod relay_sync;
 pub mod root_meta;
 pub mod sync;
+pub mod sync_cache;
 
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
 pub use app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot, select_latest};
@@ -46,6 +47,10 @@ pub use merge::{
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};
+pub use sync_cache::{
+    CachedBaseState, CachedPathState, CachedRoot, ContentNeed, SourceAvailability, SyncCache,
+    SyncCacheError,
+};
 
 /// Schema version for the iris-drive config file. Bump when fields are
 /// removed or repurposed so older installs can detect incompatible state.

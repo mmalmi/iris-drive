@@ -23,8 +23,9 @@ use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records, layer_prev_link,
     layer_root_meta, read_conflict_records,
 };
-use crate::paths::{config_path_in, key_path_in};
+use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
+use crate::sync_cache::{SyncCache, SyncCacheError};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
 
@@ -114,6 +115,8 @@ pub enum DaemonError {
     Uninitialized,
     #[error("index: {0}")]
     Index(#[from] IndexError),
+    #[error("sync cache: {0}")]
+    SyncCache(#[from] SyncCacheError),
     #[error("store: {0}")]
     Store(String),
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
@@ -291,6 +294,7 @@ impl Daemon {
             .map_err(|e| DaemonError::Store(e.to_string()))?;
 
         self.update_primary_drive(&root_cid, Some(working_dir), root_meta.as_ref(), now)?;
+        self.persist_sync_cache_with_current_base().await?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
@@ -340,6 +344,7 @@ impl Daemon {
             root = layer_root_meta(&self.tree, root, meta).await?;
         }
         self.update_primary_drive(&root, None, root_meta.as_ref(), now)?;
+        self.persist_sync_cache_with_current_base().await?;
 
         Ok(ConflictResolveReport {
             conflict_id: conflict_id.to_string(),
@@ -363,6 +368,22 @@ impl Daemon {
             .last_root_cid
             .as_deref()
             .ok_or(DaemonError::PrimaryRootMissing)
+    }
+
+    pub async fn rebuild_sync_cache(&self) -> Result<SyncCache, DaemonError> {
+        let cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
+        cache.save(sync_cache_path_in(&self.config_dir))?;
+        Ok(cache)
+    }
+
+    async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
+        let mut cache =
+            SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
+        if let Some(account) = self.config.account.as_ref() {
+            cache.set_current_device_base(PRIMARY_DRIVE_ID, &account.device_pubkey);
+        }
+        cache.save(sync_cache_path_in(&self.config_dir))?;
+        Ok(())
     }
 
     fn update_primary_drive(
@@ -511,6 +532,42 @@ mod tests {
                 .working_dir
                 .as_deref(),
             Some(work.path())
+        );
+    }
+
+    #[tokio::test]
+    async fn import_persists_rebuildable_sync_cache_with_base_state() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"hello cache").unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+
+        let cache =
+            crate::sync_cache::SyncCache::load(crate::paths::sync_cache_path_in(cfg_dir.path()))
+                .unwrap();
+        assert_eq!(cache.schema, crate::sync_cache::SyncCache::SCHEMA);
+        assert_eq!(cache.roots.len(), 1);
+        assert_eq!(cache.roots[0].device_id, account.state.device_pubkey);
+        assert_eq!(cache.roots[0].root_cid, report.root_cid);
+        assert_eq!(cache.path_state.len(), 1);
+        assert_eq!(cache.path_state[0].path, "note.txt");
+        assert_eq!(cache.path_state[0].root_cid, report.root_cid);
+        assert!(cache.path_state[0].whole_file_hash.is_some());
+        assert_eq!(cache.base_state.len(), 1);
+        assert_eq!(cache.base_state[0].path, "note.txt");
+        assert_eq!(cache.base_state[0].base_root_cid, report.root_cid);
+
+        std::fs::remove_file(crate::paths::sync_cache_path_in(cfg_dir.path())).unwrap();
+        let rebuilt = daemon.rebuild_sync_cache().await.unwrap();
+        assert_eq!(rebuilt.roots.len(), 1);
+        assert_eq!(rebuilt.path_state.len(), 1);
+        assert_eq!(rebuilt.path_state[0].path, "note.txt");
+        assert!(
+            rebuilt.base_state.is_empty(),
+            "rebuilds restore current state but not historical base quality"
         );
     }
 
