@@ -123,13 +123,18 @@ fn build_ui(app: &adw::Application) {
     header.set_title_widget(Some(&adw::WindowTitle::new("Iris Drive", "")));
     root.append(&header);
 
-    let folder_button = icon_button("folder-symbolic", "Open drive folder");
-    let copy_snapshot_button = icon_button("insert-link-symbolic", "Copy snapshot link");
-    let open_snapshot_button = icon_button("web-browser-symbolic", "Open snapshot");
+    let folder_button = action_button("folder-open-symbolic", "Drive", "Open drive folder");
+    let copy_snapshot_button = action_button(
+        "insert-link-symbolic",
+        "Copy Snapshot",
+        "Copy snapshot link",
+    );
+    let open_snapshot_button =
+        action_button("document-open-symbolic", "Open Snapshot", "Open snapshot");
     let init_button = text_button("Initialize");
-    let restart_button = icon_button("view-refresh-symbolic", "Restart sync");
-    let stop_button = icon_button("media-playback-stop-symbolic", "Stop sync");
-    let start_button = icon_button("media-playback-start-symbolic", "Start sync");
+    let restart_button = action_button("view-refresh-symbolic", "Restart", "Restart sync");
+    let stop_button = action_button("process-stop-symbolic", "Stop", "Stop sync");
+    let start_button = action_button("media-playback-start-symbolic", "Start", "Start sync");
 
     let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     shell.add_css_class("iris-shell");
@@ -178,9 +183,7 @@ fn build_ui(app: &adw::Application) {
     stack.set_hexpand(true);
     stack.set_vexpand(true);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    actions.add_css_class("iris-compact-actions");
-    actions.set_halign(gtk::Align::Start);
+    let actions = flow_section("iris-actions", 1, 6);
     actions.append(&folder_button);
     actions.append(&copy_snapshot_button);
     actions.append(&open_snapshot_button);
@@ -310,8 +313,8 @@ fn build_ui(app: &adw::Application) {
         ("drive", "drive-harddisk-symbolic", "My Drive"),
         ("devices", "system-users-symbolic", "Devices"),
         ("network", "network-workgroup-symbolic", "Network"),
-        ("hashtree", "package-x-generic-symbolic", "Hashtree"),
-        ("settings", "emblem-system-symbolic", "Settings"),
+        ("hashtree", "network-server-symbolic", "Hashtree"),
+        ("settings", "preferences-system-symbolic", "Settings"),
     ];
     let mut nav_buttons = Vec::new();
     for (name, icon, label) in nav_items {
@@ -504,6 +507,17 @@ fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
 
 fn text_button(label: &str) -> gtk::Button {
     gtk::Button::with_label(label)
+}
+
+fn action_button(icon: &str, label: &str, tooltip: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.set_tooltip_text(Some(tooltip));
+    let content = adw::ButtonContent::builder()
+        .icon_name(icon)
+        .label(label)
+        .build();
+    button.set_child(Some(&content));
+    button
 }
 
 fn flow_section(css_class: &str, min_children: u32, max_children: u32) -> gtk::FlowBox {
@@ -1949,8 +1963,13 @@ fn install_css() {
         .iris-sidebar-button.selected label {
           font-weight: 500;
         }
+        .iris-actions flowboxchild,
         .iris-metrics flowboxchild {
           padding: 0;
+        }
+        .iris-actions button {
+          border-radius: 6px;
+          padding: 3px 10px;
         }
         .iris-status-pill {
           border-radius: 999px;
