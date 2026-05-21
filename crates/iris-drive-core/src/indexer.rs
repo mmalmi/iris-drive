@@ -7,7 +7,7 @@
 //! The indexer is deterministic — the same on-disk tree always produces
 //! the same root CID — and tests exercise that property directly.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, to_hex};
@@ -15,7 +15,8 @@ use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
 use crate::merge::{
-    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX, walk_device_tree,
+    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX,
+    WHOLE_FILE_HASH_META_KEY, walk_device_tree,
 };
 use crate::root_meta::DriveRootMeta;
 
@@ -495,13 +496,16 @@ fn index_dir_inner<'a, S: Store>(
             } else if metadata.is_file() {
                 let bytes = std::fs::read(&path)?;
                 let size = bytes.len() as u64;
+                let whole_file_hash = hashtree_core::sha256(&bytes);
                 let (cid, _) = tree.put(&bytes).await?;
                 let link_type = if size > hashtree_core::DEFAULT_CHUNK_SIZE as u64 {
                     LinkType::File
                 } else {
                     LinkType::Blob
                 };
-                let mut e = DirEntry::from_cid(name, &cid).with_size(size);
+                let mut e = DirEntry::from_cid(name, &cid)
+                    .with_size(size)
+                    .with_meta(file_entry_meta(&whole_file_hash));
                 e.link_type = link_type;
                 entries.push(e);
             }
@@ -512,12 +516,19 @@ fn index_dir_inner<'a, S: Store>(
     })
 }
 
+fn file_entry_meta(whole_file_hash: &[u8; 32]) -> HashMap<String, serde_json::Value> {
+    HashMap::from([(
+        WHOLE_FILE_HASH_META_KEY.to_string(),
+        serde_json::Value::String(to_hex(whole_file_hash)),
+    )])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
     use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
-    use hashtree_core::{HashTreeConfig, MemoryStore};
+    use hashtree_core::{DEFAULT_CHUNK_SIZE, HashTreeConfig, MemoryStore, sha256};
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -665,6 +676,27 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "a.txt");
         assert!(tombstones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn indexed_large_files_preserve_whole_file_hash_metadata() {
+        let dir = tempdir().unwrap();
+        let bytes = vec![42u8; DEFAULT_CHUNK_SIZE + 1];
+        let whole_file_hash = sha256(&bytes);
+        std::fs::write(dir.path().join("large.bin"), &bytes).unwrap();
+        let tree = new_tree();
+
+        let root = index_dir(&tree, dir.path()).await.unwrap();
+
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+        assert!(tombstones.is_empty());
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "large.bin");
+        assert_eq!(files[0].whole_file_hash, Some(whole_file_hash));
+        assert_ne!(
+            files[0].hash, whole_file_hash,
+            "large-file CID is a chunk-tree hash, not the whole-file hash"
+        );
     }
 
     #[tokio::test]

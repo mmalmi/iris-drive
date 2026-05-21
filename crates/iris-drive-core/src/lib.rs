@@ -38,8 +38,8 @@ pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedEntry,
-    MergedView, ROOT_META_PATH, TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone,
-    tombstone_path,
+    MergedView, ROOT_META_PATH, TOMBSTONE_PREFIX, WHOLE_FILE_HASH_META_KEY, merge_drives,
+    original_path_from_tombstone, tombstone_path,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};

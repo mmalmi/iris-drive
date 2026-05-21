@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store};
+use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex};
 use serde::{Deserialize, Serialize};
 
 use crate::config::DeviceRootRef;
@@ -48,6 +48,11 @@ pub const TOMBSTONE_PREFIX: &str = ".hashtree/tombstones";
 /// records are snapshot metadata and must not appear as user files.
 pub const CONFLICTS_PREFIX: &str = ".hashtree/conflicts";
 
+/// Directory-entry metadata key carrying SHA-256 of the whole file
+/// plaintext. This is distinct from `hash`, which may be a chunk-tree
+/// CID hash or encrypted node hash.
+pub const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
+
 /// Reserved entry path for the directory-revision back-link. A
 /// directory whose contents have a prior version stores that previous
 /// version's `Cid` (hash + key) at this path. Walking the chain
@@ -68,6 +73,8 @@ pub struct DeviceFileEntry {
     pub path: String,
     pub hash: [u8; 32],
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole_file_hash: Option<[u8; 32]>,
 }
 
 /// One tombstone from a device's tree.
@@ -96,6 +103,8 @@ pub struct MergedEntry {
     pub path: String,
     pub hash: [u8; 32],
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole_file_hash: Option<[u8; 32]>,
     pub source_device: String,
     pub published_at: i64,
 }
@@ -166,6 +175,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 path: f.path.clone(),
                 hash: f.hash,
                 size: f.size,
+                whole_file_hash: f.whole_file_hash,
                 source_device: snap.device_pubkey.to_string(),
                 published_at: snap.root.published_at,
             };
@@ -282,7 +292,7 @@ fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandi
 }
 
 fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
-    if candidate.entry.hash == existing.entry.hash && candidate.entry.size == existing.entry.size {
+    if file_identity_matches(&candidate.entry, &existing.entry) {
         return false;
     }
     roots_are_causal(&candidate.root)
@@ -296,6 +306,14 @@ fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandid
             ),
             RootRelation::Concurrent
         )
+}
+
+fn file_identity_matches(left: &MergedEntry, right: &MergedEntry) -> bool {
+    left.size == right.size && identity_hash(left) == identity_hash(right)
+}
+
+fn identity_hash(entry: &MergedEntry) -> [u8; 32] {
+    entry.whole_file_hash.unwrap_or(entry.hash)
 }
 
 fn should_mark_write_delete_conflict(
@@ -479,11 +497,21 @@ fn walk_dir_recursive<'a, S: Store>(
                     path,
                     hash: entry.hash,
                     size: entry.size,
+                    whole_file_hash: whole_file_hash_from_meta(&entry.meta),
                 });
             }
         }
         Ok(())
     })
+}
+
+fn whole_file_hash_from_meta(
+    meta: &Option<std::collections::HashMap<String, serde_json::Value>>,
+) -> Option<[u8; 32]> {
+    meta.as_ref()
+        .and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| from_hex(s).ok())
 }
 
 #[cfg(test)]
@@ -526,6 +554,21 @@ mod tests {
             path: path.into(),
             hash: [hash_byte; 32],
             size,
+            whole_file_hash: None,
+        }
+    }
+
+    fn file_with_whole_hash(
+        path: &str,
+        cid_hash_byte: u8,
+        whole_hash_byte: u8,
+        size: u64,
+    ) -> DeviceFileEntry {
+        DeviceFileEntry {
+            path: path.into(),
+            hash: [cid_hash_byte; 32],
+            size,
+            whole_file_hash: Some([whole_hash_byte; 32]),
         }
     }
 
@@ -677,6 +720,56 @@ mod tests {
         );
         assert_eq!(view.files.len(), 1);
         assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn concurrent_same_whole_file_hash_converges_despite_different_content_cids() {
+        let r_a = causal_root("cid-a", 100, 1, &[]);
+        let r_b = causal_root("cid-b", 200, 1, &[]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap(
+                    "dev-a",
+                    &r_a,
+                    vec![file_with_whole_hash("x", 1, 9, 1024)],
+                    vec![],
+                ),
+                snap(
+                    "dev-b",
+                    &r_b,
+                    vec![file_with_whole_hash("x", 2, 9, 1024)],
+                    vec![],
+                ),
+            ],
+        );
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(view.files[0].whole_file_hash, Some([9u8; 32]));
+        assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn concurrent_different_whole_file_hashes_conflict_even_with_same_content_cid() {
+        let r_a = causal_root("cid-a", 100, 1, &[]);
+        let r_b = causal_root("cid-b", 200, 1, &[]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap(
+                    "dev-a",
+                    &r_a,
+                    vec![file_with_whole_hash("x", 1, 8, 1024)],
+                    vec![],
+                ),
+                snap(
+                    "dev-b",
+                    &r_b,
+                    vec![file_with_whole_hash("x", 1, 9, 1024)],
+                    vec![],
+                ),
+            ],
+        );
+        assert_eq!(view.conflicts, vec!["x".to_string()]);
     }
 
     #[test]
