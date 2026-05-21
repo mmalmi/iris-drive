@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use crate::CONFIG_SCHEMA_VERSION;
 use crate::account::AccountState;
+use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -162,9 +163,9 @@ pub struct Drive {
     pub role: DriveRole,
     /// Per-device drive roots, keyed by `device_pubkey` (hex). Every
     /// authorized device publishes its own root tree; the merged view
-    /// is computed by LWW across all entries (see
-    /// [`crate::merge::merge_drives`]). Single-device installs carry
-    /// exactly one entry here.
+    /// is computed causally across all entries, with timestamp fallback
+    /// for legacy roots (see [`crate::merge::merge_drives`]).
+    /// Single-device installs carry exactly one entry here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub device_roots: BTreeMap<String, DeviceRootRef>,
     /// Deprecated: this device's most-recent root CID. Retained as a
@@ -184,19 +185,59 @@ pub struct Drive {
 }
 
 /// One device's contribution to a drive. Each authorized device
-/// publishes its own root tree; the merged drive view aggregates
-/// across all entries via LWW per path.
+/// publishes its own complete root tree. Causal fields are optional
+/// for legacy roots; new roots fill them from `.hashtree/root.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeviceRootRef {
     /// htree root CID the device most recently published.
     pub root_cid: String,
-    /// Unix-seconds publication time. Drives LWW ordering at merge
-    /// time: among writers for the same path, the device with the
-    /// most recent `published_at` wins.
+    /// Unix-seconds publication time. Used for display and as the
+    /// deterministic fallback when a legacy root has no causal fields.
     pub published_at: i64,
     /// DCK generation this root was sealed with. Lets readers detect
     /// stale device roots that pre-date a rotation.
     pub dck_generation: u64,
+    /// Monotonic per-device sequence for this drive. `0` means legacy
+    /// root with unknown causality.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub device_seq: u64,
+    /// Direct parent roots this snapshot replaces or incorporates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<RootParent>,
+    /// Latest roots this device had observed when publishing this
+    /// snapshot, keyed by device id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub observed: BTreeMap<String, RootObservation>,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+impl DeviceRootRef {
+    #[must_use]
+    pub fn legacy(root_cid: impl Into<String>, published_at: i64, dck_generation: u64) -> Self {
+        Self {
+            root_cid: root_cid.into(),
+            published_at,
+            dck_generation,
+            device_seq: 0,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_meta(root_cid: impl Into<String>, published_at: i64, meta: &DriveRootMeta) -> Self {
+        Self {
+            root_cid: root_cid.into(),
+            published_at,
+            dck_generation: meta.dck_generation,
+            device_seq: meta.device_seq,
+            parents: meta.parents.clone(),
+            observed: meta.observed.clone(),
+        }
+    }
 }
 
 impl Drive {
@@ -237,6 +278,22 @@ mod tests {
         let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
         let cfg: AppConfig = toml::from_str(&raw).unwrap();
         assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
+    }
+
+    #[test]
+    fn legacy_device_root_ref_defaults_causal_fields() {
+        let raw = r#"
+root_cid = "cid-legacy"
+published_at = 1234
+dck_generation = 1
+"#;
+        let root: DeviceRootRef = toml::from_str(raw).unwrap();
+        assert_eq!(root.root_cid, "cid-legacy");
+        assert_eq!(root.published_at, 1234);
+        assert_eq!(root.dck_generation, 1);
+        assert_eq!(root.device_seq, 0);
+        assert!(root.parents.is_empty());
+        assert!(root.observed.is_empty());
     }
 
     #[test]

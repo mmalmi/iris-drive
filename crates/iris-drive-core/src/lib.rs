@@ -23,6 +23,7 @@ pub mod merge;
 pub mod nostr_events;
 pub mod paths;
 pub mod relay_sync;
+pub mod root_meta;
 pub mod sync;
 
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
@@ -34,8 +35,9 @@ pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir};
 pub use merge::{
     DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedEntry, MergedView,
-    TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone, tombstone_path,
+    ROOT_META_PATH, TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone, tombstone_path,
 };
+pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};
 
 /// Schema version for the iris-drive config file. Bump when fields are

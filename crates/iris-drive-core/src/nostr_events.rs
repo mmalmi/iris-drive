@@ -9,8 +9,9 @@
 //!
 //! - **`KIND_DRIVE_ROOT = 30079`** — device-signed drive-root reference.
 //!   d-tag: `"iris-drive/<owner_pubkey_hex>/<drive_id>/root"`.
-//!   Pubkey = device pubkey. Content = JSON `{ root_cid, dck_generation }`.
-//!   The event's `created_at` doubles as `DeviceRootRef::published_at`.
+//!   Pubkey = device pubkey. Content = JSON root hash/key-wrap metadata,
+//!   DCK generation, and optional causal fields. The event's `created_at`
+//!   doubles as `DeviceRootRef::published_at`.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -27,6 +28,7 @@ use thiserror::Error;
 
 use crate::app_keys::{AppKeysSnapshot, DeviceEntry};
 use crate::config::DeviceRootRef;
+use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for owner-signed `AppKeys`.
 pub const KIND_APP_KEYS: u16 = 30078;
@@ -41,6 +43,16 @@ pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
 pub const HASHTREE_LABEL: &str = "hashtree";
 pub const TAG_HASH: &str = "hash";
 pub const TAG_SELF_ENCRYPTED_KEY: &str = "selfEncryptedKey";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriveRootEventPreview {
+    pub device_pubkey_hex: String,
+    pub owner_pubkey_hex: String,
+    pub drive_id: String,
+    pub published_at: i64,
+    pub dck_generation: u64,
+    pub device_seq: u64,
+}
 
 #[derive(Debug, Error)]
 pub enum WireError {
@@ -84,6 +96,16 @@ struct DriveRootWireContent {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     root_key_wraps: std::collections::BTreeMap<String, String>,
     dck_generation: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    device_seq: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    parents: Vec<RootParent>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    observed: std::collections::BTreeMap<String, RootObservation>,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// Build a signed `AppKeys` event from a snapshot. The owner key must
@@ -198,6 +220,9 @@ pub fn build_drive_root_event(
         root_hash: Some(to_hex(&root_cid.hash)),
         root_key_wraps,
         dck_generation: root.dck_generation,
+        device_seq: root.device_seq,
+        parents: root.parents.clone(),
+        observed: root.observed.clone(),
     };
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
@@ -302,6 +327,19 @@ pub fn parse_drive_root_event_header(event: &Event) -> Result<(String, String, S
     Ok((device_pubkey_hex, owner_pubkey_hex, drive_id))
 }
 
+pub fn parse_drive_root_event_preview(event: &Event) -> Result<DriveRootEventPreview, WireError> {
+    let (device_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+        parse_drive_root_event_parts(event)?;
+    Ok(DriveRootEventPreview {
+        device_pubkey_hex,
+        owner_pubkey_hex,
+        drive_id,
+        published_at,
+        dck_generation: content.dck_generation,
+        device_seq: content.device_seq,
+    })
+}
+
 fn parse_drive_root_event_inner(
     event: &Event,
     device_keys: Option<&Keys>,
@@ -313,6 +351,9 @@ fn parse_drive_root_event_inner(
         root_cid,
         published_at,
         dck_generation: content.dck_generation,
+        device_seq: content.device_seq,
+        parents: content.parents,
+        observed: content.observed,
     };
     Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
 }
@@ -507,12 +548,12 @@ mod tests {
         let owner = Keys::generate();
         let owner_hex = owner.public_key().to_hex();
         let authorized_devices = vec![device.public_key().to_hex()];
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
             // Set an explicit published_at so roundtrip is stable.
-            published_at: 1_700_000_000,
-            dck_generation: 7,
-        };
+            1_700_000_000,
+            7,
+        );
         let event = build_drive_root_event(&device, &owner_hex, "main", &root, &authorized_devices)
             .unwrap();
         let (device_pk, parsed_owner, drive_id, parsed_root) =
@@ -526,15 +567,56 @@ mod tests {
     }
 
     #[test]
+    fn drive_root_event_roundtrip_preserves_causal_fields() {
+        let device = Keys::generate();
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let parent = RootParent {
+            device_id: device.public_key().to_hex(),
+            device_seq: 2,
+            root_cid: Cid::encrypted([0x20; 32], [0x21; 32]).to_string(),
+        };
+        let observed_device = Keys::generate().public_key().to_hex();
+        let observed = BTreeMap::from([(
+            observed_device.clone(),
+            RootObservation {
+                device_seq: 9,
+                root_cid: Cid::encrypted([0x30; 32], [0x31; 32]).to_string(),
+            },
+        )]);
+        let root = DeviceRootRef {
+            root_cid: Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
+            published_at: 1_700_000_000,
+            dck_generation: 7,
+            device_seq: 3,
+            parents: vec![parent.clone()],
+            observed: observed.clone(),
+        };
+
+        let event = build_drive_root_event(
+            &device,
+            &owner_hex,
+            "main",
+            &root,
+            &[device.public_key().to_hex(), observed_device],
+        )
+        .unwrap();
+        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
+        assert_eq!(parsed_root.device_seq, 3);
+        assert_eq!(parsed_root.parents, vec![parent]);
+        assert_eq!(parsed_root.observed, observed);
+    }
+
+    #[test]
     fn drive_root_event_does_not_publish_root_key_in_cleartext() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
         let root_key = [0x44; 32];
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x33; 32], root_key).to_string(),
-            published_at: 1_700_000_000,
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x33; 32], root_key).to_string(),
+            1_700_000_000,
+            1,
+        );
 
         let event = build_drive_root_event(
             &device,
@@ -558,11 +640,11 @@ mod tests {
         let owner = Keys::generate();
         let root_key = [0x44; 32];
         let root_hash = [0x33; 32];
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted(root_hash, root_key).to_string(),
-            published_at: 1_700_000_000,
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted(root_hash, root_key).to_string(),
+            1_700_000_000,
+            1,
+        );
 
         let event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
         assert_eq!(event.kind.as_u16(), 30078);
@@ -584,11 +666,7 @@ mod tests {
     fn drive_root_event_builder_rejects_unencrypted_root() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef {
-            root_cid: Cid::public([0x11; 32]).to_string(),
-            published_at: 1_700_000_000,
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
 
         assert!(
             build_drive_root_event(
@@ -606,11 +684,11 @@ mod tests {
     fn drive_root_event_builder_always_wraps_for_signing_device() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
-            published_at: 1_700_000_000,
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
+            1_700_000_000,
+            1,
+        );
 
         let event = build_drive_root_event(&device, &owner, "main", &root, &[]).unwrap();
         let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
@@ -621,11 +699,11 @@ mod tests {
     fn drive_root_event_with_zero_published_at_falls_back_to_wall_clock() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
-            published_at: 0, // caller hasn't stamped — should fall back
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
+            0, // caller hasn't stamped — should fall back
+            1,
+        );
         let event = build_drive_root_event(
             &device,
             &owner,
@@ -696,11 +774,7 @@ mod tests {
         let device_a = Keys::generate();
         let device_b = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x88; 32], [0x99; 32]).to_string(),
-            published_at: 0,
-            dck_generation: 1,
-        };
+        let root = DeviceRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
         let ev_a = build_drive_root_event(
             &device_a,
             &owner,

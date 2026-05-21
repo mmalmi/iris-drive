@@ -15,9 +15,10 @@ use hashtree_core::{Cid, HashTree, HashTreeConfig};
 use hashtree_fs::FsBlobStore;
 use thiserror::Error;
 
-use crate::config::{AppConfig, ConfigError};
-use crate::indexer::{IndexError, index_dir_with_history};
+use crate::config::{AppConfig, ConfigError, DeviceRootRef};
+use crate::indexer::{IndexError, index_dir_with_history_and_meta};
 use crate::paths::{config_path_in, key_path_in};
+use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
 
@@ -162,9 +163,16 @@ impl Daemon {
             None => None,
         };
 
-        let root_cid =
-            index_dir_with_history(&self.tree, working_dir, previous_root.as_ref(), unix_now())
-                .await?;
+        let now = unix_now();
+        let root_meta = self.root_meta_for_import(now);
+        let root_cid = index_dir_with_history_and_meta(
+            &self.tree,
+            working_dir,
+            previous_root.as_ref(),
+            now,
+            root_meta.as_ref(),
+        )
+        .await?;
 
         // Live-file count excludes the internal metadata directory from the
         // report.
@@ -178,7 +186,7 @@ impl Daemon {
             .filter(|e| e.name != crate::merge::META_DIR)
             .count();
 
-        self.update_primary_drive(&root_cid, Some(working_dir))?;
+        self.update_primary_drive(&root_cid, Some(working_dir), root_meta.as_ref(), now)?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
@@ -191,6 +199,8 @@ impl Daemon {
         &mut self,
         root_cid: &Cid,
         working_dir: Option<&Path>,
+        root_meta: Option<&DriveRootMeta>,
+        published_at: i64,
     ) -> Result<(), DaemonError> {
         let drive = match self.config.drive(PRIMARY_DRIVE_ID) {
             Some(d) => d.clone(),
@@ -206,24 +216,65 @@ impl Daemon {
         // Falls back to no-op when there is no account yet (legacy
         // installs from before the multi-device split).
         if let Some(account) = self.config.account.as_ref() {
-            let now = unix_now();
             let dck_generation = account
                 .app_keys
                 .as_ref()
                 .map_or(0, |snap| snap.dck_generation);
-            updated.device_roots.insert(
-                account.device_pubkey.clone(),
-                crate::config::DeviceRootRef {
-                    root_cid: root_cid.to_string(),
-                    published_at: now,
-                    dck_generation,
-                },
+            let device_root = root_meta.map_or_else(
+                || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
+                |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
+            updated
+                .device_roots
+                .insert(account.device_pubkey.clone(), device_root);
         }
 
         self.config.upsert_drive(updated);
         self.config.save(config_path_in(&self.config_dir))?;
         Ok(())
+    }
+
+    fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
+        let account = self.config.account.as_ref()?;
+        let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
+        let previous = drive.device_roots.get(&account.device_pubkey);
+        let device_seq = previous.map_or(1, |root| root.device_seq.saturating_add(1).max(1));
+        let parents = previous
+            .map(|root| RootParent {
+                device_id: account.device_pubkey.clone(),
+                device_seq: root.device_seq,
+                root_cid: root.root_cid.clone(),
+            })
+            .into_iter()
+            .collect();
+        let observed = drive
+            .device_roots
+            .iter()
+            .filter(|(_, root)| root.device_seq > 0)
+            .map(|(device_id, root)| {
+                (
+                    device_id.clone(),
+                    RootObservation {
+                        device_seq: root.device_seq,
+                        root_cid: root.root_cid.clone(),
+                    },
+                )
+            })
+            .collect();
+        let dck_generation = account
+            .app_keys
+            .as_ref()
+            .map_or(0, |snap| snap.dck_generation);
+        Some(DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: drive.drive_id.clone(),
+            device_id: account.device_pubkey.clone(),
+            device_seq,
+            dck_generation,
+            parents,
+            observed,
+            created_at,
+        })
     }
 }
 
@@ -311,6 +362,52 @@ mod tests {
         assert_eq!(entry.root_cid, report.root_cid);
         assert!(entry.published_at > 0);
         assert_eq!(entry.dck_generation, 1); // create-flow seeds DCK gen 1
+        assert_eq!(entry.device_seq, 1);
+        assert!(entry.parents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_embeds_root_meta_and_advances_device_sequence() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"one").unwrap();
+        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        let first_cid = Cid::parse(&first.root_cid).unwrap();
+        let first_meta = crate::indexer::read_root_meta(daemon.tree(), &first_cid)
+            .await
+            .unwrap()
+            .expect("first root metadata");
+        assert_eq!(first_meta.schema, crate::DriveRootMeta::SCHEMA);
+        assert_eq!(first_meta.drive_id, PRIMARY_DRIVE_ID);
+        assert_eq!(first_meta.device_id, account.state.device_pubkey);
+        assert_eq!(first_meta.device_seq, 1);
+        assert!(first_meta.parents.is_empty());
+
+        std::fs::write(work.path().join("note.txt"), b"two").unwrap();
+        let second = daemon.import_working_dir(work.path()).await.unwrap();
+        let second_cid = Cid::parse(&second.root_cid).unwrap();
+        let second_meta = crate::indexer::read_root_meta(daemon.tree(), &second_cid)
+            .await
+            .unwrap()
+            .expect("second root metadata");
+        assert_eq!(second_meta.device_seq, 2);
+        assert_eq!(second_meta.parents.len(), 1);
+        assert_eq!(second_meta.parents[0].device_seq, 1);
+        assert_eq!(second_meta.parents[0].root_cid, first.root_cid);
+
+        let entry = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert_eq!(entry.root_cid, second.root_cid);
+        assert_eq!(entry.device_seq, 2);
+        assert_eq!(entry.parents, second_meta.parents);
     }
 
     #[tokio::test]
@@ -531,11 +628,11 @@ mod tests {
             drive.working_dir = Some(work.path().to_path_buf());
             drive.device_roots.insert(
                 account.state.device_pubkey.clone(),
-                crate::config::DeviceRootRef {
-                    root_cid: public_root.to_string(),
-                    published_at: unix_now(),
-                    dck_generation: account.state.app_keys.as_ref().unwrap().dck_generation,
-                },
+                DeviceRootRef::legacy(
+                    public_root.to_string(),
+                    unix_now(),
+                    account.state.app_keys.as_ref().unwrap().dck_generation,
+                ),
             );
             cfg.save(config_path_in(cfg_dir.path())).unwrap();
         }

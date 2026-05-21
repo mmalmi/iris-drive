@@ -24,7 +24,7 @@ use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
     D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, build_app_keys_event, build_drive_root_event,
     build_private_hashtree_root_event, drive_root_d_tag, parse_app_keys_event,
-    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_header,
+    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 
 #[derive(Debug, Error)]
@@ -81,8 +81,9 @@ pub enum DriveRootApply {
     /// Device pubkey isn't in the current `AppKeys` roster — ignored.
     /// Protects against forged events from unauthorized devices.
     UnauthorizedDevice,
-    /// Older or equal-timestamp than what we already have for this
-    /// device — ignored (LWW).
+    /// Older than what we already have for this device — ignored.
+    /// Causal roots compare by `device_seq`; legacy roots compare by
+    /// timestamp.
     StaleTimestamp,
     /// Applied; the device's root entry was updated/inserted.
     Applied,
@@ -96,11 +97,12 @@ pub fn apply_remote_drive_root_event(
     event: &Event,
     device_keys: Option<&Keys>,
 ) -> Result<DriveRootApply, RelayError> {
-    let (device_hex, owner_hex, drive_id) = parse_drive_root_event_header(event)?;
+    let preview = parse_drive_root_event_preview(event)?;
+    let device_hex = preview.device_pubkey_hex.clone();
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if owner_hex != account.owner_pubkey {
+    if preview.owner_pubkey_hex != account.owner_pubkey {
         return Ok(DriveRootApply::NotOurOwner);
     }
     let authorized: BTreeSet<&str> = account
@@ -111,11 +113,15 @@ pub fn apply_remote_drive_root_event(
     if !authorized.contains(device_hex.as_str()) {
         return Ok(DriveRootApply::UnauthorizedDevice);
     }
-    let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == drive_id) else {
+    let Some(drive) = config
+        .drives
+        .iter_mut()
+        .find(|d| d.drive_id == preview.drive_id)
+    else {
         return Ok(DriveRootApply::UnknownDrive);
     };
     if let Some(existing) = drive.device_roots.get(&device_hex)
-        && existing.published_at >= i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX)
+        && incoming_root_is_stale(existing, preview.device_seq, preview.published_at)
     {
         return Ok(DriveRootApply::StaleTimestamp);
     }
@@ -126,6 +132,23 @@ pub fn apply_remote_drive_root_event(
     };
     drive.device_roots.insert(device_hex, incoming_root);
     Ok(DriveRootApply::Applied)
+}
+
+fn incoming_root_is_stale(
+    existing: &DeviceRootRef,
+    incoming_device_seq: u64,
+    incoming_published_at: i64,
+) -> bool {
+    if existing.device_seq > 0 || incoming_device_seq > 0 {
+        if incoming_device_seq == 0 {
+            return true;
+        }
+        if existing.device_seq == 0 {
+            return false;
+        }
+        return incoming_device_seq <= existing.device_seq;
+    }
+    existing.published_at >= incoming_published_at
 }
 
 // ----- Live relay layer -----
@@ -313,10 +336,26 @@ mod tests {
     }
 
     fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> DeviceRootRef {
+        DeviceRootRef::legacy(
+            Cid::encrypted([seed; 32], [seed.wrapping_add(1); 32]).to_string(),
+            published_at,
+            dck_generation,
+        )
+    }
+
+    fn causal_encrypted_root(
+        seed: u8,
+        published_at: i64,
+        dck_generation: u64,
+        device_seq: u64,
+    ) -> DeviceRootRef {
         DeviceRootRef {
             root_cid: Cid::encrypted([seed; 32], [seed.wrapping_add(1); 32]).to_string(),
             published_at,
             dck_generation,
+            device_seq,
+            parents: Vec::new(),
+            observed: std::collections::BTreeMap::new(),
         }
     }
 
@@ -511,6 +550,54 @@ mod tests {
                 .published_at,
             first_published_at
         );
+    }
+
+    #[test]
+    fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        acct.approve_device(device_b_hex.clone(), None).unwrap();
+        cfg.account = Some(acct.state.clone());
+
+        let root_1 = causal_encrypted_root(0x21, 300, 1, 1);
+        let event_1 = build_drive_root_event(
+            &device_b,
+            &acct.state.owner_pubkey,
+            "main",
+            &root_1,
+            &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.device.keys())).unwrap(),
+            DriveRootApply::Applied
+        );
+
+        let root_2 = causal_encrypted_root(0x22, 100, 1, 2);
+        let event_2 = build_drive_root_event(
+            &device_b,
+            &acct.state.owner_pubkey,
+            "main",
+            &root_2,
+            &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &event_2, Some(acct.device.keys())).unwrap(),
+            DriveRootApply::Applied
+        );
+
+        let entry = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&device_b_hex)
+            .unwrap();
+        assert_eq!(entry.root_cid, root_2.root_cid);
+        assert_eq!(entry.device_seq, 2);
+        assert_eq!(entry.published_at, 100);
     }
 
     #[test]

@@ -3,16 +3,15 @@
 //! Each authorized device publishes its own htree root tree carrying
 //! that device's contribution to the drive. The merged drive view is
 //! computed by walking every authorized device's tree and resolving
-//! per-path conflicts via last-writer-wins by **publication time**
-//! (`DeviceRootRef::published_at`).
+//! per-path conflicts with causal root metadata. Publication time is
+//! only a fallback for legacy roots without `device_seq` / observations.
 //!
 //! Tombstones are stored alongside regular files under a reserved
 //! `.hashtree/tombstones/` subtree in each device's root. A tombstone
 //! is a leaf whose path is `.hashtree/tombstones/<mirror of original
 //! path>` and whose content is the unix-seconds timestamp at which
-//! the file was removed. Tombstones participate in LWW: if the newest
-//! action across all devices for a path is a tombstone, the path is
-//! absent from the merged view.
+//! the file was removed. Tombstones participate in the same causal
+//! ordering as writes; timestamp ordering is only the legacy fallback.
 //!
 //! This module is pure logic — it takes pre-fetched per-device entry
 //! and tombstone lists and produces a `MergedView`. The actual htree
@@ -32,8 +31,12 @@ use crate::config::DeviceRootRef;
 /// is ever reserved at the user-visible top level. Currently used for:
 ///
 /// - `.hashtree/prev` — back-link to the prior version of this dir
+/// - `.hashtree/root.json` — causal metadata for this root snapshot
 /// - `.hashtree/tombstones/<path>` — deletion markers
 pub const META_DIR: &str = ".hashtree";
+
+/// Reserved entry path for the root-level causal metadata record.
+pub const ROOT_META_PATH: &str = ".hashtree/root.json";
 
 /// Reserved path prefix for the tombstone subtree (inside `META_DIR`).
 /// Files written under this prefix by the indexer are not part of the
@@ -101,6 +104,32 @@ pub struct MergedView {
     /// tombstone is newer than the newest write). Useful in test and
     /// debug output.
     pub suppressed_by_tombstone: Vec<String>,
+    /// Paths where concurrent roots disagree. The merged view still
+    /// picks a deterministic visible entry for now, but callers can
+    /// surface a conflict record/copy for these paths.
+    pub conflicts: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WriteCandidate {
+    entry: MergedEntry,
+    device_pubkey: String,
+    root: DeviceRootRef,
+}
+
+#[derive(Debug, Clone)]
+struct TombstoneCandidate {
+    tombstoned_at: i64,
+    device_pubkey: String,
+    root: DeviceRootRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootRelation {
+    Same,
+    LeftDescends,
+    RightDescends,
+    Concurrent,
 }
 
 /// Merge across all authorized device snapshots. `authorized_devices`
@@ -109,7 +138,8 @@ pub struct MergedView {
 /// silently ignored.
 ///
 /// Conflict resolution per path:
-///   - newest publication time wins (per-device `published_at`)
+///   - causal descendants win over ancestors
+///   - newest publication time wins only when causality is unknown
 ///   - if a tombstone is newer than the newest write, the path is
 ///     suppressed
 ///   - if the latest write and a tombstone share the same timestamp,
@@ -118,9 +148,9 @@ pub struct MergedView {
 pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>]) -> MergedView {
     let allow: std::collections::BTreeSet<&str> = authorized_devices.iter().copied().collect();
 
-    // path -> (winning_write, latest_tombstone_at)
-    let mut writes: BTreeMap<String, MergedEntry> = BTreeMap::new();
-    let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
+    let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
+    let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
+    let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for snap in snapshots {
         if !allow.contains(snap.device_pubkey) {
@@ -134,35 +164,51 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 source_device: snap.device_pubkey.to_string(),
                 published_at: snap.root.published_at,
             };
+            let candidate = WriteCandidate {
+                entry: candidate,
+                device_pubkey: snap.device_pubkey.to_string(),
+                root: snap.root.clone(),
+            };
             writes
                 .entry(f.path.clone())
                 .and_modify(|existing| {
-                    if candidate.published_at > existing.published_at {
+                    if should_mark_write_conflict(&candidate, existing) {
+                        conflicts.insert(candidate.entry.path.clone());
+                    }
+                    if write_candidate_wins(&candidate, existing) {
                         *existing = candidate.clone();
                     }
                 })
                 .or_insert(candidate);
         }
         for t in &snap.tombstones {
+            let candidate = TombstoneCandidate {
+                tombstoned_at: t.tombstoned_at,
+                device_pubkey: snap.device_pubkey.to_string(),
+                root: snap.root.clone(),
+            };
             tombstones
                 .entry(t.path.clone())
                 .and_modify(|cur| {
-                    if t.tombstoned_at > *cur {
-                        *cur = t.tombstoned_at;
+                    if tombstone_candidate_wins(&candidate, cur) {
+                        *cur = candidate.clone();
                     }
                 })
-                .or_insert(t.tombstoned_at);
+                .or_insert(candidate);
         }
     }
 
     let mut view = MergedView::default();
     for (path, write) in &writes {
-        let tombstone = tombstones.get(path).copied();
-        let suppressed = matches!(tombstone, Some(ts) if ts >= write.published_at);
+        let tombstone = tombstones.get(path);
+        if tombstone.is_some_and(|t| should_mark_write_delete_conflict(write, t)) {
+            conflicts.insert(path.clone());
+        }
+        let suppressed = tombstone.is_some_and(|t| tombstone_suppresses_write(t, write));
         if suppressed {
             view.suppressed_by_tombstone.push(path.clone());
         } else {
-            view.files.push(write.clone());
+            view.files.push(write.entry.clone());
         }
     }
     // Tombstones that don't have a surviving write anywhere should also
@@ -177,7 +223,146 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     view.files.sort_by(|a, b| a.path.cmp(&b.path));
     view.suppressed_by_tombstone.sort();
     view.suppressed_by_tombstone.dedup();
+    view.conflicts = conflicts.into_iter().collect();
     view
+}
+
+fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
+    match root_relation(
+        &candidate.device_pubkey,
+        &candidate.root,
+        &existing.device_pubkey,
+        &existing.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => fallback_newer(
+            candidate.entry.published_at,
+            &candidate.device_pubkey,
+            existing.entry.published_at,
+            &existing.device_pubkey,
+        ),
+    }
+}
+
+fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &TombstoneCandidate) -> bool {
+    match root_relation(
+        &candidate.device_pubkey,
+        &candidate.root,
+        &existing.device_pubkey,
+        &existing.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => fallback_newer(
+            candidate.tombstoned_at,
+            &candidate.device_pubkey,
+            existing.tombstoned_at,
+            &existing.device_pubkey,
+        ),
+    }
+}
+
+fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandidate) -> bool {
+    match root_relation(
+        &tombstone.device_pubkey,
+        &tombstone.root,
+        &write.device_pubkey,
+        &write.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => tombstone.tombstoned_at >= write.entry.published_at,
+    }
+}
+
+fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
+    if candidate.entry.hash == existing.entry.hash && candidate.entry.size == existing.entry.size {
+        return false;
+    }
+    roots_are_causal(&candidate.root)
+        && roots_are_causal(&existing.root)
+        && matches!(
+            root_relation(
+                &candidate.device_pubkey,
+                &candidate.root,
+                &existing.device_pubkey,
+                &existing.root,
+            ),
+            RootRelation::Concurrent
+        )
+}
+
+fn should_mark_write_delete_conflict(
+    write: &WriteCandidate,
+    tombstone: &TombstoneCandidate,
+) -> bool {
+    roots_are_causal(&write.root)
+        && roots_are_causal(&tombstone.root)
+        && matches!(
+            root_relation(
+                &write.device_pubkey,
+                &write.root,
+                &tombstone.device_pubkey,
+                &tombstone.root,
+            ),
+            RootRelation::Concurrent
+        )
+}
+
+fn root_relation(
+    left_device: &str,
+    left: &DeviceRootRef,
+    right_device: &str,
+    right: &DeviceRootRef,
+) -> RootRelation {
+    if left.root_cid == right.root_cid {
+        return RootRelation::Same;
+    }
+    let left_descends = root_observes(left_device, left, right_device, right);
+    let right_descends = root_observes(right_device, right, left_device, left);
+    match (left_descends, right_descends) {
+        (true, false) => RootRelation::LeftDescends,
+        (false, true) => RootRelation::RightDescends,
+        _ => RootRelation::Concurrent,
+    }
+}
+
+fn root_observes(
+    observer_device: &str,
+    observer: &DeviceRootRef,
+    observed_device: &str,
+    observed: &DeviceRootRef,
+) -> bool {
+    if observer.root_cid == observed.root_cid {
+        return true;
+    }
+    if observer_device == observed_device
+        && observer.device_seq > 0
+        && observed.device_seq > 0
+        && observer.device_seq > observed.device_seq
+    {
+        return true;
+    }
+    if observer.parents.iter().any(|parent| {
+        parent.device_id == observed_device
+            && (parent.root_cid == observed.root_cid
+                || (observed.device_seq > 0 && parent.device_seq > observed.device_seq))
+    }) {
+        return true;
+    }
+    observer.observed.get(observed_device).is_some_and(|o| {
+        o.root_cid == observed.root_cid
+            || (observed.device_seq > 0 && o.device_seq > observed.device_seq)
+    })
+}
+
+fn roots_are_causal(root: &DeviceRootRef) -> bool {
+    root.device_seq > 0 || !root.parents.is_empty() || !root.observed.is_empty()
+}
+
+fn fallback_newer(left_time: i64, left_device: &str, right_time: i64, right_device: &str) -> bool {
+    left_time > right_time || (left_time == right_time && left_device > right_device)
 }
 
 /// Encode a file path into the path under `.hashtree/tombstones/`
@@ -300,10 +485,33 @@ mod tests {
     use super::*;
 
     fn dev_root(published_at: i64) -> DeviceRootRef {
+        DeviceRootRef::legacy(format!("cid-{published_at}"), published_at, 1)
+    }
+
+    fn causal_root(
+        root_cid: &str,
+        published_at: i64,
+        device_seq: u64,
+        observed: &[(&str, u64, &str)],
+    ) -> DeviceRootRef {
         DeviceRootRef {
-            root_cid: format!("cid-{published_at}"),
+            root_cid: root_cid.into(),
             published_at,
             dck_generation: 1,
+            device_seq,
+            parents: Vec::new(),
+            observed: observed
+                .iter()
+                .map(|(device, seq, cid)| {
+                    (
+                        (*device).to_string(),
+                        crate::RootObservation {
+                            device_seq: *seq,
+                            root_cid: (*cid).to_string(),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -397,6 +605,102 @@ mod tests {
         assert_eq!(view.files.len(), 1);
         assert_eq!(view.files[0].source_device, "dev-b");
         assert_eq!(view.files[0].hash, [2u8; 32]);
+    }
+
+    #[test]
+    fn causal_descendant_wins_even_with_older_wall_clock() {
+        let r_a = causal_root("cid-a", 300, 1, &[]);
+        let r_b = causal_root("cid-b", 100, 1, &[("dev-a", 1, "cid-a")]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![file("x", 2, 1)], vec![]),
+            ],
+        );
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(view.files[0].source_device, "dev-b");
+        assert_eq!(view.files[0].hash, [2u8; 32]);
+        assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn observed_same_sequence_with_different_root_is_not_descendant() {
+        let r_a = causal_root("cid-a", 300, 1, &[]);
+        let r_b = causal_root("cid-b", 100, 1, &[("dev-a", 1, "cid-a-fork")]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![file("x", 2, 1)], vec![]),
+            ],
+        );
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(
+            view.files[0].source_device, "dev-a",
+            "timestamp fallback should win when ancestry is unknown"
+        );
+        assert_eq!(view.conflicts, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn concurrent_different_writes_are_marked_as_conflicts() {
+        let r_a = causal_root("cid-a", 100, 1, &[]);
+        let r_b = causal_root("cid-b", 200, 1, &[]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![file("x", 2, 1)], vec![]),
+            ],
+        );
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(view.conflicts, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn concurrent_same_content_converges_without_conflict() {
+        let r_a = causal_root("cid-a", 100, 1, &[]);
+        let r_b = causal_root("cid-b", 200, 1, &[]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![file("x", 1, 1)], vec![]),
+            ],
+        );
+        assert_eq!(view.files.len(), 1);
+        assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn causal_tombstone_suppresses_observed_write_even_with_older_clock() {
+        let r_a = causal_root("cid-a", 300, 1, &[]);
+        let r_b = causal_root("cid-b", 100, 1, &[("dev-a", 1, "cid-a")]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![], vec![tomb("x", 100)]),
+            ],
+        );
+        assert!(view.files.is_empty());
+        assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
+        assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn concurrent_write_delete_is_marked_as_conflict() {
+        let r_a = causal_root("cid-a", 100, 1, &[]);
+        let r_b = causal_root("cid-b", 200, 1, &[]);
+        let view = merge_drives(
+            &["dev-a", "dev-b"],
+            &[
+                snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+                snap("dev-b", &r_b, vec![], vec![tomb("x", 200)]),
+            ],
+        );
+        assert_eq!(view.conflicts, vec!["x".to_string()]);
     }
 
     #[test]

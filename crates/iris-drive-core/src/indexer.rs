@@ -10,10 +10,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store};
+use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, to_hex};
 use thiserror::Error;
 
-use crate::merge::{PREV_LINK_PATH, TOMBSTONE_PREFIX, walk_device_tree};
+use crate::merge::{META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX, walk_device_tree};
+use crate::root_meta::DriveRootMeta;
 
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -25,6 +26,8 @@ pub enum IndexError {
     NonUtf8(String),
     #[error("path is not a directory: {0}")]
     NotADirectory(String),
+    #[error("root metadata: {0}")]
+    RootMeta(String),
 }
 
 /// Index a directory recursively, returning the root htree CID.
@@ -55,11 +58,35 @@ pub async fn index_dir_with_history<S: Store>(
     previous_root: Option<&Cid>,
     now_unix_seconds: i64,
 ) -> Result<Cid, IndexError> {
-    let mut root = index_dir(tree, dir).await?;
-    let Some(prev) = previous_root else {
-        return Ok(root);
-    };
+    index_dir_with_history_and_meta(tree, dir, previous_root, now_unix_seconds, None).await
+}
 
+/// Like [`index_dir_with_history`], but embeds optional root-level
+/// causal metadata at `.hashtree/root.json`.
+pub async fn index_dir_with_history_and_meta<S: Store>(
+    tree: &HashTree<S>,
+    dir: &Path,
+    previous_root: Option<&Cid>,
+    now_unix_seconds: i64,
+    root_meta: Option<&DriveRootMeta>,
+) -> Result<Cid, IndexError> {
+    let mut root = index_dir(tree, dir).await?;
+    if let Some(prev) = previous_root {
+        root = attach_history(tree, dir, root, prev, now_unix_seconds).await?;
+    }
+    if let Some(meta) = root_meta {
+        root = attach_root_meta(tree, root, meta).await?;
+    }
+    Ok(root)
+}
+
+async fn attach_history<S: Store>(
+    tree: &HashTree<S>,
+    dir: &Path,
+    mut root: Cid,
+    prev: &Cid,
+    now_unix_seconds: i64,
+) -> Result<Cid, IndexError> {
     let mut current_paths: BTreeSet<String> = BTreeSet::new();
     collect_local_file_paths(dir, "", &mut current_paths)?;
 
@@ -95,6 +122,70 @@ pub async fn index_dir_with_history<S: Store>(
     root = attach_prev_link(tree, root, prev).await?;
 
     Ok(root)
+}
+
+async fn attach_root_meta<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    meta: &DriveRootMeta,
+) -> Result<Cid, IndexError> {
+    let segments: Vec<&str> = ROOT_META_PATH
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (name, parent_segs) = segments.split_last().expect("ROOT_META_PATH is non-empty");
+    for depth in 1..=parent_segs.len() {
+        let dir_path: Vec<String> = parent_segs[..depth]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        root = ensure_dir(tree, &root, &dir_path).await?;
+    }
+    let bytes = serde_json::to_vec_pretty(meta).map_err(|e| IndexError::RootMeta(e.to_string()))?;
+    let (cid, size) = tree.put(&bytes).await?;
+    let new_root = tree
+        .set_entry(&root, parent_segs, name, &cid, size, LinkType::Blob)
+        .await?;
+    Ok(new_root)
+}
+
+/// Read root-level causal metadata from `.hashtree/root.json`, if
+/// present. Absence is normal for legacy roots.
+pub async fn read_root_meta<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<Option<DriveRootMeta>, IndexError> {
+    let entries = tree.list_directory(root).await?;
+    let Some(meta_entry) = entries
+        .iter()
+        .find(|e| e.name == META_DIR && e.link_type == LinkType::Dir)
+    else {
+        return Ok(None);
+    };
+    let meta_cid = Cid {
+        hash: meta_entry.hash,
+        key: meta_entry.key,
+    };
+    let meta_entries = tree.list_directory(&meta_cid).await?;
+    let name = ROOT_META_PATH
+        .rsplit_once('/')
+        .map_or(ROOT_META_PATH, |(_, name)| name);
+    let Some(root_meta) = meta_entries
+        .iter()
+        .find(|e| e.name == name && e.link_type != LinkType::Dir)
+    else {
+        return Ok(None);
+    };
+    let cid = Cid {
+        hash: root_meta.hash,
+        key: root_meta.key,
+    };
+    let raw = tree
+        .get(&cid, None)
+        .await?
+        .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&root_meta.hash)))?;
+    let meta = serde_json::from_slice(&raw).map_err(|e| IndexError::RootMeta(e.to_string()))?;
+    Ok(Some(meta))
 }
 
 async fn attach_prev_link<S: Store>(
@@ -293,7 +384,9 @@ fn index_dir_inner<'a, S: Store>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
     use hashtree_core::{HashTreeConfig, MemoryStore};
+    use std::collections::BTreeMap;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -401,6 +494,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cid_plain.hash, cid_history.hash);
+    }
+
+    #[tokio::test]
+    async fn root_metadata_is_embedded_under_hashtree_and_not_user_visible() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        let tree = new_tree();
+        let meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: "main".into(),
+            device_id: "device-a".into(),
+            device_seq: 2,
+            dck_generation: 1,
+            parents: vec![RootParent {
+                device_id: "device-a".into(),
+                device_seq: 1,
+                root_cid: "cid-parent".into(),
+            }],
+            observed: BTreeMap::from([(
+                "device-b".into(),
+                RootObservation {
+                    device_seq: 7,
+                    root_cid: "cid-b".into(),
+                },
+            )]),
+            created_at: 1234,
+        };
+
+        let root = index_dir_with_history_and_meta(&tree, dir.path(), None, 1234, Some(&meta))
+            .await
+            .unwrap();
+
+        let loaded = read_root_meta(&tree, &root).await.unwrap().unwrap();
+        assert_eq!(loaded, meta);
+
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "a.txt");
+        assert!(tombstones.is_empty());
     }
 
     #[tokio::test]
