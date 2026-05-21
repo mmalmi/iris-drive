@@ -93,7 +93,7 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
         root = attach_history(tree, dir, root, prev, now_unix_seconds).await?;
     }
     if let Some(meta) = root_meta {
-        root = attach_root_meta(tree, root, meta).await?;
+        root = layer_root_meta(tree, root, meta).await?;
     }
     Ok(root)
 }
@@ -137,12 +137,12 @@ async fn attach_history<S: Store>(
     // at the prior root's Cid (hash + key). Capability propagates
     // automatically when readers decrypt the new TreeNode — the prior
     // TreeNode is now navigable from the current one.
-    root = attach_prev_link(tree, root, prev).await?;
+    root = layer_prev_link(tree, root, prev).await?;
 
     Ok(root)
 }
 
-async fn attach_root_meta<S: Store>(
+pub async fn layer_root_meta<S: Store>(
     tree: &HashTree<S>,
     mut root: Cid,
     meta: &DriveRootMeta,
@@ -332,7 +332,7 @@ fn validate_conflict_id(conflict_id: &str) -> Result<(), IndexError> {
     Ok(())
 }
 
-async fn attach_prev_link<S: Store>(
+pub async fn layer_prev_link<S: Store>(
     tree: &HashTree<S>,
     mut root: Cid,
     previous: &Cid,

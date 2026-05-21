@@ -83,6 +83,9 @@ enum Command {
     RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
+    /// Inspect or resolve durable conflict ledger records.
+    #[command(subcommand)]
+    Conflicts(ConflictsCmd),
     /// List configured drives.
     Drives,
     /// Show the local identity (owner + device pubkeys + auth state).
@@ -187,6 +190,15 @@ enum Command {
 }
 
 #[derive(Debug, Subcommand)]
+enum ConflictsCmd {
+    /// Mark a conflict record resolved after the files have been handled.
+    Resolve {
+        /// Conflict id from `idrive status`.
+        conflict_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum BlossomServersCmd {
     /// Print current Blossom servers as JSON.
     List,
@@ -247,6 +259,7 @@ fn main() -> ExitCode {
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
+        Command::Conflicts(command) => cmd_conflicts(&config_dir, command),
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
@@ -516,6 +529,37 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         })
     );
     Ok(())
+}
+
+fn cmd_conflicts(config_dir: &std::path::Path, command: ConflictsCmd) -> Result<()> {
+    match command {
+        ConflictsCmd::Resolve { conflict_id } => cmd_conflict_resolve(config_dir, &conflict_id),
+    }
+}
+
+fn cmd_conflict_resolve(config_dir: &std::path::Path, conflict_id: &str) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let report = daemon
+            .resolve_conflict_record(conflict_id)
+            .await
+            .with_context(|| format!("resolving conflict {conflict_id}"))?;
+        println!(
+            "{}",
+            json!({
+                "conflict_id": report.conflict_id,
+                "previous_root_cid": report.previous_root_cid,
+                "root_cid": report.root_cid,
+                "changed": report.changed,
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
 }
 
 #[derive(Debug, Default)]

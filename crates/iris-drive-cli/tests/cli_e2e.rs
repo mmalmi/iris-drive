@@ -4,8 +4,13 @@
 //! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
 
 use assert_cmd::Command;
-use hashtree_core::{Cid, nhash_decode};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode};
+use hashtree_fs::FsBlobStore;
+use iris_drive_core::{
+    AppConfig, ConflictRecord, ConflictSide, ConflictState, PRIMARY_DRIVE_ID, paths::config_path_in,
+};
 use predicates::str::contains;
+use std::sync::Arc;
 use tempfile::tempdir;
 
 fn idrive(dir: &std::path::Path) -> Command {
@@ -414,6 +419,97 @@ fn status_after_init_reports_initialized() {
     assert_eq!(peers[0]["is_current_device"], true);
     assert_eq!(peers[0]["authorized"], true);
     assert_eq!(peers[0]["has_root"], false);
+}
+
+#[test]
+fn conflicts_resolve_marks_record_resolved_in_current_root() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("report.pdf"), b"chosen").unwrap();
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+    seed_conflict_record(cfg.path(), "conflict-a");
+
+    let before = idrive(cfg.path()).arg("status").output().unwrap();
+    assert!(before.status.success(), "{before:?}");
+    let before_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(before.stdout).unwrap()).unwrap();
+    assert_eq!(before_json["conflicts"]["unresolved_count"], 1);
+
+    let resolved = idrive(cfg.path())
+        .args(["conflicts", "resolve", "conflict-a"])
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    let resolved_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(resolved.stdout).unwrap()).unwrap();
+    assert_eq!(resolved_json["conflict_id"], "conflict-a");
+    assert_eq!(resolved_json["changed"], true);
+
+    let after = idrive(cfg.path()).arg("status").output().unwrap();
+    assert!(after.status.success(), "{after:?}");
+    let after_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(after.stdout).unwrap()).unwrap();
+    assert_eq!(after_json["conflicts"]["unresolved_count"], 0);
+    assert_eq!(after_json["conflicts"]["resolved_count"], 1);
+}
+
+fn seed_conflict_record(config_dir: &std::path::Path, conflict_id: &str) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+        let root_cid = config
+            .drive(PRIMARY_DRIVE_ID)
+            .and_then(|drive| drive.last_root_cid.clone())
+            .unwrap();
+        let root = Cid::parse(&root_cid).unwrap();
+        let store = FsBlobStore::new(config_dir.join("blocks")).unwrap();
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(store)));
+        let record = ConflictRecord {
+            schema: ConflictRecord::SCHEMA,
+            conflict_id: conflict_id.into(),
+            path: "report.pdf".into(),
+            visible_conflict_path: "report (conflict from phone).pdf".into(),
+            local: ConflictSide {
+                device_id: "laptop".into(),
+                device_seq: 1,
+                root_cid: root_cid.clone(),
+                whole_file_hash: "hash-local".into(),
+            },
+            remote: Some(ConflictSide {
+                device_id: "phone".into(),
+                device_seq: 1,
+                root_cid: "cid-remote".into(),
+                whole_file_hash: "hash-remote".into(),
+            }),
+            deleted: None,
+            state: ConflictState::Unresolved,
+            created_at: 1234,
+        };
+        let new_root = iris_drive_core::layer_conflict_records(&tree, root, &[record])
+            .await
+            .unwrap();
+        let account_device = config.account.as_ref().unwrap().device_pubkey.clone();
+        let drive = config
+            .drives
+            .iter_mut()
+            .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
+            .unwrap();
+        drive.last_root_cid = Some(new_root.to_string());
+        drive
+            .device_roots
+            .get_mut(&account_device)
+            .unwrap()
+            .root_cid = new_root.to_string();
+        config.save(config_path_in(config_dir)).unwrap();
+    });
 }
 
 #[test]

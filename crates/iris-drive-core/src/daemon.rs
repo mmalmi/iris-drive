@@ -18,7 +18,11 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::config::{AppConfig, ConfigError, DeviceRootRef};
-use crate::indexer::{IndexError, index_dir_with_history_and_meta};
+use crate::conflict::ConflictState;
+use crate::indexer::{
+    IndexError, index_dir_with_history_and_meta, layer_conflict_records, layer_prev_link,
+    layer_root_meta, read_conflict_records,
+};
 use crate::paths::{config_path_in, key_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 
@@ -114,6 +118,10 @@ pub enum DaemonError {
     Store(String),
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
     PrimaryDriveMissing,
+    #[error("primary drive has no recorded root")]
+    PrimaryRootMissing,
+    #[error("conflict record not found: {0}")]
+    ConflictRecordNotFound(String),
 }
 
 /// Snapshot of an import operation, suitable for serializing to JSON.
@@ -123,6 +131,15 @@ pub struct ImportReport {
     pub working_dir: PathBuf,
     pub file_count: usize,
     pub top_level_entries: usize,
+}
+
+/// Snapshot of a conflict-resolution marker update.
+#[derive(Debug, Clone)]
+pub struct ConflictResolveReport {
+    pub conflict_id: String,
+    pub previous_root_cid: String,
+    pub root_cid: String,
+    pub changed: bool,
 }
 
 pub struct Daemon {
@@ -283,6 +300,71 @@ impl Daemon {
         })
     }
 
+    /// Mark a durable conflict record resolved and publish a new root
+    /// that preserves the rest of the snapshot unchanged.
+    pub async fn resolve_conflict_record(
+        &mut self,
+        conflict_id: &str,
+    ) -> Result<ConflictResolveReport, DaemonError> {
+        let previous_root_cid = self.current_device_root_cid()?.to_string();
+        let previous_root =
+            Cid::parse(&previous_root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+        let mut records = read_conflict_records(&self.tree, &previous_root).await?;
+        let Some(record) = records
+            .iter_mut()
+            .find(|record| record.conflict_id == conflict_id)
+        else {
+            return Err(DaemonError::ConflictRecordNotFound(conflict_id.to_string()));
+        };
+
+        if record.state == ConflictState::Resolved {
+            return Ok(ConflictResolveReport {
+                conflict_id: conflict_id.to_string(),
+                previous_root_cid: previous_root_cid.clone(),
+                root_cid: previous_root_cid,
+                changed: false,
+            });
+        }
+
+        record.state = ConflictState::Resolved;
+        let now = unix_now();
+        let root_meta = self.root_meta_for_import(now);
+        let mut root = layer_conflict_records(
+            &self.tree,
+            previous_root.clone(),
+            std::slice::from_ref(record),
+        )
+        .await?;
+        root = layer_prev_link(&self.tree, root, &previous_root).await?;
+        if let Some(meta) = root_meta.as_ref() {
+            root = layer_root_meta(&self.tree, root, meta).await?;
+        }
+        self.update_primary_drive(&root, None, root_meta.as_ref(), now)?;
+
+        Ok(ConflictResolveReport {
+            conflict_id: conflict_id.to_string(),
+            previous_root_cid,
+            root_cid: root.to_string(),
+            changed: true,
+        })
+    }
+
+    fn current_device_root_cid(&self) -> Result<&str, DaemonError> {
+        let drive = self
+            .config
+            .drive(PRIMARY_DRIVE_ID)
+            .ok_or(DaemonError::PrimaryDriveMissing)?;
+        if let Some(account) = self.config.account.as_ref()
+            && let Some(root) = drive.device_roots.get(&account.device_pubkey)
+        {
+            return Ok(&root.root_cid);
+        }
+        drive
+            .last_root_cid
+            .as_deref()
+            .ok_or(DaemonError::PrimaryRootMissing)
+    }
+
     fn update_primary_drive(
         &mut self,
         root_cid: &Cid,
@@ -377,6 +459,7 @@ fn unix_now() -> i64 {
 mod tests {
     use super::*;
     use crate::config::Drive;
+    use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
     use crate::identity::Identity;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -535,6 +618,81 @@ mod tests {
             }
         }
         assert!(saw_blob, "import should write blobs");
+    }
+
+    #[tokio::test]
+    async fn resolve_conflict_record_marks_record_resolved_and_advances_root() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("report.pdf"), b"chosen").unwrap();
+        let imported = daemon.import_working_dir(work.path()).await.unwrap();
+        let imported_root = Cid::parse(&imported.root_cid).unwrap();
+        let record = conflict_record("conflict-a");
+
+        let mut root_with_conflict =
+            crate::indexer::layer_conflict_records(daemon.tree(), imported_root.clone(), &[record])
+                .await
+                .unwrap();
+        root_with_conflict =
+            crate::indexer::layer_prev_link(daemon.tree(), root_with_conflict, &imported_root)
+                .await
+                .unwrap();
+        let now = unix_now();
+        let root_meta = daemon.root_meta_for_import(now).unwrap();
+        root_with_conflict =
+            crate::indexer::layer_root_meta(daemon.tree(), root_with_conflict, &root_meta)
+                .await
+                .unwrap();
+        daemon
+            .update_primary_drive(&root_with_conflict, None, Some(&root_meta), now)
+            .unwrap();
+
+        let report = daemon.resolve_conflict_record("conflict-a").await.unwrap();
+
+        assert!(report.changed);
+        assert_eq!(report.previous_root_cid, root_with_conflict.to_string());
+        assert_ne!(report.root_cid, report.previous_root_cid);
+        let resolved_root = Cid::parse(&report.root_cid).unwrap();
+        let records = crate::indexer::read_conflict_records(daemon.tree(), &resolved_root)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].state, ConflictState::Resolved);
+        let resolved_meta = crate::indexer::read_root_meta(daemon.tree(), &resolved_root)
+            .await
+            .unwrap()
+            .expect("resolved root metadata");
+        assert_eq!(
+            resolved_meta.parents[0].root_cid,
+            root_with_conflict.to_string()
+        );
+    }
+
+    fn conflict_record(conflict_id: &str) -> ConflictRecord {
+        ConflictRecord {
+            schema: ConflictRecord::SCHEMA,
+            conflict_id: conflict_id.into(),
+            path: "report.pdf".into(),
+            visible_conflict_path: "report (conflict from phone).pdf".into(),
+            local: ConflictSide {
+                device_id: "laptop".into(),
+                device_seq: 2,
+                root_cid: "cid-local".into(),
+                whole_file_hash: "hash-local".into(),
+            },
+            remote: Some(ConflictSide {
+                device_id: "phone".into(),
+                device_seq: 7,
+                root_cid: "cid-remote".into(),
+                whole_file_hash: "hash-remote".into(),
+            }),
+            deleted: None,
+            state: ConflictState::Unresolved,
+            created_at: 1234,
+        }
     }
 
     #[tokio::test]
