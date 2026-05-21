@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use nostr_sdk::{PublicKey, RelayStatus};
 use serde_json::json;
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
+const CONFLICT_STATUS_PATH_CAP: usize = 32;
 
 #[derive(Debug, Parser)]
 #[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
@@ -712,19 +714,46 @@ fn root_conflict_status(config_dir: &Path, root_cid: &str) -> Option<serde_json:
 }
 
 fn conflict_status_payload(records: &[iris_drive_core::ConflictRecord]) -> serde_json::Value {
-    let unresolved: Vec<_> = records
+    let unresolved_records: Vec<_> = records
         .iter()
         .filter(|record| record.state == iris_drive_core::ConflictState::Unresolved)
-        .map(conflict_record_status_payload)
         .collect();
+    let unresolved: Vec<_> = unresolved_records
+        .iter()
+        .map(|record| conflict_record_status_payload(record))
+        .collect();
+    let overflow_paths = conflict_overflow_payload(&unresolved_records);
     let resolved_count = records.len().saturating_sub(unresolved.len());
 
     json!({
         "total_count": records.len(),
         "unresolved_count": unresolved.len(),
         "resolved_count": resolved_count,
+        "per_path_cap": CONFLICT_STATUS_PATH_CAP,
+        "overflow_count": overflow_paths.len(),
+        "overflow_paths": overflow_paths,
         "unresolved": unresolved,
     })
+}
+
+fn conflict_overflow_payload(
+    records: &[&iris_drive_core::ConflictRecord],
+) -> Vec<serde_json::Value> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for record in records {
+        *counts.entry(record.path.as_str()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > CONFLICT_STATUS_PATH_CAP)
+        .map(|(path, count)| {
+            json!({
+                "path": path,
+                "unresolved_count": count,
+                "cap": CONFLICT_STATUS_PATH_CAP,
+            })
+        })
+        .collect()
 }
 
 fn conflict_record_status_payload(record: &iris_drive_core::ConflictRecord) -> serde_json::Value {
@@ -2231,11 +2260,50 @@ mod daemon_lock_tests {
         assert_eq!(status["total_count"], 2);
         assert_eq!(status["unresolved_count"], 1);
         assert_eq!(status["resolved_count"], 1);
+        assert_eq!(status["overflow_count"], 0);
         assert_eq!(status["unresolved"][0]["conflict_id"], "unresolved-a");
         assert_eq!(status["unresolved"][0]["path"], "report.pdf");
         assert_eq!(
             status["unresolved"][0]["visible_conflict_path"],
             "report (conflict from phone).pdf"
         );
+    }
+
+    #[test]
+    fn conflict_status_reports_per_path_overflow() {
+        let records: Vec<_> = (0..=CONFLICT_STATUS_PATH_CAP)
+            .map(|index| iris_drive_core::ConflictRecord {
+                schema: iris_drive_core::ConflictRecord::SCHEMA,
+                conflict_id: format!("conflict-{index}"),
+                path: "report.pdf".into(),
+                visible_conflict_path: format!("report (conflict from phone {index}).pdf"),
+                local: iris_drive_core::ConflictSide {
+                    device_id: "laptop".into(),
+                    device_seq: 4,
+                    root_cid: "cid-local".into(),
+                    whole_file_hash: format!("hash-local-{index}"),
+                },
+                remote: Some(iris_drive_core::ConflictSide {
+                    device_id: "phone".into(),
+                    device_seq: index as u64,
+                    root_cid: "cid-remote".into(),
+                    whole_file_hash: format!("hash-remote-{index}"),
+                }),
+                deleted: None,
+                state: iris_drive_core::ConflictState::Unresolved,
+                created_at: 1234,
+            })
+            .collect();
+
+        let status = conflict_status_payload(&records);
+
+        assert_eq!(status["unresolved_count"], CONFLICT_STATUS_PATH_CAP + 1);
+        assert_eq!(status["overflow_count"], 1);
+        assert_eq!(status["overflow_paths"][0]["path"], "report.pdf");
+        assert_eq!(
+            status["overflow_paths"][0]["unresolved_count"],
+            CONFLICT_STATUS_PATH_CAP + 1
+        );
+        assert_eq!(status["overflow_paths"][0]["cap"], CONFLICT_STATUS_PATH_CAP);
     }
 }
