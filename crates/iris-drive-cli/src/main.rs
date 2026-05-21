@@ -456,6 +456,10 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let file_count = current_root_cid
         .as_deref()
         .and_then(|root| root_file_count(config_dir, root));
+    let conflict_status = current_root_cid
+        .as_deref()
+        .and_then(|root| root_conflict_status(config_dir, root))
+        .unwrap_or_else(|| conflict_status_payload(&[]));
     let peers = peer_statuses(&config);
     let default_working_dir = iris_drive_core::paths::default_working_dir_in(config_dir);
     let authorized_device_count = peers.len();
@@ -507,6 +511,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "authorized_device_count": authorized_device_count,
                 "published_device_roots": published_device_roots,
             },
+            "conflicts": conflict_status,
             "peers": peers,
         })
     );
@@ -645,6 +650,54 @@ fn root_file_count(config_dir: &Path, root_cid: &str) -> Option<usize> {
     runtime
         .block_on(async { walk_device_tree(daemon.tree(), &cid).await.ok() })
         .map(|(files, _tombstones)| files.len())
+}
+
+fn root_conflict_status(config_dir: &Path, root_cid: &str) -> Option<serde_json::Value> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let daemon = Daemon::open(config_dir).ok()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let records = runtime.block_on(async {
+        iris_drive_core::read_conflict_records(daemon.tree(), &cid)
+            .await
+            .ok()
+    })?;
+    Some(conflict_status_payload(&records))
+}
+
+fn conflict_status_payload(records: &[iris_drive_core::ConflictRecord]) -> serde_json::Value {
+    let unresolved: Vec<_> = records
+        .iter()
+        .filter(|record| record.state == iris_drive_core::ConflictState::Unresolved)
+        .map(conflict_record_status_payload)
+        .collect();
+    let resolved_count = records.len().saturating_sub(unresolved.len());
+
+    json!({
+        "total_count": records.len(),
+        "unresolved_count": unresolved.len(),
+        "resolved_count": resolved_count,
+        "unresolved": unresolved,
+    })
+}
+
+fn conflict_record_status_payload(record: &iris_drive_core::ConflictRecord) -> serde_json::Value {
+    json!({
+        "conflict_id": record.conflict_id.as_str(),
+        "path": record.path.as_str(),
+        "visible_conflict_path": record.visible_conflict_path.as_str(),
+        "created_at": record.created_at,
+        "state": conflict_state_label(&record.state),
+    })
+}
+
+fn conflict_state_label(state: &iris_drive_core::ConflictState) -> &'static str {
+    match state {
+        iris_drive_core::ConflictState::Unresolved => "unresolved",
+        iris_drive_core::ConflictState::Resolved => "resolved",
+    }
 }
 
 fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
@@ -2080,5 +2133,65 @@ mod daemon_lock_tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("daemon.lock"), "99999999\n").unwrap();
         assert!(DaemonProcessLock::acquire(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn conflict_status_counts_unresolved_records() {
+        let records = vec![
+            iris_drive_core::ConflictRecord {
+                schema: iris_drive_core::ConflictRecord::SCHEMA,
+                conflict_id: "unresolved-a".into(),
+                path: "report.pdf".into(),
+                visible_conflict_path: "report (conflict from phone).pdf".into(),
+                local: iris_drive_core::ConflictSide {
+                    device_id: "laptop".into(),
+                    device_seq: 4,
+                    root_cid: "cid-local".into(),
+                    whole_file_hash: "hash-local".into(),
+                },
+                remote: Some(iris_drive_core::ConflictSide {
+                    device_id: "phone".into(),
+                    device_seq: 9,
+                    root_cid: "cid-remote".into(),
+                    whole_file_hash: "hash-remote".into(),
+                }),
+                deleted: None,
+                state: iris_drive_core::ConflictState::Unresolved,
+                created_at: 1234,
+            },
+            iris_drive_core::ConflictRecord {
+                schema: iris_drive_core::ConflictRecord::SCHEMA,
+                conflict_id: "resolved-b".into(),
+                path: "notes.txt".into(),
+                visible_conflict_path: "notes (conflict from tablet).txt".into(),
+                local: iris_drive_core::ConflictSide {
+                    device_id: "laptop".into(),
+                    device_seq: 5,
+                    root_cid: "cid-local-2".into(),
+                    whole_file_hash: "hash-local-2".into(),
+                },
+                remote: None,
+                deleted: Some(iris_drive_core::ConflictDeletedSide {
+                    device_id: "tablet".into(),
+                    device_seq: 2,
+                    root_cid: "cid-delete".into(),
+                    tombstoned_at: 1200,
+                }),
+                state: iris_drive_core::ConflictState::Resolved,
+                created_at: 1201,
+            },
+        ];
+
+        let status = conflict_status_payload(&records);
+
+        assert_eq!(status["total_count"], 2);
+        assert_eq!(status["unresolved_count"], 1);
+        assert_eq!(status["resolved_count"], 1);
+        assert_eq!(status["unresolved"][0]["conflict_id"], "unresolved-a");
+        assert_eq!(status["unresolved"][0]["path"], "report.pdf");
+        assert_eq!(
+            status["unresolved"][0]["visible_conflict_path"],
+            "report (conflict from phone).pdf"
+        );
     }
 }

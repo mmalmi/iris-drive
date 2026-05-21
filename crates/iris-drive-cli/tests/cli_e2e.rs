@@ -386,6 +386,8 @@ fn status_before_init_reports_uninitialized() {
         serde_json::json!(["https://upload.iris.to"])
     );
     assert!(v["peers"].as_array().unwrap().is_empty());
+    assert_eq!(v["conflicts"]["total_count"], 0);
+    assert_eq!(v["conflicts"]["unresolved_count"], 0);
 }
 
 #[test]
