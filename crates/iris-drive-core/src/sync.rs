@@ -21,6 +21,7 @@ use thiserror::Error;
 use crate::conflict::{
     FileSnapshot, SyncAction, conflict_filename, parse_conflict_filename, resolve,
 };
+use crate::sync_cache::{CachedBaseState, SyncCache};
 
 const MAX_CONFLICT_COPIES_PER_PATH: usize = 32;
 
@@ -161,6 +162,41 @@ where
         }
     }
 
+    Ok(report)
+}
+
+/// Run one sync using the cache's durable base state, then refresh the
+/// accepted base from the converged local provider state when no conflicts
+/// were produced. Callers remain responsible for saving the cache.
+pub async fn sync_with_cache<L, R>(
+    local: &L,
+    remote: &R,
+    cache: &mut SyncCache,
+    drive_id: &str,
+    remote_label: &str,
+) -> Result<SyncReport, SyncError>
+where
+    L: ProviderFs<ItemId = String>,
+    R: ProviderFs<ItemId = String>,
+{
+    let base = cache.base_snapshots_for_drive(drive_id);
+    let report = sync_with_base(local, remote, &base, remote_label).await?;
+    if report.conflicts.is_empty() {
+        let anchor = local.anchor().await;
+        let base_root_cid = anchor.as_str().to_string();
+        let rows = enumerate_files(local)
+            .await?
+            .into_iter()
+            .map(|(path, entry)| CachedBaseState {
+                drive_id: drive_id.to_string(),
+                path,
+                base_root_cid: base_root_cid.clone(),
+                whole_file_hash: None,
+                content_cid_hash: to_hex(&entry.hash),
+                size: entry.size,
+            });
+        cache.replace_base_state_for_drive(drive_id, rows);
+    }
     Ok(report)
 }
 
@@ -526,6 +562,47 @@ mod tests {
         assert!(report.downloaded.is_empty());
         assert_eq!(paths(&l).await, Vec::<String>::new());
         assert_eq!(paths(&r).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn cache_backed_sync_persists_base_for_next_delete() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "shared.txt", b"v1").await;
+        let first = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+        assert_eq!(first.uploaded, vec!["shared.txt".to_string()]);
+        assert_eq!(cache.base_snapshots_for_drive("main").len(), 1);
+
+        let root = l.root().await;
+        l.remove(&root, "shared.txt").await.unwrap();
+        let second = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(second.deleted_remote, vec!["shared.txt".to_string()]);
+        assert_eq!(paths(&l).await, Vec::<String>::new());
+        assert_eq!(paths(&r).await, Vec::<String>::new());
+        assert!(cache.base_snapshots_for_drive("main").is_empty());
+    }
+
+    #[tokio::test]
+    async fn cache_backed_sync_keeps_old_base_when_conflicted() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        let mut cache = crate::sync_cache::SyncCache::empty();
+
+        write_file(&l, "report.txt", b"local").await;
+        write_file(&r, "report.txt", b"remote").await;
+        let report = sync_with_cache(&l, &r, &mut cache, "main", "peer")
+            .await
+            .unwrap();
+
+        assert_eq!(report.conflicts.len(), 1);
+        assert!(cache.base_snapshots_for_drive("main").is_empty());
     }
 
     #[tokio::test]

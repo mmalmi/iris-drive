@@ -46,7 +46,10 @@ pub use merge::{
     original_path_from_tombstone, tombstone_path,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
-pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};
+pub use sync::{
+    ConflictResolution, SyncBaseState, SyncError, SyncReport, sync as run_sync, sync_with_base,
+    sync_with_cache,
+};
 pub use sync_cache::{
     CachedBaseState, CachedPathState, CachedRoot, ContentNeed, SourceAvailability, SyncCache,
     SyncCacheError,

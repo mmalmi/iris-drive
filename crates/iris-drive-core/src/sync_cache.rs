@@ -150,6 +150,19 @@ impl SyncCache {
         self.sort_rows();
     }
 
+    pub fn replace_base_state_for_drive(
+        &mut self,
+        drive_id: &str,
+        rows: impl IntoIterator<Item = CachedBaseState>,
+    ) {
+        self.base_state.retain(|row| row.drive_id != drive_id);
+        self.base_state.extend(rows.into_iter().map(|mut row| {
+            row.drive_id = drive_id.to_string();
+            row
+        }));
+        self.sort_rows();
+    }
+
     #[must_use]
     pub fn base_snapshots_for_drive(
         &self,
@@ -322,5 +335,50 @@ mod tests {
         assert_eq!(snapshots.len(), 2);
         assert_eq!(snapshots["a.txt"].content_hash, "whole-a");
         assert_eq!(snapshots["b.txt"].content_hash, "cid-b");
+    }
+
+    #[test]
+    fn replace_base_state_for_drive_keeps_other_drives_and_sorts() {
+        let mut cache = SyncCache::empty();
+        cache.base_state = vec![CachedBaseState {
+            drive_id: "other".into(),
+            path: "other.txt".into(),
+            base_root_cid: "root-other".into(),
+            whole_file_hash: Some("whole-other".into()),
+            content_cid_hash: "cid-other".into(),
+            size: 1,
+        }];
+
+        cache.replace_base_state_for_drive(
+            "main",
+            vec![
+                CachedBaseState {
+                    drive_id: "ignored".into(),
+                    path: "z.txt".into(),
+                    base_root_cid: "root-z".into(),
+                    whole_file_hash: None,
+                    content_cid_hash: "cid-z".into(),
+                    size: 1,
+                },
+                CachedBaseState {
+                    drive_id: "ignored".into(),
+                    path: "a.txt".into(),
+                    base_root_cid: "root-a".into(),
+                    whole_file_hash: None,
+                    content_cid_hash: "cid-a".into(),
+                    size: 1,
+                },
+            ],
+        );
+
+        let paths: Vec<_> = cache
+            .base_state
+            .iter()
+            .map(|row| (row.drive_id.as_str(), row.path.as_str()))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![("main", "a.txt"), ("main", "z.txt"), ("other", "other.txt")]
+        );
     }
 }
