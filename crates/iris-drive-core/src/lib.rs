@@ -29,13 +29,17 @@ pub mod sync;
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
 pub use app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot, select_latest};
 pub use config::{AppConfig, ConfigError, DeviceRootRef, Drive, DriveRole};
-pub use conflict::{FileSnapshot, SyncAction, conflict_filename, resolve as resolve_conflict};
+pub use conflict::{
+    ConflictRecord, ConflictSide, ConflictState, FileSnapshot, SyncAction, conflict_filename,
+    resolve as resolve_conflict,
+};
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
-pub use indexer::{IndexError, index_dir};
+pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use merge::{
-    DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedEntry, MergedView,
-    ROOT_META_PATH, TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone, tombstone_path,
+    CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedEntry,
+    MergedView, ROOT_META_PATH, TOMBSTONE_PREFIX, merge_drives, original_path_from_tombstone,
+    tombstone_path,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{ConflictResolution, SyncError, SyncReport, sync as run_sync};

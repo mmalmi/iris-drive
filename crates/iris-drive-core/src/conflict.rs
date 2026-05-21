@@ -10,6 +10,43 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One side of a durable conflict record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictSide {
+    pub device_id: String,
+    pub device_seq: u64,
+    pub root_cid: String,
+    pub whole_file_hash: String,
+}
+
+/// Resolution state for a durable conflict record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictState {
+    Unresolved,
+    Resolved,
+}
+
+/// Metadata stored under `.hashtree/conflicts/<conflict_id>.json`.
+///
+/// The conflict copy itself remains a real file in the snapshot; this
+/// record explains why it exists and which roots produced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictRecord {
+    pub schema: u32,
+    pub conflict_id: String,
+    pub path: String,
+    pub visible_conflict_path: String,
+    pub local: ConflictSide,
+    pub remote: ConflictSide,
+    pub state: ConflictState,
+    pub created_at: i64,
+}
+
+impl ConflictRecord {
+    pub const SCHEMA: u32 = 1;
+}
+
 /// One file's identity at a point in time: content hash + when its
 /// writer published it. `mtime` is the wall-clock published time, not
 /// the local filesystem mtime (which differs across machines).

@@ -13,7 +13,10 @@ use std::path::Path;
 use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, to_hex};
 use thiserror::Error;
 
-use crate::merge::{META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX, walk_device_tree};
+use crate::conflict::ConflictRecord;
+use crate::merge::{
+    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX, walk_device_tree,
+};
 use crate::root_meta::DriveRootMeta;
 
 #[derive(Debug, Error)]
@@ -28,6 +31,8 @@ pub enum IndexError {
     NotADirectory(String),
     #[error("root metadata: {0}")]
     RootMeta(String),
+    #[error("conflict record: {0}")]
+    ConflictRecord(String),
 }
 
 /// Index a directory recursively, returning the root htree CID.
@@ -186,6 +191,132 @@ pub async fn read_root_meta<S: Store>(
         .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&root_meta.hash)))?;
     let meta = serde_json::from_slice(&raw).map_err(|e| IndexError::RootMeta(e.to_string()))?;
     Ok(Some(meta))
+}
+
+/// Add or replace durable conflict provenance records under
+/// `.hashtree/conflicts/<conflict_id>.json`.
+pub async fn layer_conflict_records<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    records: &[ConflictRecord],
+) -> Result<Cid, IndexError> {
+    if records.is_empty() {
+        return Ok(root);
+    }
+    let conflict_dir: Vec<&str> = CONFLICTS_PREFIX
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    for depth in 1..=conflict_dir.len() {
+        let dir_path: Vec<String> = conflict_dir[..depth]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        root = ensure_dir(tree, &root, &dir_path).await?;
+    }
+
+    for record in records {
+        let name = conflict_record_leaf_name(&record.conflict_id)?;
+        let bytes = serde_json::to_vec_pretty(record)
+            .map_err(|e| IndexError::ConflictRecord(e.to_string()))?;
+        let (cid, size) = tree.put(&bytes).await?;
+        root = tree
+            .set_entry(&root, &conflict_dir, &name, &cid, size, LinkType::Blob)
+            .await?;
+    }
+    Ok(root)
+}
+
+/// Read durable conflict provenance records from `.hashtree/conflicts`.
+/// Absence is normal for snapshots without conflicts.
+pub async fn read_conflict_records<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<Vec<ConflictRecord>, IndexError> {
+    let Some(conflicts_dir) = resolve_conflicts_dir(tree, root).await? else {
+        return Ok(Vec::new());
+    };
+    let mut entries = tree.list_directory(&conflicts_dir).await?;
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut records = Vec::new();
+    for entry in entries {
+        if entry.link_type == LinkType::Dir {
+            continue;
+        }
+        let Some(conflict_id) = entry.name.strip_suffix(".json") else {
+            continue;
+        };
+        validate_conflict_id(conflict_id)?;
+        let cid = Cid {
+            hash: entry.hash,
+            key: entry.key,
+        };
+        let raw = tree
+            .get(&cid, None)
+            .await?
+            .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
+        let record: ConflictRecord =
+            serde_json::from_slice(&raw).map_err(|e| IndexError::ConflictRecord(e.to_string()))?;
+        if record.conflict_id != conflict_id {
+            return Err(IndexError::ConflictRecord(format!(
+                "conflict_id {} does not match record filename {conflict_id}",
+                record.conflict_id
+            )));
+        }
+        records.push(record);
+    }
+    Ok(records)
+}
+
+async fn resolve_conflicts_dir<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<Option<Cid>, IndexError> {
+    let root_entries = tree.list_directory(root).await?;
+    let Some(meta_entry) = root_entries
+        .iter()
+        .find(|e| e.name == META_DIR && e.link_type == LinkType::Dir)
+    else {
+        return Ok(None);
+    };
+    let meta_cid = Cid {
+        hash: meta_entry.hash,
+        key: meta_entry.key,
+    };
+    let meta_entries = tree.list_directory(&meta_cid).await?;
+    let conflict_dir_name = CONFLICTS_PREFIX
+        .rsplit_once('/')
+        .map_or(CONFLICTS_PREFIX, |(_, name)| name);
+    let Some(conflicts_entry) = meta_entries
+        .iter()
+        .find(|e| e.name == conflict_dir_name && e.link_type == LinkType::Dir)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Cid {
+        hash: conflicts_entry.hash,
+        key: conflicts_entry.key,
+    }))
+}
+
+fn conflict_record_leaf_name(conflict_id: &str) -> Result<String, IndexError> {
+    validate_conflict_id(conflict_id)?;
+    Ok(format!("{conflict_id}.json"))
+}
+
+fn validate_conflict_id(conflict_id: &str) -> Result<(), IndexError> {
+    if conflict_id.is_empty()
+        || conflict_id == "."
+        || conflict_id == ".."
+        || conflict_id.contains('/')
+        || conflict_id.contains('\\')
+    {
+        return Err(IndexError::ConflictRecord(
+            "conflict_id must be one non-empty path segment".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn attach_prev_link<S: Store>(
@@ -384,6 +515,7 @@ fn index_dir_inner<'a, S: Store>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
     use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
     use hashtree_core::{HashTreeConfig, MemoryStore};
     use std::collections::BTreeMap;
@@ -533,6 +665,90 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "a.txt");
         assert!(tombstones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn conflict_records_round_trip_and_are_not_user_visible() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        let tree = new_tree();
+        let root = index_dir(&tree, dir.path()).await.unwrap();
+        let record = ConflictRecord {
+            schema: ConflictRecord::SCHEMA,
+            conflict_id: "dev-a-2-dev-b-7".into(),
+            path: "report.pdf".into(),
+            visible_conflict_path: "report (conflict from phone).pdf".into(),
+            local: ConflictSide {
+                device_id: "dev-a".into(),
+                device_seq: 2,
+                root_cid: "cid-a".into(),
+                whole_file_hash: "hash-a".into(),
+            },
+            remote: ConflictSide {
+                device_id: "dev-b".into(),
+                device_seq: 7,
+                root_cid: "cid-b".into(),
+                whole_file_hash: "hash-b".into(),
+            },
+            state: ConflictState::Unresolved,
+            created_at: 1234,
+        };
+
+        let with_conflict = layer_conflict_records(&tree, root, std::slice::from_ref(&record))
+            .await
+            .unwrap();
+
+        let records = read_conflict_records(&tree, &with_conflict).await.unwrap();
+        assert_eq!(records, vec![record]);
+
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &with_conflict)
+            .await
+            .unwrap();
+        let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(file_paths, vec!["a.txt"]);
+        assert!(tombstones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_conflict_records_dir_reads_as_empty() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        let tree = new_tree();
+        let root = index_dir(&tree, dir.path()).await.unwrap();
+
+        let records = read_conflict_records(&tree, &root).await.unwrap();
+        assert!(records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn conflict_record_id_must_be_single_path_segment() {
+        let tree = new_tree();
+        let root = tree.put_directory(Vec::new()).await.unwrap();
+        let record = ConflictRecord {
+            schema: ConflictRecord::SCHEMA,
+            conflict_id: "bad/id".into(),
+            path: "report.pdf".into(),
+            visible_conflict_path: "report (conflict from phone).pdf".into(),
+            local: ConflictSide {
+                device_id: "dev-a".into(),
+                device_seq: 2,
+                root_cid: "cid-a".into(),
+                whole_file_hash: "hash-a".into(),
+            },
+            remote: ConflictSide {
+                device_id: "dev-b".into(),
+                device_seq: 7,
+                root_cid: "cid-b".into(),
+                whole_file_hash: "hash-b".into(),
+            },
+            state: ConflictState::Unresolved,
+            created_at: 1234,
+        };
+
+        let err = layer_conflict_records(&tree, root, &[record])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, IndexError::ConflictRecord(msg) if msg.contains("conflict_id")));
     }
 
     #[tokio::test]

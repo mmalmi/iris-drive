@@ -613,9 +613,10 @@ mod tests {
         std::fs::create_dir_all(&blocks_dir).unwrap();
         let store = FsBlobStore::new(&blocks_dir).unwrap();
         let public_tree = HashTree::new(HashTreeConfig::new(Arc::new(store)).public());
-        let public_root = index_dir_with_history(&public_tree, work.path(), None, unix_now())
-            .await
-            .unwrap();
+        let public_root =
+            crate::indexer::index_dir_with_history(&public_tree, work.path(), None, unix_now())
+                .await
+                .unwrap();
         assert!(public_root.key.is_none());
 
         {

@@ -33,6 +33,7 @@ use crate::config::DeviceRootRef;
 /// - `.hashtree/prev` — back-link to the prior version of this dir
 /// - `.hashtree/root.json` — causal metadata for this root snapshot
 /// - `.hashtree/tombstones/<path>` — deletion markers
+/// - `.hashtree/conflicts/<id>.json` — conflict provenance records
 pub const META_DIR: &str = ".hashtree";
 
 /// Reserved entry path for the root-level causal metadata record.
@@ -42,6 +43,10 @@ pub const ROOT_META_PATH: &str = ".hashtree/root.json";
 /// Files written under this prefix by the indexer are not part of the
 /// user-visible drive; only the merge engine reads them.
 pub const TOMBSTONE_PREFIX: &str = ".hashtree/tombstones";
+
+/// Reserved path prefix for durable conflict provenance records. These
+/// records are snapshot metadata and must not appear as user files.
+pub const CONFLICTS_PREFIX: &str = ".hashtree/conflicts";
 
 /// Reserved entry path for the directory-revision back-link. A
 /// directory whose contents have a prior version stores that previous
@@ -395,7 +400,8 @@ pub async fn walk_device_tree<S: Store>(
     Ok((files, tombstones))
 }
 
-/// Walk inside `.hashtree/` collecting tombstones and ignoring `prev`.
+/// Walk inside `.hashtree/` collecting tombstones and ignoring other
+/// structural metadata.
 /// Lifted out so the main walker doesn't need to know `META_DIR`
 /// internals.
 fn walk_meta_dir<'a, S: Store>(
@@ -409,16 +415,16 @@ fn walk_meta_dir<'a, S: Store>(
         let entries = tree.list_directory(dir_cid).await?;
         for entry in entries {
             let path = format!("{prefix}/{}", entry.name);
-            // The revision back-link is structural metadata — not
-            // user-visible content, not a tombstone.
-            if path == PREV_LINK_PATH {
+            // Structural metadata is not user-visible content. Only
+            // the tombstone subtree is intentionally traversed.
+            if path == PREV_LINK_PATH || path == ROOT_META_PATH || path == CONFLICTS_PREFIX {
                 continue;
             }
             let child_cid = Cid {
                 hash: entry.hash,
                 key: entry.key,
             };
-            if entry.link_type == LinkType::Dir {
+            if entry.link_type == LinkType::Dir && path == TOMBSTONE_PREFIX {
                 // The tombstones subtree mirrors original paths; recurse
                 // and let the tombstone-leaf check below pick them up.
                 walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
