@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use hashtree_core::{Cid, CidParseError, HashTree, HashTreeError, Store, to_hex};
+use hashtree_core::{Cid, CidParseError, HashTree, HashTreeError, Store, from_hex, sha256, to_hex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
@@ -14,6 +14,39 @@ use thiserror::Error;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::conflict::FileSnapshot;
 use crate::merge::walk_device_tree;
+
+pub const SOURCE_STATE_AVAILABLE: &str = "available";
+pub const SOURCE_STATE_UNKNOWN: &str = "unknown";
+pub const SOURCE_STATE_MISSING: &str = "missing";
+pub const SOURCE_STATE_POISONED: &str = "poisoned";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalOutcome {
+    /// Bytes were received and verified against the requested hash.
+    Verified,
+    /// The source did not answer, timed out, or relay state was
+    /// inconclusive. This is not evidence that content does not exist.
+    Unknown,
+    /// The source explicitly reported that it does not have this item.
+    SourceMiss,
+    /// Bytes were received but failed content-address verification.
+    InvalidContent,
+}
+
+impl RetrievalOutcome {
+    const fn source_state(self) -> &'static str {
+        match self {
+            Self::Verified => SOURCE_STATE_AVAILABLE,
+            Self::Unknown => SOURCE_STATE_UNKNOWN,
+            Self::SourceMiss => SOURCE_STATE_MISSING,
+            Self::InvalidContent => SOURCE_STATE_POISONED,
+        }
+    }
+
+    const fn clears_need(self) -> bool {
+        matches!(self, Self::Verified)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum SyncCacheError {
@@ -222,6 +255,109 @@ impl SyncCache {
             .or_else(|| uniform_base_root_cid_for_drive(&self.base_state, drive_id))
     }
 
+    pub fn record_content_need(
+        &mut self,
+        hash_or_cid: &str,
+        source_hint: Option<&str>,
+        priority: i32,
+        now: i64,
+    ) {
+        match self
+            .needs
+            .iter_mut()
+            .find(|row| row.hash_or_cid == hash_or_cid)
+        {
+            Some(row) => {
+                row.priority = row.priority.min(priority);
+                if row.source_hint.is_none() {
+                    row.source_hint = source_hint.map(str::to_string);
+                }
+            }
+            None => self.needs.push(ContentNeed {
+                hash_or_cid: hash_or_cid.to_string(),
+                source_hint: source_hint.map(str::to_string),
+                priority,
+                first_seen_at: now,
+                last_attempt_at: None,
+            }),
+        }
+        self.sort_rows();
+    }
+
+    pub fn record_retrieval_outcome(
+        &mut self,
+        hash_or_cid: &str,
+        source_id: &str,
+        outcome: RetrievalOutcome,
+        now: i64,
+    ) {
+        self.record_source_availability(hash_or_cid, source_id, outcome.source_state(), now);
+        if outcome.clears_need() {
+            self.needs.retain(|row| row.hash_or_cid != hash_or_cid);
+        } else if let Some(row) = self
+            .needs
+            .iter_mut()
+            .find(|row| row.hash_or_cid == hash_or_cid)
+        {
+            if row.source_hint.is_none() {
+                row.source_hint = Some(source_id.to_string());
+            }
+            row.last_attempt_at = Some(now);
+        } else {
+            self.needs.push(ContentNeed {
+                hash_or_cid: hash_or_cid.to_string(),
+                source_hint: Some(source_id.to_string()),
+                priority: 0,
+                first_seen_at: now,
+                last_attempt_at: Some(now),
+            });
+        }
+        self.sort_rows();
+    }
+
+    #[must_use]
+    pub fn record_hash_response(
+        &mut self,
+        expected_hash_hex: &str,
+        source_id: &str,
+        bytes: &[u8],
+        now: i64,
+    ) -> bool {
+        let verified = from_hex(expected_hash_hex).is_ok_and(|expected| sha256(bytes) == expected);
+        let outcome = if verified {
+            RetrievalOutcome::Verified
+        } else {
+            RetrievalOutcome::InvalidContent
+        };
+        self.record_retrieval_outcome(expected_hash_hex, source_id, outcome, now);
+        verified
+    }
+
+    fn record_source_availability(
+        &mut self,
+        hash_or_cid: &str,
+        source_id: &str,
+        state: &str,
+        now: i64,
+    ) {
+        match self
+            .source_availability
+            .iter_mut()
+            .find(|row| row.hash_or_cid == hash_or_cid && row.source_id == source_id)
+        {
+            Some(row) => {
+                row.state = state.to_string();
+                row.updated_at = now;
+            }
+            None => self.source_availability.push(SourceAvailability {
+                hash_or_cid: hash_or_cid.to_string(),
+                source_id: source_id.to_string(),
+                state: state.to_string(),
+                updated_at: now,
+            }),
+        }
+    }
+
     #[must_use]
     pub fn base_snapshots_for_drive(
         &self,
@@ -393,6 +529,7 @@ fn roots_for_drive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hashtree_core::{sha256, to_hex};
 
     #[test]
     fn base_snapshots_for_drive_prefer_whole_file_hash() {
@@ -509,5 +646,73 @@ mod tests {
 
         assert!(cache.base_anchors.is_empty());
         assert!(cache.base_anchor_for_drive("main").is_none());
+    }
+
+    #[test]
+    fn unknown_retrieval_keeps_need_retryable() {
+        let mut cache = SyncCache::empty();
+        cache.record_content_need("hash-a", Some("peer-a"), 10, 100);
+
+        cache.record_retrieval_outcome("hash-a", "peer-a", RetrievalOutcome::Unknown, 110);
+
+        assert_eq!(cache.needs.len(), 1);
+        assert_eq!(cache.needs[0].hash_or_cid, "hash-a");
+        assert_eq!(cache.needs[0].source_hint.as_deref(), Some("peer-a"));
+        assert_eq!(cache.needs[0].priority, 10);
+        assert_eq!(cache.needs[0].first_seen_at, 100);
+        assert_eq!(cache.needs[0].last_attempt_at, Some(110));
+        assert_eq!(cache.source_availability.len(), 1);
+        assert_eq!(cache.source_availability[0].state, SOURCE_STATE_UNKNOWN);
+    }
+
+    #[test]
+    fn verified_retrieval_clears_need_and_marks_source_available() {
+        let mut cache = SyncCache::empty();
+        cache.record_content_need("hash-a", Some("peer-a"), 10, 100);
+
+        cache.record_retrieval_outcome("hash-a", "peer-a", RetrievalOutcome::Verified, 110);
+
+        assert!(cache.needs.is_empty());
+        assert_eq!(cache.source_availability.len(), 1);
+        assert_eq!(cache.source_availability[0].state, SOURCE_STATE_AVAILABLE);
+        assert_eq!(cache.source_availability[0].updated_at, 110);
+    }
+
+    #[test]
+    fn source_miss_keeps_need_and_marks_source_missing() {
+        let mut cache = SyncCache::empty();
+        cache.record_content_need("hash-a", Some("peer-a"), 10, 100);
+
+        cache.record_retrieval_outcome("hash-a", "peer-a", RetrievalOutcome::SourceMiss, 110);
+
+        assert_eq!(cache.needs.len(), 1);
+        assert_eq!(cache.needs[0].last_attempt_at, Some(110));
+        assert_eq!(cache.source_availability[0].state, SOURCE_STATE_MISSING);
+    }
+
+    #[test]
+    fn poisoned_hash_response_keeps_need_and_marks_source_poisoned() {
+        let mut cache = SyncCache::empty();
+        let expected = to_hex(&sha256(b"good bytes"));
+        cache.record_content_need(&expected, Some("peer-a"), 10, 100);
+
+        assert!(!cache.record_hash_response(&expected, "peer-a", b"bad bytes", 110));
+
+        assert_eq!(cache.needs.len(), 1);
+        assert_eq!(cache.needs[0].last_attempt_at, Some(110));
+        assert_eq!(cache.source_availability[0].state, SOURCE_STATE_POISONED);
+
+        assert!(cache.record_hash_response(&expected, "peer-b", b"good bytes", 120));
+
+        assert!(cache.needs.is_empty());
+        assert_eq!(
+            cache
+                .source_availability
+                .iter()
+                .find(|source| source.source_id == "peer-b")
+                .unwrap()
+                .state,
+            SOURCE_STATE_AVAILABLE
+        );
     }
 }

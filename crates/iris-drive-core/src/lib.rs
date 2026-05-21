@@ -51,7 +51,8 @@ pub use sync::{
     sync_with_base_anchor, sync_with_cache,
 };
 pub use sync_cache::{
-    CachedBaseAnchor, CachedBaseState, CachedPathState, CachedRoot, ContentNeed,
+    CachedBaseAnchor, CachedBaseState, CachedPathState, CachedRoot, ContentNeed, RetrievalOutcome,
+    SOURCE_STATE_AVAILABLE, SOURCE_STATE_MISSING, SOURCE_STATE_POISONED, SOURCE_STATE_UNKNOWN,
     SourceAvailability, SyncCache, SyncCacheError,
 };
 
