@@ -20,6 +20,7 @@ hashtree-blossom.workspace = true
 hashtree-config.workspace = true
 hashtree-embedded.workspace = true
 hashtree-fs.workspace = true
+hashtree-lmdb.workspace = true
 hashtree-provider.workspace = true
 http.workspace = true
 mime_guess.workspace = true

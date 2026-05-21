@@ -2768,6 +2768,7 @@ dependencies = [
  "hashtree-core",
  "hashtree-embedded",
  "hashtree-fs",
+ "hashtree-lmdb",
  "hashtree-provider",
  "hex",
  "http",

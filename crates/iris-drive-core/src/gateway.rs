@@ -17,11 +17,13 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
+use hashtree_config::StorageBackend;
 use hashtree_core::{
-    Cid, Hash, HashTree, LinkType, NHashData, TreeEntry, from_hex, nhash_decode, nhash_encode_full,
-    to_hex,
+    Cid, Hash, HashTree, HashTreeConfig, LinkType, NHashData, Store, TreeEntry, from_hex,
+    nhash_decode, nhash_encode_full, to_hex,
 };
 use hashtree_fs::FsBlobStore;
+use hashtree_lmdb::LmdbBlobStore;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -91,7 +93,8 @@ impl GatewayServer {
     ) -> Result<Self, GatewayError> {
         let config_dir = config_dir.into();
         let daemon = Daemon::open(config_dir.clone())?;
-        Self::bind_with_tree(config_dir, daemon.tree_handle(), bind).await
+        let trees = gateway_trees_for_daemon(daemon.tree_handle());
+        Self::bind_with_gateway_trees(config_dir, trees, bind).await
     }
 
     pub async fn bind_with_tree(
@@ -99,11 +102,19 @@ impl GatewayServer {
         tree: Arc<HashTree<FsBlobStore>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
+        Self::bind_with_gateway_trees(config_dir, vec![GatewayTree::Fs(tree)], bind).await
+    }
+
+    async fn bind_with_gateway_trees(
+        config_dir: impl Into<PathBuf>,
+        trees: Vec<GatewayTree>,
+        bind: GatewayBind,
+    ) -> Result<Self, GatewayError> {
         let listener = TcpListener::bind(bind.addr).await?;
         let local_addr = listener.local_addr()?;
         let state = GatewayState {
             config_dir: Arc::new(config_dir.into()),
-            tree,
+            trees: Arc::new(trees),
         };
         let app = Router::new()
             .fallback(any(gateway_handler))
@@ -155,7 +166,86 @@ impl Drop for GatewayServer {
 #[derive(Clone)]
 struct GatewayState {
     config_dir: Arc<PathBuf>,
-    tree: Arc<HashTree<FsBlobStore>>,
+    trees: Arc<Vec<GatewayTree>>,
+}
+
+#[derive(Clone)]
+enum GatewayTree {
+    Fs(Arc<HashTree<FsBlobStore>>),
+    Lmdb(Arc<HashTree<LmdbBlobStore>>),
+}
+
+impl GatewayTree {
+    async fn resolve_content(
+        &self,
+        root: &Cid,
+        segments: &[String],
+    ) -> Result<Option<ResolvedContent>, GatewayError> {
+        match self {
+            Self::Fs(tree) => resolve_content(tree, root, segments).await,
+            Self::Lmdb(tree) => resolve_content(tree, root, segments).await,
+        }
+    }
+
+    async fn list_public_directory(&self, cid: &Cid) -> Result<Vec<TreeEntry>, GatewayError> {
+        match self {
+            Self::Fs(tree) => list_public_directory(tree, cid).await,
+            Self::Lmdb(tree) => list_public_directory(tree, cid).await,
+        }
+    }
+
+    async fn serve_file(
+        &self,
+        cid: &Cid,
+        options: FileResponseOptions<'_>,
+    ) -> Result<Response, (StatusCode, String)> {
+        match self {
+            Self::Fs(tree) => serve_file(tree, cid, options).await,
+            Self::Lmdb(tree) => serve_file(tree, cid, options).await,
+        }
+    }
+}
+
+fn gateway_trees_for_daemon(primary: Arc<HashTree<FsBlobStore>>) -> Vec<GatewayTree> {
+    let mut trees = vec![GatewayTree::Fs(primary)];
+    if let Some(tree) = default_hashtree_gateway_tree() {
+        trees.push(tree);
+    }
+    trees
+}
+
+fn default_hashtree_gateway_tree() -> Option<GatewayTree> {
+    let config = hashtree_config::Config::load_or_default();
+    let data_dir = PathBuf::from(config.storage.data_dir);
+    let blobs_dir = data_dir.join("blobs");
+    match config.storage.backend {
+        StorageBackend::Fs => match FsBlobStore::new(&blobs_dir) {
+            Ok(store) => Some(GatewayTree::Fs(Arc::new(HashTree::new(
+                HashTreeConfig::new(Arc::new(store)),
+            )))),
+            Err(err) => {
+                tracing::warn!(
+                    "Iris Drive gateway could not open hashtree filesystem store at {}: {}",
+                    blobs_dir.display(),
+                    err
+                );
+                None
+            }
+        },
+        StorageBackend::Lmdb => match LmdbBlobStore::new(&blobs_dir) {
+            Ok(store) => Some(GatewayTree::Lmdb(Arc::new(HashTree::new(
+                HashTreeConfig::new(Arc::new(store)),
+            )))),
+            Err(err) => {
+                tracing::warn!(
+                    "Iris Drive gateway could not open hashtree LMDB store at {}: {}",
+                    blobs_dir.display(),
+                    err
+                );
+                None
+            }
+        },
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -210,14 +300,16 @@ async fn handle_gateway_request(
 
     let request = resolve_gateway_request(&state, &uri, &headers)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let content = resolve_content(&state.tree, &request.root, &request.path_segments)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "not found".into()))?;
+    let (tree, content) =
+        resolve_content_from_trees(&state.trees, &request.root, &request.path_segments)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "not found".into()))?;
 
     match content {
         ResolvedContent::Directory { cid, display_path } => {
-            let entries = list_public_directory(&state.tree, &cid)
+            let entries = tree
+                .list_public_directory(&cid)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             Ok(directory_response(
@@ -243,9 +335,22 @@ async fn handle_gateway_request(
                 set_key_cookie: request.set_key_cookie.as_deref(),
                 headers: &headers,
             };
-            serve_file(&state.tree, &cid, options).await
+            tree.serve_file(&cid, options).await
         }
     }
+}
+
+async fn resolve_content_from_trees(
+    trees: &[GatewayTree],
+    root: &Cid,
+    segments: &[String],
+) -> Result<Option<(GatewayTree, ResolvedContent)>, GatewayError> {
+    for tree in trees {
+        if let Some(content) = tree.resolve_content(root, segments).await? {
+            return Ok(Some((tree.clone(), content)));
+        }
+    }
+    Ok(None)
 }
 
 fn resolve_gateway_request(
@@ -401,8 +506,8 @@ fn current_drive_root(config_dir: &Path, drive_id: &str) -> Result<Cid, GatewayE
     Cid::parse(root_cid).map_err(|e| GatewayError::InvalidRequest(e.to_string()))
 }
 
-async fn resolve_content(
-    tree: &HashTree<FsBlobStore>,
+async fn resolve_content<S: Store>(
+    tree: &HashTree<S>,
     root: &Cid,
     segments: &[String],
 ) -> Result<Option<ResolvedContent>, GatewayError> {
@@ -448,8 +553,8 @@ async fn resolve_content(
     Ok(None)
 }
 
-async fn resolve_root_file(
-    tree: &HashTree<FsBlobStore>,
+async fn resolve_root_file<S: Store>(
+    tree: &HashTree<S>,
     root: &Cid,
     segments: &[String],
 ) -> Result<Option<ResolvedContent>, GatewayError> {
@@ -474,8 +579,8 @@ async fn resolve_root_file(
     }))
 }
 
-async fn file_size_for_cid(
-    tree: &HashTree<FsBlobStore>,
+async fn file_size_for_cid<S: Store>(
+    tree: &HashTree<S>,
     cid: &Cid,
 ) -> Result<Option<u64>, GatewayError> {
     if let Some(node) = tree
@@ -506,8 +611,8 @@ fn file_hint_path(segments: &[String]) -> String {
         .unwrap_or_else(|| "download".to_string())
 }
 
-async fn resolve_directory_or_index(
-    tree: &HashTree<FsBlobStore>,
+async fn resolve_directory_or_index<S: Store>(
+    tree: &HashTree<S>,
     dir: Cid,
     display_path: &str,
 ) -> Result<Option<ResolvedContent>, GatewayError> {
@@ -527,8 +632,8 @@ async fn resolve_directory_or_index(
     }))
 }
 
-async fn find_entry(
-    tree: &HashTree<FsBlobStore>,
+async fn find_entry<S: Store>(
+    tree: &HashTree<S>,
     dir: &Cid,
     name: &str,
 ) -> Result<Option<TreeEntry>, GatewayError> {
@@ -539,8 +644,8 @@ async fn find_entry(
     Ok(entries.into_iter().find(|entry| entry.name == name))
 }
 
-async fn list_public_directory(
-    tree: &HashTree<FsBlobStore>,
+async fn list_public_directory<S: Store>(
+    tree: &HashTree<S>,
     dir: &Cid,
 ) -> Result<Vec<TreeEntry>, GatewayError> {
     let mut entries = tree
@@ -568,8 +673,8 @@ struct FileResponseOptions<'a> {
     headers: &'a HeaderMap,
 }
 
-async fn serve_file(
-    tree: &HashTree<FsBlobStore>,
+async fn serve_file<S: Store>(
+    tree: &HashTree<S>,
     cid: &Cid,
     options: FileResponseOptions<'_>,
 ) -> Result<Response, (StatusCode, String)> {
@@ -1226,6 +1331,39 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
         assert!(response.contains("content-type: image/webp"), "{response}");
         assert!(response.contains("webp-bytes"), "{response}");
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_serves_nhash_from_secondary_hashtree_store() {
+        let cfg_dir = tempdir().unwrap();
+        init_account_config(cfg_dir.path());
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let external_blocks = tempdir().unwrap();
+        let external_store = FsBlobStore::new(external_blocks.path()).unwrap();
+        let external_tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(external_store))));
+        let (cid, _) = external_tree.put(b"external webp").await.unwrap();
+        let nhash = nhash_encode_full(&NHashData {
+            hash: cid.hash,
+            decrypt_key: cid.key,
+        })
+        .unwrap();
+        let host = format!("{}.iris.localhost", split_dns_labels(&nhash));
+
+        let server = GatewayServer::bind_with_gateway_trees(
+            cfg_dir.path(),
+            vec![
+                GatewayTree::Fs(daemon.tree_handle()),
+                GatewayTree::Fs(external_tree),
+            ],
+            GatewayBind::loopback_v4(0),
+        )
+        .await
+        .unwrap();
+        let response = http_get(server.local_addr(), &host, "/Aragorn.webp").await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("content-type: image/webp"), "{response}");
+        assert!(response.contains("external webp"), "{response}");
         server.shutdown().await.unwrap();
     }
 
