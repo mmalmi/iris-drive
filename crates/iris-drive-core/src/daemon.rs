@@ -376,6 +376,20 @@ impl Daemon {
         Ok(cache)
     }
 
+    pub async fn load_or_rebuild_sync_cache(&self) -> Result<SyncCache, DaemonError> {
+        let path = sync_cache_path_in(&self.config_dir);
+        match SyncCache::load(&path) {
+            Ok(cache) => Ok(cache),
+            Err(SyncCacheError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.rebuild_sync_cache().await
+            }
+            Err(SyncCacheError::Json(_)) | Err(SyncCacheError::SchemaMismatch { .. }) => {
+                self.rebuild_sync_cache().await
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
         let mut cache =
             SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
@@ -569,6 +583,30 @@ mod tests {
             rebuilt.base_state.is_empty(),
             "rebuilds restore current state but not historical base quality"
         );
+    }
+
+    #[tokio::test]
+    async fn corrupt_sync_cache_rebuilds_from_signed_roots() {
+        let cfg_dir = tempdir().unwrap();
+        init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"hello cache").unwrap();
+        let report = daemon.import_working_dir(work.path()).await.unwrap();
+
+        let cache_path = crate::paths::sync_cache_path_in(cfg_dir.path());
+        std::fs::write(&cache_path, b"{ definitely not json").unwrap();
+        let rebuilt = daemon.load_or_rebuild_sync_cache().await.unwrap();
+
+        assert_eq!(rebuilt.roots.len(), 1);
+        assert_eq!(rebuilt.path_state.len(), 1);
+        assert_eq!(rebuilt.path_state[0].path, "note.txt");
+        assert_eq!(rebuilt.path_state[0].root_cid, report.root_cid);
+        assert!(rebuilt.base_state.is_empty());
+
+        let loaded = crate::sync_cache::SyncCache::load(cache_path).unwrap();
+        assert_eq!(loaded.path_state, rebuilt.path_state);
     }
 
     #[tokio::test]
