@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use hashtree_provider::{EntryInfo, PathChange, ProviderError, ProviderFs};
 use thiserror::Error;
 
-use crate::conflict::conflict_filename;
+use crate::conflict::{conflict_filename, parse_conflict_filename};
+
+const MAX_CONFLICT_COPIES_PER_PATH: usize = 32;
 
 #[derive(Debug, Error)]
 pub enum SyncError {
@@ -61,9 +63,14 @@ where
     let remote_entries = enumerate_files(remote).await?;
 
     let mut report = SyncReport::default();
-    let all_paths: BTreeSet<&String> = local_entries.keys().chain(remote_entries.keys()).collect();
+    let all_paths: BTreeSet<String> = local_entries
+        .keys()
+        .chain(remote_entries.keys())
+        .cloned()
+        .collect();
+    let mut occupied_paths = all_paths.clone();
 
-    for path in all_paths {
+    for path in &all_paths {
         let l = local_entries.get(path);
         let r = remote_entries.get(path);
         match (l, r) {
@@ -80,10 +87,15 @@ where
             }
             (Some(_), Some(_)) => {
                 // Both present, hashes differ — conflict.
-                let conflict_path = conflict_filename(path, "peer");
+                let original_path = parse_conflict_filename(path)
+                    .map(|parsed| parsed.original_path)
+                    .unwrap_or_else(|| path.clone());
+                let conflict_path =
+                    next_conflict_filename(&original_path, "peer", &occupied_paths)?;
                 copy_file(remote, path, local, &conflict_path).await?;
+                occupied_paths.insert(conflict_path.clone());
                 report.conflicts.push(ConflictResolution {
-                    original_path: path.clone(),
+                    original_path,
                     renamed_to: conflict_path,
                 });
                 // Also push local's version to remote so they converge on
@@ -106,6 +118,29 @@ where
 
 fn hashes_match(l: &EntryInfo, r: &EntryInfo) -> bool {
     l.hash == r.hash && l.size == r.size
+}
+
+fn next_conflict_filename(
+    original_path: &str,
+    device_label: &str,
+    occupied_paths: &BTreeSet<String>,
+) -> Result<String, SyncError> {
+    for copy_index in 1..=MAX_CONFLICT_COPIES_PER_PATH {
+        let label = if copy_index == 1 {
+            device_label.to_string()
+        } else {
+            format!("{device_label} {copy_index}")
+        };
+        let candidate = conflict_filename(original_path, &label);
+        if !occupied_paths.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(SyncError::ConflictApply {
+        path: original_path.to_string(),
+        reason: format!("more than {MAX_CONFLICT_COPIES_PER_PATH} conflict copies exist"),
+    })
 }
 
 /// Enumerate file paths (not directories) under a provider and return
@@ -299,6 +334,42 @@ mod tests {
         );
         // Remote received local's bytes at the original path.
         assert_eq!(read_file(&r, "report.pdf").await, b"local-version");
+    }
+
+    #[tokio::test]
+    async fn divergent_existing_conflict_copy_does_not_nest_conflict_name() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        write_file(
+            &l,
+            "report (conflict from peer).pdf",
+            b"local-conflict-copy",
+        )
+        .await;
+        write_file(
+            &r,
+            "report (conflict from peer).pdf",
+            b"remote-conflict-copy",
+        )
+        .await;
+
+        let report = sync(&l, &r, "dev").await.unwrap();
+
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(report.conflicts[0].original_path, "report.pdf");
+        assert_eq!(
+            report.conflicts[0].renamed_to,
+            "report (conflict from peer 2).pdf"
+        );
+        assert_eq!(
+            read_file(&l, "report (conflict from peer 2).pdf").await,
+            b"remote-conflict-copy"
+        );
+        assert!(
+            !paths(&l)
+                .await
+                .contains(&"report (conflict from peer) (conflict from peer).pdf".to_string())
+        );
     }
 
     #[tokio::test]
