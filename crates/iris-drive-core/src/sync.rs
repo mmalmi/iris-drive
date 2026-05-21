@@ -14,10 +14,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hashtree_core::to_hex;
 use hashtree_provider::{EntryInfo, PathChange, ProviderError, ProviderFs};
 use thiserror::Error;
 
-use crate::conflict::{conflict_filename, parse_conflict_filename};
+use crate::conflict::{
+    FileSnapshot, SyncAction, conflict_filename, parse_conflict_filename, resolve,
+};
 
 const MAX_CONFLICT_COPIES_PER_PATH: usize = 32;
 
@@ -49,12 +52,31 @@ pub struct ConflictResolution {
     pub renamed_to: String,
 }
 
+pub type SyncBaseState = BTreeMap<String, FileSnapshot>;
+
 /// Run one full bidirectional sync.
 ///
 /// `device_label` is used in the conflict filename. The peer's label is
 /// always rendered as `"peer"` in local-side renames, since the peer's
 /// own label is unknown here.
 pub async fn sync<L, R>(local: &L, remote: &R, device_label: &str) -> Result<SyncReport, SyncError>
+where
+    L: ProviderFs<ItemId = String>,
+    R: ProviderFs<ItemId = String>,
+{
+    let base = SyncBaseState::new();
+    let _ = device_label;
+    sync_with_base(local, remote, &base, "peer").await
+}
+
+/// Run one bidirectional sync using durable base snapshots to distinguish
+/// deletes from additions and unchanged peer copies.
+pub async fn sync_with_base<L, R>(
+    local: &L,
+    remote: &R,
+    base_state: &SyncBaseState,
+    remote_label: &str,
+) -> Result<SyncReport, SyncError>
 where
     L: ProviderFs<ItemId = String>,
     R: ProviderFs<ItemId = String>,
@@ -66,6 +88,7 @@ where
     let all_paths: BTreeSet<String> = local_entries
         .keys()
         .chain(remote_entries.keys())
+        .chain(base_state.keys())
         .cloned()
         .collect();
     let mut occupied_paths = all_paths.clone();
@@ -73,24 +96,53 @@ where
     for path in &all_paths {
         let l = local_entries.get(path);
         let r = remote_entries.get(path);
-        match (l, r) {
-            (Some(_), Some(_)) if hashes_match(l.unwrap(), r.unwrap()) => {
-                // Convergent state, nothing to do.
+        let local_snapshot = l.map(snapshot_from_entry);
+        let remote_snapshot = r.map(snapshot_from_entry);
+        match resolve(
+            path,
+            base_state.get(path),
+            local_snapshot.as_ref(),
+            remote_snapshot.as_ref(),
+            remote_label,
+        ) {
+            SyncAction::NoOp => {}
+            SyncAction::ApplyRemote { new } => {
+                let _ = new;
+                if r.is_some() && !l.zip(r).is_some_and(|(l, r)| hashes_match(l, r)) {
+                    copy_file(remote, path, local, path).await?;
+                    occupied_paths.insert(path.clone());
+                    report.downloaded.push(path.clone());
+                }
             }
-            (Some(_), None) => {
-                copy_file(local, path, remote, path).await?;
-                report.uploaded.push(path.clone());
+            SyncAction::KeepLocal => {
+                if l.is_some() && !l.zip(r).is_some_and(|(l, r)| hashes_match(l, r)) {
+                    copy_file(local, path, remote, path).await?;
+                    occupied_paths.insert(path.clone());
+                    report.uploaded.push(path.clone());
+                }
             }
-            (None, Some(_)) => {
-                copy_file(remote, path, local, path).await?;
-                report.downloaded.push(path.clone());
+            SyncAction::DeleteLocal => {
+                if l.is_some() {
+                    remove_file(local, path).await?;
+                    occupied_paths.remove(path);
+                    report.deleted_local.push(path.clone());
+                }
             }
-            (Some(_), Some(_)) => {
-                // Both present, hashes differ — conflict.
+            SyncAction::DeleteRemote => {
+                if r.is_some() {
+                    remove_file(remote, path).await?;
+                    report.deleted_remote.push(path.clone());
+                }
+            }
+            SyncAction::Conflict {
+                remote: remote_file,
+                conflict_name,
+            } => {
+                let _ = (remote_file, conflict_name);
                 let original_path = parse_conflict_filename(path)
                     .map_or_else(|| path.clone(), |parsed| parsed.original_path);
                 let conflict_path =
-                    next_conflict_filename(&original_path, "peer", &occupied_paths)?;
+                    next_conflict_filename(&original_path, remote_label, &occupied_paths)?;
                 copy_file(remote, path, local, &conflict_path).await?;
                 occupied_paths.insert(conflict_path.clone());
                 report.conflicts.push(ConflictResolution {
@@ -103,20 +155,24 @@ where
                 // produce its own conflict rename labelled with its own
                 // device name.
                 copy_file(local, path, remote, path).await?;
+                occupied_paths.insert(path.clone());
                 report.uploaded.push(path.clone());
             }
-            (None, None) => unreachable!("path is in either local or remote map"),
         }
     }
-
-    // Discard the device_label argument warning if unused in this v1.
-    let _ = device_label;
 
     Ok(report)
 }
 
 fn hashes_match(l: &EntryInfo, r: &EntryInfo) -> bool {
     l.hash == r.hash && l.size == r.size
+}
+
+fn snapshot_from_entry(entry: &EntryInfo) -> FileSnapshot {
+    FileSnapshot {
+        content_hash: to_hex(&entry.hash),
+        mtime: 0,
+    }
 }
 
 fn next_conflict_filename(
@@ -210,6 +266,15 @@ async fn write_full<P: ProviderFs<ItemId = String>>(
     Ok(())
 }
 
+async fn remove_file<P: ProviderFs<ItemId = String>>(fs: &P, path: &str) -> Result<(), SyncError> {
+    let (parent, name) = split_path(path);
+    let parent_id = lookup_dir(fs, &parent).await?;
+    match fs.remove(&parent_id, name).await {
+        Ok(()) | Err(ProviderError::NotFound) => Ok(()),
+        Err(e) => Err(SyncError::Provider(e)),
+    }
+}
+
 async fn ensure_parents<P: ProviderFs<ItemId = String>>(
     fs: &P,
     path: &str,
@@ -218,7 +283,7 @@ async fn ensure_parents<P: ProviderFs<ItemId = String>>(
     if segments.len() <= 1 {
         return Ok(());
     }
-    let mut cursor = String::new();
+    let mut cursor = fs.root().await;
     for seg in &segments[..segments.len() - 1] {
         match fs.lookup(&cursor, seg).await {
             Ok(item) => {
@@ -232,6 +297,17 @@ async fn ensure_parents<P: ProviderFs<ItemId = String>>(
         }
     }
     Ok(())
+}
+
+async fn lookup_dir<P: ProviderFs<ItemId = String>>(
+    fs: &P,
+    path: &str,
+) -> Result<String, SyncError> {
+    let mut cursor = fs.root().await;
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        cursor = fs.lookup(&cursor, seg).await?.id;
+    }
+    Ok(cursor)
 }
 
 fn split_path(path: &str) -> (String, &str) {
@@ -267,6 +343,25 @@ mod tests {
         let mut p: Vec<_> = enumerate_files(fs).await.unwrap().into_keys().collect();
         p.sort();
         p
+    }
+
+    async fn base_state<P: ProviderFs<ItemId = String>>(
+        fs: &P,
+    ) -> BTreeMap<String, crate::conflict::FileSnapshot> {
+        enumerate_files(fs)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(path, entry)| {
+                (
+                    path,
+                    crate::conflict::FileSnapshot {
+                        content_hash: hashtree_core::to_hex(&entry.hash),
+                        mtime: 0,
+                    },
+                )
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -413,6 +508,24 @@ mod tests {
         let report = sync(&l, &r, "dev").await.unwrap();
         assert_eq!(report.uploaded, vec!["x.txt".to_string()]);
         assert_eq!(read_file(&r, "x.txt").await, b"v2-larger");
+    }
+
+    #[tokio::test]
+    async fn base_state_local_delete_removes_unchanged_remote() {
+        let l = fresh_provider().await;
+        let r = fresh_provider().await;
+        write_file(&l, "shared.txt", b"v1").await;
+        write_file(&r, "shared.txt", b"v1").await;
+        let base = base_state(&l).await;
+
+        let root = l.root().await;
+        l.remove(&root, "shared.txt").await.unwrap();
+
+        let report = sync_with_base(&l, &r, &base, "peer").await.unwrap();
+        assert_eq!(report.deleted_remote, vec!["shared.txt".to_string()]);
+        assert!(report.downloaded.is_empty());
+        assert_eq!(paths(&l).await, Vec::<String>::new());
+        assert_eq!(paths(&r).await, Vec::<String>::new());
     }
 
     #[tokio::test]

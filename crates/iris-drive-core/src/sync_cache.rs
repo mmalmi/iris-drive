@@ -12,6 +12,7 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::config::{AppConfig, DeviceRootRef};
+use crate::conflict::FileSnapshot;
 use crate::merge::walk_device_tree;
 
 #[derive(Debug, Error)]
@@ -149,6 +150,29 @@ impl SyncCache {
         self.sort_rows();
     }
 
+    #[must_use]
+    pub fn base_snapshots_for_drive(
+        &self,
+        drive_id: &str,
+    ) -> std::collections::BTreeMap<String, FileSnapshot> {
+        self.base_state
+            .iter()
+            .filter(|row| row.drive_id == drive_id)
+            .map(|row| {
+                (
+                    row.path.clone(),
+                    FileSnapshot {
+                        content_hash: row
+                            .whole_file_hash
+                            .clone()
+                            .unwrap_or_else(|| row.content_cid_hash.clone()),
+                        mtime: 0,
+                    },
+                )
+            })
+            .collect()
+    }
+
     fn sort_rows(&mut self) {
         self.roots.sort_by(|left, right| {
             (
@@ -258,4 +282,45 @@ fn roots_for_drive(
         |account| account.device_pubkey.clone(),
     );
     vec![(device_id, DeviceRootRef::legacy(root_cid, 0, 0))]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_snapshots_for_drive_prefer_whole_file_hash() {
+        let mut cache = SyncCache::empty();
+        cache.base_state = vec![
+            CachedBaseState {
+                drive_id: "main".into(),
+                path: "a.txt".into(),
+                base_root_cid: "root-a".into(),
+                whole_file_hash: Some("whole-a".into()),
+                content_cid_hash: "cid-a".into(),
+                size: 1,
+            },
+            CachedBaseState {
+                drive_id: "main".into(),
+                path: "b.txt".into(),
+                base_root_cid: "root-b".into(),
+                whole_file_hash: None,
+                content_cid_hash: "cid-b".into(),
+                size: 2,
+            },
+            CachedBaseState {
+                drive_id: "other".into(),
+                path: "ignored.txt".into(),
+                base_root_cid: "root-c".into(),
+                whole_file_hash: Some("whole-c".into()),
+                content_cid_hash: "cid-c".into(),
+                size: 3,
+            },
+        ];
+
+        let snapshots = cache.base_snapshots_for_drive("main");
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots["a.txt"].content_hash, "whole-a");
+        assert_eq!(snapshots["b.txt"].content_hash, "cid-b");
+    }
 }

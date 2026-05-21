@@ -200,6 +200,9 @@ pub enum SyncAction {
     /// Local exists, remote deleted. Honour the deletion of a peer
     /// only when our local matches the base — otherwise treat as conflict.
     DeleteLocal,
+    /// Local deleted, remote still matches the base. Propagate the local
+    /// deletion to the remote.
+    DeleteRemote,
     /// Both sides changed; preserve both. The local stays at its
     /// current path; the remote is renamed to `conflict_name`.
     Conflict {
@@ -229,8 +232,8 @@ pub fn resolve(
         (None, Some(l), Some(r)) => same_or_conflict(l, r, path, device_label),
         (Some(b), None, Some(r)) => {
             if r.content_hash == b.content_hash {
-                // Remote is still at base; we (locally) deleted. Propagate the delete on next push.
-                SyncAction::NoOp
+                // Remote is still at base; we (locally) deleted.
+                SyncAction::DeleteRemote
             } else {
                 // Local deleted but remote modified — surface as keep-remote.
                 SyncAction::ApplyRemote { new: r.clone() }
@@ -539,12 +542,12 @@ mod tests {
     }
 
     #[test]
-    fn local_delete_remote_unchanged_is_noop() {
+    fn local_delete_remote_unchanged_deletes_remote() {
         let b = snap("base", 1);
         let r = snap("base", 1);
         assert_eq!(
             resolve("x", Some(&b), None, Some(&r), "dev"),
-            SyncAction::NoOp
+            SyncAction::DeleteRemote
         );
     }
 
