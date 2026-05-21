@@ -8,7 +8,12 @@
 //! for the same path, it returns the action the sync engine should take.
 //! All I/O is the caller's problem; this keeps the algorithm testable.
 
+use hashtree_core::{sha256, to_hex};
 use serde::{Deserialize, Serialize};
+
+use crate::merge::{
+    MergedConflict, MergedConflictFile, MergedConflictKind, MergedConflictTombstone,
+};
 
 /// One side of a durable conflict record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,6 +22,15 @@ pub struct ConflictSide {
     pub device_seq: u64,
     pub root_cid: String,
     pub whole_file_hash: String,
+}
+
+/// Deleted side of a durable write/delete conflict record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictDeletedSide {
+    pub device_id: String,
+    pub device_seq: u64,
+    pub root_cid: String,
+    pub tombstoned_at: i64,
 }
 
 /// Resolution state for a durable conflict record.
@@ -38,13 +52,130 @@ pub struct ConflictRecord {
     pub path: String,
     pub visible_conflict_path: String,
     pub local: ConflictSide,
-    pub remote: ConflictSide,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<ConflictSide>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<ConflictDeletedSide>,
     pub state: ConflictState,
     pub created_at: i64,
 }
 
 impl ConflictRecord {
     pub const SCHEMA: u32 = 1;
+}
+
+/// Build durable conflict records from merge provenance. The first file
+/// side in deterministic ordering is treated as the original-path side;
+/// each other file or tombstone becomes one record.
+#[must_use]
+pub fn conflict_records_from_merge(
+    conflict: &MergedConflict,
+    created_at: i64,
+) -> Vec<ConflictRecord> {
+    let mut files = conflict.files.clone();
+    files.sort_by(|a, b| {
+        a.device_id
+            .cmp(&b.device_id)
+            .then(a.device_seq.cmp(&b.device_seq))
+            .then(a.root_cid.cmp(&b.root_cid))
+            .then(a.content_hash.cmp(&b.content_hash))
+    });
+    let Some(local_file) = files.first() else {
+        return Vec::new();
+    };
+    let local = conflict_side_from_file(local_file);
+
+    match conflict.kind {
+        MergedConflictKind::WriteWrite => files
+            .iter()
+            .skip(1)
+            .map(|remote_file| {
+                let remote = conflict_side_from_file(remote_file);
+                ConflictRecord {
+                    schema: ConflictRecord::SCHEMA,
+                    conflict_id: conflict_id(&conflict.path, &local, Some(&remote), None),
+                    path: conflict.path.clone(),
+                    visible_conflict_path: conflict_filename(&conflict.path, &remote.device_id),
+                    local: local.clone(),
+                    remote: Some(remote),
+                    deleted: None,
+                    state: ConflictState::Unresolved,
+                    created_at,
+                }
+            })
+            .collect(),
+        MergedConflictKind::WriteDelete => conflict
+            .tombstone
+            .as_ref()
+            .map(|tombstone| {
+                let deleted = conflict_deleted_side_from_tombstone(tombstone);
+                ConflictRecord {
+                    schema: ConflictRecord::SCHEMA,
+                    conflict_id: conflict_id(&conflict.path, &local, None, Some(&deleted)),
+                    path: conflict.path.clone(),
+                    visible_conflict_path: conflict_filename(&conflict.path, &local.device_id),
+                    local,
+                    remote: None,
+                    deleted: Some(deleted),
+                    state: ConflictState::Unresolved,
+                    created_at,
+                }
+            })
+            .into_iter()
+            .collect(),
+    }
+}
+
+fn conflict_side_from_file(file: &MergedConflictFile) -> ConflictSide {
+    ConflictSide {
+        device_id: file.device_id.clone(),
+        device_seq: file.device_seq,
+        root_cid: file.root_cid.clone(),
+        whole_file_hash: file.content_hash.clone(),
+    }
+}
+
+fn conflict_deleted_side_from_tombstone(
+    tombstone: &MergedConflictTombstone,
+) -> ConflictDeletedSide {
+    ConflictDeletedSide {
+        device_id: tombstone.device_id.clone(),
+        device_seq: tombstone.device_seq,
+        root_cid: tombstone.root_cid.clone(),
+        tombstoned_at: tombstone.tombstoned_at,
+    }
+}
+
+fn conflict_id(
+    path: &str,
+    local: &ConflictSide,
+    remote: Option<&ConflictSide>,
+    deleted: Option<&ConflictDeletedSide>,
+) -> String {
+    let peer = if let Some(remote) = remote {
+        format!(
+            "file|{}|{}|{}|{}",
+            remote.device_id, remote.device_seq, remote.root_cid, remote.whole_file_hash
+        )
+    } else if let Some(deleted) = deleted {
+        format!(
+            "deleted|{}|{}|{}|{}",
+            deleted.device_id, deleted.device_seq, deleted.root_cid, deleted.tombstoned_at
+        )
+    } else {
+        "none".to_string()
+    };
+    let seed = format!(
+        "{}|{}|{}|{}|{}|{}|{}",
+        ConflictRecord::SCHEMA,
+        path,
+        local.device_id,
+        local.device_seq,
+        local.root_cid,
+        local.whole_file_hash,
+        peer
+    );
+    to_hex(&sha256(seed.as_bytes()))
 }
 
 /// One file's identity at a point in time: content hash + when its
@@ -165,11 +296,82 @@ pub fn conflict_filename(original: &str, device_label: &str) -> String {
 mod tests {
     use super::*;
 
+    fn merged_file(device_id: &str, seq: u64, root: &str, hash: &str) -> MergedConflictFile {
+        MergedConflictFile {
+            device_id: device_id.into(),
+            device_seq: seq,
+            root_cid: root.into(),
+            content_hash: hash.into(),
+            content_cid_hash: format!("cid-{hash}"),
+            size: 10,
+        }
+    }
+
     fn snap(hash: &str, mtime: i64) -> FileSnapshot {
         FileSnapshot {
             content_hash: hash.into(),
             mtime,
         }
+    }
+
+    #[test]
+    fn write_write_merge_conflict_builds_durable_record() {
+        let conflict = MergedConflict {
+            path: "report.pdf".into(),
+            kind: MergedConflictKind::WriteWrite,
+            files: vec![
+                merged_file("dev-a", 2, "cid-a", &"aa".repeat(32)),
+                merged_file("dev-b", 7, "cid-b", &"bb".repeat(32)),
+            ],
+            tombstone: None,
+        };
+
+        let records = conflict_records_from_merge(&conflict, 1234);
+        assert_eq!(records, conflict_records_from_merge(&conflict, 1234));
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.schema, ConflictRecord::SCHEMA);
+        assert!(!record.conflict_id.contains('/'));
+        assert_eq!(record.path, "report.pdf");
+        assert_eq!(
+            record.visible_conflict_path,
+            "report (conflict from dev-b).pdf"
+        );
+        assert_eq!(record.local.device_id, "dev-a");
+        assert_eq!(record.remote.as_ref().unwrap().device_id, "dev-b");
+        assert!(record.deleted.is_none());
+        assert_eq!(record.state, ConflictState::Unresolved);
+        assert_eq!(record.created_at, 1234);
+    }
+
+    #[test]
+    fn write_delete_merge_conflict_records_deleted_side() {
+        let conflict = MergedConflict {
+            path: "report.pdf".into(),
+            kind: MergedConflictKind::WriteDelete,
+            files: vec![merged_file("dev-a", 2, "cid-a", &"aa".repeat(32))],
+            tombstone: Some(MergedConflictTombstone {
+                device_id: "dev-b".into(),
+                device_seq: 7,
+                root_cid: "cid-b".into(),
+                tombstoned_at: 555,
+            }),
+        };
+
+        let records = conflict_records_from_merge(&conflict, 1234);
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(
+            record.visible_conflict_path,
+            "report (conflict from dev-a).pdf"
+        );
+        assert_eq!(record.local.device_id, "dev-a");
+        assert!(record.remote.is_none());
+        let deleted = record.deleted.as_ref().unwrap();
+        assert_eq!(deleted.device_id, "dev-b");
+        assert_eq!(deleted.device_seq, 7);
+        assert_eq!(deleted.root_cid, "cid-b");
+        assert_eq!(deleted.tombstoned_at, 555);
     }
 
     #[test]

@@ -716,12 +716,13 @@ mod tests {
                 root_cid: "cid-a".into(),
                 whole_file_hash: "hash-a".into(),
             },
-            remote: ConflictSide {
+            remote: Some(ConflictSide {
                 device_id: "dev-b".into(),
                 device_seq: 7,
                 root_cid: "cid-b".into(),
                 whole_file_hash: "hash-b".into(),
-            },
+            }),
+            deleted: None,
             state: ConflictState::Unresolved,
             created_at: 1234,
         };
@@ -767,12 +768,13 @@ mod tests {
                 root_cid: "cid-a".into(),
                 whole_file_hash: "hash-a".into(),
             },
-            remote: ConflictSide {
+            remote: Some(ConflictSide {
                 device_id: "dev-b".into(),
                 device_seq: 7,
                 root_cid: "cid-b".into(),
                 whole_file_hash: "hash-b".into(),
-            },
+            }),
+            deleted: None,
             state: ConflictState::Unresolved,
             created_at: 1234,
         };
