@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex};
+use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex};
 use serde::{Deserialize, Serialize};
 
 use crate::config::DeviceRootRef;
@@ -109,6 +109,45 @@ pub struct MergedEntry {
     pub published_at: i64,
 }
 
+/// Why a path is conflicted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergedConflictKind {
+    WriteWrite,
+    WriteDelete,
+}
+
+/// File-producing side of a conflicted path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflictFile {
+    pub device_id: String,
+    pub device_seq: u64,
+    pub root_cid: String,
+    pub content_hash: String,
+    pub content_cid_hash: String,
+    pub size: u64,
+}
+
+/// Tombstone-producing side of a conflicted path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflictTombstone {
+    pub device_id: String,
+    pub device_seq: u64,
+    pub root_cid: String,
+    pub tombstoned_at: i64,
+}
+
+/// Provenance for a conflicted path. Callers can turn these sides into
+/// visible conflict files plus `.hashtree/conflicts/<id>.json` records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflict {
+    pub path: String,
+    pub kind: MergedConflictKind,
+    pub files: Vec<MergedConflictFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tombstone: Option<MergedConflictTombstone>,
+}
+
 /// The full merged drive view: every path that is currently present,
 /// plus a paths-that-are-tombstoned list for diagnostics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -122,6 +161,8 @@ pub struct MergedView {
     /// picks a deterministic visible entry for now, but callers can
     /// surface a conflict record/copy for these paths.
     pub conflicts: Vec<String>,
+    /// Detailed provenance for each path in `conflicts`.
+    pub conflict_details: Vec<MergedConflict>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +206,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
     let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
     let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
 
     for snap in snapshots {
         if !allow.contains(snap.device_pubkey) {
@@ -189,6 +231,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 .and_modify(|existing| {
                     if should_mark_write_conflict(&candidate, existing) {
                         conflicts.insert(candidate.entry.path.clone());
+                        record_write_conflict(&mut conflict_details, &candidate, existing);
                     }
                     if write_candidate_wins(&candidate, existing) {
                         *existing = candidate.clone();
@@ -218,6 +261,12 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
         let tombstone = tombstones.get(path);
         if tombstone.is_some_and(|t| should_mark_write_delete_conflict(write, t)) {
             conflicts.insert(path.clone());
+            record_write_delete_conflict(
+                &mut conflict_details,
+                path.as_str(),
+                write,
+                tombstone.expect("checked is_some"),
+            );
         }
         let suppressed = tombstone.is_some_and(|t| tombstone_suppresses_write(t, write));
         if suppressed {
@@ -239,7 +288,80 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     view.suppressed_by_tombstone.sort();
     view.suppressed_by_tombstone.dedup();
     view.conflicts = conflicts.into_iter().collect();
+    view.conflict_details = conflict_details.into_values().collect();
     view
+}
+
+fn record_write_conflict(
+    conflicts: &mut BTreeMap<String, MergedConflict>,
+    candidate: &WriteCandidate,
+    existing: &WriteCandidate,
+) {
+    let path = candidate.entry.path.clone();
+    let detail = conflicts
+        .entry(path.clone())
+        .or_insert_with(|| MergedConflict {
+            path,
+            kind: MergedConflictKind::WriteWrite,
+            files: Vec::new(),
+            tombstone: None,
+        });
+    detail.kind = MergedConflictKind::WriteWrite;
+    insert_conflict_file(&mut detail.files, conflict_file_side(candidate));
+    insert_conflict_file(&mut detail.files, conflict_file_side(existing));
+}
+
+fn record_write_delete_conflict(
+    conflicts: &mut BTreeMap<String, MergedConflict>,
+    path: &str,
+    write: &WriteCandidate,
+    tombstone: &TombstoneCandidate,
+) {
+    let detail = conflicts
+        .entry(path.to_string())
+        .or_insert_with(|| MergedConflict {
+            path: path.to_string(),
+            kind: MergedConflictKind::WriteDelete,
+            files: Vec::new(),
+            tombstone: None,
+        });
+    detail.kind = MergedConflictKind::WriteDelete;
+    insert_conflict_file(&mut detail.files, conflict_file_side(write));
+    detail.tombstone = Some(MergedConflictTombstone {
+        device_id: tombstone.device_pubkey.clone(),
+        device_seq: tombstone.root.device_seq,
+        root_cid: tombstone.root.root_cid.clone(),
+        tombstoned_at: tombstone.tombstoned_at,
+    });
+}
+
+fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflictFile) {
+    if !files.iter().any(|f| {
+        f.device_id == file.device_id
+            && f.device_seq == file.device_seq
+            && f.root_cid == file.root_cid
+            && f.content_hash == file.content_hash
+    }) {
+        files.push(file);
+        files.sort_by(|a, b| {
+            a.device_id
+                .cmp(&b.device_id)
+                .then(a.device_seq.cmp(&b.device_seq))
+                .then(a.root_cid.cmp(&b.root_cid))
+                .then(a.content_hash.cmp(&b.content_hash))
+        });
+    }
+}
+
+fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
+    MergedConflictFile {
+        device_id: write.device_pubkey.clone(),
+        device_seq: write.root.device_seq,
+        root_cid: write.root.root_cid.clone(),
+        content_hash: to_hex(&identity_hash(&write.entry)),
+        content_cid_hash: to_hex(&write.entry.hash),
+        size: write.entry.size,
+    }
 }
 
 fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
@@ -705,6 +827,20 @@ mod tests {
         );
         assert_eq!(view.files.len(), 1);
         assert_eq!(view.conflicts, vec!["x".to_string()]);
+        assert_eq!(view.conflict_details.len(), 1);
+        let detail = &view.conflict_details[0];
+        assert_eq!(detail.path, "x");
+        assert_eq!(detail.kind, MergedConflictKind::WriteWrite);
+        assert!(detail.tombstone.is_none());
+        assert_eq!(detail.files.len(), 2);
+        assert_eq!(detail.files[0].device_id, "dev-a");
+        assert_eq!(detail.files[0].device_seq, 1);
+        assert_eq!(detail.files[0].root_cid, "cid-a");
+        assert_eq!(detail.files[0].content_hash, "01".repeat(32));
+        assert_eq!(detail.files[1].device_id, "dev-b");
+        assert_eq!(detail.files[1].device_seq, 1);
+        assert_eq!(detail.files[1].root_cid, "cid-b");
+        assert_eq!(detail.files[1].content_hash, "02".repeat(32));
     }
 
     #[test]
@@ -800,6 +936,17 @@ mod tests {
             ],
         );
         assert_eq!(view.conflicts, vec!["x".to_string()]);
+        assert_eq!(view.conflict_details.len(), 1);
+        let detail = &view.conflict_details[0];
+        assert_eq!(detail.path, "x");
+        assert_eq!(detail.kind, MergedConflictKind::WriteDelete);
+        assert_eq!(detail.files.len(), 1);
+        assert_eq!(detail.files[0].device_id, "dev-a");
+        let tombstone = detail.tombstone.as_ref().unwrap();
+        assert_eq!(tombstone.device_id, "dev-b");
+        assert_eq!(tombstone.device_seq, 1);
+        assert_eq!(tombstone.root_cid, "cid-b");
+        assert_eq!(tombstone.tombstoned_at, 200);
     }
 
     #[test]
