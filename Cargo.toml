@@ -26,6 +26,7 @@ futures = "0.3"
 hex = "0.4"
 http = "1"
 mime_guess = "2"
+reqwest = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -47,7 +48,6 @@ hashtree-blossom = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/
 hashtree-config = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-config" }
 hashtree-embedded = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-embedded" }
 hashtree-fs = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-fs" }
-hashtree-lmdb = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-lmdb" }
 hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
 tempfile = "3"
 notify = "6"

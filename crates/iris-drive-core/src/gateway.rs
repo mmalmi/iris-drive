@@ -17,13 +17,11 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
-use hashtree_config::StorageBackend;
 use hashtree_core::{
-    Cid, Hash, HashTree, HashTreeConfig, LinkType, NHashData, Store, TreeEntry, from_hex,
-    nhash_decode, nhash_encode_full, to_hex,
+    Cid, Hash, HashTree, LinkType, NHashData, Store, TreeEntry, from_hex, nhash_decode,
+    nhash_encode_full, to_hex,
 };
 use hashtree_fs::FsBlobStore;
-use hashtree_lmdb::LmdbBlobStore;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -93,8 +91,7 @@ impl GatewayServer {
     ) -> Result<Self, GatewayError> {
         let config_dir = config_dir.into();
         let daemon = Daemon::open(config_dir.clone())?;
-        let trees = gateway_trees_for_daemon(daemon.tree_handle());
-        Self::bind_with_gateway_trees(config_dir, trees, bind).await
+        Self::bind_with_tree(config_dir, daemon.tree_handle(), bind).await
     }
 
     pub async fn bind_with_tree(
@@ -102,19 +99,27 @@ impl GatewayServer {
         tree: Arc<HashTree<FsBlobStore>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
-        Self::bind_with_gateway_trees(config_dir, vec![GatewayTree::Fs(tree)], bind).await
+        Self::bind_with_tree_and_htree_daemon(
+            config_dir,
+            tree,
+            default_hashtree_daemon_addr(),
+            bind,
+        )
+        .await
     }
 
-    async fn bind_with_gateway_trees(
+    pub async fn bind_with_tree_and_htree_daemon(
         config_dir: impl Into<PathBuf>,
-        trees: Vec<GatewayTree>,
+        tree: Arc<HashTree<FsBlobStore>>,
+        htree_daemon_addr: impl Into<String>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
         let listener = TcpListener::bind(bind.addr).await?;
         let local_addr = listener.local_addr()?;
         let state = GatewayState {
             config_dir: Arc::new(config_dir.into()),
-            trees: Arc::new(trees),
+            tree,
+            htree_daemon_addr: Arc::new(normalize_daemon_addr(&htree_daemon_addr.into())),
         };
         let app = Router::new()
             .fallback(any(gateway_handler))
@@ -166,94 +171,64 @@ impl Drop for GatewayServer {
 #[derive(Clone)]
 struct GatewayState {
     config_dir: Arc<PathBuf>,
-    trees: Arc<Vec<GatewayTree>>,
+    tree: Arc<HashTree<FsBlobStore>>,
+    htree_daemon_addr: Arc<String>,
 }
 
-#[derive(Clone)]
-enum GatewayTree {
-    Fs(Arc<HashTree<FsBlobStore>>),
-    Lmdb(Arc<HashTree<LmdbBlobStore>>),
+fn default_hashtree_daemon_addr() -> String {
+    normalize_daemon_addr(
+        &hashtree_config::Config::load_or_default()
+            .server
+            .bind_address,
+    )
 }
 
-impl GatewayTree {
-    async fn resolve_content(
-        &self,
-        root: &Cid,
-        segments: &[String],
-    ) -> Result<Option<ResolvedContent>, GatewayError> {
-        match self {
-            Self::Fs(tree) => resolve_content(tree, root, segments).await,
-            Self::Lmdb(tree) => resolve_content(tree, root, segments).await,
+fn normalize_daemon_addr(value: &str) -> String {
+    let trimmed = value
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+    match trimmed.parse::<SocketAddr>() {
+        Ok(addr) if addr.ip().is_unspecified() => {
+            let ip = if addr.ip().is_ipv4() {
+                IpAddr::V4(Ipv4Addr::LOCALHOST)
+            } else {
+                IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+            };
+            socket_addr_authority(SocketAddr::new(ip, addr.port()))
         }
-    }
-
-    async fn list_public_directory(&self, cid: &Cid) -> Result<Vec<TreeEntry>, GatewayError> {
-        match self {
-            Self::Fs(tree) => list_public_directory(tree, cid).await,
-            Self::Lmdb(tree) => list_public_directory(tree, cid).await,
-        }
-    }
-
-    async fn serve_file(
-        &self,
-        cid: &Cid,
-        options: FileResponseOptions<'_>,
-    ) -> Result<Response, (StatusCode, String)> {
-        match self {
-            Self::Fs(tree) => serve_file(tree, cid, options).await,
-            Self::Lmdb(tree) => serve_file(tree, cid, options).await,
-        }
+        Ok(addr) => socket_addr_authority(addr),
+        Err(_) => trimmed.to_string(),
     }
 }
 
-fn gateway_trees_for_daemon(primary: Arc<HashTree<FsBlobStore>>) -> Vec<GatewayTree> {
-    let mut trees = vec![GatewayTree::Fs(primary)];
-    if let Some(tree) = default_hashtree_gateway_tree() {
-        trees.push(tree);
-    }
-    trees
-}
-
-fn default_hashtree_gateway_tree() -> Option<GatewayTree> {
-    let config = hashtree_config::Config::load_or_default();
-    let data_dir = PathBuf::from(config.storage.data_dir);
-    let blobs_dir = data_dir.join("blobs");
-    match config.storage.backend {
-        StorageBackend::Fs => match FsBlobStore::new(&blobs_dir) {
-            Ok(store) => Some(GatewayTree::Fs(Arc::new(HashTree::new(
-                HashTreeConfig::new(Arc::new(store)),
-            )))),
-            Err(err) => {
-                tracing::warn!(
-                    "Iris Drive gateway could not open hashtree filesystem store at {}: {}",
-                    blobs_dir.display(),
-                    err
-                );
-                None
-            }
-        },
-        StorageBackend::Lmdb => match LmdbBlobStore::new(&blobs_dir) {
-            Ok(store) => Some(GatewayTree::Lmdb(Arc::new(HashTree::new(
-                HashTreeConfig::new(Arc::new(store)),
-            )))),
-            Err(err) => {
-                tracing::warn!(
-                    "Iris Drive gateway could not open hashtree LMDB store at {}: {}",
-                    blobs_dir.display(),
-                    err
-                );
-                None
-            }
-        },
+fn socket_addr_authority(addr: SocketAddr) -> String {
+    match addr.ip() {
+        IpAddr::V4(ip) => format!("{ip}:{}", addr.port()),
+        IpAddr::V6(ip) => format!("[{ip}]:{}", addr.port()),
     }
 }
 
 #[derive(Debug, Clone)]
-struct GatewayRequest {
+enum GatewayRequest {
+    Local(LocalGatewayRequest),
+    HtreeDaemon(HtreeProxyRequest),
+}
+
+#[derive(Debug, Clone)]
+struct LocalGatewayRequest {
     root: Cid,
     path_segments: Vec<String>,
     cache_policy: CachePolicy,
     set_key_cookie: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct HtreeProxyRequest {
+    nhash: String,
+    path_segments: Vec<String>,
+    key_query: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -300,16 +275,22 @@ async fn handle_gateway_request(
 
     let request = resolve_gateway_request(&state, &uri, &headers)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let (tree, content) =
-        resolve_content_from_trees(&state.trees, &request.root, &request.path_segments)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "not found".into()))?;
+
+    let request = match request {
+        GatewayRequest::Local(request) => request,
+        GatewayRequest::HtreeDaemon(request) => {
+            return proxy_htree_daemon_request(&state, &method, &headers, request).await;
+        }
+    };
+
+    let content = resolve_content(&state.tree, &request.root, &request.path_segments)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "not found".into()))?;
 
     match content {
         ResolvedContent::Directory { cid, display_path } => {
-            let entries = tree
-                .list_public_directory(&cid)
+            let entries = list_public_directory(&state.tree, &cid)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             Ok(directory_response(
@@ -335,22 +316,85 @@ async fn handle_gateway_request(
                 set_key_cookie: request.set_key_cookie.as_deref(),
                 headers: &headers,
             };
-            tree.serve_file(&cid, options).await
+            serve_file(&state.tree, &cid, options).await
         }
     }
 }
 
-async fn resolve_content_from_trees(
-    trees: &[GatewayTree],
-    root: &Cid,
-    segments: &[String],
-) -> Result<Option<(GatewayTree, ResolvedContent)>, GatewayError> {
-    for tree in trees {
-        if let Some(content) = tree.resolve_content(root, segments).await? {
-            return Ok(Some((tree.clone(), content)));
+async fn proxy_htree_daemon_request(
+    state: &GatewayState,
+    method: &Method,
+    headers: &HeaderMap,
+    request: HtreeProxyRequest,
+) -> Result<Response, (StatusCode, String)> {
+    let target = htree_daemon_target(&request);
+    let url = format!("http://{}{}", state.htree_daemon_addr, target);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let reqwest_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut upstream = client.request(reqwest_method, url);
+    for header in [RANGE, IF_NONE_MATCH, axum::http::header::ACCEPT] {
+        if let Some(value) = headers.get(&header) {
+            upstream = upstream.header(header.as_str(), value.as_bytes());
         }
     }
-    Ok(None)
+
+    let upstream = upstream
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
+    let status = StatusCode::from_u16(upstream.status().as_u16())
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let mut builder = response_builder(status, method == Method::HEAD);
+    for (name, value) in upstream.headers() {
+        if is_proxy_response_header(name.as_str()) {
+            builder = builder.header(name.as_str(), value.as_bytes());
+        }
+    }
+    if let Some(key) = request.key_query.as_deref() {
+        builder = builder.header(SET_COOKIE, key_cookie_value(key));
+    }
+    let bytes = upstream
+        .bytes()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
+    Ok(builder
+        .body(if method == Method::HEAD {
+            Body::empty()
+        } else {
+            Body::from(bytes)
+        })
+        .expect("response"))
+}
+
+fn is_proxy_response_header(name: &str) -> bool {
+    !matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
+fn htree_daemon_target(request: &HtreeProxyRequest) -> String {
+    let mut target = format!("/htree/{}", percent_encode_path_segment(&request.nhash));
+    for segment in &request.path_segments {
+        target.push('/');
+        target.push_str(&percent_encode_path_segment(segment));
+    }
+    if let Some(key) = request.key_query.as_deref() {
+        target.push_str("?k=");
+        target.push_str(&percent_encode_path_segment(key));
+    }
+    target
 }
 
 fn resolve_gateway_request(
@@ -437,14 +481,20 @@ fn nhash_request(
     headers: &HeaderMap,
     path_segments: Vec<String>,
 ) -> Result<GatewayRequest, GatewayError> {
-    let cid = cid_from_nhash(nhash)?;
-    let (cid, set_key_cookie) = cid_with_request_key(cid, uri, headers)?;
-    Ok(GatewayRequest {
-        root: cid,
+    let _ = cid_from_nhash(nhash)?;
+    let key_query = query_param(uri.query(), "k")
+        .or_else(|| cookie_value(headers, KEY_COOKIE))
+        .map(|key| {
+            from_hex(&key)
+                .map(|parsed| to_hex(&parsed))
+                .map_err(|_| GatewayError::InvalidRequest("invalid key".into()))
+        })
+        .transpose()?;
+    Ok(GatewayRequest::HtreeDaemon(HtreeProxyRequest {
+        nhash: nhash.to_string(),
         path_segments,
-        cache_policy: CachePolicy::Immutable,
-        set_key_cookie,
-    })
+        key_query,
+    }))
 }
 
 fn immutable_host_request(
@@ -461,12 +511,12 @@ fn immutable_host_request(
     let hash = decode_base32_hash(label)
         .ok_or_else(|| GatewayError::InvalidRequest("invalid immutable hash label".into()))?;
     let (cid, set_key_cookie) = cid_with_request_key(Cid { hash, key: None }, uri, headers)?;
-    Ok(GatewayRequest {
+    Ok(GatewayRequest::Local(LocalGatewayRequest {
         root: cid,
         path_segments,
         cache_policy: CachePolicy::Immutable,
         set_key_cookie,
-    })
+    }))
 }
 
 fn drive_host_request(
@@ -478,12 +528,12 @@ fn drive_host_request(
         return Err(GatewayError::InvalidRequest("invalid drive id".into()));
     }
     let root = current_drive_root(&state.config_dir, drive_id)?;
-    Ok(GatewayRequest {
+    Ok(GatewayRequest::Local(LocalGatewayRequest {
         root,
         path_segments,
         cache_policy: CachePolicy::Mutable,
         set_key_cookie: None,
-    })
+    }))
 }
 
 fn current_drive_root(config_dir: &Path, drive_id: &str) -> Result<Cid, GatewayError> {
@@ -1198,6 +1248,81 @@ mod tests {
         cfg.save(config_path_in(dir)).unwrap();
     }
 
+    fn test_nhash() -> String {
+        nhash_encode_full(&NHashData {
+            hash: [8u8; 32],
+            decrypt_key: Some([9u8; 32]),
+        })
+        .unwrap()
+    }
+
+    struct FakeHtreeDaemon {
+        addr: String,
+        shutdown_tx: oneshot::Sender<()>,
+        handle: JoinHandle<()>,
+    }
+
+    impl FakeHtreeDaemon {
+        async fn shutdown(self) {
+            let _ = self.shutdown_tx.send(());
+            let _ = self.handle.await;
+        }
+    }
+
+    async fn fake_htree_daemon(expected_path: &str, body: &str) -> FakeHtreeDaemon {
+        #[derive(Clone)]
+        struct FakeState {
+            expected_path: Arc<String>,
+            body: Arc<String>,
+        }
+
+        async fn handler(
+            State(state): State<FakeState>,
+            method: Method,
+            uri: Uri,
+            headers: HeaderMap,
+        ) -> Response {
+            if uri.path() != state.expected_path.as_str() {
+                return text_response(
+                    StatusCode::NOT_FOUND,
+                    &format!("unexpected path: {}", uri.path()),
+                );
+            }
+            if headers.get(RANGE).is_some_and(|value| value != "bytes=0-3") {
+                return text_response(StatusCode::BAD_REQUEST, "unexpected range");
+            }
+            response_builder(StatusCode::OK, method == Method::HEAD)
+                .header(CONTENT_TYPE, "image/webp")
+                .body(if method == Method::HEAD {
+                    Body::empty()
+                } else {
+                    Body::from(state.body.as_str().to_string())
+                })
+                .expect("response")
+        }
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let state = FakeState {
+            expected_path: Arc::new(expected_path.to_string()),
+            body: Arc::new(body.to_string()),
+        };
+        let app = Router::new().fallback(any(handler)).with_state(state);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+        FakeHtreeDaemon {
+            addr: addr.to_string(),
+            shutdown_tx,
+            handle,
+        }
+    }
+
     #[tokio::test]
     async fn base32_host_label_round_trips_hash() {
         let hash = [7u8; 32];
@@ -1266,27 +1391,15 @@ mod tests {
     async fn gateway_treats_nhash_file_path_as_filename_hint() {
         let cfg_dir = tempdir().unwrap();
         init_account_config(cfg_dir.path());
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("stored-name.bin"), b"webp-bytes").unwrap();
-
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
-        let root = Cid::parse(&report.root_cid).unwrap();
-        let entries = daemon.tree_handle().list_directory(&root).await.unwrap();
-        let entry = entries
-            .iter()
-            .find(|entry| entry.name == "stored-name.bin")
-            .unwrap();
-        let nhash = nhash_encode_full(&NHashData {
-            hash: entry.hash,
-            decrypt_key: entry.key,
-        })
-        .unwrap();
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let nhash = test_nhash();
         let path = format!("/nhash/{nhash}/Aragorn.webp");
+        let htree = fake_htree_daemon(&format!("/htree/{nhash}/Aragorn.webp"), "webp-bytes").await;
 
-        let server = GatewayServer::bind_with_tree(
+        let server = GatewayServer::bind_with_tree_and_htree_daemon(
             cfg_dir.path(),
             daemon.tree_handle(),
+            htree.addr.clone(),
             GatewayBind::loopback_v4(0),
         )
         .await
@@ -1296,33 +1409,22 @@ mod tests {
         assert!(response.contains("content-type: image/webp"), "{response}");
         assert!(response.contains("webp-bytes"), "{response}");
         server.shutdown().await.unwrap();
+        htree.shutdown().await;
     }
 
     #[tokio::test]
     async fn gateway_accepts_split_nhash_hostname() {
         let cfg_dir = tempdir().unwrap();
         init_account_config(cfg_dir.path());
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("stored-name.bin"), b"webp-bytes").unwrap();
-
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
-        let root = Cid::parse(&report.root_cid).unwrap();
-        let entries = daemon.tree_handle().list_directory(&root).await.unwrap();
-        let entry = entries
-            .iter()
-            .find(|entry| entry.name == "stored-name.bin")
-            .unwrap();
-        let nhash = nhash_encode_full(&NHashData {
-            hash: entry.hash,
-            decrypt_key: entry.key,
-        })
-        .unwrap();
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let nhash = test_nhash();
         let host = format!("{}.iris.localhost", split_dns_labels(&nhash));
+        let htree = fake_htree_daemon(&format!("/htree/{nhash}/Aragorn.webp"), "webp-bytes").await;
 
-        let server = GatewayServer::bind_with_tree(
+        let server = GatewayServer::bind_with_tree_and_htree_daemon(
             cfg_dir.path(),
             daemon.tree_handle(),
+            htree.addr.clone(),
             GatewayBind::loopback_v4(0),
         )
         .await
@@ -1332,30 +1434,23 @@ mod tests {
         assert!(response.contains("content-type: image/webp"), "{response}");
         assert!(response.contains("webp-bytes"), "{response}");
         server.shutdown().await.unwrap();
+        htree.shutdown().await;
     }
 
     #[tokio::test]
-    async fn gateway_serves_nhash_from_secondary_hashtree_store() {
+    async fn gateway_proxies_nhash_to_hashtree_daemon() {
         let cfg_dir = tempdir().unwrap();
         init_account_config(cfg_dir.path());
         let daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let external_blocks = tempdir().unwrap();
-        let external_store = FsBlobStore::new(external_blocks.path()).unwrap();
-        let external_tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(external_store))));
-        let (cid, _) = external_tree.put(b"external webp").await.unwrap();
-        let nhash = nhash_encode_full(&NHashData {
-            hash: cid.hash,
-            decrypt_key: cid.key,
-        })
-        .unwrap();
+        let nhash = test_nhash();
         let host = format!("{}.iris.localhost", split_dns_labels(&nhash));
+        let htree =
+            fake_htree_daemon(&format!("/htree/{nhash}/Aragorn.webp"), "external webp").await;
 
-        let server = GatewayServer::bind_with_gateway_trees(
+        let server = GatewayServer::bind_with_tree_and_htree_daemon(
             cfg_dir.path(),
-            vec![
-                GatewayTree::Fs(daemon.tree_handle()),
-                GatewayTree::Fs(external_tree),
-            ],
+            daemon.tree_handle(),
+            htree.addr.clone(),
             GatewayBind::loopback_v4(0),
         )
         .await
@@ -1365,6 +1460,7 @@ mod tests {
         assert!(response.contains("content-type: image/webp"), "{response}");
         assert!(response.contains("external webp"), "{response}");
         server.shutdown().await.unwrap();
+        htree.shutdown().await;
     }
 
     #[test]
