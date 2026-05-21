@@ -1417,8 +1417,14 @@ fn cmd_daemon(
 
     runtime.block_on(async {
         let gateway = if enable_gateway {
+            let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
-                GatewayServer::bind(config_dir, GatewayBind::loopback_v4(gateway_port))
+                GatewayServer::bind_with_tree_and_htree_daemon(
+                    config_dir,
+                    daemon.tree_handle(),
+                    embedded_hashtree.status().base_url.clone(),
+                    GatewayBind::loopback_v4(gateway_port),
+                )
                     .await
                     .context("starting browser gateway")?,
             )
@@ -1434,6 +1440,7 @@ fn cmd_daemon(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
+                "hashtree_base_url": embedded_hashtree.status().base_url.clone(),
             })
         });
         let client = relay_sync::connect(&relays)

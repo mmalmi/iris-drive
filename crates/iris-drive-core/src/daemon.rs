@@ -383,7 +383,7 @@ impl Daemon {
             Err(SyncCacheError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.rebuild_sync_cache().await
             }
-            Err(SyncCacheError::Json(_)) | Err(SyncCacheError::SchemaMismatch { .. }) => {
+            Err(SyncCacheError::Json(_) | SyncCacheError::SchemaMismatch { .. }) => {
                 self.rebuild_sync_cache().await
             }
             Err(error) => Err(error.into()),

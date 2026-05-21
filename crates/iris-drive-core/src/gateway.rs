@@ -99,13 +99,7 @@ impl GatewayServer {
         tree: Arc<HashTree<FsBlobStore>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
-        Self::bind_with_tree_and_htree_daemon(
-            config_dir,
-            tree,
-            default_hashtree_daemon_addr(),
-            bind,
-        )
-        .await
+        Self::bind_inner(config_dir, tree, None, bind).await
     }
 
     pub async fn bind_with_tree_and_htree_daemon(
@@ -114,12 +108,27 @@ impl GatewayServer {
         htree_daemon_addr: impl Into<String>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
+        Self::bind_inner(
+            config_dir,
+            tree,
+            Some(normalize_daemon_addr(&htree_daemon_addr.into())),
+            bind,
+        )
+        .await
+    }
+
+    async fn bind_inner(
+        config_dir: impl Into<PathBuf>,
+        tree: Arc<HashTree<FsBlobStore>>,
+        htree_daemon_addr: Option<String>,
+        bind: GatewayBind,
+    ) -> Result<Self, GatewayError> {
         let listener = TcpListener::bind(bind.addr).await?;
         let local_addr = listener.local_addr()?;
         let state = GatewayState {
             config_dir: Arc::new(config_dir.into()),
             tree,
-            htree_daemon_addr: Arc::new(normalize_daemon_addr(&htree_daemon_addr.into())),
+            htree_daemon_addr: htree_daemon_addr.map(Arc::new),
         };
         let app = Router::new()
             .fallback(any(gateway_handler))
@@ -172,15 +181,7 @@ impl Drop for GatewayServer {
 struct GatewayState {
     config_dir: Arc<PathBuf>,
     tree: Arc<HashTree<FsBlobStore>>,
-    htree_daemon_addr: Arc<String>,
-}
-
-fn default_hashtree_daemon_addr() -> String {
-    normalize_daemon_addr(
-        &hashtree_config::Config::load_or_default()
-            .server
-            .bind_address,
-    )
+    htree_daemon_addr: Option<Arc<String>>,
 }
 
 fn normalize_daemon_addr(value: &str) -> String {
@@ -328,7 +329,13 @@ async fn proxy_htree_daemon_request(
     request: HtreeProxyRequest,
 ) -> Result<Response, (StatusCode, String)> {
     let target = htree_daemon_target(&request);
-    let url = format!("http://{}{}", state.htree_daemon_addr, target);
+    let Some(htree_daemon_addr) = state.htree_daemon_addr.as_deref() else {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "hashtree daemon upstream is not configured".into(),
+        ));
+    };
+    let url = format!("http://{htree_daemon_addr}{target}");
     let client = reqwest::Client::builder()
         .no_proxy()
         .build()
@@ -1461,6 +1468,33 @@ mod tests {
         assert!(response.contains("external webp"), "{response}");
         server.shutdown().await.unwrap();
         htree.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn gateway_without_htree_upstream_does_not_use_global_daemon() {
+        let cfg_dir = tempdir().unwrap();
+        init_account_config(cfg_dir.path());
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let nhash = test_nhash();
+        let host = format!("{}.iris.localhost", split_dns_labels(&nhash));
+
+        let server = GatewayServer::bind_with_tree(
+            cfg_dir.path(),
+            daemon.tree_handle(),
+            GatewayBind::loopback_v4(0),
+        )
+        .await
+        .unwrap();
+        let response = http_get(server.local_addr(), &host, "/Aragorn.webp").await;
+        assert!(
+            response.starts_with("HTTP/1.1 502 Bad Gateway"),
+            "{response}"
+        );
+        assert!(
+            response.contains("hashtree daemon upstream is not configured"),
+            "{response}"
+        );
+        server.shutdown().await.unwrap();
     }
 
     #[test]
