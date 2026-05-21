@@ -123,13 +123,13 @@ fn build_ui(app: &adw::Application) {
     header.set_title_widget(Some(&adw::WindowTitle::new("Iris Drive", "")));
     root.append(&header);
 
-    let folder_button = action_button("folder-symbolic", "Drive");
-    let copy_snapshot_button = action_button("insert-link-symbolic", "Copy Snapshot");
-    let open_snapshot_button = action_button("web-browser-symbolic", "Open Snapshot");
+    let folder_button = icon_button("folder-symbolic", "Open drive folder");
+    let copy_snapshot_button = icon_button("insert-link-symbolic", "Copy snapshot link");
+    let open_snapshot_button = icon_button("web-browser-symbolic", "Open snapshot");
     let init_button = text_button("Initialize");
-    let restart_button = action_button("view-refresh-symbolic", "Restart");
-    let stop_button = action_button("media-playback-stop-symbolic", "Stop");
-    let start_button = action_button("media-playback-start-symbolic", "Start");
+    let restart_button = icon_button("view-refresh-symbolic", "Restart sync");
+    let stop_button = icon_button("media-playback-stop-symbolic", "Stop sync");
+    let start_button = icon_button("media-playback-start-symbolic", "Start sync");
 
     let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     shell.add_css_class("iris-shell");
@@ -138,11 +138,13 @@ fn build_ui(app: &adw::Application) {
 
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
     sidebar.add_css_class("iris-sidebar");
-    sidebar.set_width_request(160);
+    sidebar.set_width_request(128);
+    sidebar.set_hexpand(false);
+    sidebar.set_halign(gtk::Align::Start);
     sidebar.set_margin_top(18);
     sidebar.set_margin_bottom(18);
-    sidebar.set_margin_start(12);
-    sidebar.set_margin_end(12);
+    sidebar.set_margin_start(8);
+    sidebar.set_margin_end(8);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("iris-content");
@@ -154,7 +156,7 @@ fn build_ui(app: &adw::Application) {
     setup.set_vexpand(true);
 
     let main_view = gtk::ScrolledWindow::new();
-    main_view.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+    main_view.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     main_view.set_min_content_width(260);
     main_view.set_min_content_height(220);
     main_view.set_propagate_natural_width(false);
@@ -171,11 +173,14 @@ fn build_ui(app: &adw::Application) {
     main.set_vexpand(true);
 
     let stack = gtk::Stack::new();
+    stack.set_hhomogeneous(false);
+    stack.set_vhomogeneous(false);
     stack.set_hexpand(true);
     stack.set_vexpand(true);
 
-    let actions = flow_section("iris-actions", 1, 6);
-    actions.add_css_class("iris-actions");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.add_css_class("iris-compact-actions");
+    actions.set_halign(gtk::Align::Start);
     actions.append(&folder_button);
     actions.append(&copy_snapshot_button);
     actions.append(&open_snapshot_button);
@@ -491,6 +496,8 @@ fn build_ui(app: &adw::Application) {
 
 fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon);
+    button.add_css_class("flat");
+    button.set_size_request(32, 32);
     button.set_tooltip_text(Some(tooltip));
     button
 }
@@ -512,20 +519,9 @@ fn flow_section(css_class: &str, min_children: u32, max_children: u32) -> gtk::F
     flow
 }
 
-fn action_button(icon: &str, label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("iris-action-button");
-    button.set_tooltip_text(Some(label));
-    let content = adw::ButtonContent::builder()
-        .icon_name(icon)
-        .label(label)
-        .build();
-    button.set_child(Some(&content));
-    button
-}
-
 fn sidebar_button(icon: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();
+    button.add_css_class("flat");
     button.add_css_class("iris-sidebar-button");
     button.set_halign(gtk::Align::Fill);
 
@@ -593,6 +589,8 @@ fn value_label() -> gtk::Label {
     label.set_xalign(0.0);
     label.set_selectable(true);
     label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::Char);
+    label.set_max_width_chars(44);
     label
 }
 
@@ -1833,6 +1831,7 @@ fn simple_row(title: &str, subtitle: &str) -> gtk::ListBoxRow {
     title_label.add_css_class("iris-row-title");
     title_label.set_xalign(0.0);
     title_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    title_label.set_max_width_chars(44);
     body.append(&title_label);
 
     if !subtitle.is_empty() {
@@ -1840,6 +1839,7 @@ fn simple_row(title: &str, subtitle: &str) -> gtk::ListBoxRow {
         subtitle_label.add_css_class("iris-row-subtitle");
         subtitle_label.set_xalign(0.0);
         subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        subtitle_label.set_max_width_chars(44);
         body.append(&subtitle_label);
     }
 
@@ -1868,6 +1868,7 @@ fn drive_row(name: &str, path: &str, status: &str) -> gtk::ListBoxRow {
     subtitle.set_xalign(0.0);
     subtitle.set_hexpand(true);
     subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_max_width_chars(44);
     labels.append(&title);
     labels.append(&subtitle);
     body.append(&labels);
@@ -1948,13 +1949,8 @@ fn install_css() {
         .iris-sidebar-button.selected label {
           font-weight: 500;
         }
-        .iris-actions flowboxchild,
         .iris-metrics flowboxchild {
           padding: 0;
-        }
-        .iris-actions button.iris-action-button {
-          border-radius: 6px;
-          padding: 3px 10px;
         }
         .iris-status-pill {
           border-radius: 999px;
