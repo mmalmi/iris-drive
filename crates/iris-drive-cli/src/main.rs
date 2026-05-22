@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use iris_drive_core::{
 };
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{PublicKey, RelayStatus};
-use serde_json::json;
+use serde_json::{Value, json};
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
@@ -82,6 +82,11 @@ enum Command {
         /// Optional device label to record alongside.
         #[arg(long)]
         label: Option<String>,
+    },
+    /// Revoke an authorized device and rotate the drive content key.
+    Revoke {
+        /// Device pubkey to revoke (npub1... or 64-char hex).
+        device: String,
     },
     /// Print the current `AppKeys` roster as JSON.
     Roster,
@@ -282,6 +287,7 @@ fn run_cli() -> ExitCode {
         Command::Restore { nsec, label } => cmd_restore(&config_dir, &nsec, label),
         Command::Link { owner, label } => cmd_link(&config_dir, &owner, label),
         Command::Approve { device, label } => cmd_approve(&config_dir, &device, label),
+        Command::Revoke { device } => cmd_revoke(&config_dir, &device),
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
@@ -405,6 +411,35 @@ fn cmd_approve(config_dir: &std::path::Path, device: &str, label: Option<String>
     Ok(())
 }
 
+fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<()> {
+    let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    if state.device_pubkey == device_hex {
+        return Err(anyhow::anyhow!("cannot revoke this device from itself"));
+    }
+    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let snap = account
+        .revoke_device(&device_hex)
+        .context("revoking device")?;
+    let device_count = snap.devices.len();
+    let dck_generation = snap.dck_generation;
+    config.account = Some(account.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "revoked_device_npub": account_npub(&device_hex),
+            "roster_size": device_count,
+            "dck_generation": dck_generation,
+        })
+    );
+    Ok(())
+}
+
 fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
@@ -499,7 +534,8 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .as_deref()
         .and_then(|root| root_conflict_status(config_dir, root))
         .unwrap_or_else(|| conflict_status_payload(&[]));
-    let peers = peer_statuses(&config);
+    let daemon_status = load_daemon_status(config_dir);
+    let peers = peer_statuses(config_dir, &config, daemon_status.as_ref());
     let default_working_dir = iris_drive_core::paths::default_working_dir_in(config_dir);
     let authorized_device_count = peers.len();
     let published_device_roots = config
@@ -550,12 +586,114 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "blossom_servers": config.blossom_servers,
                 "authorized_device_count": authorized_device_count,
                 "published_device_roots": published_device_roots,
+                "relay_statuses": daemon_status
+                    .as_ref()
+                    .and_then(|status| status.get("relay_statuses"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
             },
+            "daemon": daemon_status,
             "conflicts": conflict_status,
             "peers": peers,
         })
     );
     Ok(())
+}
+
+const DAEMON_STATUS_SCHEMA: u32 = 1;
+const DAEMON_STATUS_FRESH_SECS: i64 = 15;
+
+fn daemon_status_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("daemon-status.json")
+}
+
+fn load_daemon_status(config_dir: &Path) -> Option<Value> {
+    let pid = daemon_lock_pid(config_dir);
+    let running = pid.is_some_and(process_is_running);
+    let now = unix_now();
+    let raw = std::fs::read_to_string(daemon_status_path(config_dir)).ok();
+    let mut value = raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .unwrap_or_else(|| json!({}));
+    let object = value.as_object_mut()?;
+    let updated_at = object
+        .get("updated_at")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let fresh = running && now.saturating_sub(updated_at) <= DAEMON_STATUS_FRESH_SECS;
+    object.insert("schema".to_string(), json!(DAEMON_STATUS_SCHEMA));
+    object.insert("running".to_string(), json!(running));
+    object.insert("pid".to_string(), json!(pid));
+    object.insert("fresh".to_string(), json!(fresh));
+    if !fresh
+        && let Some(fips) = object
+            .get_mut("fips_block_sync")
+            .and_then(Value::as_object_mut)
+    {
+        fips.insert("connected_peers".to_string(), json!([]));
+    }
+    Some(value)
+}
+
+fn write_daemon_status(config_dir: &Path, mut payload: Value) {
+    let now = unix_now();
+    if let Some(payload_object) = payload.as_object_mut()
+        && let Ok(raw) = std::fs::read_to_string(daemon_status_path(config_dir))
+        && let Ok(existing) = serde_json::from_str::<Value>(&raw)
+        && let Some(existing_object) = existing.as_object()
+    {
+        for key in ["last_block_sync", "block_sync_by_root"] {
+            if !payload_object.contains_key(key)
+                && let Some(value) = existing_object.get(key)
+            {
+                payload_object.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("schema".to_string(), json!(DAEMON_STATUS_SCHEMA));
+        object.insert("pid".to_string(), json!(std::process::id()));
+        object.insert("running".to_string(), json!(true));
+        object.insert("fresh".to_string(), json!(true));
+        object.insert("updated_at".to_string(), json!(now));
+    }
+    if let Some(parent) = daemon_status_path(config_dir).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(bytes) = serde_json::to_vec_pretty(&payload) {
+        let _ = std::fs::write(daemon_status_path(config_dir), bytes);
+    }
+}
+
+fn merge_daemon_status(
+    config_dir: &Path,
+    update: impl FnOnce(&mut serde_json::Map<String, Value>),
+) {
+    let mut value = std::fs::read_to_string(daemon_status_path(config_dir))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!({}));
+    if !value.is_object() {
+        value = json!({});
+    }
+    if let Some(object) = value.as_object_mut() {
+        update(object);
+    }
+    write_daemon_status(config_dir, value);
+}
+
+fn daemon_lock_pid(config_dir: &Path) -> Option<u32> {
+    std::fs::read_to_string(config_dir.join("daemon.lock"))
+        .ok()
+        .and_then(|contents| contents.trim().parse::<u32>().ok())
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn cmd_conflicts(config_dir: &std::path::Path, command: ConflictsCmd) -> Result<()> {
@@ -800,7 +938,11 @@ fn conflict_state_label(state: &iris_drive_core::ConflictState) -> &'static str 
     }
 }
 
-fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
+fn peer_statuses(
+    config_dir: &Path,
+    config: &AppConfig,
+    daemon_status: Option<&Value>,
+) -> Vec<serde_json::Value> {
     let Some(account) = config.account.as_ref() else {
         return Vec::new();
     };
@@ -809,6 +951,21 @@ fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
     };
     let primary_drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID);
 
+    let daemon_running = daemon_status
+        .and_then(|status| status.get("running"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fips_status = daemon_status
+        .and_then(|status| status.get("fips_block_sync"))
+        .filter(|value| value.is_object());
+    let connected_fips =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
+    let authorized_fips =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
+    let block_sync_by_root = daemon_status
+        .and_then(|status| status.get("block_sync_by_root"))
+        .filter(|value| value.is_object());
+
     snapshot
         .devices
         .iter()
@@ -816,21 +973,70 @@ fn peer_statuses(config: &AppConfig) -> Vec<serde_json::Value> {
             let root = primary_drive.and_then(|drive| drive.device_roots.get(&device.pubkey));
             let root_cid = root.map(|root| root.root_cid.clone());
             let root_private = root_cid.as_deref().and_then(root_is_private);
+            let root_available = root_cid
+                .as_deref()
+                .map(|root| root_file_count(config_dir, root).is_some());
+            let device_npub = account_npub(&device.pubkey);
+            let is_current_device = device.pubkey == account.device_pubkey;
+            let fips_online = if is_current_device {
+                daemon_running && fips_status.is_some()
+            } else {
+                connected_fips.contains(&device_npub)
+            };
+            let sync_state = device_sync_state(is_current_device, root.is_some(), root_available);
+            let last_block_sync = root_cid
+                .as_ref()
+                .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
             json!({
                 "device_pubkey": device.pubkey,
-                "device_npub": account_npub(&device.pubkey),
+                "device_npub": device_npub,
                 "label": device.label,
                 "authorized": true,
-                "is_current_device": device.pubkey == account.device_pubkey,
+                "is_current_device": is_current_device,
                 "added_at": device.added_at,
+                "fips_authorized": authorized_fips.contains(&device_npub),
+                "fips_online": fips_online,
                 "has_root": root.is_some(),
                 "root_cid": root_cid,
                 "root_private": root_private,
+                "root_available": root_available,
+                "sync_state": sync_state,
+                "last_block_sync": last_block_sync,
                 "published_at": root.map(|root| root.published_at),
                 "dck_generation": root.map(|root| root.dck_generation),
+                "device_seq": root.map(|root| root.device_seq),
             })
         })
         .collect()
+}
+
+fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn device_sync_state(
+    is_current_device: bool,
+    has_root: bool,
+    root_available: Option<bool>,
+) -> &'static str {
+    if is_current_device {
+        return if has_root { "local" } else { "not imported" };
+    }
+    match (has_root, root_available) {
+        (false, _) => "waiting for root",
+        (true, Some(true)) => "synced",
+        (true, Some(false)) => "blocks pending",
+        (true, None) => "metadata only",
+    }
 }
 
 fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
@@ -918,16 +1124,7 @@ fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .account
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
-        let authorized = account
-            .app_keys
-            .as_ref()
-            .map(|s| {
-                s.devices
-                    .iter()
-                    .map(|d| d.pubkey.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let authorized = authorized_device_pubkeys(account);
 
         // Fetch each authorized device's tree + tombstones from htree.
         // With `--at N`, this device's own root walks back N revisions
@@ -1445,9 +1642,57 @@ fn cmd_sync(
             }
         }
 
+        // 3) Pull the owner-signed web root for drive.iris.to. This is the
+        // standard hashtree mutable-root event used by all web Iris apps, so a
+        // native restore of a web account can import browser-origin changes.
+        let mut files_root_event_seen = false;
+        let mut files_root_event_outcome = "none".to_string();
+        let mut files_root_fetch_error: Option<String> = None;
+        match relay_sync::fetch_latest_files_root(
+            &client,
+            &state.owner_pubkey,
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            timeout,
+        )
+        .await
+        {
+            Ok(Some(ev)) => {
+                files_root_event_seen = true;
+                if state.has_owner_signing_authority {
+                    let account_state = config.account.clone().ok_or_else(|| {
+                        anyhow::anyhow!("not initialized; run `idrive init` first")
+                    })?;
+                    let account = Account::load(account_state, config_dir)
+                        .context("loading owner account")?;
+                    let owner_keys = account.owner_key.as_ref().map(|owner| owner.keys());
+                    let outcome =
+                        relay_sync::apply_remote_files_root_event(&mut config, &ev, owner_keys)
+                            .context("applying files-root event")?;
+                    files_root_event_outcome = files_root_apply_label(&outcome).to_string();
+                    if matches!(outcome, relay_sync::FilesRootApply::Applied)
+                        && let Some(root_ref) = config
+                            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                            .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+                        && !root_cids_to_download
+                            .iter()
+                            .any(|root_cid| root_cid == &root_ref.root_cid)
+                    {
+                        root_cids_to_download.push(root_ref.root_cid.clone());
+                    }
+                } else {
+                    files_root_event_outcome = "owner_key_unavailable".to_string();
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                files_root_event_outcome = "fetch_error".to_string();
+                files_root_fetch_error = Some(format!("{error:#}"));
+            }
+        }
+
         config.save(config_path_in(config_dir))?;
 
-        // 3) Replicate blocks for each seen drive root. Prefer direct
+        // 4) Replicate blocks for each seen drive root. Prefer direct
         // FIPS peer transfer between authorized Iris Drive instances;
         // Blossom stays as the public fallback/cache path.
         let mut fips_download_report: Option<DownloadReport> = None;
@@ -1489,6 +1734,9 @@ fn cmd_sync(
                 "drive_root_events_seen": drive_root_events.len(),
                 "drive_root_events_applied": drive_roots_applied,
                 "drive_root_events_skipped": drive_roots_skipped,
+                "files_root_event_seen": files_root_event_seen,
+                "files_root_event_outcome": files_root_event_outcome,
+                "files_root_fetch_error": files_root_fetch_error,
                 "fips_download": fips_download_report.as_ref().map(download_report_json),
                 "fips_download_error": fips_download_error,
                 "blossom_download": blossom_download_report.as_ref().map(download_report_json),
@@ -1613,15 +1861,7 @@ fn cmd_daemon(
             .await
             .context("opening subscription")?;
         let mut notifications = client.notifications();
-        let fips_block_sync_status = if let Some(sync) = fips_blocks.as_ref() {
-            Some(json!({
-                "endpoint_npub": sync.endpoint_npub(),
-                "discovery_scope": sync.discovery_scope(),
-                "authorized_peers": sync.peer_ids().await,
-            }))
-        } else {
-            None
-        };
+        let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_ref()).await;
 
         // Spawn an fs-notify watcher on the working dir. Events get
         // debounced (notify-debouncer-mini) then forwarded over an
@@ -1638,9 +1878,7 @@ fn cmd_daemon(
             None
         };
 
-        println!(
-            "{}",
-            json!({
+        let subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
@@ -1650,10 +1888,11 @@ fn cmd_daemon(
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
                 "browser_gateway": gateway_status,
-                "fips_block_sync": fips_block_sync_status,
+                "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
-            })
-        );
+        });
+        write_daemon_status(config_dir, subscribed_status.clone());
+        println!("{}", subscribed_status);
 
         // Announce the current account roster and device root once on
         // startup, and upload the initial blocks if this launch just
@@ -1774,13 +2013,13 @@ fn cmd_daemon(
                     }
                 }
                 _ = relay_status_timer.tick() => {
-                    println!(
-                        "{}",
-                        json!({
+                    let status = json!({
                             "event": "relay_statuses",
                             "relay_statuses": relay_status_payload(&client).await,
-                        })
-                    );
+                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_ref()).await,
+                    });
+                    write_daemon_status(config_dir, status.clone());
+                    println!("{}", status);
                 }
                 () = async {
                     if let Some(timer) = watch_timer.as_mut() {
@@ -1814,6 +2053,16 @@ async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Val
         }));
     }
     payload
+}
+
+async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Option<Value> {
+    let sync = sync?;
+    Some(json!({
+        "endpoint_npub": sync.endpoint_npub(),
+        "discovery_scope": sync.discovery_scope(),
+        "authorized_peers": sync.authorized_peer_ids().await,
+        "connected_peers": sync.connected_peer_ids().await,
+    }))
 }
 
 fn relay_status_label(status: RelayStatus) -> &'static str {
@@ -1878,6 +2127,7 @@ impl Drop for DaemonProcessLock {
     }
 }
 
+#[cfg(unix)]
 fn process_is_running(pid: u32) -> bool {
     if pid == std::process::id() {
         return true;
@@ -1889,6 +2139,37 @@ fn process_is_running(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    let filter = format!("PID eq {pid}");
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().any(|line| {
+        let mut fields = line.split(',');
+        let _image = fields.next();
+        fields
+            .next()
+            .map(|value| value.trim_matches('"').trim() == pid.to_string())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_running(pid: u32) -> bool {
+    pid == std::process::id()
 }
 
 async fn parent_exit_signal() {
@@ -2117,7 +2398,9 @@ async fn apply_one_event(
     use iris_drive_core::relay_sync;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
-    if kind == iris_drive_core::nostr_events::KIND_APP_KEYS {
+    if kind == iris_drive_core::nostr_events::KIND_APP_KEYS
+        && event.identifier() == Some(iris_drive_core::nostr_events::D_TAG_APP_KEYS)
+    {
         let outcome = relay_sync::apply_remote_app_keys_event(&mut config, event)?;
         println!(
             "{}",
@@ -2130,6 +2413,49 @@ async fn apply_one_event(
         if let Some(sync) = fips_blocks {
             sync.refresh_authorized_peers(&config).await;
         }
+    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
+        let Some(account_state) = config.account.clone() else {
+            return Ok(());
+        };
+        if !account_state.has_owner_signing_authority {
+            println!(
+                "{}",
+                json!({
+                    "event": "files_root",
+                    "event_id": event.id.to_hex(),
+                    "author": account_npub(&event.pubkey.to_hex()),
+                    "outcome": "owner_key_unavailable",
+                })
+            );
+            return Ok(());
+        }
+        let account = Account::load(account_state, config_dir).context("loading owner account")?;
+        let owner_keys = account.owner_key.as_ref().map(|owner| owner.keys());
+        let parsed =
+            iris_drive_core::nostr_events::parse_hashtree_root_event(event, owner_keys).ok();
+        let outcome = relay_sync::apply_remote_files_root_event(&mut config, event, owner_keys)?;
+        let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
+        println!(
+            "{}",
+            json!({
+                "event": "files_root",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": files_root_apply_label(&outcome),
+            })
+        );
+        config.save(config_path_in(config_dir))?;
+        if was_applied
+            && let Some((_, _, root_ref)) = parsed
+            && let Err(e) =
+                pull_blocks_for_root(config_dir, &config, &root_ref.root_cid, fips_blocks).await
+        {
+            println!(
+                "{}",
+                json!({"event": "block_download_error", "error": e.to_string()})
+            );
+        }
+        return Ok(());
     } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
@@ -2185,6 +2511,7 @@ async fn pull_blocks_for_root(
     if let Some(sync) = fips_blocks {
         match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await {
             Ok(report) => {
+                record_block_sync(config_dir, root_cid_str, "fips", &report);
                 println!(
                     "{}",
                     json!({
@@ -2211,6 +2538,7 @@ async fn pull_blocks_for_root(
     if !config.blossom_servers.is_empty() {
         match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
             Ok(report) => {
+                record_block_sync(config_dir, root_cid_str, "blossom", &report);
                 println!(
                     "{}",
                     json!({
@@ -2235,6 +2563,29 @@ async fn pull_blocks_for_root(
     Ok(())
 }
 
+fn record_block_sync(config_dir: &Path, root_cid: &str, transport: &str, report: &DownloadReport) {
+    let value = json!({
+        "root_cid": root_cid,
+        "transport": transport,
+        "updated_at": unix_now(),
+        "total_hashes": report.total_hashes,
+        "fetched": report.fetched,
+        "already_local": report.already_local,
+    });
+    merge_daemon_status(config_dir, |status| {
+        status.insert("last_block_sync".to_string(), value.clone());
+        let entry = status
+            .entry("block_sync_by_root".to_string())
+            .or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        if let Some(map) = entry.as_object_mut() {
+            map.insert(root_cid.to_string(), value);
+        }
+    });
+}
+
 fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<String> {
     if override_list.is_empty() {
         config.relays.clone()
@@ -2253,6 +2604,15 @@ fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
         devices.push(state.device_pubkey.clone());
     }
     devices
+}
+
+fn files_root_apply_label(outcome: &iris_drive_core::relay_sync::FilesRootApply) -> &'static str {
+    match outcome {
+        iris_drive_core::relay_sync::FilesRootApply::NotOurOwner => "not_our_owner",
+        iris_drive_core::relay_sync::FilesRootApply::UnknownDrive => "unknown_drive",
+        iris_drive_core::relay_sync::FilesRootApply::StaleTimestamp => "stale_timestamp",
+        iris_drive_core::relay_sync::FilesRootApply::Applied => "applied",
+    }
 }
 
 fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<()> {

@@ -22,9 +22,10 @@ use crate::AppKeysSnapshot;
 use crate::app_keys::ApplyDecision;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
-    D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, build_app_keys_event, build_drive_root_event,
-    build_private_hashtree_root_event, drive_root_d_tag, parse_app_keys_event,
-    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    D_TAG_APP_KEYS, HASHTREE_LABEL, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT,
+    build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
+    drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
+    parse_drive_root_event_for_device, parse_drive_root_event_preview, parse_hashtree_root_event,
 };
 
 #[derive(Debug, Error)]
@@ -89,6 +90,19 @@ pub enum DriveRootApply {
     Applied,
 }
 
+/// Result of applying a web-compatible hashtree root event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilesRootApply {
+    /// Event author doesn't match our owner.
+    NotOurOwner,
+    /// The tree name does not match a configured drive id.
+    UnknownDrive,
+    /// Older than the local root we already mapped to this device.
+    StaleTimestamp,
+    /// Applied as this device's current root.
+    Applied,
+}
+
 /// Apply a remote drive-root event to `config`. Drops events from
 /// foreign owners, unknown drives, unauthorized devices, or that are
 /// older than what's already recorded.
@@ -132,6 +146,40 @@ pub fn apply_remote_drive_root_event(
     };
     drive.device_roots.insert(device_hex, incoming_root);
     Ok(DriveRootApply::Applied)
+}
+
+/// Apply a standard web hashtree root event to the local primary device root.
+///
+/// Web Iris apps publish one owner-signed mutable root per tree. Native Iris
+/// Drive stores roots per authorized device, so an owner-capable native client
+/// imports that web root as its own current device contribution. Native
+/// drive-root events remain the richer multi-device protocol; this bridge makes
+/// the web root an interoperable source of truth for restored web accounts and
+/// browser-origin edits.
+pub fn apply_remote_files_root_event(
+    config: &mut AppConfig,
+    event: &Event,
+    owner_keys: Option<&Keys>,
+) -> Result<FilesRootApply, RelayError> {
+    let (owner_pubkey, tree_name, incoming_root) = parse_hashtree_root_event(event, owner_keys)?;
+    let Some(account) = config.account.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if owner_pubkey != account.owner_pubkey {
+        return Ok(FilesRootApply::NotOurOwner);
+    }
+    let device_pubkey = account.device_pubkey.clone();
+    let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == tree_name) else {
+        return Ok(FilesRootApply::UnknownDrive);
+    };
+    if let Some(existing) = drive.device_roots.get(&device_pubkey)
+        && existing.published_at >= incoming_root.published_at
+    {
+        return Ok(FilesRootApply::StaleTimestamp);
+    }
+    drive.last_root_cid = Some(incoming_root.root_cid.clone());
+    drive.device_roots.insert(device_pubkey, incoming_root);
+    Ok(FilesRootApply::Applied)
 }
 
 fn incoming_root_is_stale(
@@ -243,6 +291,31 @@ pub async fn fetch_latest_app_keys(
     Ok(latest)
 }
 
+/// Fetch the latest standard hashtree root for `owner_pubkey_hex/tree_name`.
+pub async fn fetch_latest_files_root(
+    client: &Client,
+    owner_pubkey_hex: &str,
+    tree_name: &str,
+    timeout: Duration,
+) -> Result<Option<Event>, RelayError> {
+    let owner = PublicKey::from_hex(owner_pubkey_hex)
+        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
+    let filter = Filter::new()
+        .author(owner)
+        .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
+        .identifier(tree_name)
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+            [HASHTREE_LABEL],
+        );
+    let events = client
+        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    let latest = events.into_iter().max_by_key(|e| e.created_at.as_u64());
+    Ok(latest)
+}
+
 /// Build the filter set covering all events relevant to a single
 /// account's primary drive: the owner's `AppKeys` + any drive-root for
 /// `(owner, drive_id)`.
@@ -270,6 +343,18 @@ pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filte
             .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
             .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
     );
+    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
+        filters.push(
+            Filter::new()
+                .author(owner)
+                .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
+                .identifier(drive_id)
+                .custom_tag(
+                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+                    [HASHTREE_LABEL],
+                ),
+        );
+    }
     filters
 }
 
@@ -321,7 +406,9 @@ mod tests {
     use super::*;
     use crate::account::{Account, DeviceAuthorizationState};
     use crate::config::Drive;
-    use crate::nostr_events::{build_app_keys_event, build_drive_root_event};
+    use crate::nostr_events::{
+        build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
+    };
     use hashtree_core::Cid;
     use tempfile::tempdir;
 
@@ -435,6 +522,54 @@ mod tests {
         let entry = drive.device_roots.get(&device_b_hex).unwrap();
         assert_eq!(entry.root_cid, root.root_cid);
         assert!(entry.published_at > 0); // came from event.created_at
+    }
+
+    #[test]
+    fn apply_files_root_event_from_owner_maps_to_current_device() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, acct) = config_with_owner_account(dir.path());
+        let root = encrypted_root(0x5a, 1_700_000_000, 0);
+        let event = build_private_hashtree_root_event(
+            acct.owner_key.as_ref().unwrap().keys(),
+            "main",
+            &root,
+        )
+        .unwrap();
+
+        let outcome = apply_remote_files_root_event(
+            &mut cfg,
+            &event,
+            Some(acct.owner_key.as_ref().unwrap().keys()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, FilesRootApply::Applied);
+        let entry = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&acct.state.device_pubkey)
+            .unwrap();
+        assert_eq!(entry.root_cid, root.root_cid);
+        assert_eq!(entry.dck_generation, 0);
+        assert_eq!(
+            cfg.drive("main").unwrap().last_root_cid.as_deref(),
+            Some(root.root_cid.as_str())
+        );
+    }
+
+    #[test]
+    fn apply_files_root_event_from_foreign_owner_ignored() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, _) = config_with_owner_account(dir.path());
+        let other_owner = Keys::generate();
+        let root = encrypted_root(0x61, 1_700_000_000, 0);
+        let event = build_private_hashtree_root_event(&other_owner, "main", &root).unwrap();
+
+        let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_owner)).unwrap();
+
+        assert_eq!(outcome, FilesRootApply::NotOurOwner);
+        assert!(cfg.drive("main").unwrap().device_roots.is_empty());
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub const KIND_HASHTREE_ROOT: u16 = 30078;
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
 pub const HASHTREE_LABEL: &str = "hashtree";
 pub const TAG_HASH: &str = "hash";
+pub const TAG_KEY: &str = "key";
 pub const TAG_SELF_ENCRYPTED_KEY: &str = "selfEncryptedKey";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,6 +306,70 @@ pub fn build_private_hashtree_root_event(
         .map_err(|e| WireError::Event(e.to_string()))
 }
 
+/// Parse + verify a standard hashtree mutable-root event.
+///
+/// Web Iris apps publish kind 30078 roots with `d=<tree>`, `l=hashtree`,
+/// `hash=<root hash>`, and either a public `key` tag or a private
+/// `selfEncryptedKey` tag. Private roots require the owner's key so we can
+/// recover the root CID in the same encrypted-CID form used by the native
+/// drive store.
+pub fn parse_hashtree_root_event(
+    event: &Event,
+    owner_keys: Option<&Keys>,
+) -> Result<(String, String, DeviceRootRef), WireError> {
+    let kind = event.kind.as_u16();
+    if kind != KIND_HASHTREE_ROOT {
+        return Err(WireError::WrongKind {
+            expected: KIND_HASHTREE_ROOT,
+            got: kind,
+        });
+    }
+    let tree_name = event.identifier().ok_or(WireError::MissingDTag)?;
+    if !tag_values(event, "l")
+        .iter()
+        .any(|label| label == HASHTREE_LABEL)
+    {
+        return Err(WireError::DTagMalformed(format!(
+            "expected l={HASHTREE_LABEL} tag"
+        )));
+    }
+    event
+        .verify()
+        .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
+
+    let hash_hex = tag_value(event, TAG_HASH).ok_or(WireError::MissingRootHash)?;
+    let hash = from_hex(&hash_hex).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    let key = if let Some(key_hex) = tag_value(event, TAG_KEY) {
+        Some(from_hex(&key_hex).map_err(|e| WireError::InvalidRootCid(e.to_string()))?)
+    } else if let Some(ciphertext) = tag_value(event, TAG_SELF_ENCRYPTED_KEY) {
+        let Some(owner_keys) = owner_keys else {
+            return Err(WireError::RootKeyUnavailable);
+        };
+        if owner_keys.public_key() != event.pubkey {
+            return Err(WireError::InvalidPubkey(format!(
+                "owner key {} does not match event author {}",
+                owner_keys.public_key().to_hex(),
+                event.pubkey.to_hex()
+            )));
+        }
+        let key_hex = nip44::decrypt(owner_keys.secret_key(), &event.pubkey, ciphertext)
+            .map_err(|_| WireError::RootKeyUnavailable)?;
+        Some(from_hex(&key_hex).map_err(|e| WireError::InvalidRootCid(e.to_string()))?)
+    } else {
+        None
+    };
+
+    let root = DeviceRootRef {
+        root_cid: Cid { hash, key }.to_string(),
+        published_at: i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX),
+        dck_generation: 0,
+        device_seq: 0,
+        parents: Vec::new(),
+        observed: std::collections::BTreeMap::new(),
+    };
+    Ok((event.pubkey.to_hex(), tree_name.to_string(), root))
+}
+
 /// Parse + verify a drive-root event. Returns
 /// `(device_pubkey_hex, owner_pubkey_hex, drive_id, DeviceRootRef)`.
 /// The device pubkey is the event's author; the owner pubkey and
@@ -441,6 +506,32 @@ fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
         )));
     }
     Ok((owner.to_string(), drive.to_string()))
+}
+
+fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
+    event.tags.iter().find_map(|tag| {
+        let fields = tag.as_slice();
+        if fields.first().is_some_and(|name| name == tag_name) {
+            fields.get(1).cloned()
+        } else {
+            None
+        }
+    })
+}
+
+fn tag_values(event: &Event, tag_name: &str) -> Vec<String> {
+    event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let fields = tag.as_slice();
+            if fields.first().is_some_and(|name| name == tag_name) {
+                fields.get(1).cloned()
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -661,6 +752,50 @@ mod tests {
         let plaintext =
             nip44::decrypt(owner.secret_key(), &owner.public_key(), self_encrypted_key).unwrap();
         assert_eq!(plaintext, hex::encode(root_key));
+
+        let (parsed_owner, tree_name, parsed_root) =
+            parse_hashtree_root_event(&event, Some(&owner)).unwrap();
+        assert_eq!(parsed_owner, owner.public_key().to_hex());
+        assert_eq!(tree_name, "main");
+        assert_eq!(parsed_root.root_cid, root.root_cid);
+        assert_eq!(parsed_root.published_at, root.published_at);
+        assert_eq!(parsed_root.dck_generation, 0);
+        assert!(parse_hashtree_root_event(&event, None).is_err());
+    }
+
+    #[test]
+    fn public_hashtree_root_event_roundtrips_without_owner_key() {
+        let owner = Keys::generate();
+        let root_hash = [0x53; 32];
+        let root_key = [0x54; 32];
+        let event = EventBuilder::new(
+            Kind::from(KIND_HASHTREE_ROOT),
+            "",
+            [
+                Tag::identifier("public"),
+                Tag::custom(
+                    TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::L)),
+                    vec![HASHTREE_LABEL],
+                ),
+                Tag::custom(
+                    TagKind::Custom(TAG_HASH.into()),
+                    vec![hex::encode(root_hash)],
+                ),
+                Tag::custom(TagKind::Custom(TAG_KEY.into()), vec![hex::encode(root_key)]),
+            ],
+        )
+        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
+        .to_event(&owner)
+        .unwrap();
+
+        let (parsed_owner, tree_name, parsed_root) =
+            parse_hashtree_root_event(&event, None).unwrap();
+        assert_eq!(parsed_owner, owner.public_key().to_hex());
+        assert_eq!(tree_name, "public");
+        assert_eq!(
+            parsed_root.root_cid,
+            Cid::encrypted(root_hash, root_key).to_string()
+        );
     }
 
     #[test]

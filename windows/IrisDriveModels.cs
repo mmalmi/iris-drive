@@ -65,7 +65,9 @@ public sealed class IrisDriveStatusData
             LocalBlockCount = hashtree.HasValue ? Int(hashtree.Value, "local_block_count") : 0,
             LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
             Drives = drives,
-            Peers = PeerRows(root),
+            Peers = PeerRows(
+                root,
+                account.HasValue && Bool(account.Value, "has_owner_signing_authority")),
             Relays = network.HasValue ? StringArray(network.Value, "relays") : Array.Empty<string>(),
             BlossomServers = network.HasValue
                 ? StringArray(network.Value, "blossom_servers")
@@ -136,7 +138,7 @@ public sealed class IrisDriveStatusData
         return rows;
     }
 
-    private static IReadOnlyList<PeerRow> PeerRows(JsonElement root)
+    private static IReadOnlyList<PeerRow> PeerRows(JsonElement root, bool canManageDevices)
     {
         var rows = new List<PeerRow>();
         if (!root.TryGetProperty("peers", out var peers) || peers.ValueKind != JsonValueKind.Array)
@@ -146,12 +148,32 @@ public sealed class IrisDriveStatusData
 
         foreach (var peer in peers.EnumerateArray())
         {
-            var title = String(peer, "label") ?? String(peer, "device_npub") ??
-                String(peer, "device_pubkey") ?? "Device";
+            var deviceNpub = String(peer, "device_npub") ?? "";
+            var isCurrentDevice = Bool(peer, "is_current_device");
+            var title = String(peer, "label") ??
+                (!string.IsNullOrWhiteSpace(deviceNpub) ? deviceNpub : String(peer, "device_pubkey")) ??
+                "Device";
             var details = new List<string>();
-            if (Bool(peer, "is_current_device"))
+            if (isCurrentDevice)
             {
                 details.Add("this device");
+            }
+
+            var syncState = String(peer, "sync_state");
+            if (!string.IsNullOrWhiteSpace(syncState))
+            {
+                details.Add(syncState);
+            }
+
+            if (Object(peer, "last_block_sync") is { } blockSync)
+            {
+                var transport = String(blockSync, "transport");
+                var fetched = Int(blockSync, "fetched");
+                var total = Int(blockSync, "total_hashes");
+                if (!string.IsNullOrWhiteSpace(transport) && total > 0)
+                {
+                    details.Add($"{transport} {fetched}/{total}");
+                }
             }
 
             var rootCid = String(peer, "root_cid");
@@ -166,7 +188,14 @@ public sealed class IrisDriveStatusData
                 details.Add($"DCK {dck}");
             }
 
-            rows.Add(new PeerRow(title, string.Join(" | ", details)));
+            var state = Bool(peer, "fips_online") ? "Online" : "Offline";
+            rows.Add(new PeerRow(
+                deviceNpub,
+                title,
+                string.Join(" | ", details),
+                state,
+                isCurrentDevice,
+                canManageDevices && !isCurrentDevice && !string.IsNullOrWhiteSpace(deviceNpub)));
         }
 
         return rows;
@@ -263,4 +292,10 @@ public sealed class IrisDriveStatusData
 
 public sealed record DriveRow(string Name, string Path, string State);
 
-public sealed record PeerRow(string Title, string Subtitle);
+public sealed record PeerRow(
+    string DeviceNpub,
+    string Title,
+    string Subtitle,
+    string State,
+    bool IsCurrentDevice,
+    bool CanRevoke);

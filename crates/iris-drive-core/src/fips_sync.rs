@@ -123,6 +123,14 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.transport.peer_ids().await
     }
 
+    pub async fn authorized_peer_ids(&self) -> Vec<String> {
+        self.transport.configured_peer_ids().await
+    }
+
+    pub async fn connected_peer_ids(&self) -> Vec<String> {
+        self.transport.connected_peer_ids().await
+    }
+
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
         download_tree_with_transport(self.local_store.clone(), root, self.transport.clone()).await
     }

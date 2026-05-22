@@ -176,8 +176,71 @@ public partial class MainWindow : Window
 
         foreach (var peer in status.Peers)
         {
-            PeersList.Items.Add(Row(peer.Title, peer.Subtitle, ""));
+            PeersList.Items.Add(PeerListRow(peer));
         }
+    }
+
+    private Border PeerListRow(PeerRow peer)
+    {
+        var titleBlock = new TextBlock
+        {
+            Text = peer.Title,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var stack = new StackPanel { Orientation = WpfOrientation.Vertical };
+        stack.Children.Add(titleBlock);
+
+        if (!string.IsNullOrWhiteSpace(peer.Subtitle))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = peer.Subtitle,
+                Foreground = (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontSize = 12,
+            });
+        }
+
+        var state = new TextBlock
+        {
+            Text = peer.State,
+            Foreground = peer.State == "Online"
+                ? (WpfBrush)WpfApplication.Current.Resources["IrisSuccessBrush"]
+                : (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold,
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(stack);
+        Grid.SetColumn(state, 1);
+        grid.Children.Add(state);
+
+        if (peer.CanRevoke)
+        {
+            var revoke = new WpfButton
+            {
+                Content = new TextBlock { Text = "\uE74D", Style = (Style)FindResource("IconGlyph") },
+                Style = (Style)FindResource("IconButton"),
+                Tag = peer.DeviceNpub,
+                Margin = new Thickness(8, 0, 0, 0),
+                ToolTip = "Revoke device",
+            };
+            revoke.Click += RevokeDevice_Click;
+            Grid.SetColumn(revoke, 2);
+            grid.Children.Add(revoke);
+        }
+
+        return new Border
+        {
+            Padding = new Thickness(12, 9, 12, 9),
+            Child = grid,
+        };
     }
 
     private void RenderNetwork(IrisDriveStatusData status)
@@ -390,6 +453,30 @@ public partial class MainWindow : Window
                 EnsureDaemonRunning(currentStatus);
             }
             NoticeText.Text = "Device approved";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void RevokeDevice_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: string deviceNpub })
+        {
+            return;
+        }
+
+        try
+        {
+            await service.RevokeDeviceAsync(deviceNpub);
+            StopDaemon();
+            if (currentStatus is not null)
+            {
+                EnsureDaemonRunning(currentStatus);
+            }
+            NoticeText.Text = "Device revoked";
             await RefreshAsync();
         }
         catch (Exception error)

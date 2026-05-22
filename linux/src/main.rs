@@ -1061,7 +1061,7 @@ fn refresh(model: &AppRef) {
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
             render_drives(&model.ui.drives, &json);
-            render_peers(&model.ui.peers, &json);
+            render_peers(model, &json);
             render_network(&model.ui.relays, &model.ui.blossom, &json);
         }
         Err(error) => {
@@ -1420,6 +1420,10 @@ fn link_device(owner: &str, label: &str) -> Result<(), String> {
     }
     run_idrive_owned(&args)?;
     import_default_drive()
+}
+
+fn revoke_device(device: &str) -> Result<(), String> {
+    run_idrive(["revoke", device])
 }
 
 fn import_default_drive() -> Result<(), String> {
@@ -1902,7 +1906,8 @@ fn render_drives(list: &gtk::ListBox, json: &Value) {
     }
 }
 
-fn render_peers(list: &gtk::ListBox, json: &Value) {
+fn render_peers(model: &AppRef, json: &Value) {
+    let list = &model.ui.peers;
     clear_list(list);
     let Some(peers) = json.get("peers").and_then(Value::as_array) else {
         list.append(&simple_row("No authorized devices", ""));
@@ -1912,16 +1917,34 @@ fn render_peers(list: &gtk::ListBox, json: &Value) {
         list.append(&simple_row("No authorized devices", ""));
         return;
     }
+    let can_manage_devices = json
+        .get("account")
+        .and_then(|account| account.get("has_owner_signing_authority"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     for peer in peers {
         let title =
             find_string(peer, &["label", "device_npub", "device_pubkey"]).unwrap_or("Device");
-        let mut metadata = Vec::new();
-        if peer
+        let device_npub = find_string(peer, &["device_npub"]).unwrap_or("");
+        let is_current_device = peer
             .get("is_current_device")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        let mut metadata = Vec::new();
+        if is_current_device {
             metadata.push("this device".to_string());
+        }
+        if let Some(sync_state) = find_string(peer, &["sync_state"]) {
+            metadata.push(sync_state.to_string());
+        }
+        if let Some(last_sync) = peer.get("last_block_sync") {
+            if let (Some(transport), Some(total)) = (
+                find_string(last_sync, &["transport"]),
+                find_number(last_sync, &["total_hashes"]),
+            ) {
+                let fetched = find_number(last_sync, &["fetched"]).unwrap_or(0);
+                metadata.push(format!("{transport} {fetched}/{total}"));
+            }
         }
         if let Some(root) = find_string(peer, &["root_cid"]) {
             metadata.push(short_text(root));
@@ -1929,7 +1952,23 @@ fn render_peers(list: &gtk::ListBox, json: &Value) {
         if let Some(generation) = find_number(peer, &["dck_generation"]) {
             metadata.push(format!("DCK {generation}"));
         }
-        list.append(&simple_row(title, &metadata.join(" | ")));
+        let state = if peer
+            .get("fips_online")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            "Online"
+        } else {
+            "Offline"
+        };
+        list.append(&peer_row(
+            model,
+            title,
+            &metadata.join(" | "),
+            state,
+            device_npub,
+            can_manage_devices && !is_current_device && !device_npub.is_empty(),
+        ));
     }
 }
 
@@ -2008,6 +2047,64 @@ fn simple_row(title: &str, subtitle: &str) -> gtk::ListBoxRow {
         subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         subtitle_label.set_max_width_chars(44);
         body.append(&subtitle_label);
+    }
+
+    row.set_child(Some(&body));
+    row
+}
+
+fn peer_row(
+    model: &AppRef,
+    title: &str,
+    subtitle: &str,
+    state: &str,
+    device_npub: &str,
+    can_revoke: bool,
+) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    body.set_margin_top(10);
+    body.set_margin_bottom(10);
+    body.set_margin_start(12);
+    body.set_margin_end(12);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    labels.set_hexpand(true);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.add_css_class("iris-row-title");
+    title_label.set_xalign(0.0);
+    title_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    title_label.set_max_width_chars(44);
+    labels.append(&title_label);
+
+    if !subtitle.is_empty() {
+        let subtitle_label = gtk::Label::new(Some(subtitle));
+        subtitle_label.add_css_class("iris-row-subtitle");
+        subtitle_label.set_xalign(0.0);
+        subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        subtitle_label.set_max_width_chars(44);
+        labels.append(&subtitle_label);
+    }
+    body.append(&labels);
+
+    let state_label = gtk::Label::new(Some(state));
+    state_label.add_css_class("iris-row-state");
+    state_label.set_xalign(1.0);
+    body.append(&state_label);
+
+    if can_revoke {
+        let revoke = icon_button("user-trash-symbolic", "Revoke device");
+        let model = Rc::clone(model);
+        let device_npub = device_npub.to_string();
+        revoke.connect_clicked(move |_| match revoke_device(&device_npub) {
+            Ok(()) => {
+                restart_daemon(&model);
+                model.ui.notice.set_text("Device revoked");
+                refresh(&model);
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        });
+        body.append(&revoke);
     }
 
     row.set_child(Some(&body));

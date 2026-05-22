@@ -16,6 +16,8 @@ file-provider backends differ.
 | Open drive folder | Yes | Yes | Yes |
 | Copy/open snapshot link | Yes | Yes | Yes |
 | Devices list and auth state | Yes | Yes | Yes |
+| Device online/sync status | Yes | Planned | Yes |
+| Owner device revoke control | Yes | Planned | Yes |
 | Relay add/reset controls | Yes | Yes | Yes |
 | Direct FIPS block sync | Yes | Yes | Yes |
 | Blossom fallback server list | Yes | Yes | Yes |
@@ -31,8 +33,9 @@ The minimum parity smoke for Linux/Windows is:
 1. Create an owner profile on one VM.
 2. Link the other VM as a secondary device from the GUI.
 3. Approve the secondary device from the owner GUI.
-4. Create a file in each drive folder.
-5. Confirm each side sees both files after daemon sync.
+4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
+5. Create a file in each drive folder.
+6. Confirm each side sees both files after daemon sync.
 
 The same flow is valid for macOS once the visible app has the latest control
 panel build.

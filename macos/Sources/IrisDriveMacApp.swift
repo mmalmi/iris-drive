@@ -8,6 +8,14 @@ private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveAppGroupIdentifier = "group.to.iris.drive"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
+private let irisDriveAssociatedHosts: Set<String> = [
+    "drive.iris.to",
+    "docs.iris.to",
+    "video.iris.to",
+    "maps.iris.to",
+    "boards.iris.to",
+    "git.iris.to",
+]
 
 @main
 struct IrisDriveMacApp: App {
@@ -88,11 +96,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) -> Bool {
         guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
               let url = userActivity.webpageURL,
-              isDriveWebURL(url)
+              isIrisWebURL(url)
         else {
             return false
         }
-        handleDriveWebURL(url)
+        handleIrisWebURL(url)
         return true
     }
 
@@ -130,13 +138,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showControlPanel()
     }
 
-    private func isDriveWebURL(_ url: URL) -> Bool {
-        url.scheme == "https" && url.host?.lowercased() == "drive.iris.to"
+    private func isIrisWebURL(_ url: URL) -> Bool {
+        guard url.scheme == "https",
+              let host = url.host?.lowercased()
+        else {
+            return false
+        }
+        return irisDriveAssociatedHosts.contains(host)
     }
 
-    private func handleDriveWebURL(_ url: URL) {
+    private func handleIrisWebURL(_ url: URL) {
         showControlPanel()
-        updateStatus("Drive link opened")
+        updateStatus("Iris link opened")
         NSLog("Iris Drive opened universal link: \(url.absoluteString)")
     }
 

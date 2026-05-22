@@ -80,6 +80,16 @@ public sealed class IrisDriveService
         await RunAsync(BuildLabelArgs(new[] { "approve", device.Trim() }, label));
     }
 
+    public Task RevokeDeviceAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device key is required.");
+        }
+
+        return RunAsync("revoke", device.Trim());
+    }
+
     public Task AddRelayAsync(string relay)
     {
         if (string.IsNullOrWhiteSpace(relay))

@@ -218,6 +218,53 @@ fn link_then_approve_authorizes_the_linked_device() {
 }
 
 #[test]
+fn owner_can_revoke_a_linked_device() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner_npub = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap()["owner_npub"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let linked_dir = tempdir().unwrap();
+    let linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_npub])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let linked_device_npub = linked_v["device_npub"].as_str().unwrap().to_string();
+
+    idrive(owner_dir.path())
+        .args(["approve", &linked_device_npub])
+        .assert()
+        .success();
+    let revoked = run_json(owner_dir.path(), &["revoke", &linked_device_npub]);
+    assert_eq!(revoked["roster_size"], 1);
+    assert!(revoked["dck_generation"].as_u64().unwrap() > 1);
+
+    let roster = run_json(owner_dir.path(), &["roster"]);
+    let devices = roster["app_keys"]["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_ne!(devices[0]["npub"], linked_device_npub);
+}
+
+#[test]
 fn approve_without_owner_authority_errors() {
     // Linked-only device tries to approve.
     let owner_dir = tempdir().unwrap();
