@@ -34,6 +34,13 @@ struct Ui {
     blocks: gtk::Label,
     storage: gtk::Label,
     devices: gtk::Label,
+    account_owner: gtk::Label,
+    account_device: gtk::Label,
+    account_authorization: gtk::Label,
+    approve_box: gtk::Box,
+    approve_device_entry: gtk::Entry,
+    approve_label_entry: gtk::Entry,
+    approve_device_button: gtk::Button,
     notice: gtk::Label,
     drives: gtk::ListBox,
     peers: gtk::ListBox,
@@ -249,6 +256,41 @@ fn build_ui(app: &adw::Application) {
 
     let peers_page = page_box();
     peers_page.append(&section_title("Devices"));
+    let account_owner = value_label();
+    let account_device = value_label();
+    let account_authorization = value_label();
+    let copy_owner_button = icon_button("edit-copy-symbolic", "Copy owner key");
+    let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
+    let account_grid = gtk::Grid::new();
+    account_grid.add_css_class("iris-summary");
+    account_grid.set_column_spacing(10);
+    account_grid.set_row_spacing(8);
+    account_grid.set_hexpand(true);
+    add_copy_field(&account_grid, 0, "Owner", &account_owner, &copy_owner_button);
+    add_copy_field(
+        &account_grid,
+        1,
+        "This device",
+        &account_device,
+        &copy_device_button,
+    );
+    add_field(&account_grid, 2, 0, "State", &account_authorization);
+    peers_page.append(&account_grid);
+
+    let approve_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    approve_box.set_hexpand(true);
+    approve_box.append(&field_title("Approve device"));
+    let approve_device_entry = setup_entry("Device public key");
+    approve_device_entry.set_hexpand(true);
+    let approve_label_entry = setup_entry("Device label");
+    approve_label_entry.set_hexpand(true);
+    let approve_device_button = action_button("emblem-ok-symbolic", "Approve", "Approve device");
+    approve_box.append(&approve_device_entry);
+    approve_box.append(&approve_label_entry);
+    approve_box.append(&approve_device_button);
+    peers_page.append(&approve_box);
+
+    peers_page.append(&field_title("Authorized"));
     let peers = gtk::ListBox::new();
     peers.add_css_class("iris-drive-list");
     peers.set_selection_mode(gtk::SelectionMode::None);
@@ -367,6 +409,13 @@ fn build_ui(app: &adw::Application) {
             blocks,
             storage,
             devices,
+            account_owner,
+            account_device,
+            account_authorization,
+            approve_box,
+            approve_device_entry,
+            approve_label_entry,
+            approve_device_button,
             notice,
             drives,
             peers,
@@ -429,6 +478,19 @@ fn build_ui(app: &adw::Application) {
         let button = model.ui.open_snapshot_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| open_snapshot_link(&model));
+    }
+    {
+        let model = Rc::clone(&model);
+        copy_owner_button.connect_clicked(move |_| copy_account_key(&model, "owner_npub"));
+    }
+    {
+        let model = Rc::clone(&model);
+        copy_device_button.connect_clicked(move |_| copy_account_key(&model, "device_npub"));
+    }
+    {
+        let button = model.ui.approve_device_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| approve_device(&model));
     }
     {
         let model = Rc::clone(&model);
@@ -577,6 +639,13 @@ fn section_title(title: &str) -> gtk::Label {
     label
 }
 
+fn field_title(title: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(title));
+    label.add_css_class("iris-field-name");
+    label.set_xalign(0.0);
+    label
+}
+
 fn pill_button(label: &str) -> gtk::Button {
     let button = gtk::Button::with_label(label);
     button.add_css_class("pill");
@@ -651,6 +720,22 @@ fn add_field(grid: &gtk::Grid, row: i32, column: i32, name: &str, value: &gtk::L
     label.set_xalign(0.0);
     grid.attach(&label, column * 2, row, 1, 1);
     grid.attach(value, column * 2 + 1, row, 1, 1);
+}
+
+fn add_copy_field(
+    grid: &gtk::Grid,
+    row: i32,
+    name: &str,
+    value: &gtk::Label,
+    button: &gtk::Button,
+) {
+    let label = gtk::Label::new(Some(name));
+    label.add_css_class("iris-field-name");
+    label.set_xalign(0.0);
+    grid.attach(&label, 0, row, 1, 1);
+    value.set_hexpand(true);
+    grid.attach(value, 1, row, 1, 1);
+    grid.attach(button, 2, row, 1, 1);
 }
 
 fn connect_tray(model: &AppRef, window: &adw::ApplicationWindow) {
@@ -924,14 +1009,24 @@ fn refresh(model: &AppRef) {
                 .ui
                 .folder
                 .set_text(&working_dir(&json).display().to_string());
+            let account = account_json(&json);
+            let owner_npub = find_string(account, &["owner_npub"]);
+            let device_npub = find_string(account, &["device_npub"]);
+            let authorization = find_string(account, &["authorization_state"]).unwrap_or("-");
             model
                 .ui
                 .owner
-                .set_text(&short_value(find_string(&json, &["owner", "owner_npub"])));
+                .set_text(&short_value(owner_npub));
             model
                 .ui
                 .device
-                .set_text(&short_value(find_string(&json, &["device", "device_npub"])));
+                .set_text(&short_value(device_npub));
+            model.ui.account_owner.set_text(owner_npub.unwrap_or("-"));
+            model.ui.account_device.set_text(device_npub.unwrap_or("-"));
+            model.ui.account_authorization.set_text(authorization);
+            model.ui.approve_box.set_visible(
+                find_bool(account, &["has_owner_signing_authority"]).unwrap_or(false),
+            );
             model.ui.snapshot.set_text(&snapshot_value(&json));
             model.ui.files.set_text(&file_count_value(&json));
             model.ui.blocks.set_text(&block_count_value(&json));
@@ -981,6 +1076,10 @@ fn refresh(model: &AppRef) {
                 .set_text(&default_drive_dir().display().to_string());
             model.ui.owner.set_text("-");
             model.ui.device.set_text("-");
+            model.ui.account_owner.set_text("-");
+            model.ui.account_device.set_text("-");
+            model.ui.account_authorization.set_text("-");
+            model.ui.approve_box.set_visible(false);
             model.ui.snapshot.set_text("-");
             model.ui.files.set_text("0");
             model.ui.blocks.set_text("0");
@@ -1545,6 +1644,32 @@ fn reset_relays(model: &AppRef) {
     }
 }
 
+fn approve_device(model: &AppRef) {
+    let device = model.ui.approve_device_entry.text().trim().to_string();
+    if device.is_empty() {
+        model.ui.notice.set_text("Device key is required");
+        return;
+    }
+
+    let mut args = vec!["approve".to_string(), device];
+    let label = model.ui.approve_label_entry.text().trim().to_string();
+    if !label.is_empty() {
+        args.push("--label".to_string());
+        args.push(label);
+    }
+
+    match run_idrive_owned(&args) {
+        Ok(()) => {
+            model.ui.approve_device_entry.set_text("");
+            model.ui.approve_label_entry.set_text("");
+            restart_daemon(model);
+            model.ui.notice.set_text("Device approved");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 fn open_drive_folder(model: &AppRef) {
     let folder = run_idrive_json(["status"])
         .map(|json| working_dir(&json))
@@ -1561,15 +1686,31 @@ fn open_drive_folder(model: &AppRef) {
 
 fn copy_snapshot_link(model: &AppRef) {
     match current_snapshot_link() {
-        Ok(link) => {
-            if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&link);
-                model.ui.notice.set_text("Snapshot copied");
+        Ok(link) => copy_text(model, &link, "Snapshot copied"),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn copy_account_key(model: &AppRef, key: &str) {
+    match current_account_value(key) {
+        Ok(value) => {
+            let message = if key == "owner_npub" {
+                "Owner key copied"
             } else {
-                model.ui.notice.set_text("Clipboard unavailable");
-            }
+                "Device key copied"
+            };
+            copy_text(model, &value, message);
         }
         Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn copy_text(model: &AppRef, value: &str, message: &str) {
+    if let Some(display) = gtk::gdk::Display::default() {
+        display.clipboard().set_text(value);
+        model.ui.notice.set_text(message);
+    } else {
+        model.ui.notice.set_text("Clipboard unavailable");
     }
 }
 
@@ -1585,6 +1726,14 @@ fn current_snapshot_link() -> Result<String, String> {
     snapshot_link(&json)
         .map(str::to_string)
         .ok_or_else(|| "No snapshot available".to_string())
+}
+
+fn current_account_value(key: &str) -> Result<String, String> {
+    let json = run_idrive_json(["status"])?;
+    let account = account_json(&json);
+    find_string(account, &[key])
+        .map(str::to_string)
+        .ok_or_else(|| "No account key available".to_string())
 }
 
 fn run_idrive_json<const N: usize>(args: [&str; N]) -> Result<Value, String> {
@@ -1691,6 +1840,10 @@ fn snapshot_value(json: &Value) -> String {
 fn snapshot_link(json: &Value) -> Option<&str> {
     let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
     find_string(hashtree, &["snapshot_url", "permalink_url"])
+}
+
+fn account_json(json: &Value) -> &Value {
+    json.get("account").unwrap_or(&Value::Null)
 }
 
 fn file_count_value(json: &Value) -> String {
@@ -1904,6 +2057,11 @@ fn find_string<'a>(json: &'a Value, keys: &[&str]) -> Option<&'a str> {
 fn find_number(json: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| json.get(*key).and_then(Value::as_u64))
+}
+
+fn find_bool(json: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| json.get(*key).and_then(Value::as_bool))
 }
 
 fn short_value(value: Option<&str>) -> String {

@@ -13,6 +13,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var ownerNpub: String?
     @Published var deviceNpub: String?
+    @Published var hasOwnerSigningAuthority = false
     @Published var authorizationState: String?
     @Published var rosterSize = 0
     @Published var authorizedDeviceCount = 0

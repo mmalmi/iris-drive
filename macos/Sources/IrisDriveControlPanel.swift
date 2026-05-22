@@ -59,6 +59,8 @@ struct IrisDriveControlPanel: View {
     @State private var setupLabel = ""
     @State private var setupSecret = ""
     @State private var setupOwner = ""
+    @State private var approveDeviceKey = ""
+    @State private var approveDeviceLabel = ""
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .topLeading)
@@ -282,8 +284,57 @@ struct IrisDriveControlPanel: View {
     }
 
     private var peers: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             SectionTitle("Devices")
+            accountKeys
+            if status.hasOwnerSigningAuthority {
+                approveDeviceForm
+            }
+            authorizedDevices
+        }
+    }
+
+    private var accountKeys: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKeyRow(title: "Owner", value: status.ownerNpub) {
+                controller.copyOwnerKey()
+            }
+            AccountKeyRow(title: "This device", value: status.deviceNpub) {
+                controller.copyDeviceKey()
+            }
+            AccountInfoRow(title: "State", value: status.authorizationState ?? "-")
+        }
+    }
+
+    private var approveDeviceForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Approve device")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("Device public key", text: $approveDeviceKey)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                TextField("Device label", text: $approveDeviceLabel)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+                Button {
+                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel)
+                    approveDeviceKey = ""
+                    approveDeviceLabel = ""
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle.fill")
+                }
+                .disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var authorizedDevices: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Authorized")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if status.peers.isEmpty {
                 Text("No authorized devices")
                     .foregroundStyle(.secondary)
@@ -461,6 +512,48 @@ struct IrisDriveControlPanel: View {
 
     private func relayStatusLabel(_ status: String) -> String {
         status == "configured" ? "saved" : status
+    }
+}
+
+private struct AccountKeyRow: View {
+    let title: String
+    let value: String?
+    let copy: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 82, alignment: .leading)
+            Text(value ?? "-")
+                .font(.system(.callout, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: copy) {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .disabled((value ?? "").isEmpty)
+        }
+    }
+}
+
+private struct AccountInfoRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 82, alignment: .leading)
+            Text(value)
+                .font(.system(.callout, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

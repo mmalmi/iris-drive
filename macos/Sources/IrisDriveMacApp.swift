@@ -166,10 +166,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(link, forType: .string)
+        copyText(link, statusMessage: "Snapshot copied")
         IrisDriveStatus.shared.copyStatus = "Copied"
         NSLog("Iris Drive private link copied")
+    }
+
+    @objc func copyOwnerKey() {
+        copyText(IrisDriveStatus.shared.ownerNpub, statusMessage: "Owner key copied")
+    }
+
+    @objc func copyDeviceKey() {
+        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
+    }
+
+    private func copyText(_ value: String?, statusMessage: String) {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            NSSound.beep()
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        updateStatus(statusMessage)
     }
 
     @objc func openDriveLink() {
@@ -269,6 +288,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let args = setupArguments(command: "link", label: label, extra: [owner])
         finishSetup(arguments: args)
+    }
+
+    func approveDevice(_ device: String, label: String) {
+        let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !device.isEmpty else {
+            updateStatus("Device key required")
+            return
+        }
+        var arguments = ["approve", device]
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty {
+            arguments += ["--label", label]
+        }
+
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus("Approving device")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                DispatchQueue.main.async {
+                    self.updateStatus("Device approved")
+                    self.refreshStatus()
+                    if IrisDriveStatus.shared.daemonRunning {
+                        self.restartSync()
+                    } else {
+                        self.startSync()
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive device approval failed: \(error)")
+                self.updateStatus("Approve failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
     }
 
     @objc func quitApp() {
@@ -774,8 +831,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let account = json["account"] as? [String: Any] {
                 status.ownerNpub = account["owner_npub"] as? String
                 status.deviceNpub = account["device_npub"] as? String
+                status.hasOwnerSigningAuthority =
+                    account["has_owner_signing_authority"] as? Bool ?? false
                 status.authorizationState = account["authorization_state"] as? String
                 status.rosterSize = Self.intValue(account["roster_size"]) ?? 0
+            } else {
+                status.ownerNpub = nil
+                status.deviceNpub = nil
+                status.hasOwnerSigningAuthority = false
+                status.authorizationState = nil
+                status.rosterSize = 0
             }
 
             if let drives = json["drives"] as? [[String: Any]],
