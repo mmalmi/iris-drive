@@ -2130,17 +2130,45 @@ fn cmd_daemon(
         write_daemon_status(config_dir, subscribed_status.clone());
         println!("{subscribed_status}");
 
+        let mut startup_config = config.clone();
+        let mut startup_state = state.clone();
+        match materialize_working_dir(config_dir).await {
+            Ok(Some(report)) => {
+                if report.materialize.changed() {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "startup_materialized",
+                            "materialize": materialize_report_json(&report),
+                        })
+                    );
+                    startup_config = AppConfig::load_or_default(config_path_in(config_dir))?;
+                    startup_state = startup_config
+                        .account
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing account after materialize"))?;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                println!(
+                    "{}",
+                    json!({"event": "startup_materialize_error", "error": format!("{error:#}")})
+                );
+            }
+        }
+
         // Announce the current account roster and device root once on
         // startup, and upload the initial blocks if this launch just
         // imported them. The fs-notify + periodic paths only publish on
         // change, so without this a freshly-imported device would sit
         // silent until its first edit.
-        match publish_current_state(&client, config_dir, &config, &state).await {
+        match publish_current_state(&client, config_dir, &startup_config, &startup_state).await {
             Ok(report) => {
                 let drive_iris_to_url = report
                     .root_cid
                     .as_ref()
-                    .and_then(|_| drive_iris_to_url_for_primary_drive(&config));
+                    .and_then(|_| drive_iris_to_url_for_primary_drive(&startup_config));
                 let snapshot_url = report
                     .root_cid
                     .as_deref()
@@ -2191,15 +2219,6 @@ fn cmd_daemon(
                 })
             );
         }
-        if let Err(error) =
-            materialize_and_publish(&client, config_dir, "startup_materialized").await
-        {
-            println!(
-                "{}",
-                json!({"event": "startup_materialize_error", "error": format!("{error:#}")})
-            );
-        }
-
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
