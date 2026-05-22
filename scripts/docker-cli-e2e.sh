@@ -30,6 +30,7 @@ exec docker run --rm --init \
   "$IMAGE" \
   bash -lc '
     set -Eeuo pipefail
+    export PATH="/usr/local/cargo/bin:${PATH}"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends \
