@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use nostr_sdk::{Client, Event, Filter, Keys, PublicKey, SingleLetterTag};
+use nostr_sdk::{Client, Event, Filter, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
 use crate::AppKeysSnapshot;
@@ -88,6 +88,9 @@ pub enum DriveRootApply {
     /// Causal roots compare by `device_seq`; legacy roots compare by
     /// timestamp.
     StaleTimestamp,
+    /// The event is for an authorized device, but this local device has not
+    /// received a DCK wrap that can decrypt it yet.
+    KeyUnavailable,
     /// Applied; the device's root entry was updated/inserted.
     Applied,
 }
@@ -142,7 +145,13 @@ pub fn apply_remote_drive_root_event(
         return Ok(DriveRootApply::StaleTimestamp);
     }
     let (_, _, _, incoming_root) = if let Some(keys) = device_keys {
-        parse_drive_root_event_for_device(event, keys)?
+        match parse_drive_root_event_for_device(event, keys) {
+            Ok(parsed) => parsed,
+            Err(crate::nostr_events::WireError::RootKeyUnavailable) => {
+                return Ok(DriveRootApply::KeyUnavailable);
+            }
+            Err(error) => return Err(error.into()),
+        }
     } else {
         parse_drive_root_event(event)?
     };
@@ -231,7 +240,9 @@ fn incoming_root_is_stale(
 /// Connect a fresh client to the given relays. Caller manages the
 /// client's lifecycle (disconnect when done).
 pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
-    let client = Client::default();
+    let client = Client::builder()
+        .opts(Options::new().wait_for_send(false))
+        .build();
     for url in relay_urls {
         client
             .add_relay(url)
@@ -549,6 +560,49 @@ mod tests {
         let entry = drive.device_roots.get(&device_b_hex).unwrap();
         assert_eq!(entry.root_cid, root.root_cid);
         assert!(entry.published_at > 0); // came from event.created_at
+    }
+
+    #[test]
+    fn apply_drive_root_event_without_local_wrap_is_skipped() {
+        let owner_dir = tempdir().unwrap();
+        let linked_dir = tempdir().unwrap();
+        let (_, mut owner_acct) = config_with_owner_account(owner_dir.path());
+
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        owner_acct
+            .approve_device(device_b_hex.clone(), Some("old-phone".into()))
+            .unwrap();
+
+        let linked = Account::link(
+            linked_dir.path(),
+            owner_acct.state.owner_pubkey.clone(),
+            Some("new-laptop".into()),
+        )
+        .unwrap();
+        let mut linked_state = linked.state.clone();
+        linked_state.app_keys = owner_acct.state.app_keys.clone();
+
+        let mut cfg = AppConfig {
+            account: Some(linked_state),
+            ..AppConfig::default()
+        };
+        cfg.upsert_drive(Drive::primary(owner_acct.state.owner_pubkey.clone()));
+
+        let root = encrypted_root(0xac, 0, 1);
+        let event = build_drive_root_event(
+            &device_b,
+            &owner_acct.state.owner_pubkey,
+            "main",
+            &root,
+            &[owner_acct.state.device_pubkey.clone(), device_b_hex],
+        )
+        .unwrap();
+        let outcome =
+            apply_remote_drive_root_event(&mut cfg, &event, Some(linked.device.keys())).unwrap();
+
+        assert_eq!(outcome, DriveRootApply::KeyUnavailable);
+        assert!(cfg.drive("main").unwrap().device_roots.is_empty());
     }
 
     #[test]
