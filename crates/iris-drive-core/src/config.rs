@@ -29,11 +29,11 @@ pub enum ConfigError {
 pub const DEFAULT_RELAYS: &[&str] = hashtree_config::DEFAULT_RELAYS;
 const LEGACY_IRIS_DRIVE_DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 
-/// Default Blossom servers for new installs — HTTP blob hosts used to
-/// transfer the actual htree blocks between devices. Without at least
-/// one server, multi-device sync is metadata-only (other devices see
-/// root CIDs but can't fetch the bytes). `upload.iris.to` rejects
-/// unencrypted uploads, matching Iris Drive's private-by-default model.
+/// Default Blossom servers for new installs — HTTP blob hosts used as a
+/// fallback/cache for htree block replication. Direct FIPS transfer between
+/// authorized Iris Drive instances is preferred when peers are online.
+/// `upload.iris.to` rejects unencrypted uploads, matching Iris Drive's
+/// private-by-default model.
 pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
 
 /// Top-level app state stored at `<config_dir>/config.toml`.

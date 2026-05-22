@@ -9,8 +9,7 @@ discovery layer. P2P as far as each OS allows.
 - One **"My Drive"** per user — a hashtree root they own and edit, presented as
   a folder in the OS file manager.
 - Sync that root across all of the user's devices automatically.
-- Each device seeds its blocks P2P to other peers (initially WebRTC; transport
-  layer eventually delegated to `~/src/fips`, see below).
+- Each device seeds its blocks P2P to other peers through hashtree-over-FIPS.
 - **Share** folders with specific other Nostr pubkeys; shares appear as
   additional drives on the recipient's device.
 - No DNS, SSL, CDNs, or centralized servers. Identity = Nostr keypair.
@@ -51,7 +50,7 @@ No separate daemon process, no IPC — `iris-drive-app-core` links
 ┌────────────────────────────────────────────────────────────┐
 │  hashtree-embedded                                          │
 │   - block store, root publish, mutable-root subscriptions   │
-│   - peer seeding (WebRTC today; fips later)                 │
+│   - peer seeding via FIPS                                   │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -60,10 +59,9 @@ No separate daemon process, no IPC — `iris-drive-app-core` links
 - **`~/src/hashtree`** — supplies the storage primitive and all OS-mount
   adapters (see "Where adapter crates live" below). iris-drive does not fork
   hashtree; it consumes it and contributes upstream.
-- **`~/src/fips`** — peer-to-peer transport. WebRTC and other transports will
-  be migrated to fips's concern. Iris Drive should consume the transport
-  layer through hashtree, not pin a specific transport. Treat any direct
-  WebRTC reference as a temporary measure pending the fips transition.
+- **`~/src/fips`** — peer-to-peer transport. Iris Drive consumes it through
+  hashtree/FIPS for direct block replication and keeps Blossom as an optional
+  fallback/cache.
 - **`~/src/squirreldisk`** — disk-usage pie chart analyzer. Reference only for
   the "what's using space" UI idea in Phase 7; not a code dependency. Look at
   it for visualization inspiration, no obligation to extract or reuse.

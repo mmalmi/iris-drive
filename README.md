@@ -27,8 +27,8 @@ render. Native shells follow the same Rust-core / native-front pattern used in
 
 Early working sync engine with macOS, Linux, and Windows desktop control
 panels. The CLI can initialize an account, import a working directory, publish
-private drive roots, upload encrypted blocks to Blossom, and run a long-lived
-daemon.
+private drive roots, replicate blocks directly over FIPS between authorized
+devices, fall back to Blossom, and run a long-lived daemon.
 
 ## Getting started
 
@@ -39,7 +39,7 @@ just run
 That launches the Rust macOS menu-bar wrapper. On first launch it creates
 `~/Iris Drive`, initializes the local account/device, starts `idrive daemon`,
 publishes the private drive root, and uploads encrypted blocks to the default
-Blossom server.
+Blossom server as a fallback/cache.
 
 For a terminal-only daemon, initialize/import once first:
 

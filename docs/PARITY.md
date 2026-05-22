@@ -17,7 +17,8 @@ file-provider backends differ.
 | Copy/open snapshot link | Yes | Yes | Yes |
 | Devices list and auth state | Yes | Yes | Yes |
 | Relay add/reset controls | Yes | Yes | Yes |
-| Blossom server list | Yes | Yes | Yes |
+| Direct FIPS block sync | Yes | Yes | Yes |
+| Blossom fallback server list | Yes | Yes | Yes |
 | Hashtree config/block/root paths | Yes | Yes | Yes |
 | Tray/menu-bar control | Yes | Yes | Yes |
 | Close to tray/menu-bar | Yes | Yes | Yes |
@@ -35,3 +36,7 @@ The minimum parity smoke for Linux/Windows is:
 
 The same flow is valid for macOS once the visible app has the latest control
 panel build.
+
+Block replication now tries direct hashtree-over-FIPS transfer between
+authorized Iris Drive instances first. Blossom remains configured as a
+fallback/cache path, not the primary sync transport.

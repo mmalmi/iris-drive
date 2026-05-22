@@ -2,6 +2,7 @@ pub mod account;
 pub mod app_keys;
 pub mod blossom_sync;
 pub mod config;
+pub mod fips_sync;
 
 /// Convenience constructor: a `BlossomClient` wired with the given
 /// signing keys and the given server URLs. Used as both the write and
@@ -66,6 +67,7 @@ pub use conflict::{
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,
 };
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
+pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};

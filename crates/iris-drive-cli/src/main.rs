@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
 use iris_drive_core::{
-    AccountState, Drive, DriveRole, PRIMARY_DRIVE_ID,
+    AccountState, Drive, DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
@@ -23,6 +23,10 @@ use serde_json::json;
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
+const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 5, 10, 20];
+const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
+const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
+const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 2;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 
 #[derive(Debug, Parser)]
@@ -236,7 +240,26 @@ enum EventCmd {
     DriveRoot,
 }
 
+#[cfg(windows)]
 fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .name("idrive-main".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run_cli)
+        .and_then(|handle| {
+            handle
+                .join()
+                .map_err(|_| std::io::Error::other("idrive main thread panicked"))
+        })
+        .unwrap_or(ExitCode::FAILURE)
+}
+
+#[cfg(not(windows))]
+fn main() -> ExitCode {
+    run_cli()
+}
+
+fn run_cli() -> ExitCode {
     let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1145,6 +1168,126 @@ async fn upload_tree_to_blossom_with_hashtree(
         .context("uploading tree to blossom")
 }
 
+async fn start_fips_block_sync(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+) -> Result<FsFipsBlockSync> {
+    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    let daemon = Daemon::open(config_dir).context("opening daemon for direct FIPS sync")?;
+    let local = daemon.tree().get_store().clone();
+    iris_drive_core::FipsBlockSync::start(&device, local, config)
+        .await
+        .context("starting direct FIPS block sync")
+}
+
+async fn download_roots_over_fips(
+    fips: &FsFipsBlockSync,
+    root_cid_strs: &[String],
+    policy: FipsDownloadPolicy,
+) -> Result<DownloadReport> {
+    let mut totals = DownloadReport::default();
+    for cid_str in root_cid_strs {
+        let cid = Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
+        let report = download_tree_over_fips_with_retry(fips, &cid, policy)
+            .await
+            .with_context(|| format!("downloading tree over FIPS for {cid_str}"))?;
+        add_download_report(&mut totals, report);
+    }
+    Ok(totals)
+}
+
+async fn download_tree_over_fips_with_retry(
+    fips: &FsFipsBlockSync,
+    root: &Cid,
+    policy: FipsDownloadPolicy,
+) -> Result<DownloadReport> {
+    let mut last_error: Option<anyhow::Error> = None;
+    for delay in std::iter::once(0).chain(policy.retry_delays.iter().copied()) {
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        }
+        match tokio::time::timeout(policy.attempt_timeout, fips.download_tree(root)).await {
+            Ok(Ok(report)) => return Ok(report),
+            Ok(Err(error)) => last_error = Some(anyhow::Error::from(error)),
+            Err(_) => {
+                last_error = Some(anyhow::anyhow!(
+                    "FIPS download timed out after {}s",
+                    policy.attempt_timeout.as_secs()
+                ));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("FIPS download failed")))
+}
+
+#[derive(Clone, Copy)]
+struct FipsDownloadPolicy {
+    retry_delays: &'static [u64],
+    attempt_timeout: std::time::Duration,
+}
+
+fn fips_download_policy(config: &AppConfig) -> FipsDownloadPolicy {
+    if config.blossom_servers.is_empty() {
+        FipsDownloadPolicy {
+            retry_delays: FIPS_DOWNLOAD_RETRY_DELAYS,
+            attempt_timeout: std::time::Duration::from_secs(FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS),
+        }
+    } else {
+        FipsDownloadPolicy {
+            retry_delays: FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS,
+            attempt_timeout: std::time::Duration::from_secs(
+                FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS,
+            ),
+        }
+    }
+}
+
+async fn download_roots_over_blossom(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    root_cid_strs: &[String],
+) -> Result<DownloadReport> {
+    if config.blossom_servers.is_empty() {
+        return Err(anyhow::anyhow!("no blossom servers configured"));
+    }
+
+    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    let daemon = Daemon::open(config_dir).context("opening daemon for Blossom sync")?;
+    let local = daemon.tree().get_store().clone();
+    let bclient =
+        iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
+    let mut totals = DownloadReport::default();
+    for cid_str in root_cid_strs {
+        let cid = Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
+        let report = iris_drive_core::blossom_sync::download_tree_with_retry(
+            local.clone(),
+            &cid,
+            bclient.clone(),
+            BLOSSOM_DOWNLOAD_RETRY_DELAYS,
+        )
+        .await
+        .with_context(|| format!("downloading tree from Blossom for {cid_str}"))?;
+        add_download_report(&mut totals, report);
+    }
+    Ok(totals)
+}
+
+fn add_download_report(total: &mut DownloadReport, report: DownloadReport) {
+    total.total_hashes += report.total_hashes;
+    total.fetched += report.fetched;
+    total.already_local += report.already_local;
+}
+
+fn download_report_json(report: &DownloadReport) -> serde_json::Value {
+    json!({
+        "total_hashes": report.total_hashes,
+        "fetched": report.fetched,
+        "already_local": report.already_local,
+    })
+}
+
 async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
@@ -1304,36 +1447,35 @@ fn cmd_sync(
 
         config.save(config_path_in(config_dir))?;
 
-        // 3) Replicate blocks for each seen drive root via Blossom if
-        // servers are configured. Retrying known roots lets a device
-        // recover after a transient Blossom miss.
+        // 3) Replicate blocks for each seen drive root. Prefer direct
+        // FIPS peer transfer between authorized Iris Drive instances;
+        // Blossom stays as the public fallback/cache path.
+        let mut fips_download_report: Option<DownloadReport> = None;
+        let mut fips_download_error: Option<String> = None;
         let mut blossom_download_report: Option<DownloadReport> = None;
-        if !root_cids_to_download.is_empty() && !config.blossom_servers.is_empty() {
-            let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-                .context("loading device key")?;
-            let daemon = Daemon::open(config_dir).context("opening daemon")?;
-            let local = daemon.tree().get_store().clone();
-            let bclient = iris_drive_core::blossom_sync_client(
-                device.keys().clone(),
-                &config.blossom_servers,
-            );
-            let mut totals = DownloadReport::default();
-            for cid_str in &root_cids_to_download {
-                let cid =
-                    Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
-                let r = iris_drive_core::blossom_sync::download_tree_with_retry(
-                    local.clone(),
-                    &cid,
-                    bclient.clone(),
-                    BLOSSOM_DOWNLOAD_RETRY_DELAYS,
-                )
-                .await
-                .with_context(|| format!("downloading tree for {cid_str}"))?;
-                totals.total_hashes += r.total_hashes;
-                totals.fetched += r.fetched;
-                totals.already_local += r.already_local;
+        let mut blossom_download_error: Option<String> = None;
+        if !root_cids_to_download.is_empty() {
+            let fips_policy = fips_download_policy(&config);
+            let mut block_config = config.clone();
+            block_config.relays = relays.clone();
+            match start_fips_block_sync(config_dir, &block_config).await {
+                Ok(fips) => {
+                    match download_roots_over_fips(&fips, &root_cids_to_download, fips_policy).await
+                    {
+                        Ok(report) => fips_download_report = Some(report),
+                        Err(error) => fips_download_error = Some(format!("{error:#}")),
+                    }
+                }
+                Err(error) => fips_download_error = Some(format!("{error:#}")),
             }
-            blossom_download_report = Some(totals);
+
+            if fips_download_report.is_none() && !config.blossom_servers.is_empty() {
+                match download_roots_over_blossom(config_dir, &config, &root_cids_to_download).await
+                {
+                    Ok(report) => blossom_download_report = Some(report),
+                    Err(error) => blossom_download_error = Some(error.to_string()),
+                }
+            }
         }
 
         let _ = client.disconnect().await;
@@ -1347,11 +1489,10 @@ fn cmd_sync(
                 "drive_root_events_seen": drive_root_events.len(),
                 "drive_root_events_applied": drive_roots_applied,
                 "drive_root_events_skipped": drive_roots_skipped,
-                "blossom_download": blossom_download_report.map(|r| json!({
-                    "total_hashes": r.total_hashes,
-                    "fetched": r.fetched,
-                    "already_local": r.already_local,
-                })),
+                "fips_download": fips_download_report.as_ref().map(download_report_json),
+                "fips_download_error": fips_download_error,
+                "blossom_download": blossom_download_report.as_ref().map(download_report_json),
+                "blossom_download_error": blossom_download_error,
             })
         );
         Ok::<_, anyhow::Error>(())
@@ -1429,6 +1570,13 @@ fn cmd_daemon(
     let embedded_hashtree_status = embedded_hashtree.status_payload();
 
     runtime.block_on(async {
+        let mut block_config = config.clone();
+        block_config.relays = relays.clone();
+        let (fips_blocks, fips_block_sync_error) =
+            match start_fips_block_sync(config_dir, &block_config).await {
+                Ok(sync) => (Some(sync), None),
+                Err(error) => (None, Some(error.to_string())),
+            };
         let gateway = if enable_gateway {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
@@ -1465,6 +1613,15 @@ fn cmd_daemon(
             .await
             .context("opening subscription")?;
         let mut notifications = client.notifications();
+        let fips_block_sync_status = if let Some(sync) = fips_blocks.as_ref() {
+            Some(json!({
+                "endpoint_npub": sync.endpoint_npub(),
+                "discovery_scope": sync.discovery_scope(),
+                "authorized_peers": sync.peer_ids().await,
+            }))
+        } else {
+            None
+        };
 
         // Spawn an fs-notify watcher on the working dir. Events get
         // debounced (notify-debouncer-mini) then forwarded over an
@@ -1493,6 +1650,8 @@ fn cmd_daemon(
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
                 "browser_gateway": gateway_status,
+                "fips_block_sync": fips_block_sync_status,
+                "fips_block_sync_error": fips_block_sync_error,
             })
         );
 
@@ -1545,7 +1704,8 @@ fn cmd_daemon(
             }
         }
         if working_dir.is_some()
-            && let Err(error) = scan_and_publish(&client, config_dir).await
+            && let Err(error) =
+                scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await
         {
             println!(
                 "{}",
@@ -1590,7 +1750,7 @@ fn cmd_daemon(
                 recv = notifications.recv() => {
                     match recv {
                         Ok(RelayPoolNotification::Event { event, .. }) => {
-                            if let Err(e) = apply_one_event(config_dir, &event).await {
+                            if let Err(e) = apply_one_event(config_dir, &event, fips_blocks.as_ref()).await {
                                 println!(
                                     "{}",
                                     json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
@@ -1606,7 +1766,7 @@ fn cmd_daemon(
                     }
                 }
                 Some(()) = fs_rx.recv() => {
-                    if let Err(e) = scan_and_publish(&client, config_dir).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
@@ -1629,7 +1789,7 @@ fn cmd_daemon(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    if let Err(e) = scan_and_publish(&client, config_dir).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
@@ -1783,9 +1943,16 @@ fn spawn_fs_watcher(
 /// from what's already recorded for this device, publish a new
 /// drive-root event. No-op when the root hasn't changed.
 #[allow(clippy::too_many_lines)]
-async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Path) -> Result<()> {
+async fn scan_and_publish(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
     use iris_drive_core::relay_sync;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    if let Some(sync) = fips_blocks {
+        sync.refresh_authorized_peers(&config).await;
+    }
     let state = config
         .account
         .as_ref()
@@ -1802,6 +1969,12 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
         .map(|r| r.root_cid.clone());
 
     let mut daemon = Daemon::open(config_dir).context("opening daemon")?;
+    if working_dir_has_same_visible_files(&daemon, &working_dir, previous_root_cid.as_deref())
+        .await?
+    {
+        return Ok(());
+    }
+
     let report = daemon
         .import_working_dir(&working_dir)
         .await
@@ -1902,7 +2075,45 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
     Ok(())
 }
 
-async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event) -> Result<()> {
+async fn working_dir_has_same_visible_files(
+    daemon: &Daemon,
+    working_dir: &std::path::Path,
+    previous_root_cid: Option<&str>,
+) -> Result<bool> {
+    let Some(previous_root_cid) = previous_root_cid else {
+        return Ok(false);
+    };
+    let previous_root = Cid::parse(previous_root_cid)
+        .with_context(|| format!("parsing previous root cid {previous_root_cid}"))?;
+    let current_root = index_dir(daemon.tree(), working_dir)
+        .await
+        .context("indexing working dir for change detection")?;
+    let (mut previous_files, _) = walk_device_tree(daemon.tree(), &previous_root)
+        .await
+        .with_context(|| format!("walking previous root {previous_root_cid}"))?;
+    let (mut current_files, _) = walk_device_tree(daemon.tree(), &current_root)
+        .await
+        .context("walking current working dir root")?;
+    sort_device_files(&mut previous_files);
+    sort_device_files(&mut current_files);
+    Ok(previous_files == current_files)
+}
+
+fn sort_device_files(files: &mut [DeviceFileEntry]) {
+    files.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| a.hash.cmp(&b.hash))
+            .then_with(|| a.size.cmp(&b.size))
+            .then_with(|| a.whole_file_hash.cmp(&b.whole_file_hash))
+    });
+}
+
+async fn apply_one_event(
+    config_dir: &std::path::Path,
+    event: &nostr_sdk::Event,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
     use iris_drive_core::relay_sync;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
@@ -1916,6 +2127,9 @@ async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event)
                 "outcome": format!("{outcome:?}"),
             })
         );
+        if let Some(sync) = fips_blocks {
+            sync.refresh_authorized_peers(&config).await;
+        }
     } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
@@ -1935,18 +2149,20 @@ async fn apply_one_event(config_dir: &std::path::Path, event: &nostr_sdk::Event)
             })
         );
         config.save(config_path_in(config_dir))?;
+        if let Some(sync) = fips_blocks {
+            sync.refresh_authorized_peers(&config).await;
+        }
 
-        // If we applied a fresh drive root and Blossom is configured,
-        // pull the underlying blocks so `idrive list` can walk the
-        // remote device's tree. Best-effort; errors are logged.
+        // If we applied a fresh drive root, pull the underlying blocks
+        // so `idrive list` can walk the remote device's tree.
         if was_applied
-            && !config.blossom_servers.is_empty()
             && let Some((_, _, _, root_ref)) = parsed
-            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_ref.root_cid).await
+            && let Err(e) =
+                pull_blocks_for_root(config_dir, &config, &root_ref.root_cid, fips_blocks).await
         {
             println!(
                 "{}",
-                json!({"event": "blossom_download_error", "error": e.to_string()})
+                json!({"event": "block_download_error", "error": e.to_string()})
             );
         }
         return Ok(());
@@ -1962,33 +2178,60 @@ async fn pull_blocks_for_root(
     config_dir: &std::path::Path,
     config: &AppConfig,
     root_cid_str: &str,
+    fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
-    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
-    let daemon = Daemon::open(config_dir).context("opening daemon")?;
-    let local = daemon.tree().get_store().clone();
-    let bclient =
-        iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
-    let report = iris_drive_core::blossom_sync::download_tree_with_retry(
-        local,
-        &cid,
-        bclient,
-        BLOSSOM_DOWNLOAD_RETRY_DELAYS,
-    )
-    .await
-    .with_context(|| format!("downloading tree {root_cid_str}"))?;
-    println!(
-        "{}",
-        json!({
-            "event": "blossom_downloaded",
-            "root_cid": root_cid_str,
-            "fetched": report.fetched,
-            "already_local": report.already_local,
-            "total_hashes": report.total_hashes,
-        })
-    );
+    if let Some(sync) = fips_blocks {
+        match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await {
+            Ok(report) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "fips_downloaded",
+                        "root_cid": root_cid_str,
+                        "report": download_report_json(&report),
+                    })
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "fips_download_error",
+                        "root_cid": root_cid_str,
+                        "error": format!("{error:#}"),
+                    })
+                );
+            }
+        }
+    }
+
+    if !config.blossom_servers.is_empty() {
+        match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
+            Ok(report) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "blossom_downloaded",
+                        "root_cid": root_cid_str,
+                        "report": download_report_json(&report),
+                    })
+                );
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "blossom_download_error",
+                        "root_cid": root_cid_str,
+                        "error": error.to_string(),
+                    })
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2293,6 +2536,40 @@ mod daemon_lock_tests {
         assert_eq!(
             status["unresolved"][0]["visible_conflict_path"],
             "report (conflict from phone).pdf"
+        );
+    }
+
+    #[tokio::test]
+    async fn working_dir_change_detection_ignores_snapshot_metadata() {
+        let cfg_dir = tempdir().unwrap();
+        let work = tempdir().unwrap();
+        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+
+        std::fs::write(work.path().join("note.txt"), b"one").unwrap();
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        assert!(
+            working_dir_has_same_visible_files(&daemon, work.path(), Some(&first.root_cid))
+                .await
+                .unwrap()
+        );
+
+        let second = daemon.import_working_dir(work.path()).await.unwrap();
+        assert_ne!(
+            first.root_cid, second.root_cid,
+            "history metadata still creates a new root when explicitly imported"
+        );
+        assert!(
+            working_dir_has_same_visible_files(&daemon, work.path(), Some(&second.root_cid))
+                .await
+                .unwrap()
+        );
+
+        std::fs::write(work.path().join("note.txt"), b"two").unwrap();
+        assert!(
+            !working_dir_has_same_visible_files(&daemon, work.path(), Some(&second.root_cid))
+                .await
+                .unwrap()
         );
     }
 
