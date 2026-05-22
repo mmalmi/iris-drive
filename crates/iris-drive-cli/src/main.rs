@@ -396,6 +396,7 @@ fn cmd_approve(config_dir: &std::path::Path, device: &str, label: Option<String>
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let (device_hex, label) = resolve_device_approval_input(device, &state.owner_pubkey, label)
         .context("parsing device approval request")?;
+    let approved_device_npub = account_npub(&device_hex);
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
         .approve_device(device_hex, label)
@@ -406,7 +407,7 @@ fn cmd_approve(config_dir: &std::path::Path, device: &str, label: Option<String>
     println!(
         "{}",
         json!({
-            "approved_device_npub": account_npub_or_self(device, &account.state),
+            "approved_device_npub": approved_device_npub,
             "roster_size": device_count,
         })
     );
@@ -2962,11 +2963,6 @@ fn account_npub(hex: &str) -> String {
         .ok()
         .and_then(|pk| pk.to_bech32().ok())
         .unwrap_or_else(|| hex.to_string())
-}
-
-fn account_npub_or_self(input: &str, state: &AccountState) -> String {
-    normalize_pubkey(input)
-        .map_or_else(|_| account_npub(&state.device_pubkey), |h| account_npub(&h))
 }
 
 fn authorization_state_label(state: &AccountState) -> &'static str {
