@@ -4,28 +4,30 @@ param(
 
   [string]$Runtime = "win-x64",
 
-  [switch]$FrameworkDependent,
-
   [switch]$DesktopShortcut,
 
-  [switch]$SkipCliBuild
+  [switch]$SkipCliBuild,
+
+  [switch]$AllowLockfileUpdate
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "windows\IrisDrive.Windows.csproj"
-$SelfContained = if ($FrameworkDependent) { "false" } else { "true" }
 
 if (-not $SkipCliBuild) {
   $CargoArgs = @("build", "-p", "idrive")
   if ($Configuration -eq "Release") {
     $CargoArgs += "--release"
   }
+  if (-not $AllowLockfileUpdate) {
+    $CargoArgs += "--locked"
+  }
   & cargo @CargoArgs
 }
 
-& dotnet publish $Project -c $Configuration -r $Runtime --self-contained $SelfContained
+& dotnet publish $Project -c $Configuration -r $Runtime --self-contained true -p:WindowsPackageType=None
 
 $PublishDir = Join-Path $Root "windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
 $CargoProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
@@ -63,6 +65,4 @@ if ($DesktopShortcut) {
 }
 
 Write-Output "Published Iris Drive to $PublishDir"
-if ($SelfContained -eq "true") {
-  Write-Output "Self-contained publish: no .NET Desktop Runtime install required."
-}
+Write-Output "Self-contained publish: no .NET Desktop Runtime install required."

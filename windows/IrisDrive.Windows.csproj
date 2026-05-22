@@ -8,10 +8,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>IrisDrive</AssemblyName>
     <RootNamespace>IrisDrive.WindowsShell</RootNamespace>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
     <ApplicationIcon>IrisDrive.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="IrisDrive.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="IrisDrive.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

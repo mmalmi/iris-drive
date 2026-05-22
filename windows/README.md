@@ -9,6 +9,7 @@ shared `idrive` CLI:
 - drive folder and snapshot link actions
 - devices, network, hashtree, and settings pages
 - Windows tray icon with show/open/start/stop/restart/quit actions
+- self-contained `win-x64` publish output for shortcuts/installers
 
 Build from the repo root on Windows:
 
