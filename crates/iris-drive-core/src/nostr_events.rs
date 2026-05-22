@@ -36,7 +36,7 @@ pub const KIND_APP_KEYS: u16 = 30078;
 /// NIP-78 parameterized-replaceable kind for device-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30079;
 
-/// Standard hashtree mutable-root kind used by files.iris.to.
+/// Standard hashtree mutable-root kind used by drive.iris.to.
 pub const KIND_HASHTREE_ROOT: u16 = 30078;
 
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
@@ -250,7 +250,7 @@ pub fn build_drive_root_event(
     Ok(event)
 }
 
-/// Build a standard private hashtree mutable-root event for files.iris.to.
+/// Build a standard private hashtree mutable-root event for drive.iris.to.
 ///
 /// Iris Drive keeps its richer multi-device drive-root event, but the files
 /// app already understands kind 30078 tree roots with `#l=hashtree`, `hash`,

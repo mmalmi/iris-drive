@@ -81,6 +81,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+              let url = userActivity.webpageURL,
+              isDriveWebURL(url)
+        else {
+            return false
+        }
+        handleDriveWebURL(url)
+        return true
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard sender.title == irisDriveDisplayName,
               IrisDriveStatus.shared.closeToMenuBarOnClose
@@ -113,6 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleShowControlPanelNotification(_ notification: Notification) {
         showControlPanel()
+    }
+
+    private func isDriveWebURL(_ url: URL) -> Bool {
+        url.scheme == "https" && url.host?.lowercased() == "drive.iris.to"
+    }
+
+    private func handleDriveWebURL(_ url: URL) {
+        showControlPanel()
+        updateStatus("Drive link opened")
+        NSLog("Iris Drive opened universal link: \(url.absoluteString)")
     }
 
     private func installSingleInstanceNotificationObserver() {
@@ -856,7 +881,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.localBlockBytes = Self.int64Value(hashtree["local_block_bytes"]) ?? 0
                 status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
                 status.rootIsPrivate = hashtree["current_root_private"] as? Bool
-                status.filesIrisURL = hashtree["files_iris_to_url"] as? String
+                status.filesIrisURL =
+                    (hashtree["drive_iris_to_url"] as? String)
+                    ?? (hashtree["files_iris_to_url"] as? String)
                 status.snapshotURL =
                     hashtree["snapshot_url"] as? String
                     ?? hashtree["permalink_url"] as? String
@@ -961,7 +988,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let rootCID = json["root_cid"] as? String {
                 status.rootCID = rootCID
             }
-            if let link = json["files_iris_to_url"] as? String {
+            if let link =
+                (json["drive_iris_to_url"] as? String)
+                ?? (json["files_iris_to_url"] as? String) {
                 status.filesIrisURL = link
             }
             if let link = json["snapshot_url"] as? String ?? json["permalink_url"] as? String {

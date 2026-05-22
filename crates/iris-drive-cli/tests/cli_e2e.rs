@@ -709,14 +709,18 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     assert_eq!(v["hashtree"]["current_root_private"], true);
     let owner_npub = v["account"]["owner_npub"].as_str().unwrap();
     assert_eq!(
+        v["hashtree"]["drive_iris_to_url"],
+        format!("https://drive.iris.to/#/{owner_npub}/main")
+    );
+    assert_eq!(
         v["hashtree"]["files_iris_to_url"],
-        format!("https://files.iris.to/#/{owner_npub}/main")
+        v["hashtree"]["drive_iris_to_url"]
     );
     let snapshot_url = v["hashtree"]["snapshot_url"].as_str().unwrap();
     assert_eq!(v["hashtree"]["permalink_url"], snapshot_url);
     let nhash = snapshot_url
-        .strip_prefix("https://files.iris.to/#/")
-        .expect("snapshot link should use files.iris.to nhash route");
+        .strip_prefix("https://drive.iris.to/#/")
+        .expect("snapshot link should use drive.iris.to nhash route");
     let decoded = nhash_decode(nhash).expect("decode snapshot link nhash");
     let cid = Cid::parse(root_cid).expect("parse root cid");
     assert_eq!(decoded.hash, cid.hash);

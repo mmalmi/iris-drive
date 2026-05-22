@@ -204,7 +204,7 @@ pub async fn publish_drive_root(
     Ok(*output.id())
 }
 
-/// Publish the owner-private files.iris.to-compatible mutable tree root.
+/// Publish the owner-private drive.iris.to-compatible mutable tree root.
 pub async fn publish_files_root(
     client: &Client,
     owner_keys: &Keys,

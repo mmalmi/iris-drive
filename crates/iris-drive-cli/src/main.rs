@@ -458,12 +458,12 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 .and_then(|drive| drive.last_root_cid.clone())
         });
     let current_root_private = current_root_cid.as_deref().and_then(root_is_private);
-    let files_iris_to_url = current_root_cid
+    let drive_iris_to_url = current_root_cid
         .as_ref()
-        .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+        .and_then(|_| drive_iris_to_url_for_primary_drive(&config));
     let snapshot_url = current_root_cid
         .as_deref()
-        .and_then(files_iris_to_snapshot_url_for_root);
+        .and_then(drive_iris_to_snapshot_url_for_root);
     let browser_gateway_urls =
         local_gateway_urls_for_root(current_root_cid.as_deref(), DEFAULT_GATEWAY_PORT);
     let top_level_entries = current_root_cid
@@ -514,7 +514,8 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "local_block_bytes": block_stats.total_bytes,
                 "current_root_cid": current_root_cid,
                 "current_root_private": current_root_private,
-                "files_iris_to_url": files_iris_to_url,
+                "drive_iris_to_url": drive_iris_to_url,
+                "files_iris_to_url": drive_iris_to_url,
                 "snapshot_url": snapshot_url,
                 "permalink_url": snapshot_url,
                 "local_gateway": browser_gateway_urls,
@@ -609,30 +610,32 @@ fn root_is_private(root_cid: &str) -> Option<bool> {
     Cid::parse(root_cid).ok().map(|cid| cid.key.is_some())
 }
 
-fn files_iris_to_url_for_primary_drive(config: &AppConfig) -> Option<String> {
+const DRIVE_IRIS_TO_ORIGIN: &str = "https://drive.iris.to";
+
+fn drive_iris_to_url_for_primary_drive(config: &AppConfig) -> Option<String> {
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
-    Some(files_iris_to_url_for_drive(
+    Some(drive_iris_to_url_for_drive(
         &drive.owner_pubkey,
         &drive.drive_id,
     ))
 }
 
-fn files_iris_to_url_for_drive(owner_pubkey_hex: &str, drive_id: &str) -> String {
+fn drive_iris_to_url_for_drive(owner_pubkey_hex: &str, drive_id: &str) -> String {
     format!(
-        "https://files.iris.to/#/{}/{}",
+        "{DRIVE_IRIS_TO_ORIGIN}/#/{}/{}",
         account_npub(owner_pubkey_hex),
         percent_encode_path_segment(drive_id)
     )
 }
 
-fn files_iris_to_snapshot_url_for_root(root_cid: &str) -> Option<String> {
+fn drive_iris_to_snapshot_url_for_root(root_cid: &str) -> Option<String> {
     let cid = Cid::parse(root_cid).ok()?;
     let nhash = nhash_encode_full(&NHashData {
         hash: cid.hash,
         decrypt_key: cid.key,
     })
     .ok()?;
-    Some(format!("https://files.iris.to/#/{nhash}"))
+    Some(format!("{DRIVE_IRIS_TO_ORIGIN}/#/{nhash}"))
 }
 
 fn local_gateway_urls_for_root(root_cid: Option<&str>, port: u16) -> serde_json::Value {
@@ -859,9 +862,10 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
             json!({
                 "working_dir": report.working_dir.display().to_string(),
                 "root_cid": report.root_cid,
-                "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
-                "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
-                "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
+                "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
                 "local_gateway": local_gateway_urls_for_root(
                     Some(&report.root_cid),
                     DEFAULT_GATEWAY_PORT,
@@ -1075,14 +1079,14 @@ fn cmd_publish(
         let report = publish_current_state(&client, config_dir, &config, &state).await?;
 
         let _ = client.disconnect().await;
-        let files_iris_to_url = report
+        let drive_iris_to_url = report
             .root_cid
             .as_ref()
-            .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+            .and_then(|_| drive_iris_to_url_for_primary_drive(&config));
         let snapshot_url = report
             .root_cid
             .as_deref()
-            .and_then(files_iris_to_snapshot_url_for_root);
+            .and_then(drive_iris_to_snapshot_url_for_root);
         println!(
             "{}",
             json!({
@@ -1095,7 +1099,8 @@ fn cmd_publish(
                 "published_files_root": report.published_files_root,
                 "files_root_publish_error": report.files_root_publish_error,
                 "root_cid": report.root_cid,
-                "files_iris_to_url": files_iris_to_url,
+                "drive_iris_to_url": drive_iris_to_url,
+                "files_iris_to_url": drive_iris_to_url,
                 "snapshot_url": snapshot_url,
                 "permalink_url": snapshot_url,
                 "blossom_upload": report.blossom_upload.map(|r| json!({
@@ -1392,9 +1397,10 @@ fn cmd_daemon(
                 json!({
                     "event": "initial_import",
                     "root_cid": report.root_cid,
-                    "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
-                    "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
-                    "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+                    "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                    "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                    "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
+                    "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
                     "working_dir": report.working_dir.display().to_string(),
                     "file_count": report.file_count,
                     "entries": report.top_level_entries,
@@ -1497,14 +1503,14 @@ fn cmd_daemon(
         // silent until its first edit.
         match publish_current_state(&client, config_dir, &config, &state).await {
             Ok(report) => {
-                let files_iris_to_url = report
+                let drive_iris_to_url = report
                     .root_cid
                     .as_ref()
-                    .and_then(|_| files_iris_to_url_for_primary_drive(&config));
+                    .and_then(|_| drive_iris_to_url_for_primary_drive(&config));
                 let snapshot_url = report
                     .root_cid
                     .as_deref()
-                    .and_then(files_iris_to_snapshot_url_for_root);
+                    .and_then(drive_iris_to_snapshot_url_for_root);
                 println!(
                     "{}",
                     json!({
@@ -1516,7 +1522,8 @@ fn cmd_daemon(
                         "published_files_root": report.published_files_root,
                         "files_root_publish_error": report.files_root_publish_error,
                         "root_cid": report.root_cid,
-                        "files_iris_to_url": files_iris_to_url,
+                        "drive_iris_to_url": drive_iris_to_url,
+                        "files_iris_to_url": drive_iris_to_url,
                         "snapshot_url": snapshot_url,
                         "permalink_url": snapshot_url,
                         "blossom_upload": report.blossom_upload.map(|r| json!({
@@ -1877,9 +1884,10 @@ async fn scan_and_publish(client: &nostr_sdk::Client, config_dir: &std::path::Pa
         json!({
             "event": "auto_published",
             "root_cid": report.root_cid,
-            "files_iris_to_url": files_iris_to_url_for_primary_drive(daemon.config()),
-            "snapshot_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
-            "permalink_url": files_iris_to_snapshot_url_for_root(&report.root_cid),
+            "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+            "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+            "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
+            "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
             "published_drive_root": published_drive_root,
             "published_files_root": published_files_root,
             "file_count": report.file_count,
