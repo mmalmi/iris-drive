@@ -278,28 +278,64 @@ fn spawn_daemon() -> std::io::Result<Child> {
         .spawn()
 }
 
-/// Build a simple 22×22 placeholder menu-bar icon. The real product
-/// would ship per-state icons (synced / syncing / error); a plain
-/// white glyph keeps the dev wrapper visible on the macOS menu bar.
+/// Build a 22×22 template version of the Iris Drive platter/reader glyph.
 fn make_icon() -> tray_icon::Icon {
     const SIZE: u32 = 22;
-    const HALF: u32 = SIZE / 2;
+    const CENTER: f32 = 11.0;
+    const RING_RADIUS: f32 = 6.4;
+    const STROKE_WIDTH: f32 = 2.4;
+    const PUPIL_RADIUS: f32 = 1.6;
+    const READER_START: (f32, f32) = (4.1, 17.9);
+    const READER_END: (f32, f32) = (8.8, 13.2);
+
     let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    let radius_sq = (HALF - 1) * (HALF - 1);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            // Filled circle: transparent at corners, white inside.
-            let dx = x.abs_diff(HALF);
-            let dy = y.abs_diff(HALF);
-            let r2 = dx * dx + dy * dy;
-            if r2 < radius_sq {
-                data.extend_from_slice(&[255, 255, 255, 255]);
-            } else {
-                data.extend_from_slice(&[0, 0, 0, 0]);
-            }
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let dx = px - CENTER;
+            let dy = py - CENTER;
+            let distance_from_center = (dx * dx + dy * dy).sqrt();
+            let ring_alpha = stroke_alpha((distance_from_center - RING_RADIUS).abs(), STROKE_WIDTH);
+            let pupil_alpha = fill_alpha(distance_from_center, PUPIL_RADIUS);
+            let reader_alpha = stroke_alpha(
+                distance_to_segment((px, py), READER_START, READER_END),
+                STROKE_WIDTH,
+            );
+            let alpha = ring_alpha.max(pupil_alpha).max(reader_alpha);
+            data.extend_from_slice(&[255, 255, 255, alpha]);
         }
     }
     tray_icon::Icon::from_rgba(data, SIZE, SIZE).expect("valid icon")
+}
+
+fn stroke_alpha(distance: f32, width: f32) -> u8 {
+    fill_alpha(distance, width / 2.0)
+}
+
+fn fill_alpha(distance: f32, radius: f32) -> u8 {
+    let edge = distance - radius;
+    if edge <= -0.5 {
+        255
+    } else if edge >= 0.5 {
+        0
+    } else {
+        ((0.5 - edge) * 255.0).round() as u8
+    }
+}
+
+fn distance_to_segment(point: (f32, f32), start: (f32, f32), end: (f32, f32)) -> f32 {
+    let vx = end.0 - start.0;
+    let vy = end.1 - start.1;
+    let wx = point.0 - start.0;
+    let wy = point.1 - start.1;
+    let segment_len_sq = vx * vx + vy * vy;
+    let t = ((wx * vx + wy * vy) / segment_len_sq).clamp(0.0, 1.0);
+    let closest_x = start.0 + t * vx;
+    let closest_y = start.1 + t * vy;
+    let dx = point.0 - closest_x;
+    let dy = point.1 - closest_y;
+    (dx * dx + dy * dy).sqrt()
 }
 
 #[cfg(test)]

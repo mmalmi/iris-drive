@@ -711,12 +711,27 @@ public partial class MainWindow : Window
 
         trayIcon = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = TrayIcon(),
             Text = "Iris Drive",
             ContextMenuStrip = menu,
             Visible = true,
         };
         trayIcon.DoubleClick += (_, _) => ShowFromTray();
+    }
+
+    private static System.Drawing.Icon TrayIcon()
+    {
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
+        {
+            var icon = System.Drawing.Icon.ExtractAssociatedIcon(processPath);
+            if (icon is not null)
+            {
+                return icon;
+            }
+        }
+
+        return System.Drawing.SystemIcons.Application;
     }
 
     private void InstallTraySafely()

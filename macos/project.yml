@@ -20,6 +20,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources
     settings:
       base:
         PRODUCT_NAME: Iris Drive

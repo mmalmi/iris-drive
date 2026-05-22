@@ -514,10 +514,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func statusIcon() -> NSImage {
-        let image = NSImage(
-            systemSymbolName: "externaldrive.fill",
-            accessibilityDescription: irisDriveDisplayName
-        ) ?? NSImage(size: NSSize(width: 18, height: 18))
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            NSColor.black.set()
+
+            let ring = NSBezierPath(ovalIn: NSRect(x: 3.2, y: 3.2, width: 11.6, height: 11.6))
+            ring.lineWidth = 2.4
+            ring.stroke()
+
+            NSBezierPath(ovalIn: NSRect(x: 8.0, y: 8.0, width: 2.0, height: 2.0)).fill()
+
+            let reader = NSBezierPath()
+            reader.move(to: NSPoint(x: 4.0, y: 4.0))
+            reader.line(to: NSPoint(x: 7.9, y: 7.9))
+            reader.lineWidth = 2.4
+            reader.lineCapStyle = .round
+            reader.stroke()
+
+            return rect.width > 0
+        }
+        image.accessibilityDescription = irisDriveDisplayName
         image.isTemplate = true
         return image
     }
