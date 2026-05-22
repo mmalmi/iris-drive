@@ -28,6 +28,7 @@ const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 2;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
+const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Parser)]
 #[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
@@ -1328,6 +1329,7 @@ fn cmd_publish(
                 "files_iris_to_url": drive_iris_to_url,
                 "snapshot_url": snapshot_url,
                 "permalink_url": snapshot_url,
+                "blossom_upload_error": report.blossom_upload_error,
                 "blossom_upload": report.blossom_upload.map(|r| json!({
                     "total_hashes": r.total_hashes,
                     "uploaded": r.uploaded,
@@ -1349,6 +1351,7 @@ struct PublishStateReport {
     files_root_publish_error: Option<String>,
     root_cid: Option<String>,
     blossom_upload: Option<UploadReport>,
+    blossom_upload_error: Option<String>,
 }
 
 async fn upload_tree_to_blossom_with_hashtree(
@@ -1520,15 +1523,6 @@ async fn publish_current_state(
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
-        if !config.blossom_servers.is_empty() {
-            let cid = Cid::parse(&root.root_cid)
-                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
-            report.blossom_upload = Some(
-                upload_tree_to_blossom_with_hashtree(config_dir, config, &device, cid, None)
-                    .await
-                    .context("uploading tree to blossom")?,
-            );
-        }
 
         match relay_sync::publish_drive_root(
             client,
@@ -1555,6 +1549,24 @@ async fn publish_current_state(
                 Ok(_) => report.published_files_root = true,
                 Err(error) => {
                     report.files_root_publish_error = Some(error.to_string());
+                }
+            }
+        }
+
+        if !config.blossom_servers.is_empty() {
+            let cid = Cid::parse(&root.root_cid)
+                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(BLOSSOM_UPLOAD_TIMEOUT_SECS),
+                upload_tree_to_blossom_with_hashtree(config_dir, config, &device, cid, None),
+            )
+            .await
+            {
+                Ok(Ok(upload)) => report.blossom_upload = Some(upload),
+                Ok(Err(error)) => report.blossom_upload_error = Some(format!("{error:#}")),
+                Err(_) => {
+                    report.blossom_upload_error =
+                        Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"));
                 }
             }
         }
@@ -1929,6 +1941,7 @@ fn cmd_daemon(
                         "files_iris_to_url": drive_iris_to_url,
                         "snapshot_url": snapshot_url,
                         "permalink_url": snapshot_url,
+                        "blossom_upload_error": report.blossom_upload_error,
                         "blossom_upload": report.blossom_upload.map(|r| json!({
                             "total_hashes": r.total_hashes,
                             "uploaded": r.uploaded,
@@ -2278,24 +2291,6 @@ async fn scan_and_publish(
 
     let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
         .context("loading device key")?;
-    let mut upload_report: Option<UploadReport> = None;
-    if !config.blossom_servers.is_empty() {
-        let cid = Cid::parse(&new_root.root_cid)
-            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
-        let previous = previous_root_cid
-            .as_deref()
-            .and_then(|root| Cid::parse(root).ok());
-        match upload_tree_to_blossom_with_hashtree(config_dir, &config, &device, cid, previous)
-            .await
-        {
-            Ok(r) => upload_report = Some(r),
-            Err(e) => println!(
-                "{}",
-                json!({"event": "blossom_upload_error", "error": e.to_string()})
-            ),
-        }
-    }
-
     let mut published_drive_root = false;
     match relay_sync::publish_drive_root(
         client,
@@ -2338,6 +2333,34 @@ async fn scan_and_publish(
         }
     }
 
+    let mut upload_report: Option<UploadReport> = None;
+    let mut upload_error: Option<String> = None;
+    if !config.blossom_servers.is_empty() {
+        let cid = Cid::parse(&new_root.root_cid)
+            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
+        let previous = previous_root_cid
+            .as_deref()
+            .and_then(|root| Cid::parse(root).ok());
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(BLOSSOM_UPLOAD_TIMEOUT_SECS),
+            upload_tree_to_blossom_with_hashtree(config_dir, &config, &device, cid, previous),
+        )
+        .await
+        {
+            Ok(Ok(r)) => upload_report = Some(r),
+            Ok(Err(e)) => upload_error = Some(e.to_string()),
+            Err(_) => {
+                upload_error = Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"))
+            }
+        }
+        if let Some(error) = &upload_error {
+            println!(
+                "{}",
+                json!({"event": "blossom_upload_error", "error": error})
+            );
+        }
+    }
+
     println!(
         "{}",
         json!({
@@ -2351,6 +2374,7 @@ async fn scan_and_publish(
             "published_files_root": published_files_root,
             "file_count": report.file_count,
             "top_level_entries": report.top_level_entries,
+            "blossom_upload_error": upload_error,
             "blossom_upload": upload_report.map(|r| json!({
                 "total_hashes": r.total_hashes,
                 "uploaded": r.uploaded,
