@@ -22,7 +22,7 @@ dotnet run --project .\windows\IrisDrive.Windows.csproj
 Publish a runnable Windows app without requiring the .NET Desktop Runtime:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Debug -DesktopShortcut
+powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Debug -DesktopShortcut -StopRunningApp
 ```
 
 The publish script builds `idrive.exe`, publishes the WPF shell self-contained

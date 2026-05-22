@@ -8,13 +8,32 @@ param(
 
   [switch]$SkipCliBuild,
 
-  [switch]$AllowLockfileUpdate
+  [switch]$AllowLockfileUpdate,
+
+  [switch]$StopRunningApp
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "windows\IrisDrive.Windows.csproj"
+
+function Invoke-Checked {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments
+  )
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$FilePath failed with exit code $LASTEXITCODE"
+  }
+}
+
+if ($StopRunningApp) {
+  Get-Process IrisDrive -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process idrive -ErrorAction SilentlyContinue | Stop-Process -Force
+}
 
 if (-not $SkipCliBuild) {
   $CargoArgs = @("build", "-p", "idrive")
@@ -24,10 +43,20 @@ if (-not $SkipCliBuild) {
   if (-not $AllowLockfileUpdate) {
     $CargoArgs += "--locked"
   }
-  & cargo @CargoArgs
+  Invoke-Checked cargo $CargoArgs
 }
 
-& dotnet publish $Project -c $Configuration -r $Runtime --self-contained true -p:WindowsPackageType=None
+Invoke-Checked dotnet @(
+  "publish",
+  $Project,
+  "-c",
+  $Configuration,
+  "-r",
+  $Runtime,
+  "--self-contained",
+  "true",
+  "-p:WindowsPackageType=None"
+)
 
 $PublishDir = Join-Path $Root "windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
 $CargoProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
