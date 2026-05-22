@@ -25,6 +25,7 @@ exec docker run --rm --init \
   -v "$TARGET_VOLUME:/cargo-target" \
   -v "$REGISTRY_VOLUME:/usr/local/cargo/registry" \
   -v "$GIT_VOLUME:/usr/local/cargo/git" \
+  -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" \
   -e CARGO_TARGET_DIR=/cargo-target \
   -w /work/iris-drive \
   "$IMAGE" \
