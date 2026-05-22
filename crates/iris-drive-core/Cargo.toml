@@ -21,6 +21,7 @@ hashtree-config.workspace = true
 hashtree-embedded.workspace = true
 hashtree-fips-transport.workspace = true
 hashtree-fs.workspace = true
+hashtree-nostr.workspace = true
 hashtree-provider.workspace = true
 http.workspace = true
 mime_guess.workspace = true

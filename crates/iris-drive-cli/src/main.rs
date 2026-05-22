@@ -2431,10 +2431,16 @@ async fn apply_one_event(
         }
         let account = Account::load(account_state, config_dir).context("loading owner account")?;
         let owner_keys = account.owner_key.as_ref().map(|owner| owner.keys());
-        let parsed =
-            iris_drive_core::nostr_events::parse_hashtree_root_event(event, owner_keys).ok();
         let outcome = relay_sync::apply_remote_files_root_event(&mut config, event, owner_keys)?;
         let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
+        let root_cid_to_pull = if was_applied {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+                .map(|root| root.root_cid.clone())
+        } else {
+            None
+        };
         println!(
             "{}",
             json!({
@@ -2446,9 +2452,8 @@ async fn apply_one_event(
         );
         config.save(config_path_in(config_dir))?;
         if was_applied
-            && let Some((_, _, root_ref)) = parsed
-            && let Err(e) =
-                pull_blocks_for_root(config_dir, &config, &root_ref.root_cid, fips_blocks).await
+            && let Some(root_cid) = root_cid_to_pull
+            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_cid, fips_blocks).await
         {
             println!(
                 "{}",

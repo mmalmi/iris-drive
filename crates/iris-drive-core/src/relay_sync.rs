@@ -22,10 +22,10 @@ use crate::AppKeysSnapshot;
 use crate::app_keys::ApplyDecision;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
-    D_TAG_APP_KEYS, HASHTREE_LABEL, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT,
-    build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
-    drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
-    parse_drive_root_event_for_device, parse_drive_root_event_preview, parse_hashtree_root_event,
+    D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_app_keys_event,
+    build_drive_root_event, build_private_hashtree_root_event, drive_root_d_tag,
+    parse_app_keys_event, parse_drive_root_event, parse_drive_root_event_for_device,
+    parse_drive_root_event_preview,
 };
 
 #[derive(Debug, Error)]
@@ -40,6 +40,8 @@ pub enum RelayError {
     NoOwnerAuthority,
     #[error("invalid pubkey: {0}")]
     InvalidPubkey(String),
+    #[error("hashtree root: {0}")]
+    HashtreeRoot(String),
 }
 
 /// Result of applying a remote `AppKeys` event.
@@ -161,15 +163,40 @@ pub fn apply_remote_files_root_event(
     event: &Event,
     owner_keys: Option<&Keys>,
 ) -> Result<FilesRootApply, RelayError> {
-    let (owner_pubkey, tree_name, incoming_root) = parse_hashtree_root_event(event, owner_keys)?;
+    let parsed = hashtree_nostr::parse_verified_hashtree_root_event(event)
+        .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
+        .ok_or_else(|| RelayError::HashtreeRoot("not a hashtree root event".to_string()))?;
+    let root_cid = if let Some(owner_keys) = owner_keys {
+        hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, owner_keys)
+            .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
+    } else {
+        parsed.root_cid.clone()
+    };
+    if root_cid.key.is_none() {
+        return Err(RelayError::HashtreeRoot(
+            "hashtree root key is unavailable".to_string(),
+        ));
+    }
+    let incoming_root = DeviceRootRef {
+        root_cid: root_cid.to_string(),
+        published_at: i64::try_from(parsed.event.created_at).unwrap_or(i64::MAX),
+        dck_generation: 0,
+        device_seq: 0,
+        parents: Vec::new(),
+        observed: std::collections::BTreeMap::new(),
+    };
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if owner_pubkey != account.owner_pubkey {
+    if parsed.event.pubkey != account.owner_pubkey {
         return Ok(FilesRootApply::NotOurOwner);
     }
     let device_pubkey = account.device_pubkey.clone();
-    let Some(drive) = config.drives.iter_mut().find(|d| d.drive_id == tree_name) else {
+    let Some(drive) = config
+        .drives
+        .iter_mut()
+        .find(|d| d.drive_id == parsed.tree_name)
+    else {
         return Ok(FilesRootApply::UnknownDrive);
     };
     if let Some(existing) = drive.device_roots.get(&device_pubkey)
@@ -306,7 +333,7 @@ pub async fn fetch_latest_files_root(
         .identifier(tree_name)
         .custom_tag(
             SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-            [HASHTREE_LABEL],
+            [hashtree_nostr::HASHTREE_LABEL],
         );
     let events = client
         .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
@@ -351,7 +378,7 @@ pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filte
                 .identifier(drive_id)
                 .custom_tag(
                     SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-                    [HASHTREE_LABEL],
+                    [hashtree_nostr::HASHTREE_LABEL],
                 ),
         );
     }

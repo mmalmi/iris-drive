@@ -3261,6 +3261,7 @@ dependencies = [
  "hashtree-embedded",
  "hashtree-fips-transport",
  "hashtree-fs",
+ "hashtree-nostr",
  "hashtree-provider",
  "hex",
  "http",
