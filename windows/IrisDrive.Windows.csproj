@@ -8,5 +8,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>IrisDrive</AssemblyName>
     <RootNamespace>IrisDrive.WindowsShell</RootNamespace>
+    <ApplicationIcon>IrisDrive.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>
