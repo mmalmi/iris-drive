@@ -8,9 +8,9 @@ file-provider backends differ.
 | --- | --- | --- | --- |
 | First-run create profile | Yes | Yes | Yes |
 | Restore owner profile | Yes | Yes | Yes |
-| Link as secondary device | Yes | Yes | Yes |
+| Link request handoff | Yes | Yes | Yes |
 | Copy owner/device keys | Yes | Yes | Yes |
-| Approve linked device | Yes | Yes | Yes |
+| Approve linked device from request link | Yes | Yes | Yes |
 | Start/stop/restart sync daemon | Yes | Yes | Yes |
 | Auto-scan local drive folder | Yes | Yes | Yes |
 | Open drive folder | Yes | Yes | Yes |
@@ -31,8 +31,8 @@ file-provider backends differ.
 The minimum parity smoke for Linux/Windows is:
 
 1. Create an owner profile on one VM.
-2. Link the other VM as a secondary device from the GUI.
-3. Approve the secondary device from the owner GUI.
+2. Link the other VM as a secondary device from the GUI and copy its request link.
+3. Paste the request link into the owner GUI and approve it.
 4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
 5. Create a file in each drive folder.
 6. Confirm each side sees both files after daemon sync.

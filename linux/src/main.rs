@@ -280,7 +280,7 @@ fn build_ui(app: &adw::Application) {
     let approve_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     approve_box.set_hexpand(true);
     approve_box.append(&field_title("Approve device"));
-    let approve_device_entry = setup_entry("Device public key");
+    let approve_device_entry = setup_entry("Device request link");
     approve_device_entry.set_hexpand(true);
     let approve_label_entry = setup_entry("Device label");
     approve_label_entry.set_hexpand(true);
@@ -666,6 +666,14 @@ fn setup_entry(placeholder: &str) -> gtk::Entry {
     entry
 }
 
+fn readonly_entry(value: &str) -> gtk::Entry {
+    let entry = setup_entry("");
+    entry.set_text(value);
+    entry.set_editable(false);
+    entry.set_hexpand(true);
+    entry
+}
+
 fn value_label() -> gtk::Label {
     let label = gtk::Label::new(Some("..."));
     label.add_css_class("iris-value");
@@ -986,10 +994,15 @@ fn refresh(model: &AppRef) {
                 .get("initialized")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let awaiting_link_approval = initialized && is_awaiting_link_approval(&json);
             let sync_running = initialized && ensure_daemon_running(model, &json);
-            set_view_mode(model, initialized, sync_running);
+            set_view_mode(model, initialized && !awaiting_link_approval, sync_running);
             if !initialized {
                 render_setup(model);
+                return;
+            }
+            if awaiting_link_approval {
+                render_awaiting_approval(model, &json, sync_running);
                 return;
             }
             model.ui.drive_title.set_text(&drive_name(&json));
@@ -1105,6 +1118,9 @@ fn status_with_local_import() -> Result<(Value, Option<String>), String> {
     if !initialized {
         return Ok((status, None));
     }
+    if is_awaiting_link_approval(&status) {
+        return Ok((status, None));
+    }
 
     match import_drive_folder(&working_dir(&status)) {
         Ok(()) => {
@@ -1151,6 +1167,68 @@ fn render_setup(model: &AppRef) {
         SetupScreen::Restore => render_restore_profile(model),
         SetupScreen::Link => render_link_device(model),
     }
+}
+
+fn render_awaiting_approval(model: &AppRef, json: &Value, sync_running: bool) {
+    clear_box(&model.ui.setup);
+
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    container.set_halign(gtk::Align::Center);
+    container.set_valign(gtk::Align::Center);
+    container.set_width_request(420);
+
+    let header = gtk::Label::new(Some("Awaiting approval"));
+    header.add_css_class("title-2");
+    header.set_halign(gtk::Align::Start);
+    container.append(&header);
+
+    let account = account_json(json);
+    let owner = readonly_entry(find_string(account, &["owner_npub"]).unwrap_or("-"));
+    container.append(&field_title("Owner"));
+    container.append(&owner);
+
+    let device = readonly_entry(find_string(account, &["device_npub"]).unwrap_or("-"));
+    container.append(&field_title("This device"));
+    container.append(&device);
+
+    let request = find_string(
+        account
+            .get("device_link_request")
+            .unwrap_or(&Value::Null),
+        &["url"],
+    )
+    .unwrap_or("");
+    let request_entry = readonly_entry(request);
+    request_entry.set_height_request(82);
+    container.append(&field_title("Request link"));
+    container.append(&request_entry);
+
+    let notice = setup_notice();
+    notice.set_text(if sync_running {
+        "Waiting for approval"
+    } else {
+        "Sync stopped"
+    });
+
+    let copy = primary_button("Copy request");
+    {
+        let request = request.to_string();
+        let notice = notice.clone();
+        copy.connect_clicked(move |_| {
+            if request.is_empty() {
+                notice.set_text("Nothing to copy");
+            } else if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&request);
+                notice.set_text("Request copied");
+            } else {
+                notice.set_text("Clipboard unavailable");
+            }
+        });
+    }
+    container.append(&copy);
+    container.append(&notice);
+
+    append_centered_setup(model, &container);
 }
 
 fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
@@ -1848,6 +1926,12 @@ fn snapshot_link(json: &Value) -> Option<&str> {
 
 fn account_json(json: &Value) -> &Value {
     json.get("account").unwrap_or(&Value::Null)
+}
+
+fn is_awaiting_link_approval(json: &Value) -> bool {
+    let account = account_json(json);
+    find_string(account, &["authorization_state"]) == Some("awaiting_approval")
+        && find_bool(account, &["has_owner_signing_authority"]) == Some(false)
 }
 
 fn file_count_value(json: &Value) -> String {

@@ -26,6 +26,10 @@ public sealed class IrisDriveService
         {
             return (status, null);
         }
+        if (status.IsAwaitingLinkedApproval)
+        {
+            return (status, null);
+        }
 
         try
         {

@@ -79,6 +79,12 @@ public partial class MainWindow : Window
             }
 
             var syncRunning = EnsureDaemonRunning(status);
+            if (status.IsAwaitingLinkedApproval)
+            {
+                RenderAwaitingApproval(status, syncRunning, notice);
+                return;
+            }
+
             SetupRoot.Visibility = Visibility.Collapsed;
             MainRoot.Visibility = Visibility.Visible;
             RenderStatus(status, syncRunning, notice);
@@ -93,6 +99,20 @@ public partial class MainWindow : Window
         {
             refreshing = false;
         }
+    }
+
+    private void RenderAwaitingApproval(
+        IrisDriveStatusData status,
+        bool syncRunning,
+        string? notice)
+    {
+        SetupRoot.Visibility = Visibility.Visible;
+        MainRoot.Visibility = Visibility.Collapsed;
+        ShowSetupPanel(AwaitingPanel);
+        AwaitingOwnerBox.Text = status.OwnerNpub ?? "";
+        AwaitingDeviceBox.Text = status.DeviceNpub ?? "";
+        DeviceRequestBox.Text = status.DeviceLinkRequestUrl ?? "";
+        SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync stopped");
     }
 
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
@@ -440,6 +460,11 @@ public partial class MainWindow : Window
         CopyText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
+    private void CopyDeviceRequest_Click(object sender, RoutedEventArgs e)
+    {
+        CopySetupText(currentStatus?.DeviceLinkRequestUrl, "Request copied");
+    }
+
     private async void ApproveDevice_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -524,6 +549,18 @@ public partial class MainWindow : Window
         NoticeText.Text = message;
     }
 
+    private void CopySetupText(string? value, string message)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            SetupNotice.Text = "Nothing to copy";
+            return;
+        }
+
+        WpfClipboard.SetText(value);
+        SetupNotice.Text = message;
+    }
+
     private async void CreateSubmit_Click(object sender, RoutedEventArgs e)
     {
         await RunSetupAsync(() => service.CreateProfileAsync(CreateLabelBox.Text));
@@ -602,6 +639,7 @@ public partial class MainWindow : Window
         CreatePanel.Visibility = Visibility.Collapsed;
         RestorePanel.Visibility = Visibility.Collapsed;
         LinkPanel.Visibility = Visibility.Collapsed;
+        AwaitingPanel.Visibility = Visibility.Collapsed;
         visible.Visibility = Visibility.Visible;
         SetupNotice.Text = "";
     }

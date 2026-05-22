@@ -154,6 +154,14 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     assert_eq!(v["owner_npub"], owner_npub);
     assert_eq!(v["has_owner_signing_authority"], false);
     assert_eq!(v["authorization_state"], "awaiting_approval");
+    assert_eq!(v["device_link_request"]["owner_npub"], owner_npub);
+    assert_eq!(v["device_link_request"]["device_npub"], v["device_npub"]);
+    assert!(
+        v["device_link_request"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("iris-drive://device-link?")
+    );
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists()); // never on a linked device
 }
@@ -215,6 +223,40 @@ fn link_then_approve_authorizes_the_linked_device() {
     )
     .unwrap();
     assert_eq!(roster["app_keys"]["devices"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn owner_approves_device_request_link() {
+    let owner_dir = tempdir().unwrap();
+    let other_owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    run_json(other_owner_dir.path(), &["init", "--label", "other-admin"]);
+
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_npub, "--label", "win11-dev"],
+    );
+    let request_url = linked["device_link_request"]["url"].as_str().unwrap();
+
+    idrive(other_owner_dir.path())
+        .args(["approve", request_url])
+        .assert()
+        .failure()
+        .stderr(contains("different owner"));
+
+    let approved = run_json(owner_dir.path(), &["approve", request_url]);
+    assert_eq!(approved["roster_size"], 2);
+
+    let roster = run_json(owner_dir.path(), &["roster"]);
+    let devices = roster["app_keys"]["devices"].as_array().unwrap();
+    assert!(
+        devices
+            .iter()
+            .any(|device| device["label"].as_str() == Some("win11-dev"))
+    );
 }
 
 #[test]
@@ -848,12 +890,12 @@ async fn linked_devices_sync_each_others_files_through_cli() {
     let owner_npub = init_a["owner_npub"].as_str().unwrap().to_string();
 
     let linked_b = run_json(cfg_b.path(), &["link", &owner_npub, "--label", "device-b"]);
-    let device_b_npub = linked_b["device_npub"].as_str().unwrap().to_string();
+    let device_b_request = linked_b["device_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
-    let approved = run_json(
-        cfg_a.path(),
-        &["approve", &device_b_npub, "--label", "device-b"],
-    );
+    let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);
     assert_eq!(approved["roster_size"], 2);
 
     std::fs::write(work_a.path().join("from-a.txt"), b"hello from a").unwrap();

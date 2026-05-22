@@ -381,6 +381,7 @@ fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Resul
             "device_npub": account_npub(&account.state.device_pubkey),
             "has_owner_signing_authority": account.state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(&account.state),
+            "device_link_request": device_link_request_json(&account.state),
             "drives": config.drives.iter().map(|d| &d.drive_id).collect::<Vec<_>>(),
         })
     );
@@ -388,12 +389,13 @@ fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Resul
 }
 
 fn cmd_approve(config_dir: &std::path::Path, device: &str, label: Option<String>) -> Result<()> {
-    let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let (device_hex, label) = resolve_device_approval_input(device, &state.owner_pubkey, label)
+        .context("parsing device approval request")?;
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
         .approve_device(device_hex, label)
@@ -548,6 +550,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             "has_owner_signing_authority": state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(state),
             "roster_size": state.app_keys.as_ref().map_or(0, |s| s.devices.len()),
+            "device_link_request": device_link_request_json(state),
         })
     });
     println!(
@@ -1069,6 +1072,7 @@ fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
             "device_npub": account_npub(&state.device_pubkey),
             "has_owner_signing_authority": state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(&state),
+            "device_link_request": device_link_request_json(&state),
         })
     );
     Ok(())
@@ -2781,6 +2785,174 @@ fn normalize_pubkey(input: &str) -> Result<String> {
         Err(anyhow::anyhow!(
             "expected npub1... or 64-char hex pubkey, got {trimmed}"
         ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceApprovalRequest {
+    owner_hex: String,
+    device_hex: String,
+    label: Option<String>,
+}
+
+fn resolve_device_approval_input(
+    input: &str,
+    expected_owner_hex: &str,
+    explicit_label: Option<String>,
+) -> Result<(String, Option<String>)> {
+    if let Some(request) = decode_device_approval_request(input)? {
+        if request.owner_hex != expected_owner_hex {
+            return Err(anyhow::anyhow!(
+                "device request belongs to a different owner"
+            ));
+        }
+        let label = explicit_label.or(request.label);
+        return Ok((request.device_hex, label));
+    }
+
+    Ok((
+        normalize_pubkey(input).context("parsing device pubkey")?,
+        explicit_label,
+    ))
+}
+
+fn device_link_request_json(state: &AccountState) -> Value {
+    if state.has_owner_signing_authority
+        || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
+    {
+        return Value::Null;
+    }
+
+    let url = encode_device_approval_request(
+        &state.owner_pubkey,
+        &state.device_pubkey,
+        state.device_label.as_deref(),
+    );
+
+    json!({
+        "url": url,
+        "owner_npub": account_npub(&state.owner_pubkey),
+        "device_npub": account_npub(&state.device_pubkey),
+        "label": state.device_label.as_deref(),
+    })
+}
+
+fn encode_device_approval_request(
+    owner_hex: &str,
+    device_hex: &str,
+    label: Option<&str>,
+) -> String {
+    let mut url = format!(
+        "iris-drive://device-link?owner={}&device={}",
+        account_npub(owner_hex),
+        account_npub(device_hex)
+    );
+    if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
+        url.push_str("&label=");
+        url.push_str(&percent_encode_component(label));
+    }
+    url
+}
+
+fn decode_device_approval_request(input: &str) -> Result<Option<DeviceApprovalRequest>> {
+    let trimmed = input.trim();
+    let Some(query) = device_approval_query(trimmed) else {
+        return Ok(None);
+    };
+
+    let mut owner = None;
+    let mut device = None;
+    let mut label = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let key = percent_decode_component(raw_key)?;
+        let value = percent_decode_component(raw_value)?;
+        match key.as_str() {
+            "owner" if !value.trim().is_empty() => owner = Some(value),
+            "device" if !value.trim().is_empty() => device = Some(value),
+            "label" if !value.trim().is_empty() => label = Some(value),
+            _ => {}
+        }
+    }
+
+    let owner = owner.ok_or_else(|| anyhow::anyhow!("device request is missing owner"))?;
+    let device = device.ok_or_else(|| anyhow::anyhow!("device request is missing device"))?;
+
+    Ok(Some(DeviceApprovalRequest {
+        owner_hex: normalize_pubkey(&owner).context("parsing request owner")?,
+        device_hex: normalize_pubkey(&device).context("parsing request device")?,
+        label,
+    }))
+}
+
+fn device_approval_query(input: &str) -> Option<&str> {
+    if let Some(rest) = input.strip_prefix("iris-drive://device-link") {
+        return rest.strip_prefix('?');
+    }
+    if let Some(rest) = input.strip_prefix("https://drive.iris.to/device-link") {
+        return rest.strip_prefix('?');
+    }
+    None
+}
+
+fn percent_encode_component(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(hex_digit(byte >> 4));
+            encoded.push(hex_digit(byte & 0x0f));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_component(input: &str) -> Result<String> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hi = bytes
+                .get(index + 1)
+                .copied()
+                .and_then(hex_value)
+                .ok_or_else(|| anyhow::anyhow!("invalid percent encoding"))?;
+            let lo = bytes
+                .get(index + 2)
+                .copied()
+                .and_then(hex_value)
+                .ok_or_else(|| anyhow::anyhow!("invalid percent encoding"))?;
+            output.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(output).context("request contains invalid UTF-8")
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'A' + value - 10) as char,
+        _ => '0',
+    }
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
     }
 }
 

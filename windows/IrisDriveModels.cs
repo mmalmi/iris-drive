@@ -12,6 +12,7 @@ public sealed class IrisDriveStatusData
     public string? DeviceNpub { get; init; }
     public bool HasOwnerSigningAuthority { get; init; }
     public string? AuthorizationState { get; init; }
+    public string? DeviceLinkRequestUrl { get; init; }
     public int RosterSize { get; init; }
     public int AuthorizedDeviceCount { get; init; }
     public int PublishedDeviceRoots { get; init; }
@@ -34,6 +35,9 @@ public sealed class IrisDriveStatusData
     public static IrisDriveStatusData FromJson(JsonElement root, string defaultDriveDirectory)
     {
         var account = Object(root, "account");
+        var deviceLinkRequest = account.HasValue
+            ? Object(account.Value, "device_link_request")
+            : null;
         var hashtree = Object(root, "hashtree");
         var network = Object(root, "network");
         var drives = DriveRows(root, defaultDriveDirectory);
@@ -48,6 +52,9 @@ public sealed class IrisDriveStatusData
                 account.HasValue && Bool(account.Value, "has_owner_signing_authority"),
             AuthorizationState =
                 account.HasValue ? String(account.Value, "authorization_state") : null,
+            DeviceLinkRequestUrl = deviceLinkRequest.HasValue
+                ? String(deviceLinkRequest.Value, "url")
+                : null,
             RosterSize = account.HasValue ? Int(account.Value, "roster_size") : 0,
             AuthorizedDeviceCount =
                 network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
@@ -77,6 +84,11 @@ public sealed class IrisDriveStatusData
                 : new Dictionary<string, string>(),
         };
     }
+
+    public bool IsAwaitingLinkedApproval =>
+        Initialized &&
+        !HasOwnerSigningAuthority &&
+        string.Equals(AuthorizationState, "awaiting_approval", StringComparison.Ordinal);
 
     private static string ExtractDriveName(JsonElement root)
     {

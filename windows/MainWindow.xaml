@@ -83,6 +83,27 @@
           </Button>
         </StackPanel>
 
+        <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
+          <TextBlock Text="Awaiting approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <TextBlock Text="Owner" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="AwaitingOwnerBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="AwaitingDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBlock Text="Request link" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="DeviceRequestBox"
+                   IsReadOnly="True"
+                   MinHeight="76"
+                   TextWrapping="Wrap"
+                   VerticalScrollBarVisibility="Auto"
+                   Margin="0,0,0,12" />
+          <Button Style="{StaticResource PrimaryButton}" Click="CopyDeviceRequest_Click">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy request" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
         <TextBlock x:Name="SetupNotice"
                    Foreground="{StaticResource IrisMutedBrush}"
                    TextWrapping="Wrap"
