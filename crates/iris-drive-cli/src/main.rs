@@ -23,6 +23,7 @@ use serde_json::json;
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
+const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 
 #[derive(Debug, Parser)]
 #[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
@@ -1315,10 +1316,11 @@ fn cmd_sync(
             for cid_str in &root_cids_to_download {
                 let cid =
                     Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
-                let r = iris_drive_core::blossom_sync::download_tree(
+                let r = iris_drive_core::blossom_sync::download_tree_with_retry(
                     local.clone(),
                     &cid,
                     bclient.clone(),
+                    BLOSSOM_DOWNLOAD_RETRY_DELAYS,
                 )
                 .await
                 .with_context(|| format!("downloading tree for {cid_str}"))?;
@@ -1961,9 +1963,14 @@ async fn pull_blocks_for_root(
         iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
-    let report = iris_drive_core::blossom_sync::download_tree(local, &cid, bclient)
-        .await
-        .with_context(|| format!("downloading tree {root_cid_str}"))?;
+    let report = iris_drive_core::blossom_sync::download_tree_with_retry(
+        local,
+        &cid,
+        bclient,
+        BLOSSOM_DOWNLOAD_RETRY_DELAYS,
+    )
+    .await
+    .with_context(|| format!("downloading tree {root_cid_str}"))?;
     println!(
         "{}",
         json!({

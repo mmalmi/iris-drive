@@ -222,3 +222,29 @@ where
         already_local: writeback.already_local(),
     })
 }
+
+/// Retry [`download_tree`] across a bounded set of delays when Blossom
+/// metadata is visible before the just-uploaded blocks are readable from
+/// the backing CDN.
+pub async fn download_tree_with_retry<L>(
+    local_store: Arc<L>,
+    root: &Cid,
+    client: BlossomClient,
+    retry_delays_secs: &[u64],
+) -> Result<DownloadReport, BlossomSyncError>
+where
+    L: Store + Send + Sync + 'static,
+{
+    let mut attempt = 0usize;
+    loop {
+        match download_tree(local_store.clone(), root, client.clone()).await {
+            Ok(report) => return Ok(report),
+            Err(BlossomSyncError::MissingOnBlossom(_)) if attempt < retry_delays_secs.len() => {
+                let delay = retry_delays_secs[attempt];
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
