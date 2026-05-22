@@ -29,6 +29,7 @@ const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 10;
+const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 
@@ -3028,12 +3029,13 @@ async fn apply_one_event(
         // so `idrive list` can walk the remote device's tree.
         if was_applied
             && let Some((_, _, _, root_ref)) = parsed
-            && let Err(e) =
-                pull_blocks_for_root(config_dir, &config, &root_ref.root_cid, fips_blocks).await
+            && let Err(error) =
+                pull_blocks_for_root_bounded(config_dir, &config, &root_ref.root_cid, fips_blocks)
+                    .await
         {
             println!(
                 "{}",
-                json!({"event": "block_download_error", "error": e.to_string()})
+                json!({"event": "block_download_error", "error": error})
             );
         }
         if was_applied
@@ -3102,11 +3104,12 @@ async fn apply_files_root_event(
     config.save(config_path_in(config_dir))?;
     if was_applied
         && let Some(root_cid) = root_cid_to_pull
-        && let Err(e) = pull_blocks_for_root(config_dir, config, &root_cid, fips_blocks).await
+        && let Err(error) =
+            pull_blocks_for_root_bounded(config_dir, config, &root_cid, fips_blocks).await
     {
         println!(
             "{}",
-            json!({"event": "block_download_error", "error": e.to_string()})
+            json!({"event": "block_download_error", "error": error})
         );
     }
     if was_applied
@@ -3182,6 +3185,24 @@ async fn pull_blocks_for_root(
         }
     }
     Ok(())
+}
+
+async fn pull_blocks_for_root_bounded(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    root_cid_str: &str,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> std::result::Result<(), String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(EVENT_BLOCK_PULL_TIMEOUT_SECS),
+        pull_blocks_for_root(config_dir, config, root_cid_str, fips_blocks),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("timed out after {EVENT_BLOCK_PULL_TIMEOUT_SECS}s")),
+    }
 }
 
 fn record_block_sync(config_dir: &Path, root_cid: &str, transport: &str, report: &DownloadReport) {
