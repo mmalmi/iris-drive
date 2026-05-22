@@ -10,4 +10,8 @@
     <RootNamespace>IrisDrive.WindowsShell</RootNamespace>
     <ApplicationIcon>IrisDrive.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="IrisDrive.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

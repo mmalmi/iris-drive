@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Icon = WindowsIcon.LoadWindowIcon();
+        WindowsIcon.RefreshShortcutIcons();
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
@@ -711,27 +713,12 @@ public partial class MainWindow : Window
 
         trayIcon = new Forms.NotifyIcon
         {
-            Icon = TrayIcon(),
+            Icon = WindowsIcon.TrayIcon(),
             Text = "Iris Drive",
             ContextMenuStrip = menu,
             Visible = true,
         };
         trayIcon.DoubleClick += (_, _) => ShowFromTray();
-    }
-
-    private static System.Drawing.Icon TrayIcon()
-    {
-        var processPath = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
-        {
-            var icon = System.Drawing.Icon.ExtractAssociatedIcon(processPath);
-            if (icon is not null)
-            {
-                return icon;
-            }
-        }
-
-        return System.Drawing.SystemIcons.Application;
     }
 
     private void InstallTraySafely()
