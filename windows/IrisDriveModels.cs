@@ -228,14 +228,18 @@ public sealed class IrisDriveStatusData
 
     private static int Int(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) && value.TryGetInt32(out var result)
+        return root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt32(out var result)
             ? result
             : 0;
     }
 
     private static long Long(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) && value.TryGetInt64(out var result)
+        return root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt64(out var result)
             ? result
             : 0;
     }
