@@ -18,6 +18,16 @@ dotnet build .\windows\IrisDrive.Windows.csproj
 dotnet run --project .\windows\IrisDrive.Windows.csproj
 ```
 
+Publish a runnable Windows app without requiring the .NET Desktop Runtime:
+
+```powershell
+.\scripts\windows-publish.ps1 -Configuration Debug -DesktopShortcut
+```
+
+The publish script builds `idrive.exe`, publishes the WPF shell self-contained
+for `win-x64`, copies `idrive.exe` next to `IrisDrive.exe`, and can recreate the
+desktop shortcut with the packaged Iris Drive icon.
+
 The app looks for `idrive.exe` next to the app, under `target\debug`, under
 `target\release`, or at `IRIS_DRIVE_CLI`. The visible drive folder is
 `%USERPROFILE%\Iris Drive`.
