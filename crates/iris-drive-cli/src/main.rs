@@ -1272,21 +1272,25 @@ fn cmd_sync(
         .context("fetching drive roots")?;
         let mut drive_roots_applied = 0usize;
         let mut drive_roots_skipped = 0usize;
-        let mut applied_root_cids: Vec<String> = Vec::new();
+        let mut root_cids_to_download: Vec<String> = Vec::new();
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         for ev in &drive_root_events {
             let parsed =
                 iris_drive_core::nostr_events::parse_drive_root_event_for_device(ev, device.keys())
                     .ok();
+            if let Some((_, _, _, root_ref)) = parsed.as_ref()
+                && !root_cids_to_download
+                    .iter()
+                    .any(|root_cid| root_cid == &root_ref.root_cid)
+            {
+                root_cids_to_download.push(root_ref.root_cid.clone());
+            }
             match relay_sync::apply_remote_drive_root_event(&mut config, ev, Some(device.keys()))
                 .context("applying drive-root event")?
             {
                 relay_sync::DriveRootApply::Applied => {
                     drive_roots_applied += 1;
-                    if let Some((_, _, _, root_ref)) = parsed {
-                        applied_root_cids.push(root_ref.root_cid);
-                    }
                 }
                 _ => drive_roots_skipped += 1,
             }
@@ -1294,10 +1298,11 @@ fn cmd_sync(
 
         config.save(config_path_in(config_dir))?;
 
-        // 3) Replicate blocks for each newly-applied drive root via
-        // Blossom if servers are configured.
+        // 3) Replicate blocks for each seen drive root via Blossom if
+        // servers are configured. Retrying known roots lets a device
+        // recover after a transient Blossom miss.
         let mut blossom_download_report: Option<DownloadReport> = None;
-        if !applied_root_cids.is_empty() && !config.blossom_servers.is_empty() {
+        if !root_cids_to_download.is_empty() && !config.blossom_servers.is_empty() {
             let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
                 .context("loading device key")?;
             let daemon = Daemon::open(config_dir).context("opening daemon")?;
@@ -1307,7 +1312,7 @@ fn cmd_sync(
                 &config.blossom_servers,
             );
             let mut totals = DownloadReport::default();
-            for cid_str in &applied_root_cids {
+            for cid_str in &root_cids_to_download {
                 let cid =
                     Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
                 let r = iris_drive_core::blossom_sync::download_tree(

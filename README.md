@@ -20,14 +20,15 @@ render. Native shells follow the same Rust-core / native-front pattern used in
 | `iris-drive-mac` | Rust macOS menu-bar dev wrapper around `idrive daemon` |
 | `macos` | SwiftUI/AppKit native shell over `iris-drive-app-core` |
 | `linux` | GTK/libadwaita native shell over the shared app core |
-| `windows` | WPF native shell + installer over the shared app core |
+| `windows` | WPF native shell over the shared sync engine |
 | `android` / `ios` | Native mobile shells over the same shared core |
 
 ## Status
 
-Early working sync engine and macOS menu-bar wrapper. The CLI can initialize an
-account, import a working directory, publish private drive roots, upload
-encrypted blocks to Blossom, and run a long-lived daemon.
+Early working sync engine with macOS, Linux, and Windows desktop control
+panels. The CLI can initialize an account, import a working directory, publish
+private drive roots, upload encrypted blocks to Blossom, and run a long-lived
+daemon.
 
 ## Getting started
 
@@ -77,7 +78,8 @@ crates/
   iris-drive-cli/         `idrive` CLI + daemon
   iris-drive-app-core/    UniFFI bridge + native app state/actions
   iris-drive-mac/         Rust macOS menu-bar dev wrapper
-macos/ linux/ windows/ android/ ios/   native shell placeholders
+macos/ linux/ windows/   desktop native shells
+android/ ios/            mobile shell placeholders
 docs/                   protocol notes, experiments
 ```
 

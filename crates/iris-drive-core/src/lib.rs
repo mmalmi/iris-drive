@@ -12,7 +12,17 @@ pub fn blossom_sync_client(
     keys: nostr_sdk::Keys,
     servers: &[String],
 ) -> hashtree_blossom::BlossomClient {
-    hashtree_blossom::BlossomClient::new(keys).with_servers(servers.to_vec())
+    let client = hashtree_blossom::BlossomClient::new(keys);
+    let mut read_servers = client.read_servers().to_vec();
+    for server in servers {
+        if !read_servers.iter().any(|candidate| candidate == server) {
+            read_servers.push(server.clone());
+        }
+    }
+
+    client
+        .with_read_servers(read_servers)
+        .with_write_servers(servers.to_vec())
 }
 pub mod conflict;
 pub mod daemon;
@@ -27,6 +37,26 @@ pub mod relay_sync;
 pub mod root_meta;
 pub mod sync;
 pub mod sync_cache;
+
+#[cfg(test)]
+mod tests {
+    use nostr_sdk::Keys;
+
+    #[test]
+    fn blossom_sync_client_preserves_configured_writes_as_reads_too() {
+        let write_server = "https://write.example".to_string();
+        let client =
+            super::blossom_sync_client(Keys::generate(), std::slice::from_ref(&write_server));
+
+        assert_eq!(client.write_servers(), std::slice::from_ref(&write_server));
+        assert!(
+            client
+                .read_servers()
+                .iter()
+                .any(|server| server == &write_server)
+        );
+    }
+}
 
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
 pub use app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot, select_latest};

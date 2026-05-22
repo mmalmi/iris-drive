@@ -18,7 +18,7 @@
 //!   transparent.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hashtree_blossom::BlossomClient;
@@ -107,6 +107,8 @@ pub struct WriteBackBlossomStore<L: Store + Send + Sync + 'static> {
     client: BlossomClient,
     fetched: std::sync::atomic::AtomicUsize,
     already_local: std::sync::atomic::AtomicUsize,
+    missing: std::sync::atomic::AtomicUsize,
+    first_missing: Mutex<Option<String>>,
 }
 
 impl<L: Store + Send + Sync + 'static> WriteBackBlossomStore<L> {
@@ -116,6 +118,8 @@ impl<L: Store + Send + Sync + 'static> WriteBackBlossomStore<L> {
             client,
             fetched: std::sync::atomic::AtomicUsize::new(0),
             already_local: std::sync::atomic::AtomicUsize::new(0),
+            missing: std::sync::atomic::AtomicUsize::new(0),
+            first_missing: Mutex::new(None),
         }
     }
 
@@ -126,6 +130,17 @@ impl<L: Store + Send + Sync + 'static> WriteBackBlossomStore<L> {
     pub fn already_local(&self) -> usize {
         self.already_local
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn missing(&self) -> usize {
+        self.missing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn first_missing(&self) -> Option<String> {
+        self.first_missing
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
     }
 }
 
@@ -143,6 +158,14 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackBlossomStore<L> {
         }
         let hex = to_hex(hash);
         let Some(bytes) = self.client.try_download(&hex).await else {
+            if self
+                .missing
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0
+                && let Ok(mut first_missing) = self.first_missing.lock()
+            {
+                *first_missing = Some(hex);
+            }
             return Ok(None);
         };
         // Write-back to local so subsequent ops hit cache and don't
@@ -186,6 +209,13 @@ where
     let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
     let hashes = collect_hashes(&tree, root, 4).await?;
+    if writeback.missing() > 0 {
+        let detail = writeback
+            .first_missing()
+            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
+        return Err(BlossomSyncError::MissingOnBlossom(detail));
+    }
+
     Ok(DownloadReport {
         total_hashes: hashes.len(),
         fetched: writeback.fetched(),
