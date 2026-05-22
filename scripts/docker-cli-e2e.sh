@@ -35,7 +35,9 @@ exec docker run --rm --init \
     apt-get update
     apt-get install -y --no-install-recommends \
       ca-certificates \
+      clang \
       libdbus-1-dev \
+      libclang-dev \
       pkg-config
     rm -rf /var/lib/apt/lists/*
     cargo test -p idrive --test cli_e2e linked_devices_sync_each_others_files_through_cli -- --nocapture
