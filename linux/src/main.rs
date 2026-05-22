@@ -44,6 +44,7 @@ struct Ui {
     notice: gtk::Label,
     drives: gtk::ListBox,
     peers: gtk::ListBox,
+    backups: gtk::ListBox,
     fips: gtk::ListBox,
     relays: gtk::ListBox,
     blossom: gtk::ListBox,
@@ -53,6 +54,8 @@ struct Ui {
     root_path: gtk::Label,
     tray_on_close: gtk::CheckButton,
     relay_entry: gtk::Entry,
+    backup_entry: gtk::Entry,
+    backup_label_entry: gtk::Entry,
     init_button: gtk::Button,
     folder_button: gtk::Button,
     copy_snapshot_button: gtk::Button,
@@ -303,6 +306,26 @@ fn build_ui(app: &adw::Application) {
     peers.set_selection_mode(gtk::SelectionMode::None);
     peers_page.append(&peers);
 
+    let backups_page = page_box();
+    backups_page.append(&section_title("Backups"));
+    let backups = gtk::ListBox::new();
+    backups.add_css_class("iris-drive-list");
+    backups.set_selection_mode(gtk::SelectionMode::None);
+    backups_page.append(&backups);
+    let backup_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let backup_entry = setup_entry("https://backup.example or npub1...");
+    backup_entry.set_hexpand(true);
+    let backup_label_entry = setup_entry("Label");
+    backup_label_entry.set_width_request(140);
+    let add_backup_button = icon_button("list-add-symbolic", "Add backup");
+    let sync_backups_button =
+        action_button("emblem-synchronizing-symbolic", "Sync", "Sync backups");
+    backup_controls.append(&backup_entry);
+    backup_controls.append(&backup_label_entry);
+    backup_controls.append(&add_backup_button);
+    backup_controls.append(&sync_backups_button);
+    backups_page.append(&backup_controls);
+
     let network_page = page_box();
     network_page.append(&section_title("Network"));
     let fips = gtk::ListBox::new();
@@ -359,6 +382,7 @@ fn build_ui(app: &adw::Application) {
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
     stack.add_titled(&peers_page, Some("devices"), "Devices");
+    stack.add_titled(&backups_page, Some("backups"), "Backups");
     stack.add_titled(&network_page, Some("network"), "Network");
     stack.add_titled(&hashtree_page, Some("hashtree"), "Hashtree");
     stack.add_titled(&settings_page, Some("settings"), "Settings");
@@ -366,6 +390,7 @@ fn build_ui(app: &adw::Application) {
     let nav_items = [
         ("drive", "drive-harddisk-symbolic", "My Drive"),
         ("devices", "system-users-symbolic", "Devices"),
+        ("backups", "security-high-symbolic", "Backups"),
         ("network", "network-workgroup-symbolic", "Network"),
         ("hashtree", "network-server-symbolic", "Hashtree"),
         ("settings", "preferences-system-symbolic", "Settings"),
@@ -431,6 +456,7 @@ fn build_ui(app: &adw::Application) {
             notice,
             drives,
             peers,
+            backups,
             fips,
             relays,
             blossom,
@@ -440,6 +466,8 @@ fn build_ui(app: &adw::Application) {
             root_path,
             tray_on_close,
             relay_entry,
+            backup_entry,
+            backup_label_entry,
             init_button,
             folder_button,
             copy_snapshot_button,
@@ -512,6 +540,14 @@ fn build_ui(app: &adw::Application) {
     {
         let model = Rc::clone(&model);
         reset_relays_button.connect_clicked(move |_| reset_relays(&model));
+    }
+    {
+        let model = Rc::clone(&model);
+        add_backup_button.connect_clicked(move |_| add_backup_target(&model));
+    }
+    {
+        let model = Rc::clone(&model);
+        sync_backups_button.connect_clicked(move |_| sync_backups(&model));
     }
     model.ui.tray_on_close.connect_toggled(|button| {
         write_close_to_tray_on_close(button.is_active());
@@ -831,9 +867,7 @@ fn show_window(model: &AppRef, window: &adw::ApplicationWindow) {
 }
 
 fn visible_app_window_exists() -> Option<bool> {
-    if std::env::var_os("DISPLAY").is_none() {
-        return None;
-    }
+    std::env::var_os("DISPLAY")?;
 
     let status = Command::new("xdotool")
         .args(["search", "--onlyvisible", "--name", "^Iris Drive$"])
@@ -1083,6 +1117,7 @@ fn refresh(model: &AppRef) {
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
             render_drives(&model.ui.drives, &json);
             render_peers(model, &json);
+            render_backups(&model.ui.backups, &json);
             render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &json);
         }
         Err(error) => {
@@ -1111,6 +1146,7 @@ fn refresh(model: &AppRef) {
             model.ui.notice.set_text(&error);
             clear_list(&model.ui.drives);
             clear_list(&model.ui.peers);
+            clear_list(&model.ui.backups);
             clear_list(&model.ui.relays);
             clear_list(&model.ui.blossom);
         }
@@ -1560,7 +1596,7 @@ fn ensure_daemon_running(model: &AppRef, status: &Value) -> bool {
 }
 
 fn spawn_daemon() -> Result<Child, std::io::Error> {
-    match Command::new(idrive_path())
+    Command::new(idrive_path())
         .arg("daemon")
         .arg("--watch-interval")
         .arg("10")
@@ -1568,10 +1604,6 @@ fn spawn_daemon() -> Result<Child, std::io::Error> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(child) => Ok(child),
-        Err(error) => Err(error),
-    }
 }
 
 fn daemon_is_running(model: &AppRef) -> bool {
@@ -1719,6 +1751,38 @@ fn add_relay(model: &AppRef) {
     match run_idrive_owned(&["relays".to_string(), "add".to_string(), relay]) {
         Ok(()) => {
             model.ui.relay_entry.set_text("");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn add_backup_target(model: &AppRef) {
+    let target = model.ui.backup_entry.text().trim().to_string();
+    if target.is_empty() {
+        return;
+    }
+    let mut args = vec!["backups".to_string(), "add".to_string(), target];
+    let label = model.ui.backup_label_entry.text().trim().to_string();
+    if !label.is_empty() {
+        args.push("--label".to_string());
+        args.push(label);
+    }
+
+    match run_idrive_owned(&args) {
+        Ok(()) => {
+            model.ui.backup_entry.set_text("");
+            model.ui.backup_label_entry.set_text("");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+fn sync_backups(model: &AppRef) {
+    match run_idrive(["backups", "sync"]) {
+        Ok(()) => {
+            model.ui.notice.set_text("Backups synced");
             refresh(model);
         }
         Err(error) => model.ui.notice.set_text(&error),
@@ -2027,14 +2091,14 @@ fn render_peers(model: &AppRef, json: &Value) {
         if let Some(sync_state) = find_string(peer, &["sync_state"]) {
             metadata.push(sync_state.to_string());
         }
-        if let Some(last_sync) = peer.get("last_block_sync") {
-            if let (Some(transport), Some(total)) = (
+        if let Some(last_sync) = peer.get("last_block_sync")
+            && let (Some(transport), Some(total)) = (
                 find_string(last_sync, &["transport"]),
                 find_number(last_sync, &["total_hashes"]),
-            ) {
-                let fetched = find_number(last_sync, &["fetched"]).unwrap_or(0);
-                metadata.push(format!("{transport} {fetched}/{total}"));
-            }
+            )
+        {
+            let fetched = find_number(last_sync, &["fetched"]).unwrap_or(0);
+            metadata.push(format!("{transport} {fetched}/{total}"));
         }
         if let Some(root) = find_string(peer, &["root_cid"]) {
             metadata.push(short_text(root));
@@ -2056,6 +2120,48 @@ fn render_peers(model: &AppRef, json: &Value) {
             device_npub,
             can_manage_devices && !is_current_device && !device_npub.is_empty(),
         ));
+    }
+}
+
+fn render_backups(list: &gtk::ListBox, json: &Value) {
+    clear_list(list);
+    let network = json.get("network").unwrap_or(&Value::Null);
+    if let Some(targets) = network.get("backup_targets").and_then(Value::as_array) {
+        for target in targets {
+            let kind = find_string(target, &["kind"]).unwrap_or("backup");
+            let target_value = find_string(target, &["target"]).unwrap_or("");
+            let title = find_string(target, &["label"])
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if kind == "fips" {
+                        short_text(target_value)
+                    } else {
+                        target_value.to_string()
+                    }
+                });
+            let last_sync = target.get("last_sync").unwrap_or(&Value::Null);
+            let state = find_string(last_sync, &["state"]).unwrap_or(if kind == "fips" {
+                "pending"
+            } else {
+                "ready"
+            });
+            let mut detail = if kind == "fips" {
+                short_text(target_value)
+            } else {
+                target_value.to_string()
+            };
+            if let (Some(uploaded), Some(total)) = (
+                find_number(last_sync, &["uploaded"]),
+                find_number(last_sync, &["total_hashes"]),
+            ) {
+                detail = format!("{detail} | {uploaded}/{total}");
+            }
+            list.append(&simple_row(&title, &format!("{state} | {detail}")));
+        }
+    }
+    if list.first_child().is_none() {
+        list.append(&simple_row("No backup targets", ""));
     }
 }
 
