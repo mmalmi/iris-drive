@@ -280,7 +280,7 @@ fn spawn_daemon() -> std::io::Result<Child> {
 
 /// Build a 22×22 template version of the Iris Drive platter/reader glyph.
 fn make_icon() -> tray_icon::Icon {
-    const SIZE: u32 = 22;
+    const SIZE: u16 = 22;
     const CENTER: f32 = 11.0;
     const RING_RADIUS: f32 = 6.4;
     const STROKE_WIDTH: f32 = 2.4;
@@ -288,11 +288,11 @@ fn make_icon() -> tray_icon::Icon {
     const READER_START: (f32, f32) = (4.1, 17.9);
     const READER_END: (f32, f32) = (8.8, 13.2);
 
-    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    let mut data = Vec::with_capacity(usize::from(SIZE) * usize::from(SIZE) * 4);
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let px = x as f32 + 0.5;
-            let py = y as f32 + 0.5;
+            let px = f32::from(x) + 0.5;
+            let py = f32::from(y) + 0.5;
             let dx = px - CENTER;
             let dy = py - CENTER;
             let distance_from_center = (dx * dx + dy * dy).sqrt();
@@ -306,7 +306,7 @@ fn make_icon() -> tray_icon::Icon {
             data.extend_from_slice(&[255, 255, 255, alpha]);
         }
     }
-    tray_icon::Icon::from_rgba(data, SIZE, SIZE).expect("valid icon")
+    tray_icon::Icon::from_rgba(data, u32::from(SIZE), u32::from(SIZE)).expect("valid icon")
 }
 
 fn stroke_alpha(distance: f32, width: f32) -> u8 {
@@ -320,7 +320,15 @@ fn fill_alpha(distance: f32, radius: f32) -> u8 {
     } else if edge >= 0.5 {
         0
     } else {
-        ((0.5 - edge) * 255.0).round() as u8
+        let alpha = ((0.5 - edge) * 255.0).round().clamp(0.0, 255.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "alpha is rounded and clamped into the u8 channel range"
+        )]
+        {
+            alpha as u8
+        }
     }
 }
 

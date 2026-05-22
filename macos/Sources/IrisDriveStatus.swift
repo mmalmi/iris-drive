@@ -32,6 +32,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var relays: [String] = []
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var blossomServers: [String] = []
+    @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
     @Published var lastEvent: String?
@@ -42,6 +43,74 @@ final class IrisDriveStatus: ObservableObject {
             return nil
         }
         return snapshotURL
+    }
+}
+
+struct IrisDriveFipsStatus: Equatable {
+    let enabled: Bool
+    let running: Bool
+    let fresh: Bool
+    let endpointNpub: String?
+    let discoveryScope: String?
+    let rosterPeerCount: Int
+    let rosterConnectedPeerCount: Int
+    let connectedPeerCount: Int
+    let otherPeerCount: Int
+    let error: String?
+
+    init(
+        enabled: Bool = false,
+        running: Bool = false,
+        fresh: Bool = false,
+        endpointNpub: String? = nil,
+        discoveryScope: String? = nil,
+        rosterPeerCount: Int = 0,
+        rosterConnectedPeerCount: Int = 0,
+        connectedPeerCount: Int = 0,
+        otherPeerCount: Int = 0,
+        error: String? = nil
+    ) {
+        self.enabled = enabled
+        self.running = running
+        self.fresh = fresh
+        self.endpointNpub = endpointNpub
+        self.discoveryScope = discoveryScope
+        self.rosterPeerCount = rosterPeerCount
+        self.rosterConnectedPeerCount = rosterConnectedPeerCount
+        self.connectedPeerCount = connectedPeerCount
+        self.otherPeerCount = otherPeerCount
+        self.error = error
+    }
+
+    init(json: [String: Any]) {
+        enabled = json["enabled"] as? Bool ?? false
+        running = json["running"] as? Bool ?? false
+        fresh = json["fresh"] as? Bool ?? false
+        endpointNpub = json["endpoint_npub"] as? String
+        discoveryScope = json["discovery_scope"] as? String
+        rosterPeerCount = (json["roster_peer_count"] as? NSNumber)?.intValue ?? 0
+        rosterConnectedPeerCount =
+            (json["roster_connected_peer_count"] as? NSNumber)?.intValue ?? 0
+        connectedPeerCount = (json["connected_peer_count"] as? NSNumber)?.intValue ?? 0
+        otherPeerCount = (json["other_peer_count"] as? NSNumber)?.intValue ?? 0
+        error = json["error"] as? String
+    }
+
+    var stateText: String {
+        if error != nil {
+            return "Error"
+        }
+        if enabled && fresh {
+            return "Running"
+        }
+        if enabled || running {
+            return "Stale"
+        }
+        return "Stopped"
+    }
+
+    var rosterText: String {
+        "\(rosterConnectedPeerCount)/\(rosterPeerCount) direct"
     }
 }
 
@@ -70,6 +139,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let label: String?
     let isCurrentDevice: Bool
     let authorized: Bool
+    let fipsOnline: Bool
     let hasRoot: Bool
     let rootCID: String?
     let rootIsPrivate: Bool?
@@ -83,6 +153,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         label = json["label"] as? String
         isCurrentDevice = json["is_current_device"] as? Bool ?? false
         authorized = json["authorized"] as? Bool ?? false
+        fipsOnline = json["fips_online"] as? Bool ?? false
         hasRoot = json["has_root"] as? Bool ?? false
         rootCID = json["root_cid"] as? String
         rootIsPrivate = json["root_private"] as? Bool

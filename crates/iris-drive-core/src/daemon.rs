@@ -46,9 +46,14 @@ impl EmbeddedHashtreeHost {
             "blossomWriteServers": config.blossom_servers.clone(),
             "enableWebrtc": false,
             "enableMulticast": false,
+            "enableFips": false,
+            "enableFipsUdp": false,
+            "enableFipsWebrtc": false,
+            "fetchFromFipsPeers": false,
+            "socialGraphCrawlDepth": 0,
             "syncEnabled": false,
-            "syncOwn": true,
-            "syncFollowed": true,
+            "syncOwn": false,
+            "syncFollowed": false,
             "publicWrites": false,
         });
         let settings_path = embedded_config_dir.join("browser_settings.json");
@@ -117,6 +122,8 @@ pub enum DaemonError {
     Index(#[from] IndexError),
     #[error("sync cache: {0}")]
     SyncCache(#[from] SyncCacheError),
+    #[error("materialize: {0}")]
+    Materialize(#[from] crate::MaterializeError),
     #[error("store: {0}")]
     Store(String),
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
@@ -143,6 +150,13 @@ pub struct ConflictResolveReport {
     pub previous_root_cid: String,
     pub root_cid: String,
     pub changed: bool,
+}
+
+/// Snapshot of applying the merged drive view to the working directory.
+#[derive(Debug, Clone)]
+pub struct MaterializeWorkingDirReport {
+    pub materialize: crate::MaterializeReport,
+    pub import: Option<ImportReport>,
 }
 
 pub struct Daemon {
@@ -388,6 +402,36 @@ impl Daemon {
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Apply the merged primary drive view to this device's working directory.
+    /// If files changed on disk, re-import and persist a new local root.
+    pub async fn materialize_primary_drive(
+        &mut self,
+    ) -> Result<Option<MaterializeWorkingDirReport>, DaemonError> {
+        let Some(working_dir) = self
+            .config
+            .drive(PRIMARY_DRIVE_ID)
+            .and_then(|drive| drive.working_dir.clone())
+        else {
+            return Ok(None);
+        };
+
+        let materialize = crate::materialize_primary_drive(
+            self.tree_handle(),
+            &self.config,
+            working_dir.as_path(),
+        )
+        .await?;
+        let import = if materialize.changed() {
+            Some(self.import_working_dir(&working_dir).await?)
+        } else {
+            None
+        };
+        Ok(Some(MaterializeWorkingDirReport {
+            materialize,
+            import,
+        }))
     }
 
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {

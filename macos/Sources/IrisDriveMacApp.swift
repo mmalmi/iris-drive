@@ -931,6 +931,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     )
                 }
                 status.blossomServers = network["blossom_servers"] as? [String] ?? []
+                status.fips = IrisDriveFipsStatus(
+                    json: network["fips"] as? [String: Any] ?? [:]
+                )
                 status.authorizedDeviceCount =
                     Self.intValue(network["authorized_device_count"]) ?? 0
                 status.publishedDeviceRoots =

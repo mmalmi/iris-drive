@@ -11,7 +11,7 @@ use iris_drive_core::{
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
-    daemon::{Daemon, EmbeddedHashtreeHost},
+    daemon::{Daemon, EmbeddedHashtreeHost, MaterializeWorkingDirReport},
     gateway::{GatewayBind, GatewayServer},
     index_dir,
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
@@ -26,7 +26,7 @@ const CONFLICT_STATUS_PATH_CAP: usize = 32;
 const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 5, 10, 20];
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
-const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 2;
+const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 
@@ -505,20 +505,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let blocks_dir = config_dir.join("blocks");
     let block_stats = collect_file_stats(&blocks_dir)
         .with_context(|| format!("reading block store stats at {}", blocks_dir.display()))?;
-    let current_root_cid = config
-        .account
-        .as_ref()
-        .and_then(|state| {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&state.device_pubkey))
-                .map(|root| root.root_cid.clone())
-        })
-        .or_else(|| {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.last_root_cid.clone())
-        });
+    let current_root_cid = current_primary_root_cid(&config);
     let current_root_private = current_root_cid.as_deref().and_then(root_is_private);
     let drive_iris_to_url = current_root_cid
         .as_ref()
@@ -528,12 +515,17 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .and_then(drive_iris_to_snapshot_url_for_root);
     let browser_gateway_urls =
         local_gateway_urls_for_root(current_root_cid.as_deref(), DEFAULT_GATEWAY_PORT);
-    let top_level_entries = current_root_cid
-        .as_deref()
-        .and_then(|root| root_top_level_entries(config_dir, root));
-    let file_count = current_root_cid
-        .as_deref()
-        .and_then(|root| root_file_count(config_dir, root));
+    let merged_counts = primary_drive_counts(config_dir, &config);
+    let top_level_entries = merged_counts.map(|(_, top_level)| top_level).or_else(|| {
+        current_root_cid
+            .as_deref()
+            .and_then(|root| root_top_level_entries(config_dir, root))
+    });
+    let file_count = merged_counts.map(|(files, _)| files).or_else(|| {
+        current_root_cid
+            .as_deref()
+            .and_then(|root| root_file_count(config_dir, root))
+    });
     let conflict_status = current_root_cid
         .as_deref()
         .and_then(|root| root_conflict_status(config_dir, root))
@@ -545,6 +537,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let published_device_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .map_or(0, |drive| drive.device_roots.len());
+    let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
     let account_block = config.account.as_ref().map(|state| {
         json!({
             "owner_npub": account_npub(&state.owner_pubkey),
@@ -596,6 +589,7 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                     .and_then(|status| status.get("relay_statuses"))
                     .cloned()
                     .unwrap_or_else(|| json!([])),
+                "fips": fips_diagnostics,
             },
             "daemon": daemon_status,
             "conflicts": conflict_status,
@@ -603,6 +597,23 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         })
     );
     Ok(())
+}
+
+fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
+    config
+        .account
+        .as_ref()
+        .and_then(|state| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.device_roots.get(&state.device_pubkey))
+                .map(|root| root.root_cid.clone())
+        })
+        .or_else(|| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.last_root_cid.clone())
+        })
 }
 
 const DAEMON_STATUS_SCHEMA: u32 = 1;
@@ -697,8 +708,9 @@ fn daemon_lock_pid(config_dir: &Path) -> Option<u32> {
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 fn cmd_conflicts(config_dir: &std::path::Path, command: ConflictsCmd) -> Result<()> {
@@ -868,6 +880,21 @@ fn root_file_count(config_dir: &Path, root_cid: &str) -> Option<usize> {
         .map(|(files, _tombstones)| files.len())
 }
 
+fn primary_drive_counts(config_dir: &Path, config: &AppConfig) -> Option<(usize, usize)> {
+    let daemon = Daemon::open(config_dir).ok()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime
+        .block_on(async {
+            iris_drive_core::primary_merged_view(daemon.tree(), config)
+                .await
+                .ok()
+        })
+        .map(|merged| (merged.file_count(), merged.top_level_entries()))
+}
+
 fn root_conflict_status(config_dir: &Path, root_cid: &str) -> Option<serde_json::Value> {
     let cid = Cid::parse(root_cid).ok()?;
     let daemon = Daemon::open(config_dir).ok()?;
@@ -1013,6 +1040,78 @@ fn peer_statuses(
             })
         })
         .collect()
+}
+
+fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option<&Value>) -> Value {
+    let running = daemon_status
+        .and_then(|status| status.get("running"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fresh = daemon_status
+        .and_then(|status| status.get("fresh"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fips_status = daemon_status
+        .and_then(|status| status.get("fips_block_sync"))
+        .filter(|value| value.is_object());
+    let mut authorized_peers =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
+    if authorized_peers.is_empty() {
+        authorized_peers = configured_fips_authorized_peer_npubs(config);
+    }
+    let connected_peers =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
+    let authorized_set = authorized_peers.iter().cloned().collect::<BTreeSet<_>>();
+    let connected_set = connected_peers.iter().cloned().collect::<BTreeSet<_>>();
+    let roster_connected_peer_count = connected_set.intersection(&authorized_set).count();
+    let other_peer_count = connected_set.difference(&authorized_set).count();
+    let error = daemon_status
+        .and_then(|status| status.get("fips_block_sync_error"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    json!({
+        "enabled": fips_status.is_some(),
+        "running": running,
+        "fresh": fresh,
+        "endpoint_npub": fips_status
+            .and_then(|status| status.get("endpoint_npub"))
+            .and_then(Value::as_str),
+        "discovery_scope": fips_status
+            .and_then(|status| status.get("discovery_scope"))
+            .and_then(Value::as_str),
+        "roster_peer_count": authorized_peers.len(),
+        "roster_connected_peer_count": roster_connected_peer_count,
+        "authorized_peer_count": authorized_peers.len(),
+        "connected_peer_count": connected_peers.len(),
+        "other_peer_count": other_peer_count,
+        "authorized_peers": authorized_peers,
+        "connected_peers": connected_peers,
+        "error": error,
+    })
+}
+
+fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
+    let Some(account) = config.account.as_ref() else {
+        return Vec::new();
+    };
+    let Some(snapshot) = account.app_keys.as_ref() else {
+        return Vec::new();
+    };
+
+    snapshot
+        .devices
+        .iter()
+        .filter(|device| device.pubkey != account.device_pubkey)
+        .map(|device| account_npub(&device.pubkey))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn string_vec_from_json_array(value: Option<&Value>) -> Vec<String> {
+    string_set_from_json_array(value).into_iter().collect()
 }
 
 fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {
@@ -1493,6 +1592,80 @@ fn download_report_json(report: &DownloadReport) -> serde_json::Value {
     })
 }
 
+fn materialize_report_json(report: &MaterializeWorkingDirReport) -> serde_json::Value {
+    json!({
+        "written": report.materialize.written,
+        "updated": report.materialize.updated,
+        "deleted": report.materialize.deleted,
+        "unchanged": report.materialize.unchanged,
+        "skipped": report.materialize.skipped,
+        "changed": report.materialize.changed(),
+        "import": report.import.as_ref().map(|import| json!({
+            "working_dir": import.working_dir.display().to_string(),
+            "root_cid": import.root_cid,
+            "file_count": import.file_count,
+            "top_level_entries": import.top_level_entries,
+        })),
+    })
+}
+
+fn publish_state_report_json(report: &PublishStateReport) -> serde_json::Value {
+    json!({
+        "published_app_keys": report.published_app_keys,
+        "app_keys_publish_error": report.app_keys_publish_error,
+        "published_drive_root": report.published_drive_root,
+        "drive_root_publish_error": report.drive_root_publish_error,
+        "published_files_root": report.published_files_root,
+        "files_root_publish_error": report.files_root_publish_error,
+        "root_cid": report.root_cid,
+        "blossom_upload_error": report.blossom_upload_error,
+        "blossom_upload": report.blossom_upload.as_ref().map(|r| json!({
+            "total_hashes": r.total_hashes,
+            "uploaded": r.uploaded,
+            "already_present": r.already_present,
+        })),
+    })
+}
+
+async fn materialize_working_dir(
+    config_dir: &std::path::Path,
+) -> Result<Option<MaterializeWorkingDirReport>> {
+    let mut daemon = Daemon::open(config_dir)
+        .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+    daemon
+        .materialize_primary_drive()
+        .await
+        .context("materializing merged drive")
+}
+
+async fn materialize_and_publish(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    event_name: &str,
+) -> Result<()> {
+    let Some(report) = materialize_working_dir(config_dir).await? else {
+        return Ok(());
+    };
+    if !report.materialize.changed() {
+        return Ok(());
+    }
+    let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(updated_state) = updated_config.account.clone() else {
+        return Err(anyhow::anyhow!("missing account after materialize"));
+    };
+    let publish =
+        publish_current_state(client, config_dir, &updated_config, &updated_state).await?;
+    println!(
+        "{}",
+        json!({
+            "event": event_name,
+            "materialize": materialize_report_json(&report),
+            "publish": publish_state_report_json(&publish),
+        })
+    );
+    Ok(())
+}
+
 async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
@@ -1681,7 +1854,10 @@ fn cmd_sync(
                     })?;
                     let account = Account::load(account_state, config_dir)
                         .context("loading owner account")?;
-                    let owner_keys = account.owner_key.as_ref().map(|owner| owner.keys());
+                    let owner_keys = account
+                        .owner_key
+                        .as_ref()
+                        .map(iris_drive_core::OwnerKey::keys);
                     let outcome =
                         relay_sync::apply_remote_files_root_event(&mut config, &ev, owner_keys)
                             .context("applying files-root event")?;
@@ -1716,6 +1892,10 @@ fn cmd_sync(
         let mut fips_download_error: Option<String> = None;
         let mut blossom_download_report: Option<DownloadReport> = None;
         let mut blossom_download_error: Option<String> = None;
+        let mut materialize_report: Option<MaterializeWorkingDirReport> = None;
+        let mut materialize_error: Option<String> = None;
+        let mut materialize_publish_report: Option<PublishStateReport> = None;
+        let mut materialize_publish_error: Option<String> = None;
         if !root_cids_to_download.is_empty() {
             let fips_policy = fips_download_policy(&config);
             let mut block_config = config.clone();
@@ -1740,6 +1920,41 @@ fn cmd_sync(
             }
         }
 
+        match materialize_working_dir(config_dir).await {
+            Ok(report) => {
+                let changed = report
+                    .as_ref()
+                    .is_some_and(|report| report.materialize.changed());
+                materialize_report = report;
+                if changed {
+                    match AppConfig::load_or_default(config_path_in(config_dir)) {
+                        Ok(updated_config) => {
+                            if let Some(updated_state) = updated_config.account.clone() {
+                                match publish_current_state(
+                                    &client,
+                                    config_dir,
+                                    &updated_config,
+                                    &updated_state,
+                                )
+                                .await
+                                {
+                                    Ok(report) => materialize_publish_report = Some(report),
+                                    Err(error) => {
+                                        materialize_publish_error = Some(format!("{error:#}"));
+                                    }
+                                }
+                            } else {
+                                materialize_publish_error =
+                                    Some("missing account after materialize".to_string());
+                            }
+                        }
+                        Err(error) => materialize_publish_error = Some(error.to_string()),
+                    }
+                }
+            }
+            Err(error) => materialize_error = Some(format!("{error:#}")),
+        }
+
         let _ = client.disconnect().await;
 
         println!(
@@ -1758,6 +1973,10 @@ fn cmd_sync(
                 "fips_download_error": fips_download_error,
                 "blossom_download": blossom_download_report.as_ref().map(download_report_json),
                 "blossom_download_error": blossom_download_error,
+                "materialize": materialize_report.as_ref().map(materialize_report_json),
+                "materialize_error": materialize_error,
+                "materialize_publish": materialize_publish_report.as_ref().map(publish_state_report_json),
+                "materialize_publish_error": materialize_publish_error,
             })
         );
         Ok::<_, anyhow::Error>(())
@@ -1909,7 +2128,7 @@ fn cmd_daemon(
                 "fips_block_sync_error": fips_block_sync_error,
         });
         write_daemon_status(config_dir, subscribed_status.clone());
-        println!("{}", subscribed_status);
+        println!("{subscribed_status}");
 
         // Announce the current account roster and device root once on
         // startup, and upload the initial blocks if this launch just
@@ -1972,6 +2191,14 @@ fn cmd_daemon(
                 })
             );
         }
+        if let Err(error) =
+            materialize_and_publish(&client, config_dir, "startup_materialized").await
+        {
+            println!(
+                "{}",
+                json!({"event": "startup_materialize_error", "error": format!("{error:#}")})
+            );
+        }
 
         println!("(running — Ctrl+C to stop)");
 
@@ -2007,7 +2234,9 @@ fn cmd_daemon(
                 recv = notifications.recv() => {
                     match recv {
                         Ok(RelayPoolNotification::Event { event, .. }) => {
-                            if let Err(e) = apply_one_event(config_dir, &event, fips_blocks.as_ref()).await {
+                            if let Err(e) =
+                                apply_one_event(&client, config_dir, &event, fips_blocks.as_ref()).await
+                            {
                                 println!(
                                     "{}",
                                     json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
@@ -2037,7 +2266,7 @@ fn cmd_daemon(
                             "fips_block_sync": fips_block_sync_status(fips_blocks.as_ref()).await,
                     });
                     write_daemon_status(config_dir, status.clone());
-                    println!("{}", status);
+                    println!("{status}");
                 }
                 () = async {
                     if let Some(timer) = watch_timer.as_mut() {
@@ -2350,7 +2579,7 @@ async fn scan_and_publish(
             Ok(Ok(r)) => upload_report = Some(r),
             Ok(Err(e)) => upload_error = Some(e.to_string()),
             Err(_) => {
-                upload_error = Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"))
+                upload_error = Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"));
             }
         }
         if let Some(error) = &upload_error {
@@ -2420,6 +2649,7 @@ fn sort_device_files(files: &mut [DeviceFileEntry]) {
 }
 
 async fn apply_one_event(
+    client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<&FsFipsBlockSync>,
@@ -2446,50 +2676,15 @@ async fn apply_one_event(
         let Some(account_state) = config.account.clone() else {
             return Ok(());
         };
-        if !account_state.has_owner_signing_authority {
-            println!(
-                "{}",
-                json!({
-                    "event": "files_root",
-                    "event_id": event.id.to_hex(),
-                    "author": account_npub(&event.pubkey.to_hex()),
-                    "outcome": "owner_key_unavailable",
-                })
-            );
-            return Ok(());
-        }
-        let account = Account::load(account_state, config_dir).context("loading owner account")?;
-        let owner_keys = account.owner_key.as_ref().map(|owner| owner.keys());
-        let outcome = relay_sync::apply_remote_files_root_event(&mut config, event, owner_keys)?;
-        let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
-        let root_cid_to_pull = if was_applied {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
-                .map(|root| root.root_cid.clone())
-        } else {
-            None
-        };
-        println!(
-            "{}",
-            json!({
-                "event": "files_root",
-                "event_id": event.id.to_hex(),
-                "author": account_npub(&event.pubkey.to_hex()),
-                "outcome": files_root_apply_label(&outcome),
-            })
-        );
-        config.save(config_path_in(config_dir))?;
-        if was_applied
-            && let Some(root_cid) = root_cid_to_pull
-            && let Err(e) = pull_blocks_for_root(config_dir, &config, &root_cid, fips_blocks).await
-        {
-            println!(
-                "{}",
-                json!({"event": "block_download_error", "error": e.to_string()})
-            );
-        }
-        return Ok(());
+        return apply_files_root_event(
+            client,
+            config_dir,
+            event,
+            fips_blocks,
+            &mut config,
+            account_state,
+        )
+        .await;
     } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
@@ -2525,12 +2720,88 @@ async fn apply_one_event(
                 json!({"event": "block_download_error", "error": e.to_string()})
             );
         }
+        if was_applied
+            && let Err(error) =
+                materialize_and_publish(client, config_dir, "materialized_drive_root").await
+        {
+            println!(
+                "{}",
+                json!({"event": "materialize_error", "error": format!("{error:#}")})
+            );
+        }
         return Ok(());
     } else {
         // Unknown kind; ignore.
         return Ok(());
     }
     config.save(config_path_in(config_dir))?;
+    Ok(())
+}
+
+async fn apply_files_root_event(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    event: &nostr_sdk::Event,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    config: &mut AppConfig,
+    account_state: AccountState,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    if !account_state.has_owner_signing_authority {
+        println!(
+            "{}",
+            json!({
+                "event": "files_root",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": "owner_key_unavailable",
+            })
+        );
+        return Ok(());
+    }
+    let account = Account::load(account_state, config_dir).context("loading owner account")?;
+    let owner_keys = account
+        .owner_key
+        .as_ref()
+        .map(iris_drive_core::OwnerKey::keys);
+    let outcome = relay_sync::apply_remote_files_root_event(config, event, owner_keys)?;
+    let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
+    let root_cid_to_pull = if was_applied {
+        config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+            .map(|root| root.root_cid.clone())
+    } else {
+        None
+    };
+    println!(
+        "{}",
+        json!({
+            "event": "files_root",
+            "event_id": event.id.to_hex(),
+            "author": account_npub(&event.pubkey.to_hex()),
+            "outcome": files_root_apply_label(&outcome),
+        })
+    );
+    config.save(config_path_in(config_dir))?;
+    if was_applied
+        && let Some(root_cid) = root_cid_to_pull
+        && let Err(e) = pull_blocks_for_root(config_dir, config, &root_cid, fips_blocks).await
+    {
+        println!(
+            "{}",
+            json!({"event": "block_download_error", "error": e.to_string()})
+        );
+    }
+    if was_applied
+        && let Err(error) =
+            materialize_and_publish(client, config_dir, "materialized_files_root").await
+    {
+        println!(
+            "{}",
+            json!({"event": "materialize_error", "error": format!("{error:#}")})
+        );
+    }
     Ok(())
 }
 

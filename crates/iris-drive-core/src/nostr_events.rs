@@ -35,7 +35,8 @@ pub const KIND_APP_KEYS: u16 = 30078;
 pub const KIND_DRIVE_ROOT: u16 = 30079;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
-pub const KIND_HASHTREE_ROOT: u16 = hashtree_nostr::HASHTREE_ROOT_KIND as u16;
+pub const KIND_HASHTREE_ROOT: u16 = 30_078;
+const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
 

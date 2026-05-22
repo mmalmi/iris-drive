@@ -529,6 +529,10 @@ fn status_before_init_reports_uninitialized() {
         v["network"]["blossom_servers"],
         serde_json::json!(["https://upload.iris.to"])
     );
+    assert_eq!(v["network"]["fips"]["enabled"], false);
+    assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
+    assert_eq!(v["network"]["fips"]["roster_connected_peer_count"], 0);
+    assert_eq!(v["network"]["fips"]["other_peer_count"], 0);
     assert!(v["peers"].as_array().unwrap().is_empty());
     assert_eq!(v["conflicts"]["total_count"], 0);
     assert_eq!(v["conflicts"]["unresolved_count"], 0);
@@ -553,11 +557,56 @@ fn status_after_init_reports_initialized() {
     );
     assert_eq!(v["network"]["authorized_device_count"], 1);
     assert_eq!(v["network"]["published_device_roots"], 0);
+    assert_eq!(v["network"]["fips"]["enabled"], false);
+    assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
+    assert_eq!(v["network"]["fips"]["roster_connected_peer_count"], 0);
+    assert_eq!(v["network"]["fips"]["other_peer_count"], 0);
     let peers = v["peers"].as_array().unwrap();
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0]["is_current_device"], true);
     assert_eq!(peers[0]["authorized"], true);
     assert_eq!(peers[0]["has_root"], false);
+}
+
+#[test]
+fn status_reports_fips_network_diagnostics_from_daemon_status() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        dir.path().join("daemon.lock"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": now,
+            "fips_block_sync": {
+                "endpoint_npub": "npub1local",
+                "discovery_scope": "iris-drive-v1:owner",
+                "authorized_peers": ["npub1remote"],
+                "connected_peers": ["npub1remote", "npub1outside"],
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let v = run_json(dir.path(), &["status"]);
+    let fips = &v["network"]["fips"];
+    assert_eq!(fips["enabled"], true);
+    assert_eq!(fips["running"], true);
+    assert_eq!(fips["fresh"], true);
+    assert_eq!(fips["endpoint_npub"], "npub1local");
+    assert_eq!(fips["discovery_scope"], "iris-drive-v1:owner");
+    assert_eq!(fips["roster_peer_count"], 1);
+    assert_eq!(fips["roster_connected_peer_count"], 1);
+    assert_eq!(fips["other_peer_count"], 1);
+    assert_eq!(fips["connected_peer_count"], 2);
 }
 
 #[test]
@@ -898,6 +947,8 @@ async fn linked_devices_sync_each_others_files_through_cli() {
     let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);
     assert_eq!(approved["roster_size"], 2);
 
+    run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
+
     std::fs::write(work_a.path().join("from-a.txt"), b"hello from a").unwrap();
     run_json(cfg_a.path(), &["import", work_a.path().to_str().unwrap()]);
     let publish_a = run_json(
@@ -925,6 +976,10 @@ async fn linked_devices_sync_each_others_files_through_cli() {
             > 0
     );
     assert_list_paths(cfg_b.path(), &["from-a.txt"]);
+    assert_eq!(
+        std::fs::read(work_b.path().join("from-a.txt")).unwrap(),
+        b"hello from a"
+    );
 
     std::fs::write(work_b.path().join("from-b.txt"), b"hello from b").unwrap();
     run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
@@ -941,6 +996,10 @@ async fn linked_devices_sync_each_others_files_through_cli() {
     );
     assert_eq!(sync_a["drive_root_events_applied"], 1);
     assert_list_paths(cfg_a.path(), &["from-a.txt", "from-b.txt"]);
+    assert_eq!(
+        std::fs::read(work_a.path().join("from-b.txt")).unwrap(),
+        b"hello from b"
+    );
 }
 
 fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {
@@ -951,7 +1010,7 @@ fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {
         .iter()
         .map(|file| file["path"].as_str().unwrap())
         .collect();
-    assert_eq!(paths, expected);
+    assert_eq!(paths, expected, "listing: {listing:#}");
 }
 
 #[test]

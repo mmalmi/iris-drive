@@ -68,7 +68,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .to_bech32()
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
-        let endpoint = bind_fips_endpoint(FipsEndpointOptions {
+        let endpoint = Box::pin(bind_fips_endpoint(FipsEndpointOptions {
             identity_nsec,
             discovery_scope: discovery_scope.clone(),
             relays: config.relays.clone(),
@@ -81,7 +81,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
             open_discovery_max_pending: 0,
             packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
-        })
+        }))
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
@@ -250,24 +250,21 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackFipsStore<L> {
             return Ok(Some(bytes));
         }
 
-        match self.transport.get(hash).await? {
-            Some(bytes) => {
-                self.fetched
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                Ok(Some(bytes))
+        if let Some(bytes) = self.transport.get(hash).await? {
+            self.fetched
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(Some(bytes))
+        } else {
+            let hex = to_hex(hash);
+            if self
+                .missing
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0
+                && let Ok(mut first_missing) = self.first_missing.lock()
+            {
+                *first_missing = Some(hex);
             }
-            None => {
-                let hex = to_hex(hash);
-                if self
-                    .missing
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    == 0
-                    && let Ok(mut first_missing) = self.first_missing.lock()
-                {
-                    *first_missing = Some(hex);
-                }
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 
@@ -403,15 +400,17 @@ mod tests {
 
     #[test]
     fn discovery_scope_is_owner_scoped() {
-        let mut config = AppConfig::default();
-        config.account = Some(crate::AccountState {
-            owner_pubkey: "aa".repeat(32),
-            device_pubkey: "bb".repeat(32),
-            has_owner_signing_authority: false,
-            authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
-            device_label: None,
-            app_keys: None,
-        });
+        let config = AppConfig {
+            account: Some(crate::AccountState {
+                owner_pubkey: "aa".repeat(32),
+                device_pubkey: "bb".repeat(32),
+                has_owner_signing_authority: false,
+                authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
+                device_label: None,
+                app_keys: None,
+            }),
+            ..Default::default()
+        };
 
         assert_eq!(
             discovery_scope(&config),

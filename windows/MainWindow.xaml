@@ -309,6 +309,8 @@
 
             <StackPanel x:Name="NetworkPage" Visibility="Collapsed">
               <TextBlock Text="Network" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
+              <TextBlock Text="FIPS" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="FipsList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
               <TextBlock Text="Blossom" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="BlossomList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
               <TextBlock Text="Relays" Style="{StaticResource FieldName}" Margin="0,0,0,6" />

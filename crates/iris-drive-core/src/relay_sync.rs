@@ -423,20 +423,37 @@ pub async fn fetch_drive_roots(
         .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
-    // Pick the latest event per author.
+    // Pick the latest root per author. Device roots carry a monotonic
+    // per-device sequence; use it before wall-clock timestamps so two publishes
+    // in the same second cannot make us fetch an older snapshot.
     let mut latest_per_author: std::collections::HashMap<PublicKey, Event> =
         std::collections::HashMap::new();
     for ev in events {
         latest_per_author
             .entry(ev.pubkey)
             .and_modify(|cur| {
-                if ev.created_at.as_u64() > cur.created_at.as_u64() {
+                if drive_root_event_is_newer(&ev, cur) {
                     *cur = ev.clone();
                 }
             })
             .or_insert(ev);
     }
     Ok(latest_per_author.into_values().collect())
+}
+
+fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
+    match (
+        parse_drive_root_event_preview(candidate),
+        parse_drive_root_event_preview(current),
+    ) {
+        (Ok(candidate), Ok(current)) => candidate
+            .device_seq
+            .cmp(&current.device_seq)
+            .then_with(|| candidate.published_at.cmp(&current.published_at))
+            .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
+            .is_gt(),
+        _ => candidate.created_at.as_u64() > current.created_at.as_u64(),
+    }
 }
 
 #[cfg(test)]
@@ -814,6 +831,22 @@ mod tests {
         assert_eq!(entry.root_cid, root_2.root_cid);
         assert_eq!(entry.device_seq, 2);
         assert_eq!(entry.published_at, 100);
+    }
+
+    #[test]
+    fn same_second_drive_root_selection_prefers_higher_device_seq() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let older = causal_encrypted_root(0x31, 1_700_000_000, 1, 1);
+        let newer = causal_encrypted_root(0x32, 1_700_000_000, 1, 2);
+        let authorized = vec![device.public_key().to_hex()];
+        let older_event =
+            build_drive_root_event(&device, &owner, "main", &older, &authorized).unwrap();
+        let newer_event =
+            build_drive_root_event(&device, &owner, "main", &newer, &authorized).unwrap();
+
+        assert!(drive_root_event_is_newer(&newer_event, &older_event));
+        assert!(!drive_root_event_is_newer(&older_event, &newer_event));
     }
 
     #[test]

@@ -363,6 +363,7 @@ struct IrisDriveControlPanel: View {
     private var network: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Network")
+            FipsDiagnostics(status: status.fips)
             EndpointGroup(title: "Blossom", values: status.blossomServers)
             relayEditor
         }
@@ -648,6 +649,11 @@ private struct PeerRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            Circle()
+                .fill(peer.fipsOnline ? Color.green : Color.secondary.opacity(0.65))
+                .frame(width: 8, height: 8)
+                .accessibilityLabel(peer.fipsOnline ? "Online" : "Offline")
+                .help(peer.fipsOnline ? "Online" : "Offline")
             Image(systemName: peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
@@ -735,6 +741,67 @@ private struct EndpointGroup: View {
                         .textSelection(.enabled)
                 }
             }
+        }
+    }
+}
+
+private struct FipsDiagnostics: View {
+    let status: IrisDriveFipsStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("FIPS")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 110), alignment: .leading)],
+                alignment: .leading,
+                spacing: 8
+            ) {
+                NetworkMetric(title: "State", value: status.stateText)
+                NetworkMetric(title: "Roster", value: status.rosterText)
+                NetworkMetric(title: "Other", value: "\(status.otherPeerCount)")
+                NetworkMetric(title: "Connected", value: "\(status.connectedPeerCount)")
+            }
+            if let endpoint = status.endpointNpub, !endpoint.isEmpty {
+                Text(endpoint)
+                    .font(.system(.callout, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            if let scope = status.discoveryScope, !scope.isEmpty {
+                Text(scope)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            if let error = status.error, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+}
+
+private struct NetworkMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 }

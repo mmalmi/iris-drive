@@ -44,6 +44,7 @@ struct Ui {
     notice: gtk::Label,
     drives: gtk::ListBox,
     peers: gtk::ListBox,
+    fips: gtk::ListBox,
     relays: gtk::ListBox,
     blossom: gtk::ListBox,
     config_path: gtk::Label,
@@ -266,7 +267,13 @@ fn build_ui(app: &adw::Application) {
     account_grid.set_column_spacing(10);
     account_grid.set_row_spacing(8);
     account_grid.set_hexpand(true);
-    add_copy_field(&account_grid, 0, "Owner", &account_owner, &copy_owner_button);
+    add_copy_field(
+        &account_grid,
+        0,
+        "Owner",
+        &account_owner,
+        &copy_owner_button,
+    );
     add_copy_field(
         &account_grid,
         1,
@@ -298,6 +305,11 @@ fn build_ui(app: &adw::Application) {
 
     let network_page = page_box();
     network_page.append(&section_title("Network"));
+    let fips = gtk::ListBox::new();
+    fips.add_css_class("iris-drive-list");
+    fips.set_selection_mode(gtk::SelectionMode::None);
+    network_page.append(&endpoint_group("FIPS", &fips));
+
     let blossom = gtk::ListBox::new();
     blossom.add_css_class("iris-drive-list");
     blossom.set_selection_mode(gtk::SelectionMode::None);
@@ -419,6 +431,7 @@ fn build_ui(app: &adw::Application) {
             notice,
             drives,
             peers,
+            fips,
             relays,
             blossom,
             config_path,
@@ -1026,20 +1039,15 @@ fn refresh(model: &AppRef) {
             let owner_npub = find_string(account, &["owner_npub"]);
             let device_npub = find_string(account, &["device_npub"]);
             let authorization = find_string(account, &["authorization_state"]).unwrap_or("-");
-            model
-                .ui
-                .owner
-                .set_text(&short_value(owner_npub));
-            model
-                .ui
-                .device
-                .set_text(&short_value(device_npub));
+            model.ui.owner.set_text(&short_value(owner_npub));
+            model.ui.device.set_text(&short_value(device_npub));
             model.ui.account_owner.set_text(owner_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
             model.ui.account_authorization.set_text(authorization);
-            model.ui.approve_box.set_visible(
-                find_bool(account, &["has_owner_signing_authority"]).unwrap_or(false),
-            );
+            model
+                .ui
+                .approve_box
+                .set_visible(find_bool(account, &["has_owner_signing_authority"]).unwrap_or(false));
             model.ui.snapshot.set_text(&snapshot_value(&json));
             model.ui.files.set_text(&file_count_value(&json));
             model.ui.blocks.set_text(&block_count_value(&json));
@@ -1075,7 +1083,7 @@ fn refresh(model: &AppRef) {
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
             render_drives(&model.ui.drives, &json);
             render_peers(model, &json);
-            render_network(&model.ui.relays, &model.ui.blossom, &json);
+            render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &json);
         }
         Err(error) => {
             set_view_mode(model, true, daemon_is_running(model));
@@ -1192,9 +1200,7 @@ fn render_awaiting_approval(model: &AppRef, json: &Value, sync_running: bool) {
     container.append(&device);
 
     let request = find_string(
-        account
-            .get("device_link_request")
-            .unwrap_or(&Value::Null),
+        account.get("device_link_request").unwrap_or(&Value::Null),
         &["url"],
     )
     .unwrap_or("");
@@ -2036,30 +2042,34 @@ fn render_peers(model: &AppRef, json: &Value) {
         if let Some(generation) = find_number(peer, &["dck_generation"]) {
             metadata.push(format!("DCK {generation}"));
         }
-        let state = if peer
+        let fips_online = peer
             .get("fips_online")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            "Online"
-        } else {
-            "Offline"
-        };
+            .unwrap_or(false);
+        let state = if fips_online { "Online" } else { "Offline" };
         list.append(&peer_row(
             model,
             title,
             &metadata.join(" | "),
             state,
+            fips_online,
             device_npub,
             can_manage_devices && !is_current_device && !device_npub.is_empty(),
         ));
     }
 }
 
-fn render_network(relays_list: &gtk::ListBox, blossom_list: &gtk::ListBox, json: &Value) {
+fn render_network(
+    fips_list: &gtk::ListBox,
+    relays_list: &gtk::ListBox,
+    blossom_list: &gtk::ListBox,
+    json: &Value,
+) {
+    clear_list(fips_list);
     clear_list(relays_list);
     clear_list(blossom_list);
     let network = json.get("network").unwrap_or(&Value::Null);
+    render_fips_network(fips_list, network);
 
     if let Some(relays) = network.get("relays").and_then(Value::as_array) {
         for relay in relays.iter().filter_map(Value::as_str) {
@@ -2077,6 +2087,52 @@ fn render_network(relays_list: &gtk::ListBox, blossom_list: &gtk::ListBox, json:
     }
     if blossom_list.first_child().is_none() {
         blossom_list.append(&simple_row("No Blossom servers", ""));
+    }
+}
+
+fn render_fips_network(list: &gtk::ListBox, network: &Value) {
+    let fips = network.get("fips").unwrap_or(&Value::Null);
+    let state = fips_state_text(fips);
+    let roster = format!(
+        "{}/{} direct",
+        find_number(fips, &["roster_connected_peer_count"]).unwrap_or(0),
+        find_number(fips, &["roster_peer_count"]).unwrap_or(0)
+    );
+    let other = find_number(fips, &["other_peer_count"])
+        .unwrap_or(0)
+        .to_string();
+    let connected = find_number(fips, &["connected_peer_count"])
+        .unwrap_or(0)
+        .to_string();
+    list.append(&simple_row("State", &state));
+    list.append(&simple_row("Roster FIPS", &roster));
+    list.append(&simple_row("Other FIPS", &other));
+    list.append(&simple_row("Connected", &connected));
+    if let Some(endpoint) = find_string(fips, &["endpoint_npub"]).filter(|value| !value.is_empty())
+    {
+        list.append(&simple_row("Endpoint", endpoint));
+    }
+    if let Some(scope) = find_string(fips, &["discovery_scope"]).filter(|value| !value.is_empty()) {
+        list.append(&simple_row("Scope", scope));
+    }
+    if let Some(error) = find_string(fips, &["error"]).filter(|value| !value.is_empty()) {
+        list.append(&simple_row("Error", error));
+    }
+}
+
+fn fips_state_text(fips: &Value) -> String {
+    if find_string(fips, &["error"]).is_some_and(|error| !error.is_empty()) {
+        return "Error".to_string();
+    }
+    let enabled = find_bool(fips, &["enabled"]).unwrap_or(false);
+    let running = find_bool(fips, &["running"]).unwrap_or(false);
+    let fresh = find_bool(fips, &["fresh"]).unwrap_or(false);
+    if enabled && fresh {
+        "Running".to_string()
+    } else if enabled || running {
+        "Stale".to_string()
+    } else {
+        "Stopped".to_string()
     }
 }
 
@@ -2142,15 +2198,27 @@ fn peer_row(
     title: &str,
     subtitle: &str,
     state: &str,
+    is_online: bool,
     device_npub: &str,
     can_revoke: bool,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    body.set_valign(gtk::Align::Center);
     body.set_margin_top(10);
     body.set_margin_bottom(10);
     body.set_margin_start(12);
     body.set_margin_end(12);
+
+    let dot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    dot.add_css_class(if is_online {
+        "iris-peer-online"
+    } else {
+        "iris-peer-offline"
+    });
+    dot.set_valign(gtk::Align::Center);
+    dot.set_tooltip_text(Some(state));
+    body.append(&dot);
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
     labels.set_hexpand(true);
@@ -2170,11 +2238,6 @@ fn peer_row(
         labels.append(&subtitle_label);
     }
     body.append(&labels);
-
-    let state_label = gtk::Label::new(Some(state));
-    state_label.add_css_class("iris-row-state");
-    state_label.set_xalign(1.0);
-    body.append(&state_label);
 
     if can_revoke {
         let revoke = icon_button("user-trash-symbolic", "Revoke device");
@@ -2345,6 +2408,18 @@ fn install_css() {
         }
         .iris-drive-list {
           border-radius: 8px;
+        }
+        .iris-peer-online,
+        .iris-peer-offline {
+          min-width: 10px;
+          min-height: 10px;
+          border-radius: 999px;
+        }
+        .iris-peer-online {
+          background: @success_color;
+        }
+        .iris-peer-offline {
+          background: alpha(@window_fg_color, 0.24);
         }
         .iris-row-title {
           font-weight: 700;

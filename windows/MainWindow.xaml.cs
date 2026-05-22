@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using WpfApplication = System.Windows.Application;
@@ -13,6 +14,8 @@ using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfClipboard = System.Windows.Clipboard;
+using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
+using IOPath = System.IO.Path;
 using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace IrisDrive.WindowsShell;
@@ -224,24 +227,23 @@ public partial class MainWindow : Window
             });
         }
 
-        var state = new TextBlock
+        var dot = new Ellipse
         {
-            Text = peer.State,
-            Foreground = peer.State == "Online"
-                ? (WpfBrush)WpfApplication.Current.Resources["IrisSuccessBrush"]
-                : (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
-            Margin = new Thickness(12, 0, 0, 0),
+            Width = 8,
+            Height = 8,
+            Fill = PeerConnectivityBrush(peer),
             VerticalAlignment = VerticalAlignment.Center,
-            FontWeight = FontWeights.SemiBold,
+            HorizontalAlignment = WpfHorizontalAlignment.Left,
+            ToolTip = peer.State,
         };
 
         var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(dot);
+        Grid.SetColumn(stack, 1);
         grid.Children.Add(stack);
-        Grid.SetColumn(state, 1);
-        grid.Children.Add(state);
 
         if (peer.CanRevoke)
         {
@@ -265,8 +267,34 @@ public partial class MainWindow : Window
         };
     }
 
+    private static WpfBrush PeerConnectivityBrush(PeerRow peer)
+    {
+        return (WpfBrush)WpfApplication.Current.Resources[
+            peer.IsOnline ? "IrisSuccessBrush" : "IrisMutedBrush"];
+    }
+
     private void RenderNetwork(IrisDriveStatusData status)
     {
+        FipsList.Items.Clear();
+        FipsList.Items.Add(Row("State", "", status.Fips.State));
+        FipsList.Items.Add(Row("Roster FIPS", status.Fips.RosterText, ""));
+        FipsList.Items.Add(Row("Other FIPS", status.Fips.OtherPeerCount.ToString(), ""));
+        FipsList.Items.Add(Row("Connected", status.Fips.ConnectedPeerCount.ToString(), ""));
+        if (!string.IsNullOrWhiteSpace(status.Fips.EndpointNpub))
+        {
+            FipsList.Items.Add(Row("Endpoint", status.Fips.EndpointNpub, ""));
+        }
+
+        if (!string.IsNullOrWhiteSpace(status.Fips.DiscoveryScope))
+        {
+            FipsList.Items.Add(Row("Scope", status.Fips.DiscoveryScope, ""));
+        }
+
+        if (!string.IsNullOrWhiteSpace(status.Fips.Error))
+        {
+            FipsList.Items.Add(Row("Error", status.Fips.Error, ""));
+        }
+
         BlossomList.Items.Clear();
         if (status.BlossomServers.Count == 0)
         {
@@ -774,13 +802,13 @@ public partial class MainWindow : Window
     private void WriteCloseToTrayOnClose(bool enabled)
     {
         var path = CloseToTrayConfigPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Directory.CreateDirectory(IOPath.GetDirectoryName(path)!);
         File.WriteAllText(path, enabled ? "true\n" : "false\n");
     }
 
     private string CloseToTrayConfigPath()
     {
-        return Path.Combine(service.DefaultConfigDirectory, "windows-close-to-tray-on-close");
+        return IOPath.Combine(service.DefaultConfigDirectory, "windows-close-to-tray-on-close");
     }
 
     private static string FormatBytes(long bytes)

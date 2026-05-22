@@ -29,6 +29,7 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
+    public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
     public IReadOnlyDictionary<string, string> RelayStatuses { get; init; } =
         new Dictionary<string, string>();
 
@@ -79,6 +80,9 @@ public sealed class IrisDriveStatusData
             BlossomServers = network.HasValue
                 ? StringArray(network.Value, "blossom_servers")
                 : Array.Empty<string>(),
+            Fips = network.HasValue
+                ? FipsDiagnostics.FromJson(Object(network.Value, "fips"))
+                : FipsDiagnostics.Empty,
             RelayStatuses = network.HasValue
                 ? RelayStatusMap(network.Value)
                 : new Dictionary<string, string>(),
@@ -200,12 +204,14 @@ public sealed class IrisDriveStatusData
                 details.Add($"DCK {dck}");
             }
 
-            var state = Bool(peer, "fips_online") ? "Online" : "Offline";
+            var isOnline = Bool(peer, "fips_online");
+            var state = isOnline ? "Online" : "Offline";
             rows.Add(new PeerRow(
                 deviceNpub,
                 title,
                 string.Join(" | ", details),
                 state,
+                isOnline,
                 isCurrentDevice,
                 canManageDevices && !isCurrentDevice && !string.IsNullOrWhiteSpace(deviceNpub)));
         }
@@ -304,10 +310,78 @@ public sealed class IrisDriveStatusData
 
 public sealed record DriveRow(string Name, string Path, string State);
 
+public sealed record FipsDiagnostics(
+    bool Enabled,
+    bool Running,
+    bool Fresh,
+    string? EndpointNpub,
+    string? DiscoveryScope,
+    int RosterPeerCount,
+    int RosterConnectedPeerCount,
+    int ConnectedPeerCount,
+    int OtherPeerCount,
+    string? Error)
+{
+    public static FipsDiagnostics Empty { get; } =
+        new(false, false, false, null, null, 0, 0, 0, 0, null);
+
+    public string State =>
+        !string.IsNullOrWhiteSpace(Error) ? "Error" :
+        Enabled && Fresh ? "Running" :
+        Enabled || Running ? "Stale" :
+        "Stopped";
+
+    public string RosterText => $"{RosterConnectedPeerCount}/{RosterPeerCount} direct";
+
+    public static FipsDiagnostics FromJson(JsonElement? fips)
+    {
+        if (!fips.HasValue)
+        {
+            return Empty;
+        }
+
+        var value = fips.Value;
+        return new FipsDiagnostics(
+            Bool(value, "enabled"),
+            Bool(value, "running"),
+            Bool(value, "fresh"),
+            String(value, "endpoint_npub"),
+            String(value, "discovery_scope"),
+            Int(value, "roster_peer_count"),
+            Int(value, "roster_connected_peer_count"),
+            Int(value, "connected_peer_count"),
+            Int(value, "other_peer_count"),
+            String(value, "error"));
+    }
+
+    private static string? String(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static int Int(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt32(out var result)
+            ? result
+            : 0;
+    }
+
+    private static bool Bool(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.True;
+    }
+}
+
 public sealed record PeerRow(
     string DeviceNpub,
     string Title,
     string Subtitle,
     string State,
+    bool IsOnline,
     bool IsCurrentDevice,
     bool CanRevoke);
