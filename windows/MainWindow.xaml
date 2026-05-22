@@ -132,6 +132,12 @@
               <TextBlock Text="Devices" />
             </StackPanel>
           </Button>
+          <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8C7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Backups" />
+            </StackPanel>
+          </Button>
           <Button x:Name="NavNetworkButton" Tag="Network" Style="{StaticResource NavButton}" Click="Nav_Click">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE968;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
@@ -305,6 +311,24 @@
 
               <TextBlock Text="Authorized" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
+            </StackPanel>
+
+            <StackPanel x:Name="BackupsPage" Visibility="Collapsed">
+              <TextBlock Text="Backups" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <ListBox x:Name="BackupsList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
+              <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="SyncBackups_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE895;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Sync" />
+                  </StackPanel>
+                </Button>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" Margin="8,0,0,0">
+                  <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
+                </Button>
+                <TextBox x:Name="BackupLabelBox" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
+                <TextBox x:Name="BackupTargetBox" MinHeight="34" />
+              </DockPanel>
             </StackPanel>
 
             <StackPanel x:Name="NetworkPage" Visibility="Collapsed">

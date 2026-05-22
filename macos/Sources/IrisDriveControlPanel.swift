@@ -4,6 +4,7 @@ import SwiftUI
 private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
     case peers
+    case backups
     case network
     case hashtree
     case settings
@@ -16,6 +17,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "My Drive"
         case .peers:
             return "Devices"
+        case .backups:
+            return "Backups"
         case .network:
             return "Network"
         case .hashtree:
@@ -31,6 +34,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "externaldrive.fill"
         case .peers:
             return "person.2.fill"
+        case .backups:
+            return "lock.shield.fill"
         case .network:
             return "network"
         case .hashtree:
@@ -53,6 +58,8 @@ struct IrisDriveControlPanel: View {
     let controller: AppDelegate
     @State private var selectedTab = IrisDrivePanelTab.drive
     @State private var relayInput = ""
+    @State private var backupInput = ""
+    @State private var backupLabel = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var setupMode = IrisDriveSetupMode.welcome
@@ -262,6 +269,8 @@ struct IrisDriveControlPanel: View {
             overview
         case .peers:
             peers
+        case .backups:
+            backups
         case .network:
             network
         case .hashtree:
@@ -366,6 +375,41 @@ struct IrisDriveControlPanel: View {
             FipsDiagnostics(status: status.fips)
             EndpointGroup(title: "Blossom", values: status.blossomServers)
             relayEditor
+        }
+    }
+
+    private var backups: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Backups")
+            if status.backupTargets.isEmpty {
+                Text("No backup targets")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(status.backupTargets) { target in
+                    BackupTargetRow(target: target)
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("https://backup.example or npub1...", text: $backupInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { addBackupFromInput() }
+                TextField("Label", text: $backupLabel)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                    .onSubmit { addBackupFromInput() }
+                Button {
+                    addBackupFromInput()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .disabled(backupInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    controller.syncBackups()
+                } label: {
+                    Label("Sync", systemImage: "arrow.up.circle.fill")
+                }
+            }
         }
     }
 
@@ -488,6 +532,14 @@ struct IrisDriveControlPanel: View {
         guard !value.isEmpty else { return }
         controller.addRelay(value)
         relayInput = ""
+    }
+
+    private func addBackupFromInput() {
+        let value = backupInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        controller.addBackupTarget(value, label: backupLabel)
+        backupInput = ""
+        backupLabel = ""
     }
 
     private func saveRelayEdit(_ oldURL: String) {
@@ -717,6 +769,33 @@ private struct PeerRow: View {
             return root
         }
         return "\(String(root.prefix(10)))...\(String(root.suffix(6)))"
+    }
+}
+
+private struct BackupTargetRow: View {
+    let target: IrisDriveBackupTarget
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: target.kind == "fips" ? "person.badge.shield.checkmark.fill" : "cloud.fill")
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(target.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(target.detail)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Text(target.state)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
     }
 }
 

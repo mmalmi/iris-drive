@@ -69,6 +69,21 @@ fn configure_local_blossom(config_dir: &std::path::Path, url: &str) {
         .success();
 }
 
+fn import_one_file(
+    config_dir: &std::path::Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> tempfile::TempDir {
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join(file_name), bytes).unwrap();
+    idrive(config_dir)
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+    work
+}
+
 #[test]
 fn init_creates_key_and_config() {
     let dir = tempdir().unwrap();
@@ -566,6 +581,87 @@ fn status_after_init_reports_initialized() {
     assert_eq!(peers[0]["is_current_device"], true);
     assert_eq!(peers[0]["authorized"], true);
     assert_eq!(peers[0]["has_root"], false);
+}
+
+#[test]
+fn backup_targets_can_be_added_listed_and_removed() {
+    let dir = tempdir().unwrap();
+    let init = run_json(dir.path(), &["init"]);
+    let device_npub = init["device_npub"].as_str().unwrap();
+
+    let added_blossom = run_json(
+        dir.path(),
+        &[
+            "backups",
+            "add",
+            "https://backup.example",
+            "--label",
+            "Offsite",
+        ],
+    );
+    assert_eq!(added_blossom["backup_targets"].as_array().unwrap().len(), 1);
+    assert_eq!(added_blossom["backup_targets"][0]["kind"], "blossom");
+    assert_eq!(added_blossom["backup_targets"][0]["label"], "Offsite");
+
+    let added_fips = run_json(
+        dir.path(),
+        &["backups", "add", device_npub, "--label", "Vault"],
+    );
+    let targets = added_fips["backup_targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 2);
+    assert!(targets.iter().any(|target| target["kind"] == "fips"));
+
+    let status = run_json(dir.path(), &["status"]);
+    assert_eq!(status["network"]["backup_target_count"], 2);
+    assert_eq!(
+        status["network"]["backup_targets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let removed = run_json(dir.path(), &["backups", "remove", "https://backup.example"]);
+    let remaining = removed["backup_targets"].as_array().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0]["kind"], "fips");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn backup_sync_uploads_private_root_to_blossom_target() {
+    let blossom = LocalBlossomServer::spawn().await;
+    let cfg = tempdir().unwrap();
+
+    run_json(cfg.path(), &["init", "--label", "owner"]);
+    let _work = import_one_file(cfg.path(), "backup.txt", b"encrypted backup material");
+    run_json(
+        cfg.path(),
+        &["backups", "add", &blossom.url, "--label", "Local backup"],
+    );
+
+    let synced = run_json(cfg.path(), &["backups", "sync"]);
+    let reports = synced["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["kind"], "blossom");
+    assert_eq!(reports[0]["state"], "synced");
+    assert!(
+        reports[0]["upload"]["uploaded"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    let root_cid = Cid::parse(reports[0]["root_cid"].as_str().unwrap()).unwrap();
+    assert!(
+        root_cid.key.is_some(),
+        "backup roots must stay encrypted/private"
+    );
+    assert!(blossom.blob_count().await > 0);
+
+    let status = run_json(cfg.path(), &["status"]);
+    let targets = status["network"]["backup_targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0]["last_sync"]["state"], "synced");
+    assert_eq!(targets[0]["last_sync"]["root_cid"], reports[0]["root_cid"]);
 }
 
 #[test]
@@ -1278,6 +1374,7 @@ struct LocalBlossomState {
 
 struct LocalBlossomServer {
     url: String,
+    state: LocalBlossomState,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -1289,7 +1386,7 @@ impl LocalBlossomServer {
         let app = Router::new()
             .route("/upload", put(blossom_upload))
             .route("/:name", get(blossom_get).head(blossom_head))
-            .with_state(state);
+            .with_state(state.clone());
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
             .unwrap();
@@ -1299,8 +1396,13 @@ impl LocalBlossomServer {
         });
         Self {
             url: format!("http://{addr}"),
+            state,
             task,
         }
+    }
+
+    async fn blob_count(&self) -> usize {
+        self.state.blobs.lock().await.len()
     }
 }
 

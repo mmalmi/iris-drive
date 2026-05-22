@@ -150,6 +150,7 @@ public partial class MainWindow : Window
 
         RenderDrives(status);
         RenderPeers(status);
+        RenderBackups(status);
         RenderNetwork(status);
         UpdateTrayText(syncRunning);
     }
@@ -177,6 +178,7 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = false;
         DrivesList.Items.Clear();
         PeersList.Items.Clear();
+        BackupsList.Items.Clear();
         RelaysList.Items.Clear();
         BlossomList.Items.Clear();
     }
@@ -202,6 +204,21 @@ public partial class MainWindow : Window
         foreach (var peer in status.Peers)
         {
             PeersList.Items.Add(PeerListRow(peer));
+        }
+    }
+
+    private void RenderBackups(IrisDriveStatusData status)
+    {
+        BackupsList.Items.Clear();
+        if (status.BackupTargets.Count == 0)
+        {
+            BackupsList.Items.Add(Row("No backup targets", "", ""));
+            return;
+        }
+
+        foreach (var target in status.BackupTargets)
+        {
+            BackupsList.Items.Add(Row(target.Title, target.Subtitle, target.State));
         }
     }
 
@@ -567,6 +584,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void AddBackup_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await service.AddBackupTargetAsync(BackupTargetBox.Text, BackupLabelBox.Text);
+            BackupTargetBox.Clear();
+            BackupLabelBox.Clear();
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void SyncBackups_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await service.SyncBackupsAsync();
+            NoticeText.Text = "Backups synced";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
     private void CopyText(string? value, string message)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -686,6 +732,7 @@ public partial class MainWindow : Window
     {
         DrivePage.Visibility = page == "Drive" ? Visibility.Visible : Visibility.Collapsed;
         DevicesPage.Visibility = page == "Devices" ? Visibility.Visible : Visibility.Collapsed;
+        BackupsPage.Visibility = page == "Backups" ? Visibility.Visible : Visibility.Collapsed;
         NetworkPage.Visibility = page == "Network" ? Visibility.Visible : Visibility.Collapsed;
         HashtreePage.Visibility = page == "Hashtree" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "Settings" ? Visibility.Visible : Visibility.Collapsed;
@@ -694,6 +741,7 @@ public partial class MainWindow : Window
         {
             NavDriveButton,
             NavDevicesButton,
+            NavBackupsButton,
             NavNetworkButton,
             NavHashtreeButton,
             NavSettingsButton,

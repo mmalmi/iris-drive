@@ -109,6 +109,24 @@ public sealed class IrisDriveService
         return RunAsync("relays", "reset");
     }
 
+    public Task AddBackupTargetAsync(string target, string label)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return Task.CompletedTask;
+        }
+
+        var trimmedLabel = label.Trim();
+        return string.IsNullOrEmpty(trimmedLabel)
+            ? RunAsync("backups", "add", target.Trim())
+            : RunAsync("backups", "add", target.Trim(), "--label", trimmedLabel);
+    }
+
+    public Task SyncBackupsAsync()
+    {
+        return RunAsync("backups", "sync");
+    }
+
     public async Task ImportDriveFolderAsync(string folder)
     {
         Directory.CreateDirectory(folder);

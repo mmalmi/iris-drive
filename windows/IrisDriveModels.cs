@@ -27,6 +27,8 @@ public sealed class IrisDriveStatusData
     public long LocalBlockBytes { get; init; }
     public IReadOnlyList<DriveRow> Drives { get; init; } = Array.Empty<DriveRow>();
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
+    public IReadOnlyList<BackupTargetRow> BackupTargets { get; init; } =
+        Array.Empty<BackupTargetRow>();
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
@@ -76,6 +78,9 @@ public sealed class IrisDriveStatusData
             Peers = PeerRows(
                 root,
                 account.HasValue && Bool(account.Value, "has_owner_signing_authority")),
+            BackupTargets = network.HasValue
+                ? BackupTargetRows(network.Value)
+                : Array.Empty<BackupTargetRow>(),
             Relays = network.HasValue ? StringArray(network.Value, "relays") : Array.Empty<string>(),
             BlossomServers = network.HasValue
                 ? StringArray(network.Value, "blossom_servers")
@@ -219,6 +224,49 @@ public sealed class IrisDriveStatusData
         return rows;
     }
 
+    private static IReadOnlyList<BackupTargetRow> BackupTargetRows(JsonElement network)
+    {
+        var rows = new List<BackupTargetRow>();
+        if (!network.TryGetProperty("backup_targets", out var targets) ||
+            targets.ValueKind != JsonValueKind.Array)
+        {
+            return rows;
+        }
+
+        foreach (var target in targets.EnumerateArray())
+        {
+            var value = String(target, "target") ?? "";
+            var title = String(target, "label");
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = String(target, "kind") == "fips" ? ShortText(value) : value;
+            }
+
+            var lastSync = Object(target, "last_sync");
+            var state = lastSync.HasValue
+                ? String(lastSync.Value, "state") ?? "synced"
+                : String(target, "kind") == "fips" ? "Pending" : "Ready";
+            var detail = String(target, "kind") == "fips"
+                ? ShortText(value)
+                : value;
+            if (lastSync.HasValue)
+            {
+                var uploaded = Int(lastSync.Value, "uploaded");
+                var total = Int(lastSync.Value, "total_hashes");
+                detail = $"{detail} | {uploaded}/{total}";
+            }
+
+            rows.Add(new BackupTargetRow(
+                String(target, "id") ?? value,
+                String(target, "kind") ?? "backup",
+                title ?? "Backup",
+                detail,
+                state));
+        }
+
+        return rows;
+    }
+
     private static IReadOnlyList<string> StringArray(JsonElement root, string name)
     {
         if (!root.TryGetProperty(name, out var array) || array.ValueKind != JsonValueKind.Array)
@@ -309,6 +357,13 @@ public sealed class IrisDriveStatusData
 }
 
 public sealed record DriveRow(string Name, string Path, string State);
+
+public sealed record BackupTargetRow(
+    string Id,
+    string Kind,
+    string Title,
+    string Subtitle,
+    string State);
 
 public sealed record FipsDiagnostics(
     bool Enabled,

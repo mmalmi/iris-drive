@@ -42,7 +42,10 @@ pub mod sync_cache;
 
 pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
 pub use app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot, select_latest};
-pub use config::{AppConfig, ConfigError, DeviceRootRef, Drive, DriveRole};
+pub use config::{
+    AppConfig, BackupTarget, BackupTargetKind, BackupTargetSync, ConfigError, DeviceRootRef, Drive,
+    DriveRole,
+};
 pub use conflict::{
     ConflictDeletedSide, ConflictRecord, ConflictSide, ConflictState, FileSnapshot, SyncAction,
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,

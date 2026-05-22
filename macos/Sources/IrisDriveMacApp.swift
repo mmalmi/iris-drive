@@ -303,6 +303,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mutateRelayConfig(arguments: ["relays", "reset"])
     }
 
+    func addBackupTarget(_ value: String, label: String) {
+        let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        var arguments = ["backups", "add", target]
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty {
+            arguments += ["--label", label]
+        }
+        mutateBackupConfig(arguments: arguments, success: "Backup added")
+    }
+
+    func syncBackups() {
+        mutateBackupConfig(arguments: ["backups", "sync"], success: "Backups synced")
+    }
+
     func createProfile(label: String) {
         let args = setupArguments(command: "init", label: label, extra: ["--force"])
         finishSetup(arguments: args)
@@ -486,6 +501,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 NSLog("Iris Drive relay update failed: \(error)")
                 DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
+    private func mutateBackupConfig(arguments: [String], success: String) {
+        guard let paths = runtimePathsForMenu else {
+            NSSound.beep()
+            return
+        }
+        let idrive = idriveExecutableURL()
+        updateStatus("Syncing backups")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                DispatchQueue.main.async {
+                    self.updateStatus(success)
+                    self.refreshStatus()
+                }
+            } catch {
+                NSLog("Iris Drive backup update failed: \(error)")
+                DispatchQueue.main.async {
+                    self.updateStatus("Backup failed")
                     NSSound.beep()
                 }
             }
@@ -931,6 +970,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     )
                 }
                 status.blossomServers = network["blossom_servers"] as? [String] ?? []
+                status.backupTargets =
+                    (network["backup_targets"] as? [[String: Any]])?.map(IrisDriveBackupTarget.init)
+                    ?? []
                 status.fips = IrisDriveFipsStatus(
                     json: network["fips"] as? [String: Any] ?? [:]
                 )

@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
 use iris_drive_core::{
-    AccountState, Drive, DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, Drive, DriveRole,
+    FsFipsBlockSync, PRIMARY_DRIVE_ID,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
@@ -27,6 +28,7 @@ const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 5, 10, 20];
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
+const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 
@@ -147,6 +149,9 @@ enum Command {
     /// block replication.
     #[command(subcommand)]
     BlossomServers(BlossomServersCmd),
+    /// List, add, remove, or sync encrypted backup targets.
+    #[command(subcommand)]
+    Backups(BackupsCmd),
     /// Publish current state (`AppKeys` + this device's drive root) to
     /// all configured relays. Skips `AppKeys` on linked devices that
     /// lack owner-signing authority.
@@ -219,6 +224,26 @@ enum BlossomServersCmd {
     Add { url: String },
     /// Remove a server URL from the configured list.
     Remove { url: String },
+}
+
+#[derive(Debug, Subcommand)]
+enum BackupsCmd {
+    /// Print configured encrypted backup targets as JSON.
+    List,
+    /// Add or update a Blossom URL or FIPS npub backup target.
+    Add {
+        target: String,
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Remove a backup target.
+    Remove { target: String },
+    /// Push the current encrypted root to usable backup targets.
+    Sync {
+        /// Restrict sync to one configured target.
+        #[arg(long)]
+        target: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -305,6 +330,7 @@ fn run_cli() -> ExitCode {
         },
         Command::Relays { command } => cmd_relays(&config_dir, command),
         Command::BlossomServers(sub) => cmd_blossom_servers(&config_dir, sub),
+        Command::Backups(sub) => cmd_backups(&config_dir, sub),
         Command::Publish { relay, timeout } => cmd_publish(&config_dir, &relay, timeout),
         Command::Sync { relay, timeout } => cmd_sync(&config_dir, &relay, timeout),
         Command::Daemon {
@@ -538,16 +564,9 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .map_or(0, |drive| drive.device_roots.len());
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
-    let account_block = config.account.as_ref().map(|state| {
-        json!({
-            "owner_npub": account_npub(&state.owner_pubkey),
-            "device_npub": account_npub(&state.device_pubkey),
-            "has_owner_signing_authority": state.has_owner_signing_authority,
-            "authorization_state": authorization_state_label(state),
-            "roster_size": state.app_keys.as_ref().map_or(0, |s| s.devices.len()),
-            "device_link_request": device_link_request_json(state),
-        })
-    });
+    let backup_target_count = config.backup_targets.len();
+    let backup_targets = backup_targets_status(&config);
+    let account_block = status_account_block(&config);
     println!(
         "{}",
         json!({
@@ -582,6 +601,8 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             "network": {
                 "relays": config.relays,
                 "blossom_servers": config.blossom_servers,
+                "backup_target_count": backup_target_count,
+                "backup_targets": backup_targets,
                 "authorized_device_count": authorized_device_count,
                 "published_device_roots": published_device_roots,
                 "relay_statuses": daemon_status
@@ -599,6 +620,19 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+fn status_account_block(config: &AppConfig) -> Option<Value> {
+    config.account.as_ref().map(|state| {
+        json!({
+            "owner_npub": account_npub(&state.owner_pubkey),
+            "device_npub": account_npub(&state.device_pubkey),
+            "has_owner_signing_authority": state.has_owner_signing_authority,
+            "authorization_state": authorization_state_label(state),
+            "roster_size": state.app_keys.as_ref().map_or(0, |s| s.devices.len()),
+            "device_link_request": device_link_request_json(state),
+        })
+    })
+}
+
 fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
     config
         .account
@@ -614,6 +648,43 @@ fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
                 .and_then(|drive| drive.last_root_cid.clone())
         })
+}
+
+fn backup_targets_status(config: &AppConfig) -> Vec<Value> {
+    config
+        .backup_targets
+        .iter()
+        .map(backup_target_status)
+        .collect()
+}
+
+fn backup_target_status(target: &BackupTarget) -> Value {
+    json!({
+        "id": target.id.as_str(),
+        "kind": backup_target_kind_label(target.kind),
+        "target": target.target.as_str(),
+        "label": target.label.as_deref(),
+        "enabled": target.enabled,
+        "last_sync": target.last_sync.as_ref().map(backup_target_sync_status),
+    })
+}
+
+fn backup_target_sync_status(sync: &BackupTargetSync) -> Value {
+    json!({
+        "state": sync.state.as_str(),
+        "root_cid": sync.root_cid.as_str(),
+        "synced_at": sync.synced_at,
+        "total_hashes": sync.total_hashes,
+        "uploaded": sync.uploaded,
+        "already_present": sync.already_present,
+    })
+}
+
+fn backup_target_kind_label(kind: BackupTargetKind) -> &'static str {
+    match kind {
+        BackupTargetKind::Blossom => "blossom",
+        BackupTargetKind::Fips => "fips",
+    }
 }
 
 const DAEMON_STATUS_SCHEMA: u32 = 1;
@@ -1377,6 +1448,202 @@ fn cmd_blossom_servers(config_dir: &std::path::Path, sub: BlossomServersCmd) -> 
     }
     println!("{}", serde_json::to_string_pretty(&config.blossom_servers)?);
     Ok(())
+}
+
+fn cmd_backups(config_dir: &std::path::Path, sub: BackupsCmd) -> Result<()> {
+    if let BackupsCmd::Sync { target } = sub {
+        return cmd_backups_sync(config_dir, target.as_deref());
+    }
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    match sub {
+        BackupsCmd::List | BackupsCmd::Sync { .. } => {}
+        BackupsCmd::Add { target, label } => {
+            let target = parse_backup_target(&target, label).context("parsing backup target")?;
+            config.upsert_backup_target(target);
+            config.save(config_path_in(config_dir))?;
+        }
+        BackupsCmd::Remove { target } => {
+            let target_id = parse_backup_target(&target, None)
+                .context("parsing backup target")?
+                .id;
+            if config.remove_backup_target(&target_id).is_some() {
+                config.save(config_path_in(config_dir))?;
+            }
+        }
+    }
+    println!(
+        "{}",
+        json!({
+            "backup_targets": backup_targets_status(&config),
+        })
+    );
+    Ok(())
+}
+
+fn cmd_backups_sync(config_dir: &std::path::Path, target: Option<&str>) -> Result<()> {
+    let target_id = target
+        .map(|target| parse_backup_target(target, None).map(|target| target.id))
+        .transpose()
+        .context("parsing backup target")?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let root_cid_str = current_primary_root_cid(&config)
+            .ok_or_else(|| anyhow::anyhow!("no current drive root; import files first"))?;
+        let root_cid = Cid::parse(&root_cid_str).context("parsing current root cid")?;
+        let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        let daemon = Daemon::open(config_dir).context("opening daemon for backup upload")?;
+        let mut reports = Vec::new();
+
+        for index in 0..config.backup_targets.len() {
+            let target = config.backup_targets[index].clone();
+            if !target.enabled {
+                continue;
+            }
+            if let Some(target_id) = target_id.as_deref()
+                && target.id != target_id
+            {
+                continue;
+            }
+
+            match target.kind {
+                BackupTargetKind::Blossom => {
+                    let servers = vec![target.target.clone()];
+                    let client =
+                        iris_drive_core::blossom_sync_client(device.keys().clone(), &servers);
+                    match iris_drive_core::blossom_sync::upload_tree(
+                        daemon.tree(),
+                        &root_cid,
+                        &client,
+                    )
+                    .await
+                    {
+                        Ok(upload) => {
+                            let sync = BackupTargetSync {
+                                state: "synced".to_string(),
+                                root_cid: root_cid_str.clone(),
+                                synced_at: unix_now(),
+                                total_hashes: upload.total_hashes,
+                                uploaded: upload.uploaded,
+                                already_present: upload.already_present,
+                            };
+                            config.backup_targets[index].last_sync = Some(sync);
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "blossom",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "synced",
+                                "root_cid": root_cid_str.as_str(),
+                                "upload": upload_report_json(&upload),
+                            }));
+                        }
+                        Err(error) => {
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "blossom",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "error",
+                                "root_cid": root_cid_str.as_str(),
+                                "error": error.to_string(),
+                            }));
+                        }
+                    }
+                }
+                BackupTargetKind::Fips => {
+                    reports.push(json!({
+                        "id": target.id,
+                        "kind": "fips",
+                        "target": target.target,
+                        "label": target.label,
+                        "state": "pending",
+                        "root_cid": root_cid_str.as_str(),
+                        "error": "direct FIPS backup transport pending",
+                    }));
+                }
+            }
+        }
+
+        config.save(config_path_in(config_dir))?;
+        println!("{}", json!({ "reports": reports }));
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarget> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("backup target is required"));
+    }
+
+    let (kind_hint, value) = if let Some(rest) = trimmed.strip_prefix("blossom:") {
+        (Some(BackupTargetKind::Blossom), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("fips://") {
+        (Some(BackupTargetKind::Fips), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("fips:") {
+        (Some(BackupTargetKind::Fips), rest)
+    } else {
+        (None, trimmed)
+    };
+
+    let target_label = label
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty());
+    match kind_hint {
+        Some(BackupTargetKind::Blossom) | None
+            if value.starts_with("http://") || value.starts_with("https://") =>
+        {
+            let target = normalize_blossom_url(value)?;
+            Ok(BackupTarget {
+                id: format!("blossom:{target}"),
+                kind: BackupTargetKind::Blossom,
+                target,
+                label: target_label,
+                enabled: true,
+                last_sync: None,
+            })
+        }
+        Some(BackupTargetKind::Fips) | None => {
+            let hex = normalize_pubkey(value)?;
+            let target = account_npub(&hex);
+            Ok(BackupTarget {
+                id: format!("fips:{target}"),
+                kind: BackupTargetKind::Fips,
+                target,
+                label: target_label,
+                enabled: true,
+                last_sync: None,
+            })
+        }
+        Some(BackupTargetKind::Blossom) => Err(anyhow::anyhow!(
+            "expected Blossom target URL starting with http:// or https://"
+        )),
+    }
+}
+
+fn normalize_blossom_url(value: &str) -> Result<String> {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        Ok(trimmed.to_string())
+    } else {
+        Err(anyhow::anyhow!(
+            "expected Blossom target URL starting with http:// or https://"
+        ))
+    }
+}
+
+fn upload_report_json(report: &UploadReport) -> Value {
+    json!({
+        "total_hashes": report.total_hashes,
+        "uploaded": report.uploaded,
+        "already_present": report.already_present,
+    })
 }
 
 fn cmd_publish(
@@ -2163,8 +2430,13 @@ fn cmd_daemon(
         // imported them. The fs-notify + periodic paths only publish on
         // change, so without this a freshly-imported device would sit
         // silent until its first edit.
-        match publish_current_state(&client, config_dir, &startup_config, &startup_state).await {
-            Ok(report) => {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
+            publish_current_state(&client, config_dir, &startup_config, &startup_state),
+        )
+        .await
+        {
+            Ok(Ok(report)) => {
                 let drive_iris_to_url = report
                     .root_cid
                     .as_ref()
@@ -2197,7 +2469,7 @@ fn cmd_daemon(
                     })
                 );
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 println!(
                     "{}",
                     json!({
@@ -2206,18 +2478,43 @@ fn cmd_daemon(
                     })
                 );
             }
+            Err(_) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish_error",
+                        "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
+                    })
+                );
+            }
         }
-        if working_dir.is_some()
-            && let Err(error) =
-                scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await
-        {
-            println!(
-                "{}",
-                json!({
-                    "event": "startup_scan_error",
-                    "error": error.to_string(),
-                })
-            );
+        if working_dir.is_some() {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
+                scan_and_publish(&client, config_dir, fips_blocks.as_ref()),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "startup_scan_error",
+                            "error": error.to_string(),
+                        })
+                    );
+                }
+                Err(_) => {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "startup_scan_error",
+                            "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
+                        })
+                    );
+                }
+            }
         }
         println!("(running — Ctrl+C to stop)");
 

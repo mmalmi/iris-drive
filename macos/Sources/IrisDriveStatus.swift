@@ -32,6 +32,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var relays: [String] = []
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var blossomServers: [String] = []
+    @Published var backupTargets: [IrisDriveBackupTarget] = []
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
@@ -131,6 +132,54 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
         self.url = url
         status = json["status"] as? String ?? "unknown"
     }
+}
+
+struct IrisDriveBackupTarget: Identifiable, Equatable {
+    let id: String
+    let kind: String
+    let target: String
+    let label: String?
+    let state: String
+    let uploaded: Int?
+    let totalHashes: Int?
+
+    init(json: [String: Any]) {
+        id = json["id"] as? String ?? json["target"] as? String ?? UUID().uuidString
+        kind = json["kind"] as? String ?? "backup"
+        target = json["target"] as? String ?? ""
+        label = json["label"] as? String
+        if let lastSync = json["last_sync"] as? [String: Any] {
+            state = lastSync["state"] as? String ?? "synced"
+            uploaded = (lastSync["uploaded"] as? NSNumber)?.intValue
+            totalHashes = (lastSync["total_hashes"] as? NSNumber)?.intValue
+        } else {
+            state = kind == "fips" ? "Pending" : "Ready"
+            uploaded = nil
+            totalHashes = nil
+        }
+    }
+
+    var title: String {
+        if let label, !label.isEmpty {
+            return label
+        }
+        return kind == "fips" ? shortValue(target) : target
+    }
+
+    var detail: String {
+        var parts = [kind == "fips" ? shortValue(target) : target]
+        if let uploaded, let totalHashes {
+            parts.append("\(uploaded)/\(totalHashes)")
+        }
+        return parts.joined(separator: " | ")
+    }
+}
+
+private func shortValue(_ value: String) -> String {
+    guard value.count > 32 else {
+        return value
+    }
+    return "\(value.prefix(14))...\(value.suffix(10))"
 }
 
 struct IrisDrivePeerStatus: Identifiable, Equatable {

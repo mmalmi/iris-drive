@@ -55,6 +55,11 @@ pub struct AppConfig {
     /// installs and when loading older configs that lack this field.
     #[serde(default = "default_blossom_servers")]
     pub blossom_servers: Vec<String>,
+    /// Encrypted offsite backup endpoints. Blossom targets are usable
+    /// today; FIPS targets are stored for the future direct-device
+    /// backup transport.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backup_targets: Vec<BackupTarget>,
 }
 
 fn default_relays() -> Vec<String> {
@@ -76,6 +81,7 @@ impl Default for AppConfig {
             drives: Vec::new(),
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
+            backup_targets: Vec::new(),
         }
     }
 }
@@ -105,6 +111,32 @@ impl AppConfig {
     pub fn remove_drive(&mut self, drive_id: &str) -> Option<Drive> {
         let pos = self.drives.iter().position(|d| d.drive_id == drive_id)?;
         Some(self.drives.remove(pos))
+    }
+
+    pub fn upsert_backup_target(&mut self, target: BackupTarget) -> bool {
+        if let Some(existing) = self
+            .backup_targets
+            .iter_mut()
+            .find(|existing| existing.id == target.id)
+        {
+            let last_sync = existing.last_sync.clone();
+            *existing = target;
+            if existing.last_sync.is_none() {
+                existing.last_sync = last_sync;
+            }
+            false
+        } else {
+            self.backup_targets.push(target);
+            true
+        }
+    }
+
+    pub fn remove_backup_target(&mut self, target_id: &str) -> Option<BackupTarget> {
+        let pos = self
+            .backup_targets
+            .iter()
+            .position(|target| target.id == target_id)?;
+        Some(self.backup_targets.remove(pos))
     }
 
     /// Load from path. Missing file → `Default::default()`.
@@ -149,6 +181,40 @@ pub enum DriveRole {
     Editor,
     /// Shared with this user read-only.
     Reader,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupTargetKind {
+    Blossom,
+    Fips,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupTarget {
+    pub id: String,
+    pub kind: BackupTargetKind,
+    pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync: Option<BackupTargetSync>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupTargetSync {
+    pub state: String,
+    pub root_cid: String,
+    pub synced_at: i64,
+    pub total_hashes: usize,
+    pub uploaded: usize,
+    pub already_present: usize,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl DriveRole {
