@@ -4,19 +4,69 @@
 //! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
 
 use assert_cmd::Command;
-use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode};
+use axum::{
+    Router,
+    body::{Body, Bytes},
+    extract::{
+        Path as AxumPath, State,
+        ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
+    },
+    http::{HeaderMap, StatusCode, header},
+    response::Response,
+    routing::{get, put},
+};
+use futures::StreamExt;
+use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode, sha256, to_hex};
 use hashtree_fs::FsBlobStore;
 use iris_drive_core::{
     AppConfig, ConflictRecord, ConflictSide, ConflictState, PRIMARY_DRIVE_ID, paths::config_path_in,
 };
 use predicates::str::contains;
+use std::collections::HashMap;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::process::Output;
 use std::sync::Arc;
 use tempfile::tempdir;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 
 fn idrive(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("idrive").unwrap();
     cmd.env("IRIS_DRIVE_CONFIG_DIR", dir);
     cmd
+}
+
+fn assert_success(output: &Output) {
+    assert!(
+        output.status.success(),
+        "command failed\nstatus: {}\nstdout: {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let output = idrive(dir).args(args).output().unwrap();
+    assert_success(&output);
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+        panic!(
+            "invalid json: {err}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn configure_local_blossom(config_dir: &std::path::Path, url: &str) {
+    idrive(config_dir)
+        .args(["blossom-servers", "remove", "https://upload.iris.to"])
+        .assert()
+        .success();
+    idrive(config_dir)
+        .args(["blossom-servers", "add", url])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -730,6 +780,87 @@ fn list_after_import_shows_merged_view() {
     assert_eq!(files[1]["size"], 10);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn linked_devices_sync_each_others_files_through_cli() {
+    let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn().await;
+
+    let cfg_a = tempdir().unwrap();
+    let cfg_b = tempdir().unwrap();
+    let work_a = tempdir().unwrap();
+    let work_b = tempdir().unwrap();
+
+    configure_local_blossom(cfg_a.path(), &blossom.url);
+    configure_local_blossom(cfg_b.path(), &blossom.url);
+
+    let init_a = run_json(cfg_a.path(), &["init", "--label", "device-a"]);
+    let owner_npub = init_a["owner_npub"].as_str().unwrap().to_string();
+
+    let linked_b = run_json(cfg_b.path(), &["link", &owner_npub, "--label", "device-b"]);
+    let device_b_npub = linked_b["device_npub"].as_str().unwrap().to_string();
+
+    let approved = run_json(
+        cfg_a.path(),
+        &["approve", &device_b_npub, "--label", "device-b"],
+    );
+    assert_eq!(approved["roster_size"], 2);
+
+    std::fs::write(work_a.path().join("from-a.txt"), b"hello from a").unwrap();
+    run_json(cfg_a.path(), &["import", work_a.path().to_str().unwrap()]);
+    let publish_a = run_json(
+        cfg_a.path(),
+        &["publish", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert_eq!(publish_a["published_app_keys"], true);
+    assert_eq!(publish_a["published_drive_root"], true);
+    assert!(
+        publish_a["blossom_upload"]["uploaded"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+
+    let sync_b = run_json(
+        cfg_b.path(),
+        &["sync", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert_eq!(sync_b["drive_root_events_applied"], 1);
+    assert!(
+        sync_b["blossom_download"]["fetched"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_list_paths(cfg_b.path(), &["from-a.txt"]);
+
+    std::fs::write(work_b.path().join("from-b.txt"), b"hello from b").unwrap();
+    run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
+    let publish_b = run_json(
+        cfg_b.path(),
+        &["publish", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert_eq!(publish_b["published_app_keys"], false);
+    assert_eq!(publish_b["published_drive_root"], true);
+
+    let sync_a = run_json(
+        cfg_a.path(),
+        &["sync", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert_eq!(sync_a["drive_root_events_applied"], 1);
+    assert_list_paths(cfg_a.path(), &["from-a.txt", "from-b.txt"]);
+}
+
+fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {
+    let listing = run_json(config_dir, &["list"]);
+    let paths: Vec<&str> = listing["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, expected);
+}
+
 #[test]
 fn list_before_import_is_empty() {
     let cfg = tempdir().unwrap();
@@ -842,4 +973,256 @@ fn restore_after_init_errors_without_force_path() {
         .args(["restore", &nsec])
         .assert()
         .failure();
+}
+
+#[derive(Clone)]
+struct LocalRelayState {
+    events: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+struct LocalNostrRelay {
+    url: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl LocalNostrRelay {
+    async fn spawn() -> Self {
+        let state = LocalRelayState {
+            events: Arc::new(Mutex::new(Vec::new())),
+        };
+        let app = Router::new().route("/", get(relay_ws)).with_state(state);
+        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Self {
+            url: format!("ws://{addr}"),
+            task,
+        }
+    }
+}
+
+impl Drop for LocalNostrRelay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn relay_ws(ws: WebSocketUpgrade, State(state): State<LocalRelayState>) -> Response {
+    ws.on_upgrade(move |socket| relay_socket(socket, state))
+}
+
+async fn relay_socket(mut socket: WebSocket, state: LocalRelayState) {
+    while let Some(Ok(message)) = socket.next().await {
+        let WsMessage::Text(text) = message else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let Some(items) = value.as_array() else {
+            continue;
+        };
+        let Some(command) = items.first().and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match command {
+            "EVENT" => {
+                let Some(event) = items.get(1).cloned() else {
+                    continue;
+                };
+                let event_id = event["id"].as_str().unwrap_or_default().to_string();
+                state.events.lock().await.push(event);
+                let _ = socket
+                    .send(WsMessage::Text(
+                        serde_json::json!(["OK", event_id, true, ""]).to_string(),
+                    ))
+                    .await;
+            }
+            "REQ" => {
+                let Some(subscription_id) = items.get(1).and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let filters = items.iter().skip(2).cloned().collect::<Vec<_>>();
+                let events = state.events.lock().await.clone();
+                for event in events {
+                    if filters
+                        .iter()
+                        .any(|filter| event_matches_filter(&event, filter))
+                    {
+                        let _ = socket
+                            .send(WsMessage::Text(
+                                serde_json::json!(["EVENT", subscription_id, event]).to_string(),
+                            ))
+                            .await;
+                    }
+                }
+                let _ = socket
+                    .send(WsMessage::Text(
+                        serde_json::json!(["EOSE", subscription_id]).to_string(),
+                    ))
+                    .await;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn event_matches_filter(event: &serde_json::Value, filter: &serde_json::Value) -> bool {
+    if let Some(kinds) = filter.get("kinds").and_then(serde_json::Value::as_array) {
+        let Some(kind) = event.get("kind").and_then(serde_json::Value::as_u64) else {
+            return false;
+        };
+        if !kinds
+            .iter()
+            .any(|candidate| candidate.as_u64() == Some(kind))
+        {
+            return false;
+        }
+    }
+    if let Some(authors) = filter.get("authors").and_then(serde_json::Value::as_array) {
+        let Some(author) = event.get("pubkey").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        if !authors
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(author))
+        {
+            return false;
+        }
+    }
+    if let Some(d_values) = filter.get("#d").and_then(serde_json::Value::as_array) {
+        let Some(tags) = event.get("tags").and_then(serde_json::Value::as_array) else {
+            return false;
+        };
+        let has_matching_d_tag = tags.iter().any(|tag| {
+            let Some(tag_items) = tag.as_array() else {
+                return false;
+            };
+            tag_items.first().and_then(serde_json::Value::as_str) == Some("d")
+                && tag_items
+                    .get(1)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| {
+                        d_values
+                            .iter()
+                            .any(|candidate| candidate.as_str() == Some(value))
+                    })
+        });
+        if !has_matching_d_tag {
+            return false;
+        }
+    }
+    true
+}
+
+#[derive(Clone)]
+struct LocalBlossomState {
+    blobs: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+}
+
+struct LocalBlossomServer {
+    url: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl LocalBlossomServer {
+    async fn spawn() -> Self {
+        let state = LocalBlossomState {
+            blobs: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let app = Router::new()
+            .route("/upload", put(blossom_upload))
+            .route("/:name", get(blossom_get).head(blossom_head))
+            .with_state(state);
+        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Self {
+            url: format!("http://{addr}"),
+            task,
+        }
+    }
+}
+
+impl Drop for LocalBlossomServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn blossom_upload(
+    State(state): State<LocalBlossomState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let hash = to_hex(&sha256(&body));
+    if let Some(expected) = headers
+        .get("x-sha-256")
+        .and_then(|value| value.to_str().ok())
+        && expected != hash
+    {
+        return text_response(StatusCode::BAD_REQUEST, "hash mismatch");
+    }
+    let mut blobs = state.blobs.lock().await;
+    if blobs.contains_key(&hash) {
+        return text_response(StatusCode::CONFLICT, "already exists");
+    }
+    blobs.insert(hash, body.to_vec());
+    text_response(StatusCode::CREATED, "created")
+}
+
+async fn blossom_get(
+    State(state): State<LocalBlossomState>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let Some(hash) = name.strip_suffix(".bin") else {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    };
+    let Some(bytes) = state.blobs.lock().await.get(hash).cloned() else {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    };
+    blob_response(StatusCode::OK, bytes)
+}
+
+async fn blossom_head(
+    State(state): State<LocalBlossomState>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let Some(hash) = name.strip_suffix(".bin") else {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    };
+    let Some(size) = state.blobs.lock().await.get(hash).map(Vec::len) else {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, size.to_string())
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn blob_response(status: StatusCode, bytes: Vec<u8>) -> Response {
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, bytes.len().to_string())
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
+fn text_response(status: StatusCode, text: &str) -> Response {
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(text.to_string()))
+        .unwrap()
 }

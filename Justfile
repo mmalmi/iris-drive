@@ -22,6 +22,7 @@ info:
     @echo "  just macos-build"
     @echo "  just smoke"
     @echo "  just smoke-macos"
+    @echo "  just docker-cli-e2e"
     @echo
     @echo "Checks"
     @echo "  just test"
@@ -92,6 +93,9 @@ release:
 
 test:
     cargo test --workspace
+
+docker-cli-e2e:
+    ./scripts/docker-cli-e2e.sh
 
 fmt:
     cargo fmt --all

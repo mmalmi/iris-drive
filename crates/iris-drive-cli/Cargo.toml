@@ -32,6 +32,7 @@ rustls.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 assert_cmd = "2"
+axum = { workspace = true, features = ["ws"] }
 predicates = "3"
 
 [[bin]]

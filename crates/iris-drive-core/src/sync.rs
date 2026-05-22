@@ -308,7 +308,7 @@ where
     let rows = enumerate_files(local)
         .await?
         .into_iter()
-        .map(|(path, entry)| cached_base_row_from_entry(drive_id, path, &base_root_cid, entry));
+        .map(|(path, entry)| cached_base_row_from_entry(drive_id, path, &base_root_cid, &entry));
     cache.replace_base_state_for_drive_at_anchor(drive_id, &base_root_cid, rows);
     Ok(())
 }
@@ -330,7 +330,7 @@ where
         .filter(|row| row.drive_id == drive_id)
         .map(|row| {
             let mut row = row.clone();
-            row.base_root_cid = base_root_cid.clone();
+            row.base_root_cid.clone_from(&base_root_cid);
             (row.path.clone(), row)
         })
         .collect();
@@ -343,7 +343,7 @@ where
             } if entry.link_type != hashtree_core::LinkType::Dir => {
                 rows.insert(
                     path.clone(),
-                    cached_base_row_from_entry(drive_id, path, &base_root_cid, entry),
+                    cached_base_row_from_entry(drive_id, path, &base_root_cid, &entry),
                 );
             }
             PathChange::Removed { path, entry }
@@ -363,7 +363,7 @@ fn cached_base_row_from_entry(
     drive_id: &str,
     path: String,
     base_root_cid: &str,
-    entry: EntryInfo,
+    entry: &EntryInfo,
 ) -> CachedBaseState {
     CachedBaseState {
         drive_id: drive_id.to_string(),

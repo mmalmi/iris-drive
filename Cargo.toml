@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/hashtree-provider",
   "crates/iris-drive-core",
   "crates/iris-drive-cli",
   "crates/iris-drive-app-core",
@@ -39,16 +40,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
-# In-flight hashtree worktree path deps — the hashtree-provider crate
-# hasn't shipped to crates.io yet, and pinning hashtree-core to a
-# single source avoids two versions in the dep graph. Swap both to
-# crates.io once hashtree-provider publishes.
-hashtree-core = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-core" }
-hashtree-blossom = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-blossom", features = ["store"] }
-hashtree-config = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-config" }
-hashtree-embedded = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-embedded" }
-hashtree-fs = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-fs" }
-hashtree-provider = { path = "../hashtree/.claude/worktrees/youthful-pare-ea57c7/rust/crates/hashtree-provider" }
+# In-flight hashtree path deps — hashtree-provider and FIPS-backed embedded
+# daemon support have not shipped to crates.io yet. Keep all hashtree crates
+# pinned to the same checkout so the Store trait and transport stack line up.
+hashtree-core = { path = "../hashtree/rust/crates/hashtree-core" }
+hashtree-blossom = { path = "../hashtree/rust/crates/hashtree-blossom", features = ["store"] }
+hashtree-config = { path = "../hashtree/rust/crates/hashtree-config" }
+hashtree-embedded = { path = "../hashtree/rust/crates/hashtree-embedded" }
+hashtree-fs = { path = "../hashtree/rust/crates/hashtree-fs" }
+hashtree-provider = { path = "crates/hashtree-provider" }
 tempfile = "3"
 notify = "6"
 notify-debouncer-mini = "0.4"
