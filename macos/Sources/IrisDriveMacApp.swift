@@ -1042,7 +1042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case "initial_publish":
                     self.updateStatus("Sync running")
                 case "auto_published":
-                    self.updateStatus("Synced")
+                    self.updateStatus("Published")
                 case "app_keys":
                     self.updateStatus("Device roster updated")
                 case "drive_root":

@@ -19,7 +19,8 @@ use iris_drive_core::{
     paths::{config_path_in, default_config_dir, key_path_in},
 };
 use nostr_sdk::nips::nip19::FromBech32;
-use nostr_sdk::{PublicKey, RelayStatus};
+use nostr_sdk::{Event, PublicKey, RelayStatus};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
@@ -28,10 +29,12 @@ const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 5, 10, 20];
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
-const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 10;
+const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
+const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
+const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 
 #[derive(Debug, Parser)]
 #[command(name = "idrive", version, about = "Iris Drive CLI / daemon")]
@@ -1669,7 +1672,7 @@ fn cmd_publish(
             .await
             .context("connecting to relays")?;
 
-        let report = publish_current_state(&client, config_dir, &config, &state).await?;
+        let report = publish_current_state(&client, config_dir, &config, &state, true).await?;
 
         let _ = client.disconnect().await;
         let drive_iris_to_url = report
@@ -1721,6 +1724,290 @@ struct PublishStateReport {
     blossom_upload_error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct DirectRootEvent {
+    key: String,
+    event_id: String,
+    kind: u16,
+    json: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DirectRootFrame {
+    key: String,
+    event_id: String,
+    event_json: String,
+}
+
+#[derive(Default)]
+struct DirectRootExchange {
+    cached_events: BTreeMap<String, DirectRootEvent>,
+    seen_keys: BTreeSet<String>,
+    subscribed_streams: BTreeSet<String>,
+}
+
+impl DirectRootExchange {
+    async fn subscribe_owner_stream(&mut self, owner_pubkey: &str, sync: Option<&FsFipsBlockSync>) {
+        let Some(sync) = sync else {
+            self.subscribed_streams.clear();
+            return;
+        };
+        let stream = direct_root_mesh_stream(owner_pubkey);
+        if self.subscribed_streams.insert(stream.clone()) {
+            let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_subscribe",
+                    "stream": stream,
+                    "selected_peers": subscribe_stats.selected_peers,
+                    "sent_peers": subscribe_stats.sent_peers,
+                })
+            );
+        }
+    }
+
+    async fn announce_current_state(
+        &mut self,
+        config_dir: &Path,
+        config: &AppConfig,
+        state: &AccountState,
+        fips_blocks: Option<&FsFipsBlockSync>,
+    ) -> Result<()> {
+        let Some(sync) = fips_blocks else {
+            return Ok(());
+        };
+        self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
+            .await;
+        let stream = direct_root_mesh_stream(&state.owner_pubkey);
+        let events = build_current_sync_events(config_dir, config, state)?;
+        for event in events {
+            self.cache_event(event.clone());
+            let frame = DirectRootFrame {
+                key: event.key.clone(),
+                event_id: event.event_id.clone(),
+                event_json: event.json.clone(),
+            };
+            let bytes = serde_json::to_vec(&frame)?;
+            let publish_stats = sync
+                .publish_mesh_pubsub(stream.clone(), direct_root_seq(&event.key), bytes)
+                .await;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_publish",
+                    "stream": stream,
+                    "root_key": event.key,
+                    "root_event_id": event.event_id,
+                    "kind": event.kind,
+                    "selected_peers": publish_stats.selected_peers,
+                    "sent_peers": publish_stats.sent_peers,
+                    "sent_bytes": publish_stats.sent_bytes,
+                })
+            );
+        }
+        Ok(())
+    }
+
+    async fn request_roots_from_new_peers(
+        &mut self,
+        config_dir: &Path,
+        sync: Option<&FsFipsBlockSync>,
+    ) {
+        let Some(sync) = sync else {
+            self.subscribed_streams.clear();
+            return;
+        };
+        let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+            return;
+        };
+        if let Some(state) = config.account.as_ref() {
+            self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
+                .await;
+        }
+    }
+
+    async fn drain_mesh_events(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+    ) -> Result<()> {
+        for message in sync.drain_mesh_pubsub_events().await {
+            if !message
+                .stream_id
+                .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
+            {
+                continue;
+            }
+            let frame: DirectRootFrame =
+                serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
+            if self.seen_keys.contains(&frame.key) {
+                continue;
+            }
+            let event: Event =
+                serde_json::from_str(&frame.event_json).context("parsing mesh root event")?;
+            if event.id.to_hex() != frame.event_id {
+                return Err(anyhow::anyhow!("direct mesh root event id mismatch"));
+            }
+            self.seen_keys.insert(frame.key.clone());
+            if let Err(error) = apply_one_event(client, config_dir, &event, Some(sync)).await {
+                self.seen_keys.remove(&frame.key);
+                return Err(error);
+            }
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_event",
+                    "stream": message.stream_id,
+                    "peer": message.from_peer_id,
+                    "origin": message.origin_peer_id,
+                    "seq": message.seq,
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                })
+            );
+            let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+            if let Some(state) = config.account.as_ref() {
+                self.announce_current_state(config_dir, &config, state, Some(sync))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    fn cache_event(&mut self, event: DirectRootEvent) {
+        self.seen_keys.insert(event.key.clone());
+        self.cached_events.insert(event.key.clone(), event);
+        while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(key) = self.cached_events.keys().next().cloned() else {
+                break;
+            };
+            self.cached_events.remove(&key);
+        }
+    }
+}
+
+fn build_current_sync_events(
+    config_dir: &Path,
+    config: &AppConfig,
+    state: &AccountState,
+) -> Result<Vec<DirectRootEvent>> {
+    let mut events = Vec::new();
+
+    if state.has_owner_signing_authority
+        && let Some(snap) = state.app_keys.as_ref()
+    {
+        let account = Account::load(state.clone(), config_dir).context("loading account")?;
+        let owner_keys = account
+            .owner_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+            .keys();
+        let event = iris_drive_core::nostr_events::build_app_keys_event(owner_keys, snap)
+            .context("building AppKeys event")?;
+        events.push(direct_root_event(
+            format!(
+                "appkeys:{}:{}:{}:{}",
+                snap.owner_pubkey,
+                snap.created_at,
+                snap.dck_generation,
+                snap.devices
+                    .iter()
+                    .map(|device| device.pubkey.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            &event,
+        )?);
+    }
+
+    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+    {
+        let authorized_devices = authorized_device_pubkeys(state);
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        let event = iris_drive_core::nostr_events::build_drive_root_event(
+            device.keys(),
+            &state.owner_pubkey,
+            &drive.drive_id,
+            root,
+            &authorized_devices,
+        )
+        .context("building drive-root event")?;
+        events.push(direct_root_event(
+            format!(
+                "drive-root:{}:{}:{}:{}:{}",
+                state.device_pubkey,
+                drive.drive_id,
+                root.device_seq,
+                root.root_cid,
+                authorized_devices.join(",")
+            ),
+            &event,
+        )?);
+
+        if state.has_owner_signing_authority {
+            let account = Account::load(state.clone(), config_dir).context("loading account")?;
+            let owner_keys = account
+                .owner_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+                .keys();
+            let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
+                owner_keys,
+                &drive.drive_id,
+                root,
+            )
+            .context("building files-root event")?;
+            events.push(direct_root_event(
+                format!(
+                    "files-root:{}:{}:{}",
+                    state.owner_pubkey, drive.drive_id, root.root_cid
+                ),
+                &event,
+            )?);
+        }
+    }
+
+    Ok(events)
+}
+
+fn direct_root_event(key: String, event: &Event) -> Result<DirectRootEvent> {
+    Ok(DirectRootEvent {
+        key,
+        event_id: event.id.to_hex(),
+        kind: event.kind.as_u16(),
+        json: serde_json::to_string(&event)?,
+    })
+}
+
+fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
+    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
+}
+
+fn direct_root_seq(key: &str) -> u64 {
+    let hash = hashtree_core::sha256(key.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash[..8]);
+    u64::from_be_bytes(bytes).max(1)
+}
+
+async fn announce_current_state_direct(
+    direct_roots: &mut DirectRootExchange,
+    config_dir: &Path,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(());
+    };
+    direct_roots
+        .announce_current_state(config_dir, &config, state, fips_blocks)
+        .await
+}
+
 async fn upload_tree_to_blossom_with_hashtree(
     config_dir: &std::path::Path,
     config: &AppConfig,
@@ -1738,6 +2025,44 @@ async fn upload_tree_to_blossom_with_hashtree(
     iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &root_cid, &bclient)
         .await
         .context("uploading tree to blossom")
+}
+
+async fn maybe_upload_root_to_blossom(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    device: &iris_drive_core::DeviceIdentity,
+    root_cid_str: &str,
+    previous_root_cid: Option<&str>,
+) -> Result<(Option<UploadReport>, Option<String>)> {
+    if config.blossom_servers.is_empty() {
+        return Ok((None, None));
+    }
+
+    let root_cid =
+        Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let previous_root_cid = previous_root_cid
+        .map(Cid::parse)
+        .transpose()
+        .context("parsing previous root cid")?;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(BLOSSOM_UPLOAD_TIMEOUT_SECS),
+        upload_tree_to_blossom_with_hashtree(
+            config_dir,
+            config,
+            device,
+            root_cid,
+            previous_root_cid,
+        ),
+    )
+    .await;
+    Ok(match result {
+        Ok(Ok(upload)) => (Some(upload), None),
+        Ok(Err(error)) => (None, Some(format!("{error:#}"))),
+        Err(_) => (
+            None,
+            Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s")),
+        ),
+    })
 }
 
 async fn start_fips_block_sync(
@@ -1922,7 +2247,7 @@ async fn materialize_and_publish(
         return Err(anyhow::anyhow!("missing account after materialize"));
     };
     let publish =
-        publish_current_state(client, config_dir, &updated_config, &updated_state).await?;
+        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
     println!(
         "{}",
         json!({
@@ -1939,6 +2264,7 @@ async fn publish_current_state(
     config_dir: &std::path::Path,
     config: &AppConfig,
     state: &AccountState,
+    upload_blossom: bool,
 ) -> Result<PublishStateReport> {
     use iris_drive_core::relay_sync;
 
@@ -1965,6 +2291,14 @@ async fn publish_current_state(
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
 
+        if upload_blossom {
+            let (blossom_upload, blossom_upload_error) =
+                maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                    .await?;
+            report.blossom_upload = blossom_upload;
+            report.blossom_upload_error = blossom_upload_error;
+        }
+
         match relay_sync::publish_drive_root(
             client,
             device.keys(),
@@ -1990,24 +2324,6 @@ async fn publish_current_state(
                 Ok(_) => report.published_files_root = true,
                 Err(error) => {
                     report.files_root_publish_error = Some(error.to_string());
-                }
-            }
-        }
-
-        if !config.blossom_servers.is_empty() {
-            let cid = Cid::parse(&root.root_cid)
-                .with_context(|| format!("parsing root cid {}", root.root_cid))?;
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(BLOSSOM_UPLOAD_TIMEOUT_SECS),
-                upload_tree_to_blossom_with_hashtree(config_dir, config, &device, cid, None),
-            )
-            .await
-            {
-                Ok(Ok(upload)) => report.blossom_upload = Some(upload),
-                Ok(Err(error)) => report.blossom_upload_error = Some(format!("{error:#}")),
-                Err(_) => {
-                    report.blossom_upload_error =
-                        Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"));
                 }
             }
         }
@@ -2203,6 +2519,7 @@ fn cmd_sync(
                                     config_dir,
                                     &updated_config,
                                     &updated_state,
+                                    true,
                                 )
                                 .await
                                 {
@@ -2365,6 +2682,7 @@ fn cmd_daemon(
             .await
             .context("opening subscription")?;
         let mut notifications = client.notifications();
+        let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_ref()).await;
 
         // Spawn an fs-notify watcher on the working dir. Events get
@@ -2433,7 +2751,7 @@ fn cmd_daemon(
         // silent until its first edit.
         match tokio::time::timeout(
             std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-            publish_current_state(&client, config_dir, &startup_config, &startup_state),
+            publish_current_state(&client, config_dir, &startup_config, &startup_state, true),
         )
         .await
         {
@@ -2492,7 +2810,7 @@ fn cmd_daemon(
         if working_dir.is_some() {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-                scan_and_publish(&client, config_dir, fips_blocks.as_ref()),
+                scan_and_publish(&client, config_dir, fips_blocks.as_ref(), false),
             )
             .await
             {
@@ -2517,6 +2835,17 @@ fn cmd_daemon(
                 }
             }
         }
+        if let Err(error) =
+            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_ref()).await
+        {
+            println!(
+                "{}",
+                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+            );
+        }
+        direct_roots
+            .request_roots_from_new_peers(config_dir, fips_blocks.as_ref())
+            .await;
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
@@ -2537,6 +2866,8 @@ fn cmd_daemon(
         };
         let mut relay_status_timer = tokio::time::interval(std::time::Duration::from_secs(2));
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
+        direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -2558,6 +2889,18 @@ fn cmd_daemon(
                                     "{}",
                                     json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
                                 );
+                            } else if let Err(error) =
+                                announce_current_state_direct(
+                                    &mut direct_roots,
+                                    config_dir,
+                                    fips_blocks.as_ref(),
+                                )
+                                .await
+                            {
+                                println!(
+                                    "{}",
+                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                );
                             }
                         }
                         Ok(RelayPoolNotification::Shutdown)
@@ -2569,14 +2912,42 @@ fn cmd_daemon(
                     }
                 }
                 Some(()) = fs_rx.recv() => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref(), false).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
                         );
+                    } else if let Err(error) =
+                        announce_current_state_direct(
+                            &mut direct_roots,
+                            config_dir,
+                            fips_blocks.as_ref(),
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                        );
                     }
                 }
                 _ = relay_status_timer.tick() => {
+                    direct_roots
+                        .request_roots_from_new_peers(config_dir, fips_blocks.as_ref())
+                        .await;
+                    if let Err(error) =
+                        announce_current_state_direct(
+                            &mut direct_roots,
+                            config_dir,
+                            fips_blocks.as_ref(),
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                        );
+                    }
                     let status = json!({
                             "event": "relay_statuses",
                             "relay_statuses": relay_status_payload(&client).await,
@@ -2592,10 +2963,34 @@ fn cmd_daemon(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref()).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref(), true).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
+                        );
+                    } else if let Err(error) =
+                        announce_current_state_direct(
+                            &mut direct_roots,
+                            config_dir,
+                            fips_blocks.as_ref(),
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                        );
+                    }
+                }
+                _ = direct_mesh_timer.tick() => {
+                    if let Some(sync) = fips_blocks.as_ref()
+                        && let Err(error) = direct_roots
+                            .drain_mesh_events(&client, config_dir, sync)
+                            .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
                         );
                     }
                 }
@@ -2792,6 +3187,7 @@ async fn scan_and_publish(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     fips_blocks: Option<&FsFipsBlockSync>,
+    retry_current_root: bool,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -2817,6 +3213,24 @@ async fn scan_and_publish(
     if working_dir_has_same_visible_files(&daemon, &working_dir, previous_root_cid.as_deref())
         .await?
     {
+        if retry_current_root {
+            let report = publish_current_state(client, config_dir, &config, state, false).await?;
+            println!(
+                "{}",
+                json!({
+                    "event": "republished_current_state",
+                    "published_app_keys": report.published_app_keys,
+                    "app_keys_publish_error": report.app_keys_publish_error,
+                    "published_drive_root": report.published_drive_root,
+                    "drive_root_publish_error": report.drive_root_publish_error,
+                    "published_files_root": report.published_files_root,
+                    "files_root_publish_error": report.files_root_publish_error,
+                    "root_cid": report.root_cid,
+                    "blossom_upload_error": report.blossom_upload_error,
+                    "blossom_upload": report.blossom_upload.as_ref().map(upload_report_json),
+                })
+            );
+        }
         return Ok(());
     }
 
@@ -2837,6 +3251,21 @@ async fn scan_and_publish(
 
     let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
         .context("loading device key")?;
+    let (upload_report, upload_error) = maybe_upload_root_to_blossom(
+        config_dir,
+        &config,
+        &device,
+        &new_root.root_cid,
+        previous_root_cid.as_deref(),
+    )
+    .await?;
+    if let Some(error) = &upload_error {
+        println!(
+            "{}",
+            json!({"event": "blossom_upload_error", "error": error})
+        );
+    }
+
     let mut published_drive_root = false;
     match relay_sync::publish_drive_root(
         client,
@@ -2876,34 +3305,6 @@ async fn scan_and_publish(
                 "{}",
                 json!({"event": "files_root_publish_error", "error": e.to_string()})
             ),
-        }
-    }
-
-    let mut upload_report: Option<UploadReport> = None;
-    let mut upload_error: Option<String> = None;
-    if !config.blossom_servers.is_empty() {
-        let cid = Cid::parse(&new_root.root_cid)
-            .with_context(|| format!("parsing root cid {}", new_root.root_cid))?;
-        let previous = previous_root_cid
-            .as_deref()
-            .and_then(|root| Cid::parse(root).ok());
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(BLOSSOM_UPLOAD_TIMEOUT_SECS),
-            upload_tree_to_blossom_with_hashtree(config_dir, &config, &device, cid, previous),
-        )
-        .await
-        {
-            Ok(Ok(r)) => upload_report = Some(r),
-            Ok(Err(e)) => upload_error = Some(e.to_string()),
-            Err(_) => {
-                upload_error = Some(format!("timed out after {BLOSSOM_UPLOAD_TIMEOUT_SECS}s"));
-            }
-        }
-        if let Some(error) = &upload_error {
-            println!(
-                "{}",
-                json!({"event": "blossom_upload_error", "error": error})
-            );
         }
     }
 
@@ -3132,34 +3533,53 @@ async fn pull_blocks_for_root(
 ) -> Result<()> {
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let mut attempted = false;
+    let mut errors = Vec::new();
     if let Some(sync) = fips_blocks {
-        match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await {
-            Ok(report) => {
-                record_block_sync(config_dir, root_cid_str, "fips", &report);
-                println!(
-                    "{}",
-                    json!({
-                        "event": "fips_downloaded",
-                        "root_cid": root_cid_str,
-                        "report": download_report_json(&report),
-                    })
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "fips_download_error",
-                        "root_cid": root_cid_str,
-                        "error": format!("{error:#}"),
-                    })
-                );
+        let connected_peers = sync.connected_peer_ids().await;
+        if connected_peers.is_empty() {
+            println!(
+                "{}",
+                json!({
+                    "event": "fips_download_skipped",
+                    "root_cid": root_cid_str,
+                    "reason": "no_connected_peers",
+                })
+            );
+        } else {
+            attempted = true;
+            match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await
+            {
+                Ok(report) => {
+                    record_block_sync(config_dir, root_cid_str, "fips", &report);
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "fips_downloaded",
+                            "root_cid": root_cid_str,
+                            "report": download_report_json(&report),
+                        })
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    errors.push(format!("fips: {error}"));
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "fips_download_error",
+                            "root_cid": root_cid_str,
+                            "error": error,
+                        })
+                    );
+                }
             }
         }
     }
 
     if !config.blossom_servers.is_empty() {
+        attempted = true;
         match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
             Ok(report) => {
                 record_block_sync(config_dir, root_cid_str, "blossom", &report);
@@ -3171,20 +3591,33 @@ async fn pull_blocks_for_root(
                         "report": download_report_json(&report),
                     })
                 );
+                return Ok(());
             }
             Err(error) => {
+                let error = error.to_string();
+                errors.push(format!("blossom: {error}"));
                 println!(
                     "{}",
                     json!({
                         "event": "blossom_download_error",
                         "root_cid": root_cid_str,
-                        "error": error.to_string(),
+                        "error": error,
                     })
                 );
             }
         }
     }
-    Ok(())
+
+    if attempted {
+        Err(anyhow::anyhow!(
+            "all block download transports failed for {root_cid_str}: {}",
+            errors.join("; ")
+        ))
+    } else {
+        Err(anyhow::anyhow!(
+            "no block download transport available for {root_cid_str}"
+        ))
+    }
 }
 
 async fn pull_blocks_for_root_bounded(

@@ -2680,6 +2680,7 @@ dependencies = [
  "async-trait",
  "fips-core",
  "hashtree-core",
+ "hashtree-network",
  "hex",
  "rmp-serde",
  "serde",
@@ -2720,6 +2721,32 @@ dependencies = [
  "hashtree-core",
  "heed",
  "page_size",
+]
+
+[[package]]
+name = "hashtree-network"
+version = "0.2.55"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "cashu-service",
+ "futures",
+ "hashtree-blossom",
+ "hashtree-core",
+ "hex",
+ "lazy_static",
+ "nostr-sdk 0.35.0",
+ "rand 0.8.6",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "socket2 0.5.10",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

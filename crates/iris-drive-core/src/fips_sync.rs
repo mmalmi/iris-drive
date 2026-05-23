@@ -13,7 +13,10 @@ use hashtree_core::diff::collect_hashes;
 use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
-use hashtree_fips_transport::{FipsEndpointOptions, HashtreeFipsTransport, bind_fips_endpoint};
+use hashtree_fips_transport::{
+    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
+    HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
+};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use thiserror::Error;
@@ -49,6 +52,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
     local_store: Arc<L>,
     receiver_task: JoinHandle<()>,
+    mesh_pubsub: FipsMeshPubsub<L>,
     endpoint_npub: String,
     discovery_scope: String,
 }
@@ -93,11 +97,20 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         );
         let receiver_task = transport.start();
         transport.set_peers(authorized_device_npubs(config)).await;
+        let mesh_pubsub = transport
+            .start_mesh_pubsub(
+                local_store.clone(),
+                endpoint.local_peer_id.clone(),
+                FIPS_REQUEST_TIMEOUT,
+            )
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
         Ok(Self {
             transport,
             local_store,
             receiver_task,
+            mesh_pubsub,
             endpoint_npub: endpoint.local_peer_id,
             discovery_scope,
         })
@@ -129,6 +142,57 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
         self.transport.connected_peer_ids().await
+    }
+
+    #[must_use]
+    pub fn subscribe_app_messages(&self) -> tokio::sync::broadcast::Receiver<FipsAppMessage> {
+        self.transport.subscribe_app_messages()
+    }
+
+    pub async fn send_app_message(
+        &self,
+        peer_id: &str,
+        topic: &str,
+        data: Vec<u8>,
+    ) -> Result<(), FipsSyncError> {
+        self.transport
+            .send_app_message(peer_id, topic, data)
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
+    }
+
+    pub async fn broadcast_app_message(
+        &self,
+        topic: &str,
+        data: Vec<u8>,
+    ) -> Result<usize, FipsSyncError> {
+        self.transport
+            .broadcast_app_message(topic, data)
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
+    }
+
+    pub async fn subscribe_mesh_pubsub(&self, stream_id: String) -> PubsubPublishStats {
+        self.mesh_pubsub.subscribe_pubsub(stream_id).await
+    }
+
+    pub async fn publish_mesh_pubsub(
+        &self,
+        stream_id: String,
+        seq: u64,
+        payload: Vec<u8>,
+    ) -> PubsubPublishStats {
+        self.mesh_pubsub
+            .publish_pubsub(stream_id, seq, payload)
+            .await
+    }
+
+    pub async fn drain_mesh_pubsub_events(&self) -> Vec<FipsMeshPubsubEvent> {
+        self.mesh_pubsub.drain_pubsub_events().await
+    }
+
+    pub async fn mesh_peer_count(&self) -> usize {
+        self.mesh_pubsub.peer_count().await
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {

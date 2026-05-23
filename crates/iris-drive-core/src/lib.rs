@@ -55,6 +55,7 @@ pub use daemon::{
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
+pub use hashtree_fips_transport::FipsAppMessage;
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use materialize::{

@@ -1056,7 +1056,7 @@ fn refresh(model: &AppRef) {
             model
                 .ui
                 .drive_message
-                .set_text(if sync_running { "Synced" } else { "Stopped" });
+                .set_text(if sync_running { "Running" } else { "Stopped" });
             model
                 .ui
                 .status_pill

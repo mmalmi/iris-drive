@@ -123,7 +123,7 @@ public partial class MainWindow : Window
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
     {
         DriveTitle.Text = status.DriveName;
-        DriveMessage.Text = syncRunning ? "Synced" : "Stopped";
+        DriveMessage.Text = syncRunning ? "Running" : "Stopped";
         StatusPill.Text = syncRunning ? "Running" : "Stopped";
         FilesValue.Text = (status.FileCount > 0 ? status.FileCount : status.TopLevelEntries)
             .ToString(CultureInfo.InvariantCulture);
