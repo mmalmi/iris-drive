@@ -2575,6 +2575,17 @@ fn spawn_scan_publish_worker(
     });
 }
 
+fn spawn_daemon_heartbeat(config_dir: PathBuf) {
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(2));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            timer.tick().await;
+            write_daemon_status(&config_dir, json!({"event": "heartbeat"}));
+        }
+    });
+}
+
 async fn relay_publish_with_timeout<T, F>(future: F) -> std::result::Result<T, String>
 where
     F: std::future::Future<
@@ -2987,6 +2998,7 @@ fn cmd_daemon(
         });
         write_daemon_status(config_dir, subscribed_status.clone());
         println!("{subscribed_status}");
+        spawn_daemon_heartbeat(config_dir.to_path_buf());
 
         let startup_config = config.clone();
         let startup_state = state.clone();
@@ -3049,8 +3061,6 @@ fn cmd_daemon(
         } else {
             None
         };
-        let mut heartbeat_timer = tokio::time::interval(std::time::Duration::from_secs(2));
-        heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let relay_status_period = std::time::Duration::from_secs(10);
         let mut relay_status_timer = tokio::time::interval_at(
             tokio::time::Instant::now() + relay_status_period,
@@ -3131,9 +3141,6 @@ fn cmd_daemon(
                             json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
                         );
                     }
-                }
-                _ = heartbeat_timer.tick() => {
-                    write_daemon_status(config_dir, json!({"event": "heartbeat"}));
                 }
                 _ = relay_status_timer.tick() => {
                     spawn_status_probe(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
