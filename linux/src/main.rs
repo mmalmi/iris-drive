@@ -313,7 +313,7 @@ fn build_ui(app: &adw::Application) {
     backups.set_selection_mode(gtk::SelectionMode::None);
     backups_page.append(&backups);
     let backup_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let backup_entry = setup_entry("https://backup.example or npub1...");
+    let backup_entry = setup_entry("https://, npub1..., fs:/path, lmdb:/path");
     backup_entry.set_hexpand(true);
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);

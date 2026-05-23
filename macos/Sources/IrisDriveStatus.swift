@@ -173,6 +173,19 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         }
         return parts.joined(separator: " | ")
     }
+
+    var iconName: String {
+        switch kind {
+        case "fips":
+            return "person.badge.shield.checkmark.fill"
+        case "filesystem":
+            return "externaldrive.fill"
+        case "lmdb":
+            return "cylinder.split.1x2.fill"
+        default:
+            return "cloud.fill"
+        }
+    }
 }
 
 private func shortValue(_ value: String) -> String {

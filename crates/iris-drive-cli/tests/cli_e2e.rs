@@ -16,8 +16,11 @@ use axum::{
     routing::{get, put},
 };
 use futures::StreamExt;
-use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode, sha256, to_hex};
+use hashtree_core::{
+    Cid, HashTree, HashTreeConfig, Store, diff::collect_hashes, nhash_decode, sha256, to_hex,
+};
 use hashtree_fs::FsBlobStore;
+use hashtree_lmdb::LmdbBlobStore;
 use iris_drive_core::{
     AppConfig, ConflictRecord, ConflictSide, ConflictState, PRIMARY_DRIVE_ID, paths::config_path_in,
 };
@@ -82,6 +85,40 @@ fn import_one_file(
         .assert()
         .success();
     work
+}
+
+async fn assert_replica_contains_private_root<S>(
+    store: Arc<S>,
+    root_cid: &str,
+    expected_hashes: u64,
+) where
+    S: Store + Send + Sync + 'static,
+{
+    let root = Cid::parse(root_cid).unwrap();
+    assert!(
+        root.key.is_some(),
+        "backup roots must stay encrypted/private"
+    );
+    let tree = HashTree::new(HashTreeConfig::new(store));
+    let hashes = collect_hashes(&tree, &root, 4).await.unwrap();
+    assert_eq!(hashes.len() as u64, expected_hashes);
+}
+
+fn assert_tree_does_not_contain_bytes(path: &std::path::Path, needle: &[u8]) {
+    for entry in std::fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            assert_tree_does_not_contain_bytes(&entry.path(), needle);
+        } else if file_type.is_file() {
+            let bytes = std::fs::read(entry.path()).unwrap();
+            assert!(
+                !bytes.windows(needle.len()).any(|window| window == needle),
+                "replica file leaked plaintext: {}",
+                entry.path().display()
+            );
+        }
+    }
 }
 
 #[test]
@@ -662,6 +699,90 @@ async fn backup_sync_uploads_private_root_to_blossom_target() {
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0]["last_sync"]["state"], "synced");
     assert_eq!(targets[0]["last_sync"]["root_cid"], reports[0]["root_cid"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backup_sync_uploads_private_root_to_filesystem_target() {
+    let cfg = tempdir().unwrap();
+    let replica = tempdir().unwrap();
+    let secret = b"filesystem replica plaintext must not leak";
+
+    run_json(cfg.path(), &["init", "--label", "owner"]);
+    let _work = import_one_file(cfg.path(), "backup.txt", secret);
+    let target = format!("fs:{}", replica.path().display());
+    run_json(
+        cfg.path(),
+        &["backups", "add", &target, "--label", "iCloud"],
+    );
+
+    let synced = run_json(cfg.path(), &["backups", "sync"]);
+    let reports = synced["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["kind"], "filesystem");
+    assert_eq!(reports[0]["state"], "synced");
+    assert!(
+        reports[0]["upload"]["uploaded"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+
+    let total_hashes = reports[0]["upload"]["total_hashes"].as_u64().unwrap();
+    let store = Arc::new(FsBlobStore::new(replica.path()).unwrap());
+    assert_replica_contains_private_root(
+        store,
+        reports[0]["root_cid"].as_str().unwrap(),
+        total_hashes,
+    )
+    .await;
+    assert_tree_does_not_contain_bytes(replica.path(), secret);
+
+    let status = run_json(cfg.path(), &["status"]);
+    let targets = status["network"]["backup_targets"].as_array().unwrap();
+    assert_eq!(targets[0]["kind"], "filesystem");
+    assert_eq!(targets[0]["last_sync"]["state"], "synced");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backup_sync_uploads_private_root_to_lmdb_target() {
+    let cfg = tempdir().unwrap();
+    let replica = tempdir().unwrap();
+    let secret = b"lmdb replica plaintext must not leak";
+
+    run_json(cfg.path(), &["init", "--label", "owner"]);
+    let _work = import_one_file(cfg.path(), "backup.txt", secret);
+    let target = format!("lmdb:{}", replica.path().display());
+    run_json(
+        cfg.path(),
+        &["backups", "add", &target, "--label", "Local LMDB"],
+    );
+
+    let synced = run_json(cfg.path(), &["backups", "sync"]);
+    let reports = synced["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["kind"], "lmdb");
+    assert_eq!(reports[0]["state"], "synced");
+    assert!(
+        reports[0]["upload"]["uploaded"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+
+    let total_hashes = reports[0]["upload"]["total_hashes"].as_u64().unwrap();
+    let store = Arc::new(LmdbBlobStore::new(replica.path()).unwrap());
+    assert_replica_contains_private_root(
+        store,
+        reports[0]["root_cid"].as_str().unwrap(),
+        total_hashes,
+    )
+    .await;
+    assert_tree_does_not_contain_bytes(replica.path(), secret);
+
+    let status = run_json(cfg.path(), &["status"]);
+    let targets = status["network"]["backup_targets"].as_array().unwrap();
+    assert_eq!(targets[0]["kind"], "lmdb");
+    assert_eq!(targets[0]["last_sync"]["state"], "synced");
 }
 
 #[test]

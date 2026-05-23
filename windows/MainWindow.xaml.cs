@@ -649,6 +649,13 @@ public partial class MainWindow : Window
             RestoreLabelBox.Text));
     }
 
+    private void RestoreSecretBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        RestoreSecretPlaceholder.Visibility = string.IsNullOrEmpty(RestoreSecretBox.Password)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
     private async void LinkSubmit_Click(object sender, RoutedEventArgs e)
     {
         await RunSetupAsync(() => service.LinkDeviceAsync(LinkOwnerBox.Text, LinkLabelBox.Text));

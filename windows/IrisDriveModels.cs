@@ -243,10 +243,11 @@ public sealed class IrisDriveStatusData
             }
 
             var lastSync = Object(target, "last_sync");
+            var kind = String(target, "kind") ?? "backup";
             var state = lastSync.HasValue
                 ? String(lastSync.Value, "state") ?? "synced"
-                : String(target, "kind") == "fips" ? "Pending" : "Ready";
-            var detail = String(target, "kind") == "fips"
+                : kind == "fips" ? "Pending" : "Ready";
+            var detail = kind == "fips"
                 ? ShortText(value)
                 : value;
             if (lastSync.HasValue)
@@ -258,7 +259,7 @@ public sealed class IrisDriveStatusData
 
             rows.Add(new BackupTargetRow(
                 String(target, "id") ?? value,
-                String(target, "kind") ?? "backup",
+                kind,
                 title ?? "Backup",
                 detail,
                 state));

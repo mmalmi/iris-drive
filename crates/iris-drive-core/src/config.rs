@@ -188,6 +188,8 @@ pub enum DriveRole {
 pub enum BackupTargetKind {
     Blossom,
     Fips,
+    Filesystem,
+    Lmdb,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

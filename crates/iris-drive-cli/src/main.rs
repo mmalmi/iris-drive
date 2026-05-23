@@ -5,7 +5,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
+use hashtree_core::{
+    Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, Store, diff::collect_hashes,
+    nhash_encode_full, to_hex,
+};
+use hashtree_fs::FsBlobStore;
+use hashtree_lmdb::LmdbBlobStore;
 use iris_drive_core::{
     AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, DeviceRootRef, Drive,
     DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
@@ -237,7 +242,7 @@ enum BlossomServersCmd {
 enum BackupsCmd {
     /// Print configured encrypted backup targets as JSON.
     List,
-    /// Add or update a Blossom URL or FIPS npub backup target.
+    /// Add or update a Blossom URL, FIPS npub, filesystem, or LMDB backup target.
     Add {
         target: String,
         #[arg(long)]
@@ -691,6 +696,8 @@ fn backup_target_kind_label(kind: BackupTargetKind) -> &'static str {
     match kind {
         BackupTargetKind::Blossom => "blossom",
         BackupTargetKind::Fips => "fips",
+        BackupTargetKind::Filesystem => "filesystem",
+        BackupTargetKind::Lmdb => "lmdb",
     }
 }
 
@@ -1589,6 +1596,88 @@ fn cmd_backups_sync(config_dir: &std::path::Path, target: Option<&str>) -> Resul
                         "error": "direct FIPS backup transport pending",
                     }));
                 }
+                BackupTargetKind::Filesystem => {
+                    match upload_tree_to_filesystem_replica(
+                        daemon.tree(),
+                        &root_cid,
+                        Path::new(&target.target),
+                    )
+                    .await
+                    {
+                        Ok(upload) => {
+                            let sync = BackupTargetSync {
+                                state: "synced".to_string(),
+                                root_cid: root_cid_str.clone(),
+                                synced_at: unix_now(),
+                                total_hashes: upload.total_hashes,
+                                uploaded: upload.uploaded,
+                                already_present: upload.already_present,
+                            };
+                            config.backup_targets[index].last_sync = Some(sync);
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "filesystem",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "synced",
+                                "root_cid": root_cid_str.as_str(),
+                                "upload": upload_report_json(&upload),
+                            }));
+                        }
+                        Err(error) => {
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "filesystem",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "error",
+                                "root_cid": root_cid_str.as_str(),
+                                "error": error.to_string(),
+                            }));
+                        }
+                    }
+                }
+                BackupTargetKind::Lmdb => {
+                    match upload_tree_to_lmdb_replica(
+                        daemon.tree(),
+                        &root_cid,
+                        Path::new(&target.target),
+                    )
+                    .await
+                    {
+                        Ok(upload) => {
+                            let sync = BackupTargetSync {
+                                state: "synced".to_string(),
+                                root_cid: root_cid_str.clone(),
+                                synced_at: unix_now(),
+                                total_hashes: upload.total_hashes,
+                                uploaded: upload.uploaded,
+                                already_present: upload.already_present,
+                            };
+                            config.backup_targets[index].last_sync = Some(sync);
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "lmdb",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "synced",
+                                "root_cid": root_cid_str.as_str(),
+                                "upload": upload_report_json(&upload),
+                            }));
+                        }
+                        Err(error) => {
+                            reports.push(json!({
+                                "id": target.id,
+                                "kind": "lmdb",
+                                "target": target.target,
+                                "label": target.label,
+                                "state": "error",
+                                "root_cid": root_cid_str.as_str(),
+                                "error": error.to_string(),
+                            }));
+                        }
+                    }
+                }
             }
         }
 
@@ -1596,6 +1685,79 @@ fn cmd_backups_sync(config_dir: &std::path::Path, target: Option<&str>) -> Resul
         println!("{}", json!({ "reports": reports }));
         Ok::<_, anyhow::Error>(())
     })
+}
+
+async fn upload_tree_to_filesystem_replica<S>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &Path,
+) -> Result<UploadReport>
+where
+    S: Store + Send + Sync + 'static,
+{
+    let replica = FsBlobStore::new(path)
+        .with_context(|| format!("opening filesystem backup target at {}", path.display()))?;
+    upload_tree_to_replica(tree, root, &replica).await
+}
+
+async fn upload_tree_to_lmdb_replica<S>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &Path,
+) -> Result<UploadReport>
+where
+    S: Store + Send + Sync + 'static,
+{
+    let replica = LmdbBlobStore::new(path)
+        .with_context(|| format!("opening LMDB backup target at {}", path.display()))?;
+    upload_tree_to_replica(tree, root, &replica).await
+}
+
+async fn upload_tree_to_replica<S, R>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    replica: &R,
+) -> Result<UploadReport>
+where
+    S: Store + Send + Sync + 'static,
+    R: Store + Send + Sync,
+{
+    let hashes = collect_hashes(tree, root, 4)
+        .await
+        .context("collecting encrypted backup blocks")?;
+    let mut report = UploadReport {
+        total_hashes: hashes.len(),
+        ..Default::default()
+    };
+    let local = tree.get_store();
+
+    for hash in hashes {
+        if replica
+            .has(&hash)
+            .await
+            .with_context(|| format!("checking backup blob {}", to_hex(&hash)))?
+        {
+            report.already_present += 1;
+            continue;
+        }
+
+        let bytes = local
+            .get(&hash)
+            .await
+            .with_context(|| format!("reading local backup blob {}", to_hex(&hash)))?
+            .ok_or_else(|| anyhow::anyhow!("missing local backup blob {}", to_hex(&hash)))?;
+        if replica
+            .put(hash, bytes)
+            .await
+            .with_context(|| format!("writing backup blob {}", to_hex(&hash)))?
+        {
+            report.uploaded += 1;
+        } else {
+            report.already_present += 1;
+        }
+    }
+
+    Ok(report)
 }
 
 fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarget> {
@@ -1610,6 +1772,20 @@ fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarge
         (Some(BackupTargetKind::Fips), rest)
     } else if let Some(rest) = trimmed.strip_prefix("fips:") {
         (Some(BackupTargetKind::Fips), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("filesystem://") {
+        (Some(BackupTargetKind::Filesystem), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("filesystem:") {
+        (Some(BackupTargetKind::Filesystem), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("file://") {
+        (Some(BackupTargetKind::Filesystem), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("fs://") {
+        (Some(BackupTargetKind::Filesystem), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("fs:") {
+        (Some(BackupTargetKind::Filesystem), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("lmdb://") {
+        (Some(BackupTargetKind::Lmdb), rest)
+    } else if let Some(rest) = trimmed.strip_prefix("lmdb:") {
+        (Some(BackupTargetKind::Lmdb), rest)
     } else {
         (None, trimmed)
     };
@@ -1617,10 +1793,18 @@ fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarge
     let target_label = label
         .map(|label| label.trim().to_string())
         .filter(|label| !label.is_empty());
-    match kind_hint {
-        Some(BackupTargetKind::Blossom) | None
-            if value.starts_with("http://") || value.starts_with("https://") =>
-        {
+    let kind = kind_hint.unwrap_or_else(|| {
+        if value.starts_with("http://") || value.starts_with("https://") {
+            BackupTargetKind::Blossom
+        } else if looks_like_local_backup_path(value) {
+            BackupTargetKind::Filesystem
+        } else {
+            BackupTargetKind::Fips
+        }
+    });
+
+    match kind {
+        BackupTargetKind::Blossom => {
             let target = normalize_blossom_url(value)?;
             Ok(BackupTarget {
                 id: format!("blossom:{target}"),
@@ -1631,7 +1815,7 @@ fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarge
                 last_sync: None,
             })
         }
-        Some(BackupTargetKind::Fips) | None => {
+        BackupTargetKind::Fips => {
             let hex = normalize_pubkey(value)?;
             let target = account_npub(&hex);
             Ok(BackupTarget {
@@ -1643,9 +1827,28 @@ fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarge
                 last_sync: None,
             })
         }
-        Some(BackupTargetKind::Blossom) => Err(anyhow::anyhow!(
-            "expected Blossom target URL starting with http:// or https://"
-        )),
+        BackupTargetKind::Filesystem => {
+            let target = normalize_local_backup_path(value)?;
+            Ok(BackupTarget {
+                id: format!("filesystem:{target}"),
+                kind: BackupTargetKind::Filesystem,
+                target,
+                label: target_label,
+                enabled: true,
+                last_sync: None,
+            })
+        }
+        BackupTargetKind::Lmdb => {
+            let target = normalize_local_backup_path(value)?;
+            Ok(BackupTarget {
+                id: format!("lmdb:{target}"),
+                kind: BackupTargetKind::Lmdb,
+                target,
+                label: target_label,
+                enabled: true,
+                last_sync: None,
+            })
+        }
     }
 }
 
@@ -1658,6 +1861,44 @@ fn normalize_blossom_url(value: &str) -> Result<String> {
             "expected Blossom target URL starting with http:// or https://"
         ))
     }
+}
+
+fn looks_like_local_backup_path(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('/')
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with("\\\\")
+        || value.as_bytes().get(1).is_some_and(|byte| *byte == b':')
+}
+
+fn normalize_local_backup_path(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("backup path is required"));
+    }
+    let trimmed = if cfg!(windows)
+        && trimmed.len() > 3
+        && trimmed.as_bytes()[0] == b'/'
+        && trimmed.as_bytes()[2] == b':'
+    {
+        &trimmed[1..]
+    } else {
+        trimmed
+    };
+
+    let path = if let Some(rest) = trimmed.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|home| home.join(rest))
+            .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?
+    } else {
+        PathBuf::from(trimmed)
+    };
+    if path.as_os_str().is_empty() {
+        return Err(anyhow::anyhow!("backup path is required"));
+    }
+    Ok(path.to_string_lossy().to_string())
 }
 
 fn upload_report_json(report: &UploadReport) -> Value {

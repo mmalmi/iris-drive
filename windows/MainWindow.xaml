@@ -49,7 +49,7 @@
           </Button>
           <TextBlock Text="Create profile" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Device label" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="CreateLabelBox" MinHeight="34" Margin="0,0,0,12" />
+          <TextBox x:Name="CreateLabelBox" Tag="Device label" MinHeight="34" Margin="0,0,0,12" />
           <Button x:Name="CreateSubmitButton" Style="{StaticResource PrimaryButton}" Click="CreateSubmit_Click">
             <TextBlock Text="Create profile" HorizontalAlignment="Center" />
           </Button>
@@ -61,9 +61,17 @@
           </Button>
           <TextBlock Text="Restore profile" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Secret key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <PasswordBox x:Name="RestoreSecretBox" MinHeight="34" Margin="0,0,0,10" />
+          <Grid Margin="0,0,0,10">
+            <PasswordBox x:Name="RestoreSecretBox" PasswordChanged="RestoreSecretBox_PasswordChanged" />
+            <TextBlock x:Name="RestoreSecretPlaceholder"
+                       Text="nsec1... or hex secret key"
+                       Foreground="{StaticResource IrisMutedBrush}"
+                       Margin="9,0,0,0"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False" />
+          </Grid>
           <TextBlock Text="Device label" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="RestoreLabelBox" MinHeight="34" Margin="0,0,0,12" />
+          <TextBox x:Name="RestoreLabelBox" Tag="Device label" MinHeight="34" Margin="0,0,0,12" />
           <Button x:Name="RestoreSubmitButton" Style="{StaticResource PrimaryButton}" Click="RestoreSubmit_Click">
             <TextBlock Text="Restore profile" HorizontalAlignment="Center" />
           </Button>
@@ -75,9 +83,9 @@
           </Button>
           <TextBlock Text="Link this device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Owner public key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="LinkOwnerBox" MinHeight="34" Margin="0,0,0,10" />
+          <TextBox x:Name="LinkOwnerBox" Tag="npub1... owner key" MinHeight="34" Margin="0,0,0,10" />
           <TextBlock Text="Device label" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="LinkLabelBox" MinHeight="34" Margin="0,0,0,12" />
+          <TextBox x:Name="LinkLabelBox" Tag="Device label" MinHeight="34" Margin="0,0,0,12" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource PrimaryButton}" Click="LinkSubmit_Click">
             <TextBlock Text="Link device" HorizontalAlignment="Center" />
           </Button>
@@ -304,8 +312,8 @@
                       <TextBlock Text="Approve" />
                     </StackPanel>
                   </Button>
-                  <TextBox x:Name="ApproveLabelBox" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
-                  <TextBox x:Name="ApproveDeviceBox" MinHeight="34" />
+                  <TextBox x:Name="ApproveLabelBox" Tag="Label" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
+                  <TextBox x:Name="ApproveDeviceBox" Tag="npub1... device key" MinHeight="34" />
                 </DockPanel>
               </StackPanel>
 
@@ -326,8 +334,8 @@
                 <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" Margin="8,0,0,0">
                   <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
                 </Button>
-                <TextBox x:Name="BackupLabelBox" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
-                <TextBox x:Name="BackupTargetBox" MinHeight="34" />
+                <TextBox x:Name="BackupLabelBox" Tag="Label" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
+                <TextBox x:Name="BackupTargetBox" Tag="https://, npub1..., fs:/path, lmdb:/path" MinHeight="34" />
               </DockPanel>
             </StackPanel>
 
@@ -346,7 +354,7 @@
                 <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddRelay_Click" Margin="8,0,0,0">
                   <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
                 </Button>
-                <TextBox x:Name="RelayBox" MinHeight="34" />
+                <TextBox x:Name="RelayBox" Tag="wss://relay.example" MinHeight="34" />
               </DockPanel>
             </StackPanel>
 

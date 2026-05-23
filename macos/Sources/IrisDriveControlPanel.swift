@@ -390,7 +390,7 @@ struct IrisDriveControlPanel: View {
                 }
             }
             HStack(spacing: 8) {
-                TextField("https://backup.example or npub1...", text: $backupInput)
+                TextField("https://, npub1..., fs:/path, lmdb:/path", text: $backupInput)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                     .onSubmit { addBackupFromInput() }
@@ -777,7 +777,7 @@ private struct BackupTargetRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: target.kind == "fips" ? "person.badge.shield.checkmark.fill" : "cloud.fill")
+            Image(systemName: target.iconName)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(target.title)
