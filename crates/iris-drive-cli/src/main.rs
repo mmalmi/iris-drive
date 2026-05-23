@@ -797,7 +797,8 @@ fn cmd_conflicts(config_dir: &std::path::Path, command: ConflictsCmd) -> Result<
 }
 
 fn cmd_conflict_resolve(config_dir: &std::path::Path, conflict_id: &str) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
         .enable_all()
         .build()
         .context("building tokio runtime")?;
