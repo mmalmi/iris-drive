@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use hashtree_core::{Cid, CidParseError, HashTree, HashTreeError, Store, sha256};
+use hashtree_core::{Cid, CidParseError, HashTree, HashTreeError, LinkType, Store, sha256};
 use hashtree_provider::{HashTreeProviderFs, ProviderError, ProviderFs};
 use thiserror::Error;
 
@@ -158,14 +158,81 @@ where
         .collect();
     let local_entries =
         current_device_entries(tree.as_ref(), drive, &account.device_pubkey).await?;
+    let target_dirs =
+        merged_user_directory_paths(tree.as_ref(), drive, &authorized_device_pubkeys(account))
+            .await?
+            .into_iter()
+            .filter(|path| !target_by_path.contains_key(path))
+            .collect::<BTreeSet<_>>();
     let mut report = MaterializeReport::default();
+    materialize_target_dirs(working_dir, &target_dirs, &local_entries, &mut report)?;
+    materialize_target_files(
+        tree,
+        drive,
+        working_dir,
+        &target_by_path,
+        &local_entries,
+        &mut report,
+    )
+    .await?;
+    delete_removed_local_files(working_dir, &target_by_path, &local_entries, &mut report)?;
 
+    Ok(report)
+}
+
+fn materialize_target_dirs(
+    working_dir: &Path,
+    target_dirs: &BTreeSet<String>,
+    local_entries: &BTreeMap<String, DeviceFileEntry>,
+    report: &mut MaterializeReport,
+) -> Result<(), MaterializeError> {
+    for dir in target_dirs {
+        let Some(relative) = safe_relative_path(dir) else {
+            report.skipped += 1;
+            continue;
+        };
+        let destination = working_dir.join(relative);
+        if destination.is_dir() {
+            report.unchanged += 1;
+            continue;
+        }
+        if destination.exists() {
+            if !may_replace_file_destination_with_directory(&destination, local_entries.get(dir))? {
+                report.skipped += 1;
+                continue;
+            }
+            std::fs::remove_file(&destination)?;
+        }
+        std::fs::create_dir_all(&destination)?;
+        report.written += 1;
+    }
+    Ok(())
+}
+
+async fn materialize_target_files<S>(
+    tree: Arc<HashTree<S>>,
+    drive: &crate::config::Drive,
+    working_dir: &Path,
+    target_by_path: &BTreeMap<String, MergedEntry>,
+    local_entries: &BTreeMap<String, DeviceFileEntry>,
+    report: &mut MaterializeReport,
+) -> Result<(), MaterializeError>
+where
+    S: Store + Send + Sync + 'static,
+{
     for entry in target_by_path.values() {
         let Some(relative) = safe_relative_path(&entry.path) else {
             report.skipped += 1;
             continue;
         };
         let destination = working_dir.join(relative);
+        if destination.is_dir() {
+            if !directory_matches_local_entries(working_dir, &entry.path, local_entries)? {
+                report.skipped += 1;
+                continue;
+            }
+            std::fs::remove_dir_all(&destination)?;
+        }
         let destination_snapshot = file_snapshot(&destination)?;
         if destination_snapshot.is_some_and(|snapshot| snapshot_matches_entry(snapshot, entry)) {
             report.unchanged += 1;
@@ -195,8 +262,16 @@ where
             report.written += 1;
         }
     }
+    Ok(())
+}
 
-    for (path, local_entry) in &local_entries {
+fn delete_removed_local_files(
+    working_dir: &Path,
+    target_by_path: &BTreeMap<String, MergedEntry>,
+    local_entries: &BTreeMap<String, DeviceFileEntry>,
+    report: &mut MaterializeReport,
+) -> Result<(), MaterializeError> {
+    for (path, local_entry) in local_entries {
         if target_by_path.contains_key(path) {
             continue;
         }
@@ -217,8 +292,58 @@ where
             report.skipped += 1;
         }
     }
+    Ok(())
+}
 
-    Ok(report)
+async fn merged_user_directory_paths<S: Store>(
+    tree: &HashTree<S>,
+    drive: &crate::config::Drive,
+    authorized_devices: &[String],
+) -> Result<BTreeSet<String>, MaterializeError> {
+    let mut dirs = BTreeSet::new();
+    for device_pubkey in authorized_devices {
+        let Some(root) = drive.device_roots.get(device_pubkey) else {
+            continue;
+        };
+        let cid = Cid::parse(&root.root_cid).map_err(|source| MaterializeError::RootCid {
+            device_id: device_pubkey.clone(),
+            root_cid: root.root_cid.clone(),
+            source,
+        })?;
+        collect_user_directory_paths(tree, &cid, "", &mut dirs).await?;
+    }
+    Ok(dirs)
+}
+
+fn collect_user_directory_paths<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    dirs: &'a mut BTreeSet<String>,
+) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir_cid).await?;
+        for entry in entries {
+            if prefix.is_empty() && entry.name == crate::merge::META_DIR {
+                continue;
+            }
+            if entry.link_type != LinkType::Dir {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            dirs.insert(path.clone());
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            collect_user_directory_paths(tree, &child_cid, &path, dirs).await?;
+        }
+        Ok(())
+    })
 }
 
 fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
@@ -328,6 +453,81 @@ fn file_snapshot(path: &Path) -> Result<Option<FileSnapshot>, MaterializeError> 
         size: metadata.len(),
         hash: sha256(&bytes),
     }))
+}
+
+fn may_replace_file_destination_with_directory(
+    destination: &Path,
+    local_entry: Option<&DeviceFileEntry>,
+) -> Result<bool, MaterializeError> {
+    let Some(local_entry) = local_entry else {
+        return Ok(false);
+    };
+    Ok(file_snapshot(destination)?
+        .is_some_and(|snapshot| snapshot_matches_device_entry(snapshot, local_entry)))
+}
+
+fn directory_matches_local_entries(
+    working_dir: &Path,
+    path: &str,
+    local_entries: &BTreeMap<String, DeviceFileEntry>,
+) -> Result<bool, MaterializeError> {
+    let Some(relative) = safe_relative_path(path) else {
+        return Ok(false);
+    };
+    let directory = working_dir.join(relative);
+    let actual_files = collect_disk_file_paths(working_dir, &directory)?;
+    let prefix = format!("{path}/");
+    let local_subtree = local_entries
+        .iter()
+        .filter(|(entry_path, _)| entry_path.starts_with(&prefix))
+        .collect::<BTreeMap<_, _>>();
+    if actual_files.len() != local_subtree.len() {
+        return Ok(false);
+    }
+    for actual_path in actual_files {
+        let Some(local_entry) = local_entries.get(&actual_path) else {
+            return Ok(false);
+        };
+        let Some(relative) = safe_relative_path(&actual_path) else {
+            return Ok(false);
+        };
+        let snapshot = file_snapshot(&working_dir.join(relative))?;
+        if !snapshot.is_some_and(|snapshot| snapshot_matches_device_entry(snapshot, local_entry)) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn collect_disk_file_paths(root: &Path, dir: &Path) -> Result<BTreeSet<String>, MaterializeError> {
+    let mut paths = BTreeSet::new();
+    collect_disk_file_paths_inner(root, dir, &mut paths)?;
+    Ok(paths)
+}
+
+fn collect_disk_file_paths_inner(
+    root: &Path,
+    dir: &Path,
+    paths: &mut BTreeSet<String>,
+) -> Result<(), MaterializeError> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_disk_file_paths_inner(root, &path, paths)?;
+        } else if file_type.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| std::io::Error::other(error.to_string()))?
+                .iter()
+                .map(|segment| segment.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            paths.insert(relative);
+        }
+    }
+    Ok(())
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), MaterializeError> {

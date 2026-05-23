@@ -318,6 +318,7 @@ fn parse_drive_root_event_inner(
         device_seq: content.device_seq,
         parents: content.parents,
         observed: content.observed,
+        materialized_only: false,
     };
     Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
 }
@@ -555,6 +556,7 @@ mod tests {
             device_seq: 3,
             parents: vec![parent.clone()],
             observed: observed.clone(),
+            materialized_only: false,
         };
 
         let event = build_drive_root_event(

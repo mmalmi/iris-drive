@@ -670,6 +670,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            materialized_only: false,
         }
     }
 

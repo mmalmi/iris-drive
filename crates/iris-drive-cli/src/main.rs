@@ -2290,6 +2290,9 @@ async fn publish_current_state(
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
+        if root.materialized_only {
+            return Ok(report);
+        }
 
         if upload_blossom {
             let (blossom_upload, blossom_upload_error) =

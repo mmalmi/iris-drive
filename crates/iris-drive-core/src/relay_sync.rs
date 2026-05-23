@@ -193,6 +193,7 @@ pub fn apply_remote_files_root_event(
         device_seq: 0,
         parents: Vec::new(),
         observed: std::collections::BTreeMap::new(),
+        materialized_only: false,
     };
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
@@ -498,6 +499,7 @@ mod tests {
             device_seq,
             parents: Vec::new(),
             observed: std::collections::BTreeMap::new(),
+            materialized_only: false,
         }
     }
 

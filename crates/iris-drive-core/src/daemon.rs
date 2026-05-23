@@ -263,6 +263,21 @@ impl Daemon {
         &mut self,
         working_dir: impl AsRef<Path>,
     ) -> Result<ImportReport, DaemonError> {
+        self.import_working_dir_inner(working_dir, false).await
+    }
+
+    async fn import_materialized_working_dir(
+        &mut self,
+        working_dir: impl AsRef<Path>,
+    ) -> Result<ImportReport, DaemonError> {
+        self.import_working_dir_inner(working_dir, true).await
+    }
+
+    async fn import_working_dir_inner(
+        &mut self,
+        working_dir: impl AsRef<Path>,
+        materialized_only: bool,
+    ) -> Result<ImportReport, DaemonError> {
         let working_dir = working_dir.as_ref();
         // Look up this device's previous root, if any, so the indexer
         // can diff against it and emit tombstones for removed files.
@@ -307,7 +322,13 @@ impl Daemon {
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
 
-        self.update_primary_drive(&root_cid, Some(working_dir), root_meta.as_ref(), now)?;
+        self.update_primary_drive(
+            &root_cid,
+            Some(working_dir),
+            root_meta.as_ref(),
+            now,
+            materialized_only,
+        )?;
         self.persist_sync_cache_with_current_base().await?;
 
         Ok(ImportReport {
@@ -357,7 +378,7 @@ impl Daemon {
         if let Some(meta) = root_meta.as_ref() {
             root = layer_root_meta(&self.tree, root, meta).await?;
         }
-        self.update_primary_drive(&root, None, root_meta.as_ref(), now)?;
+        self.update_primary_drive(&root, None, root_meta.as_ref(), now, false)?;
         self.persist_sync_cache_with_current_base().await?;
 
         Ok(ConflictResolveReport {
@@ -424,7 +445,7 @@ impl Daemon {
         )
         .await?;
         let import = if materialize.changed() {
-            Some(self.import_working_dir(&working_dir).await?)
+            Some(self.import_materialized_working_dir(&working_dir).await?)
         } else {
             None
         };
@@ -450,6 +471,7 @@ impl Daemon {
         working_dir: Option<&Path>,
         root_meta: Option<&DriveRootMeta>,
         published_at: i64,
+        materialized_only: bool,
     ) -> Result<(), DaemonError> {
         let drive = match self.config.drive(PRIMARY_DRIVE_ID) {
             Some(d) => d.clone(),
@@ -469,10 +491,11 @@ impl Daemon {
                 .app_keys
                 .as_ref()
                 .map_or(0, |snap| snap.dck_generation);
-            let device_root = root_meta.map_or_else(
+            let mut device_root = root_meta.map_or_else(
                 || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
+            device_root.materialized_only = materialized_only;
             updated
                 .device_roots
                 .insert(account.device_pubkey.clone(), device_root);
@@ -591,6 +614,39 @@ mod tests {
                 .as_deref(),
             Some(work.path())
         );
+    }
+
+    #[tokio::test]
+    async fn materialized_import_is_local_only_until_user_imports() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"from peer").unwrap();
+        daemon
+            .import_materialized_working_dir(work.path())
+            .await
+            .unwrap();
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert!(root.materialized_only);
+
+        std::fs::write(work.path().join("note.txt"), b"local edit").unwrap();
+        daemon.import_working_dir(work.path()).await.unwrap();
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert!(!root.materialized_only);
     }
 
     #[tokio::test]
@@ -790,7 +846,7 @@ mod tests {
                 .await
                 .unwrap();
         daemon
-            .update_primary_drive(&root_with_conflict, None, Some(&root_meta), now)
+            .update_primary_drive(&root_with_conflict, None, Some(&root_meta), now, false)
             .unwrap();
 
         let report = daemon.resolve_conflict_record("conflict-a").await.unwrap();

@@ -5,7 +5,8 @@
 //! convergence, then compare on-disk contents instead of trusting status text.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -32,8 +33,14 @@ use tokio::sync::{Mutex, broadcast};
 
 const WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+static LIVE_DAEMON_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
+    std::sync::LazyLock::new(|| Mutex::new(()));
 
 type DirSnapshot = BTreeMap<String, FileSnapshot>;
+
+async fn live_daemon_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    LIVE_DAEMON_TEST_LOCK.lock().await
+}
 
 fn bytes_per_second(bytes: u64, elapsed: Duration) -> u64 {
     let millis = elapsed.as_millis().max(1);
@@ -47,8 +54,38 @@ struct FileSnapshot {
     sha256: String,
 }
 
+impl FileSnapshot {
+    const fn len(&self) -> u64 {
+        self.len
+    }
+}
+
+#[derive(Clone)]
+struct SeedFile {
+    client: Client,
+    path: String,
+    bytes: Vec<u8>,
+}
+
+impl SeedFile {
+    fn new(client: Client, path: &str, bytes: &[u8]) -> Self {
+        Self {
+            client,
+            path: path.to_string(),
+            bytes: bytes.to_vec(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct SyncClusterOptions {
+    blossom_upload_delay: Duration,
+    seed_files: Vec<SeedFile>,
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_sync_windows_create_edit_rename_delete_to_ubuntu_peer() {
+    let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start(Duration::from_millis(250)).await;
     cluster.wait_until_authorized().await;
 
@@ -118,6 +155,7 @@ async fn live_daemons_sync_windows_create_edit_rename_delete_to_ubuntu_peer() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_sync_when_relay_drops_root_events_after_fips_connect() {
+    let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
     cluster.wait_until_direct_peers_connected().await;
@@ -144,8 +182,393 @@ async fn live_daemons_sync_when_relay_drops_root_events_after_fips_connect() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_initial_merge_existing_trees_from_both_peers() {
+    let _guard = live_daemon_test_guard().await;
+    let seed_files = vec![
+        SeedFile::new(
+            Client::Windows,
+            "seed/windows/alpha.txt",
+            b"already on windows",
+        ),
+        SeedFile::new(Client::Ubuntu, "seed/ubuntu/beta.txt", b"already on ubuntu"),
+        SeedFile::new(Client::Windows, "shared/same.txt", b"same bytes"),
+        SeedFile::new(
+            Client::Ubuntu,
+            "unicode/Raksmorgas-动作-Адрес.txt",
+            b"unicode path bytes",
+        ),
+    ];
+    let cluster = SyncCluster::start_with_options(SyncClusterOptions {
+        blossom_upload_delay: Duration::ZERO,
+        seed_files,
+    })
+    .await;
+    cluster.wait_until_authorized().await;
+
+    let mut expected = dir_snapshot(cluster.path(Client::Windows));
+    expected.extend(dir_snapshot(cluster.path(Client::Ubuntu)));
+    cluster
+        .wait_for_snapshot(&expected, "initial two-device merge")
+        .await;
+    cluster.assert_file(
+        Client::Ubuntu,
+        "seed/windows/alpha.txt",
+        b"already on windows",
+    );
+    cluster.assert_file(
+        Client::Windows,
+        "seed/ubuntu/beta.txt",
+        b"already on ubuntu",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_match_seafile_release_operation_sequence() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start(Duration::from_millis(100)).await;
+    cluster.wait_until_authorized().await;
+
+    seafile_add_delete_add_sequence(&cluster).await;
+    seafile_create_update_sequence(&cluster).await;
+    seafile_rename_sequence(&cluster).await;
+    seafile_download_side_sequence(&cluster).await;
+}
+
+async fn seafile_add_delete_add_sequence(cluster: &SyncCluster) {
+    cluster
+        .write(Client::Windows, "release/add-delete-add/1.txt", b"aaaaaaaa")
+        .await;
+    cluster
+        .remove_all(Client::Windows, "release/add-delete-add")
+        .await;
+    cluster
+        .write(Client::Windows, "release/add-delete-add/1.txt", b"aaaaaaaa")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "add-delete-add")
+        .await;
+}
+
+async fn seafile_create_update_sequence(cluster: &SyncCluster) {
+    cluster
+        .write(Client::Windows, "release/test/1.txt", b"111")
+        .await;
+    cluster
+        .write(Client::Windows, "release/test/1.txt", b"222")
+        .await;
+    cluster
+        .write(Client::Windows, "release/copy-source/1.txt", b"111")
+        .await;
+    cluster
+        .write(Client::Windows, "release/copy-source/2/2.txt", b"222")
+        .await;
+    cluster
+        .write(Client::Windows, "release/test/copied/1.txt", b"111")
+        .await;
+    cluster
+        .write(Client::Windows, "release/test/copied/2/2.txt", b"222")
+        .await;
+    cluster.mkdir(Client::Windows, "release/empty").await;
+    cluster
+        .write(
+            Client::Windows,
+            "release/empty/test.md",
+            b"dddddddddddddddddddddd",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "create-update-deep-copy")
+        .await;
+}
+
+async fn seafile_rename_sequence(cluster: &SyncCluster) {
+    cluster
+        .write(Client::Windows, "release/rename/1.txt", b"111")
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/1.txt",
+            "release/rename/2.txt",
+        )
+        .await;
+    cluster
+        .write(Client::Windows, "release/rename/3.txt", b"222")
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/2.txt",
+            "release/rename/3.txt",
+        )
+        .await;
+    cluster
+        .write(Client::Windows, "release/rename/test.txt", b"test")
+        .await;
+    cluster.mkdir(Client::Windows, "release/rename/test").await;
+    cluster
+        .write(Client::Windows, "release/rename/4.txt", b"444")
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/test.txt",
+            "release/rename/test/test.txt",
+        )
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/3.txt",
+            "release/rename/test/3.txt",
+        )
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/4.txt",
+            "release/rename/test/4.txt",
+        )
+        .await;
+    cluster.mkdir(Client::Windows, "release/rename/test2").await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/test",
+            "release/rename/test2/test",
+        )
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/test2/test",
+            "release/rename/test",
+        )
+        .await;
+    cluster
+        .write(Client::Windows, "release/rename/test/4.txt", b"444555")
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/test",
+            "release/rename/test2/test",
+        )
+        .await;
+    cluster
+        .rename(
+            Client::Windows,
+            "release/rename/test2",
+            "release/rename/test3",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "rename chain")
+        .await;
+}
+
+async fn seafile_download_side_sequence(cluster: &SyncCluster) {
+    cluster
+        .write(Client::Ubuntu, "download/1.txt", b"11111")
+        .await;
+    cluster
+        .write(Client::Ubuntu, "download/1.txt", b"22222")
+        .await;
+    cluster.mkdir(Client::Ubuntu, "download/dir1").await;
+    cluster
+        .rename(Client::Ubuntu, "download/1.txt", "download/2.txt")
+        .await;
+    cluster
+        .rename(Client::Ubuntu, "download/dir1", "download/dir2")
+        .await;
+    cluster
+        .write(Client::Ubuntu, "download/dir2/1.txt", b"1111111")
+        .await;
+    cluster
+        .rename(Client::Ubuntu, "download/dir2", "download/dir3")
+        .await;
+    cluster.remove(Client::Ubuntu, "download/dir3/1.txt").await;
+    cluster
+        .write(Client::Ubuntu, "download/dir4/2.txt", b"2222222")
+        .await;
+    cluster
+        .rename(Client::Ubuntu, "download/dir4", "download/dir3/dir4")
+        .await;
+    cluster.remove(Client::Ubuntu, "download/2.txt").await;
+    cluster.remove_all(Client::Ubuntu, "download/dir3").await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "download-side sequence")
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_sync_file_type_replacements() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+
+    cluster
+        .write(Client::Windows, "types/file-to-dir", b"old file")
+        .await;
+    cluster
+        .write(Client::Windows, "types/dir-to-file/old.txt", b"old child")
+        .await;
+    cluster
+        .write(
+            Client::Windows,
+            "types/non-empty-dir/old.txt",
+            b"old non-empty child",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "initial file types")
+        .await;
+
+    cluster
+        .remove_all(Client::Windows, "types/file-to-dir")
+        .await;
+    cluster
+        .write(Client::Windows, "types/file-to-dir/new.txt", b"new child")
+        .await;
+    cluster
+        .remove_all(Client::Windows, "types/dir-to-file")
+        .await;
+    cluster
+        .write(Client::Windows, "types/dir-to-file", b"new file")
+        .await;
+    cluster
+        .remove_all(Client::Windows, "types/non-empty-dir")
+        .await;
+    cluster
+        .write(Client::Windows, "types/non-empty-dir", b"replacement file")
+        .await;
+
+    cluster
+        .wait_for_convergence_from(Client::Windows, "file type replacements")
+        .await;
+    cluster.assert_file(Client::Ubuntu, "types/file-to-dir/new.txt", b"new child");
+    cluster.assert_file(Client::Ubuntu, "types/dir-to-file", b"new file");
+    cluster.assert_file(Client::Ubuntu, "types/non-empty-dir", b"replacement file");
+    cluster.assert_missing(Client::Ubuntu, "types/dir-to-file/old.txt");
+    cluster.assert_missing(Client::Ubuntu, "types/non-empty-dir/old.txt");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_ignore_noise_and_temporary_files() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+
+    cluster
+        .write(Client::Windows, "noise/keep.txt", b"keep")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/.DS_Store", b"finder")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/._keep.txt", b"resource fork")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/Thumbs.db", b"windows thumbs")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/desktop.ini", b"windows desktop")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/draft~", b"editor backup")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/#draft#", b"emacs backup")
+        .await;
+    cluster
+        .write(Client::Windows, "noise/backup.sbak", b"seafile backup")
+        .await;
+    cluster
+        .write(Client::Windows, ".hashtree/prev", b"internal")
+        .await;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        cluster.path(Client::Windows).join("noise/keep.txt"),
+        cluster.path(Client::Windows).join("noise/link.txt"),
+    )
+    .unwrap();
+
+    let expected = visible_dir_snapshot(cluster.path(Client::Windows));
+    cluster
+        .wait_for_visible_snapshot(&expected, "ignored noise")
+        .await;
+    cluster.assert_file(Client::Ubuntu, "noise/keep.txt", b"keep");
+    for ignored in [
+        "noise/.DS_Store",
+        "noise/._keep.txt",
+        "noise/Thumbs.db",
+        "noise/desktop.ini",
+        "noise/draft~",
+        "noise/#draft#",
+        "noise/backup.sbak",
+        ".hashtree/prev",
+        "noise/link.txt",
+    ] {
+        cluster.assert_missing(Client::Ubuntu, ignored);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_reconnect_sender_and_receiver_without_losing_updates() {
+    let _guard = live_daemon_test_guard().await;
+    let mut cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
+
+    for index in 0..16 {
+        let path = format!("reconnect/baseline/file-{index:03}.bin");
+        cluster
+            .write(Client::Windows, &path, &deterministic_bytes(index, 512))
+            .await;
+    }
+    cluster
+        .wait_for_convergence_from(Client::Windows, "reconnect baseline")
+        .await;
+
+    cluster.stop_daemon(Client::Ubuntu);
+    for index in 0..24 {
+        let path = format!("reconnect/receiver-stopped/file-{index:03}.bin");
+        cluster
+            .write(
+                Client::Windows,
+                &path,
+                &deterministic_bytes(100 + index, 768),
+            )
+            .await;
+    }
+    cluster.start_daemon(Client::Ubuntu);
+    cluster.wait_until_direct_peers_connected().await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "receiver restarted")
+        .await;
+
+    cluster.stop_daemon(Client::Windows);
+    for index in 0..24 {
+        let path = format!("reconnect/sender-stopped/file-{index:03}.bin");
+        cluster
+            .write(
+                Client::Ubuntu,
+                &path,
+                &deterministic_bytes(200 + index, 768),
+            )
+            .await;
+    }
+    cluster.start_daemon(Client::Windows);
+    cluster.wait_until_direct_peers_connected().await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "sender restarted")
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "transfer bench; run with `cargo test -p idrive --test daemon_sync_matrix -- --ignored --nocapture`"]
 async fn bench_live_daemon_transfer_many_files() {
+    let _guard = live_daemon_test_guard().await;
     let files = env_usize("IRIS_DRIVE_SYNC_BENCH_FILES", 1_000);
     let bytes_per_file = env_usize("IRIS_DRIVE_SYNC_BENCH_FILE_BYTES", 4096);
     let cluster = SyncCluster::start(Duration::ZERO).await;
@@ -162,7 +585,7 @@ async fn bench_live_daemon_transfer_many_files() {
         .wait_for_snapshot(&expected, "many-file transfer")
         .await;
     let elapsed = start.elapsed();
-    let total_bytes = expected.values().map(|file| file.len).sum::<u64>();
+    let total_bytes = expected.values().map(FileSnapshot::len).sum::<u64>();
 
     println!(
         "{}",
@@ -179,6 +602,7 @@ async fn bench_live_daemon_transfer_many_files() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "large-file transfer bench; set IRIS_DRIVE_SYNC_BENCH_LARGE_BYTES to size"]
 async fn bench_live_daemon_transfer_large_file() {
+    let _guard = live_daemon_test_guard().await;
     let bytes = env_usize("IRIS_DRIVE_SYNC_BENCH_LARGE_BYTES", 64 * 1024 * 1024);
     let cluster = SyncCluster::start(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
@@ -204,6 +628,46 @@ async fn bench_live_daemon_transfer_large_file() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "same-files convergence bench; set IRIS_DRIVE_SYNC_BENCH_FILES and IRIS_DRIVE_SYNC_BENCH_FILE_BYTES"]
+async fn bench_live_daemon_same_files_already_present() {
+    let _guard = live_daemon_test_guard().await;
+    let files = env_usize("IRIS_DRIVE_SYNC_BENCH_FILES", 1_000);
+    let bytes_per_file = env_usize("IRIS_DRIVE_SYNC_BENCH_FILE_BYTES", 4096);
+    let mut seed_files = Vec::new();
+    let mut total_bytes = 0u64;
+    for index in 0..files {
+        let path = format!("same/{:04}/file-{:06}.bin", index / 100, index);
+        let bytes = deterministic_bytes(index, bytes_per_file);
+        total_bytes += u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        seed_files.push(SeedFile::new(Client::Windows, &path, &bytes));
+        seed_files.push(SeedFile::new(Client::Ubuntu, &path, &bytes));
+    }
+
+    let start = Instant::now();
+    let cluster = SyncCluster::start_with_options(SyncClusterOptions {
+        blossom_upload_delay: Duration::ZERO,
+        seed_files,
+    })
+    .await;
+    cluster.wait_until_authorized().await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "same-files already present")
+        .await;
+    let elapsed = start.elapsed();
+
+    println!(
+        "{}",
+        json!({
+            "bench": "live_daemon_same_files_already_present",
+            "files": files,
+            "bytes": total_bytes,
+            "elapsed_ms": elapsed.as_millis(),
+            "bytes_per_second": bytes_per_second(total_bytes, elapsed),
+        })
+    );
+}
+
 #[derive(Clone, Copy)]
 enum Client {
     Windows,
@@ -217,14 +681,22 @@ struct SyncCluster {
     ubuntu_cfg: TempDir,
     windows_work: TempDir,
     ubuntu_work: TempDir,
-    windows_daemon: DaemonChild,
-    ubuntu_daemon: DaemonChild,
+    windows_daemon: Option<DaemonChild>,
+    ubuntu_daemon: Option<DaemonChild>,
 }
 
 impl SyncCluster {
     async fn start(blossom_upload_delay: Duration) -> Self {
+        Self::start_with_options(SyncClusterOptions {
+            blossom_upload_delay,
+            ..SyncClusterOptions::default()
+        })
+        .await
+    }
+
+    async fn start_with_options(options: SyncClusterOptions) -> Self {
         let relay = LocalNostrRelay::spawn().await;
-        let blossom = LocalBlossomServer::spawn(blossom_upload_delay).await;
+        let blossom = LocalBlossomServer::spawn(options.blossom_upload_delay).await;
 
         let windows_cfg = tempdir().unwrap();
         let ubuntu_cfg = tempdir().unwrap();
@@ -243,6 +715,18 @@ impl SyncCluster {
         let request = linked["device_link_request"]["url"].as_str().unwrap();
         run_json(windows_cfg.path(), &["approve", request]);
 
+        for seed in &options.seed_files {
+            let root = match seed.client {
+                Client::Windows => windows_work.path(),
+                Client::Ubuntu => ubuntu_work.path(),
+            };
+            let path = root.join(&seed.path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, &seed.bytes).unwrap();
+        }
+
         run_json(
             windows_cfg.path(),
             &["import", windows_work.path().to_str().unwrap()],
@@ -252,16 +736,16 @@ impl SyncCluster {
             &["import", ubuntu_work.path().to_str().unwrap()],
         );
 
-        let windows_daemon = DaemonChild::spawn(
+        let windows_daemon = Some(DaemonChild::spawn(
             windows_cfg.path(),
             &relay.url,
             windows_cfg.path().join("win.log"),
-        );
-        let ubuntu_daemon = DaemonChild::spawn(
+        ));
+        let ubuntu_daemon = Some(DaemonChild::spawn(
             ubuntu_cfg.path(),
             &relay.url,
             ubuntu_cfg.path().join("ubuntu.log"),
-        );
+        ));
 
         Self {
             relay,
@@ -328,6 +812,26 @@ impl SyncCluster {
             .unwrap();
     }
 
+    async fn remove_all(&self, client: Client, path: &str) {
+        let path = self.path(client).join(path);
+        let metadata = match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("metadata failed for {}: {error}", path.display()),
+        };
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(path).await.unwrap();
+        } else {
+            tokio::fs::remove_file(path).await.unwrap();
+        }
+    }
+
+    async fn mkdir(&self, client: Client, path: &str) {
+        tokio::fs::create_dir_all(self.path(client).join(path))
+            .await
+            .unwrap();
+    }
+
     fn assert_file(&self, client: Client, path: &str, expected: &[u8]) {
         let actual = std::fs::read(self.path(client).join(path)).unwrap();
         assert_eq!(actual, expected, "{}", self.debug_state());
@@ -355,6 +859,14 @@ impl SyncCluster {
         .await;
     }
 
+    async fn wait_for_visible_snapshot(&self, expected: &DirSnapshot, label: &str) {
+        self.wait_until(label, || {
+            visible_dir_snapshot(self.windows_work.path()) == *expected
+                && visible_dir_snapshot(self.ubuntu_work.path()) == *expected
+        })
+        .await;
+    }
+
     async fn wait_until(&self, label: &str, mut ready: impl FnMut() -> bool) {
         let start = Instant::now();
         while start.elapsed() < WAIT_TIMEOUT {
@@ -373,6 +885,31 @@ impl SyncCluster {
         }
     }
 
+    fn stop_daemon(&mut self, client: Client) {
+        let daemon = match client {
+            Client::Windows => &mut self.windows_daemon,
+            Client::Ubuntu => &mut self.ubuntu_daemon,
+        };
+        drop(daemon.take());
+    }
+
+    fn start_daemon(&mut self, client: Client) {
+        let (slot, config_dir, log_path) = match client {
+            Client::Windows => (
+                &mut self.windows_daemon,
+                self.windows_cfg.path(),
+                self.windows_cfg.path().join("win.log"),
+            ),
+            Client::Ubuntu => (
+                &mut self.ubuntu_daemon,
+                self.ubuntu_cfg.path(),
+                self.ubuntu_cfg.path().join("ubuntu.log"),
+            ),
+        };
+        assert!(slot.is_none(), "daemon is already running");
+        *slot = Some(DaemonChild::spawn(config_dir, &self.relay.url, log_path));
+    }
+
     fn debug_state(&self) -> String {
         format!(
             "windows: {:#?}\nubuntu: {:#?}\nwindows status: {}\nubuntu status: {}\nwindows log:\n{}\nubuntu log:\n{}",
@@ -382,8 +919,12 @@ impl SyncCluster {
                 .unwrap_or_default(),
             serde_json::to_string_pretty(&run_json(self.ubuntu_cfg.path(), &["status"]))
                 .unwrap_or_default(),
-            self.windows_daemon.log(),
-            self.ubuntu_daemon.log(),
+            self.windows_daemon
+                .as_ref()
+                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+            self.ubuntu_daemon
+                .as_ref()
+                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
         )
     }
 }
@@ -395,7 +936,12 @@ struct DaemonChild {
 
 impl DaemonChild {
     fn spawn(config_dir: &Path, relay_url: &str, log_path: PathBuf) -> Self {
-        let stdout = File::create(&log_path).unwrap();
+        let mut stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .unwrap();
+        writeln!(stdout, "\n--- daemon start ---").unwrap();
         let stderr = stdout.try_clone().unwrap();
         let child = Command::new(idrive_bin())
             .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
@@ -477,11 +1023,28 @@ fn configure_local_blossom(config_dir: &Path, url: &str) {
 
 fn dir_snapshot(root: &Path) -> DirSnapshot {
     let mut snapshot = BTreeMap::new();
-    collect_dir_snapshot(root, root, &mut snapshot);
+    collect_dir_snapshot(root, root, &mut snapshot, SnapshotFilter::All);
     snapshot
 }
 
-fn collect_dir_snapshot(root: &Path, dir: &Path, snapshot: &mut DirSnapshot) {
+fn visible_dir_snapshot(root: &Path) -> DirSnapshot {
+    let mut snapshot = BTreeMap::new();
+    collect_dir_snapshot(root, root, &mut snapshot, SnapshotFilter::UserVisible);
+    snapshot
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotFilter {
+    All,
+    UserVisible,
+}
+
+fn collect_dir_snapshot(
+    root: &Path,
+    dir: &Path,
+    snapshot: &mut DirSnapshot,
+    filter: SnapshotFilter,
+) {
     let mut entries = std::fs::read_dir(dir)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
@@ -489,9 +1052,14 @@ fn collect_dir_snapshot(root: &Path, dir: &Path, snapshot: &mut DirSnapshot) {
     entries.sort_by_key(std::fs::DirEntry::path);
     for entry in entries {
         let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(filter, SnapshotFilter::UserVisible) && should_ignore_name(&name) {
+            continue;
+        }
         let file_type = entry.file_type().unwrap();
         if file_type.is_dir() {
-            collect_dir_snapshot(root, &path, snapshot);
+            collect_dir_snapshot(root, &path, snapshot, filter);
         } else if file_type.is_file() {
             let relative = path
                 .strip_prefix(root)
@@ -510,6 +1078,18 @@ fn collect_dir_snapshot(root: &Path, dir: &Path, snapshot: &mut DirSnapshot) {
             );
         }
     }
+}
+
+fn should_ignore_name(name: &str) -> bool {
+    matches!(
+        name,
+        ".DS_Store" | ".hashtree" | "Thumbs.db" | "desktop.ini"
+    ) || name.starts_with("._")
+        || name.ends_with('~')
+        || (name.starts_with('#') && name.ends_with('#'))
+        || Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("sbak"))
 }
 
 fn deterministic_bytes(seed: usize, len: usize) -> Vec<u8> {

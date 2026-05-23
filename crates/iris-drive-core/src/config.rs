@@ -279,11 +279,21 @@ pub struct DeviceRootRef {
     /// snapshot, keyed by device id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub observed: BTreeMap<String, RootObservation>,
+    /// This root was imported after materializing another device's root.
+    /// It is useful as local base state, but should not be announced as
+    /// this device's own edit.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub materialized_only: bool,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl DeviceRootRef {
@@ -296,6 +306,7 @@ impl DeviceRootRef {
             device_seq: 0,
             parents: Vec::new(),
             observed: BTreeMap::new(),
+            materialized_only: false,
         }
     }
 
@@ -308,6 +319,7 @@ impl DeviceRootRef {
             device_seq: meta.device_seq,
             parents: meta.parents.clone(),
             observed: meta.observed.clone(),
+            materialized_only: false,
         }
     }
 }
@@ -384,6 +396,7 @@ dck_generation = 1
         assert_eq!(root.device_seq, 0);
         assert!(root.parents.is_empty());
         assert!(root.observed.is_empty());
+        assert!(!root.materialized_only);
     }
 
     #[test]
