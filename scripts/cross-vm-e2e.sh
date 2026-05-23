@@ -29,6 +29,9 @@ Environment:
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
   IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should also expose FUSE mounts.
+  IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
+                                  Copy the owner AppKeys snapshot into temp peer configs after approval
+                                  so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
@@ -42,6 +45,7 @@ MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
 LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
 KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
 MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
+SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -360,6 +364,76 @@ webdav_path_url() {
     out+="/$encoded"
   done
   printf "%s" "$out"
+}
+
+owner_app_keys_b64() {
+  local label="$1"
+  local kind
+  local config
+  local script
+  kind="$(host_value "$label" kind)"
+  config="$(host_value "$label" config)"
+  if [[ "$kind" == "windows" ]]; then
+    script="
+\$config = $(ps_quote "$config")
+\$text = Get-Content -LiteralPath (Join-Path \$config 'config.toml') -Raw
+\$match = [regex]::Match(\$text, '(?s)\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
+if (-not \$match.Success) { throw 'owner AppKeys block not found' }
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$match.Value))
+"
+  else
+    script="
+set -Eeuo pipefail
+config=$(sh_quote "$config")
+awk 'BEGIN{copy=0} /^\\[account\\.app_keys\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
+"
+  fi
+  remote_exec "$label" "$script" | tr -d '\r\n'
+}
+
+sideload_app_keys() {
+  local label="$1"
+  local appkeys_b64="$2"
+  local kind
+  local config
+  local script
+  kind="$(host_value "$label" kind)"
+  config="$(host_value "$label" config)"
+  if [[ "$kind" == "windows" ]]; then
+    script="
+\$config = $(ps_quote "$config")
+\$path = Join-Path \$config 'config.toml'
+\$appKeys = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$appkeys_b64")))
+\$text = Get-Content -LiteralPath \$path -Raw
+\$text = \$text.Replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
+\$lf = [string][char]10
+\$pattern = '(?s)\\r?\\n\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
+if ([regex]::IsMatch(\$text, \$pattern)) {
+  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$appKeys + \$lf), 1)
+} else {
+  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$appKeys + \$lf + '[[drives]]')
+}
+Set-Content -LiteralPath \$path -Value \$text -NoNewline
+"
+  else
+    script="
+set -Eeuo pipefail
+CONFIG_PATH=$(sh_quote "$config") APPKEYS_B64=$(sh_quote "$appkeys_b64") python3 - <<'PY'
+import base64, os, re
+from pathlib import Path
+
+path = Path(os.environ['CONFIG_PATH']) / 'config.toml'
+appkeys = base64.b64decode(os.environ['APPKEYS_B64']).decode()
+text = path.read_text()
+text = text.replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
+text = re.sub(r'\\n\\[account\\.app_keys\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + appkeys + '\\n', text, count=1, flags=re.S)
+if '[account.app_keys]' not in text:
+    text = text.replace('\\n[[drives]]', '\\n' + appkeys + '\\n[[drives]]', 1)
+path.write_text(text)
+PY
+"
+  fi
+  remote_exec "$label" "$script" >/dev/null
 }
 
 daemon_relay_args_posix() {
@@ -992,6 +1066,17 @@ for label in "${LABELS[@]}"; do
   request_url="$(jq -r '.device_link_request.url' <<<"$link_json")"
   idrive_cmd "$owner_label" approve "$request_url" --label "$label" >/dev/null
 done
+
+if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
+  echo "side-loading approved AppKeys into peer temp configs"
+  appkeys_b64="$(owner_app_keys_b64 "$owner_label")"
+  for label in "${LABELS[@]}"; do
+    if [[ "$label" == "$owner_label" ]]; then
+      continue
+    fi
+    sideload_app_keys "$label" "$appkeys_b64"
+  done
+fi
 
 for label in "${LABELS[@]}"; do
   start_daemon "$label"
