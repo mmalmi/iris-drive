@@ -29,6 +29,8 @@ pub struct DriveRootMeta {
     pub device_id: String,
     pub device_seq: u64,
     pub dck_generation: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub materialized_only: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<RootParent>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -38,4 +40,9 @@ pub struct DriveRootMeta {
 
 impl DriveRootMeta {
     pub const SCHEMA: u16 = 1;
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }

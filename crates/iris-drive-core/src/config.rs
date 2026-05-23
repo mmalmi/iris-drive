@@ -319,7 +319,7 @@ impl DeviceRootRef {
             device_seq: meta.device_seq,
             parents: meta.parents.clone(),
             observed: meta.observed.clone(),
-            materialized_only: false,
+            materialized_only: meta.materialized_only,
         }
     }
 }

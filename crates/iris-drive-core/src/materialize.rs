@@ -14,7 +14,8 @@ use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
 use crate::account::AccountState;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, DeviceRootRef};
+use crate::indexer::{IndexError, read_root_meta};
 use crate::merge::{
     DeviceFileEntry, DeviceSnapshot, MergedEntry, MergedView, merge_drives, walk_device_tree,
 };
@@ -35,6 +36,8 @@ pub enum MaterializeError {
     Tree(#[from] HashTreeError),
     #[error("provider: {0}")]
     Provider(#[from] ProviderError),
+    #[error("index: {0}")]
+    Index(#[from] IndexError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -103,13 +106,16 @@ pub async fn primary_merged_view<S: Store>(
         let Some(root) = drive.device_roots.get(device_pubkey) else {
             continue;
         };
+        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+            continue;
+        };
         let cid = Cid::parse(&root.root_cid).map_err(|source| MaterializeError::RootCid {
             device_id: device_pubkey.clone(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
         let (files, tombstones) = walk_device_tree(tree, &cid).await?;
-        snapshots_data.push((device_pubkey.clone(), root.clone(), files, tombstones));
+        snapshots_data.push((device_pubkey.clone(), root, files, tombstones));
     }
 
     let authorized_refs: Vec<&str> = authorized.iter().map(String::as_str).collect();
@@ -305,6 +311,9 @@ async fn merged_user_directory_paths<S: Store>(
         let Some(root) = drive.device_roots.get(device_pubkey) else {
             continue;
         };
+        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+            continue;
+        };
         let cid = Cid::parse(&root.root_cid).map_err(|source| MaterializeError::RootCid {
             device_id: device_pubkey.clone(),
             root_cid: root.root_cid.clone(),
@@ -313,6 +322,44 @@ async fn merged_user_directory_paths<S: Store>(
         collect_user_directory_paths(tree, &cid, "", &mut dirs).await?;
     }
     Ok(dirs)
+}
+
+async fn merge_root_for_device<S: Store>(
+    tree: &HashTree<S>,
+    device_pubkey: &str,
+    root: &DeviceRootRef,
+) -> Result<Option<DeviceRootRef>, MaterializeError> {
+    let mut current = root.clone();
+    for _ in 0..32 {
+        if !current.materialized_only {
+            return Ok(Some(current));
+        }
+        let Some(parent) = current
+            .parents
+            .iter()
+            .rev()
+            .find(|parent| parent.device_id == device_pubkey)
+        else {
+            return Ok(None);
+        };
+        let parent_cid =
+            Cid::parse(&parent.root_cid).map_err(|source| MaterializeError::RootCid {
+                device_id: device_pubkey.to_string(),
+                root_cid: parent.root_cid.clone(),
+                source,
+            })?;
+        let Some(meta) = read_root_meta(tree, &parent_cid).await? else {
+            let mut parent_root = DeviceRootRef::legacy(
+                parent.root_cid.clone(),
+                current.published_at,
+                current.dck_generation,
+            );
+            parent_root.device_seq = parent.device_seq;
+            return Ok(Some(parent_root));
+        };
+        current = DeviceRootRef::from_meta(parent.root_cid.clone(), current.published_at, &meta);
+    }
+    Ok(None)
 }
 
 fn collect_user_directory_paths<'a, S: Store>(
@@ -411,7 +458,7 @@ fn may_replace_destination(
     destination_exists: bool,
 ) -> bool {
     let Some(destination) = destination else {
-        return !destination_exists;
+        return !destination_exists && local_entry.is_none();
     };
     local_entry.is_some_and(|entry| snapshot_matches_device_entry(destination, entry))
 }
@@ -575,5 +622,18 @@ mod tests {
         assert!(safe_relative_path("notes/../../today.txt").is_none());
         assert!(safe_relative_path("notes\\today.txt").is_none());
         assert!(safe_relative_path("").is_none());
+    }
+
+    #[test]
+    fn may_replace_destination_preserves_unimported_deletions() {
+        let local_entry = DeviceFileEntry {
+            path: "note.txt".to_string(),
+            hash: [1; 32],
+            size: 5,
+            whole_file_hash: None,
+        };
+
+        assert!(may_replace_destination(None, None, false));
+        assert!(!may_replace_destination(None, Some(&local_entry), false));
     }
 }

@@ -297,7 +297,7 @@ impl Daemon {
         };
 
         let now = unix_now();
-        let root_meta = self.root_meta_for_import(now);
+        let root_meta = self.root_meta_for_import(now, materialized_only);
         let root_cid = index_dir_with_history_and_meta(
             &self.tree,
             working_dir,
@@ -367,7 +367,7 @@ impl Daemon {
 
         record.state = ConflictState::Resolved;
         let now = unix_now();
-        let root_meta = self.root_meta_for_import(now);
+        let root_meta = self.root_meta_for_import(now, false);
         let mut root = layer_conflict_records(
             &self.tree,
             previous_root.clone(),
@@ -506,7 +506,11 @@ impl Daemon {
         Ok(())
     }
 
-    fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
+    fn root_meta_for_import(
+        &self,
+        created_at: i64,
+        materialized_only: bool,
+    ) -> Option<DriveRootMeta> {
         let account = self.config.account.as_ref()?;
         let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
         let previous = drive.device_roots.get(&account.device_pubkey);
@@ -543,6 +547,7 @@ impl Daemon {
             device_id: account.device_pubkey.clone(),
             device_seq,
             dck_generation,
+            materialized_only,
             parents,
             observed,
             created_at,
@@ -840,7 +845,7 @@ mod tests {
                 .await
                 .unwrap();
         let now = unix_now();
-        let root_meta = daemon.root_meta_for_import(now).unwrap();
+        let root_meta = daemon.root_meta_for_import(now, false).unwrap();
         root_with_conflict =
             crate::indexer::layer_root_meta(daemon.tree(), root_with_conflict, &root_meta)
                 .await

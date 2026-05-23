@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashtree_core::{Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, nhash_encode_full};
 use iris_drive_core::{
-    AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, Drive, DriveRole,
-    FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, DeviceRootRef, Drive,
+    DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
@@ -1780,7 +1780,7 @@ impl DirectRootExchange {
         self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
             .await;
         let stream = direct_root_mesh_stream(&state.owner_pubkey);
-        let events = build_current_sync_events(config_dir, config, state)?;
+        let events = build_current_sync_events(config_dir, config, state).await?;
         for event in events {
             self.cache_event(event.clone());
             let frame = DirectRootFrame {
@@ -1888,7 +1888,7 @@ impl DirectRootExchange {
     }
 }
 
-fn build_current_sync_events(
+async fn build_current_sync_events(
     config_dir: &Path,
     config: &AppConfig,
     state: &AccountState,
@@ -1923,7 +1923,7 @@ fn build_current_sync_events(
     }
 
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+        && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
         let authorized_devices = authorized_device_pubkeys(state);
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
@@ -1932,7 +1932,7 @@ fn build_current_sync_events(
             device.keys(),
             &state.owner_pubkey,
             &drive.drive_id,
-            root,
+            &root,
             &authorized_devices,
         )
         .context("building drive-root event")?;
@@ -1958,7 +1958,7 @@ fn build_current_sync_events(
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
                 owner_keys,
                 &drive.drive_id,
-                root,
+                &root,
             )
             .context("building files-root event")?;
             events.push(direct_root_event(
@@ -1972,6 +1972,71 @@ fn build_current_sync_events(
     }
 
     Ok(events)
+}
+
+async fn publishable_device_root(
+    config_dir: &Path,
+    drive: &Drive,
+    state: &AccountState,
+) -> Result<Option<DeviceRootRef>> {
+    let Some(root) = drive.device_roots.get(&state.device_pubkey).cloned() else {
+        return Ok(None);
+    };
+    if !root.materialized_only {
+        return Ok(Some(root));
+    }
+    publishable_parent_root(config_dir, state, root).await
+}
+
+async fn publishable_parent_root(
+    config_dir: &Path,
+    state: &AccountState,
+    mut root: DeviceRootRef,
+) -> Result<Option<DeviceRootRef>> {
+    let daemon = Daemon::open(config_dir).context("opening daemon for publishable root lookup")?;
+    let mut seen = BTreeSet::new();
+    for _ in 0..32 {
+        if !seen.insert(root.root_cid.clone()) {
+            return Ok(None);
+        }
+        let cid = Cid::parse(&root.root_cid)
+            .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+        let Some(meta) = iris_drive_core::indexer::read_root_meta(daemon.tree(), &cid)
+            .await
+            .with_context(|| format!("reading root metadata for {}", root.root_cid))?
+        else {
+            return Ok(None);
+        };
+        let Some(parent) = meta
+            .parents
+            .iter()
+            .find(|parent| parent.device_id == state.device_pubkey)
+        else {
+            return Ok(None);
+        };
+        let parent_cid = Cid::parse(&parent.root_cid)
+            .with_context(|| format!("parsing parent root cid {}", parent.root_cid))?;
+        let parent_root = match iris_drive_core::indexer::read_root_meta(daemon.tree(), &parent_cid)
+            .await
+            .with_context(|| format!("reading parent root metadata for {}", parent.root_cid))?
+        {
+            Some(parent_meta) => DeviceRootRef::from_meta(
+                parent.root_cid.clone(),
+                parent_meta.created_at,
+                &parent_meta,
+            ),
+            None => DeviceRootRef::legacy(
+                parent.root_cid.clone(),
+                root.published_at,
+                root.dck_generation,
+            ),
+        };
+        if !parent_root.materialized_only {
+            return Ok(Some(parent_root));
+        }
+        root = parent_root;
+    }
+    Ok(None)
 }
 
 fn direct_root_event(key: String, event: &Event) -> Result<DirectRootEvent> {
@@ -2285,14 +2350,11 @@ async fn publish_current_state(
     }
 
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+        && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
-        if root.materialized_only {
-            return Ok(report);
-        }
 
         if upload_blossom {
             let (blossom_upload, blossom_upload_error) =
@@ -2307,7 +2369,7 @@ async fn publish_current_state(
             device.keys(),
             &state.owner_pubkey,
             &drive.drive_id,
-            root,
+            &root,
             &authorized_device_pubkeys(state),
         )
         .await
@@ -2323,7 +2385,7 @@ async fn publish_current_state(
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
                 .keys();
-            match relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, root).await {
+            match relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, &root).await {
                 Ok(_) => report.published_files_root = true,
                 Err(error) => {
                     report.files_root_publish_error = Some(error.to_string());
@@ -3415,6 +3477,19 @@ async fn apply_one_event(
         let outcome =
             relay_sync::apply_remote_drive_root_event(&mut config, event, Some(device.keys()))?;
         let was_applied = matches!(outcome, relay_sync::DriveRootApply::Applied);
+        let stale_current_root = matches!(outcome, relay_sync::DriveRootApply::StaleTimestamp)
+            && parsed
+                .as_ref()
+                .is_some_and(|(device_pubkey, _, drive_id, root_ref)| {
+                    config
+                        .drive(drive_id)
+                        .and_then(|drive| drive.device_roots.get(device_pubkey))
+                        .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
+                });
+        let root_cid_to_pull = parsed
+            .as_ref()
+            .filter(|_| was_applied || stale_current_root)
+            .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
         println!(
             "{}",
             json!({
@@ -3431,18 +3506,16 @@ async fn apply_one_event(
 
         // If we applied a fresh drive root, pull the underlying blocks
         // so `idrive list` can walk the remote device's tree.
-        if was_applied
-            && let Some((_, _, _, root_ref)) = parsed
+        if let Some(root_cid) = root_cid_to_pull
             && let Err(error) =
-                pull_blocks_for_root_bounded(config_dir, &config, &root_ref.root_cid, fips_blocks)
-                    .await
+                pull_blocks_for_root_bounded(config_dir, &config, &root_cid, fips_blocks).await
         {
             println!(
                 "{}",
                 json!({"event": "block_download_error", "error": error})
             );
         }
-        if was_applied
+        if (was_applied || stale_current_root)
             && let Err(error) =
                 materialize_and_publish(client, config_dir, "materialized_drive_root").await
         {
@@ -4171,6 +4244,120 @@ mod daemon_lock_tests {
             !working_dir_has_same_visible_files(&daemon, work.path(), Some(&second.root_cid))
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_mesh_sync_events_skip_materialized_only_roots() {
+        let cfg_dir = tempdir().unwrap();
+        let work = tempdir().unwrap();
+        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+
+        std::fs::write(work.path().join("from-peer.txt"), b"materialized copy").unwrap();
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        daemon.import_working_dir(work.path()).await.unwrap();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = config.account.clone().unwrap();
+        let mut drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .clone();
+        drive
+            .device_roots
+            .get_mut(&state.device_pubkey)
+            .unwrap()
+            .materialized_only = true;
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let events = build_current_sync_events(cfg_dir.path(), &config, &state)
+            .await
+            .unwrap();
+
+        assert!(
+            events
+                .iter()
+                .all(|event| !event.key.starts_with("drive-root:")
+                    && !event.key.starts_with("files-root:")),
+            "materialized-only roots must not be announced as local edits: {events:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_mesh_sync_events_reannounce_publishable_parent_root() {
+        let cfg_dir = tempdir().unwrap();
+        let work = tempdir().unwrap();
+        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+
+        std::fs::write(work.path().join("mine.txt"), b"local edit").unwrap();
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        let first_root = daemon
+            .config()
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&daemon.config().account.as_ref().unwrap().device_pubkey)
+            .unwrap()
+            .clone();
+
+        std::fs::write(work.path().join("peer.txt"), b"materialized peer").unwrap();
+        let account = daemon.config().account.as_ref().unwrap().clone();
+        let first_cid = Cid::parse(&first.root_cid).unwrap();
+        let second_time = first_root.published_at + 1;
+        let meta = iris_drive_core::DriveRootMeta {
+            schema: iris_drive_core::DriveRootMeta::SCHEMA,
+            drive_id: iris_drive_core::PRIMARY_DRIVE_ID.to_string(),
+            device_id: account.device_pubkey.clone(),
+            device_seq: first_root.device_seq + 1,
+            dck_generation: first_root.dck_generation,
+            materialized_only: true,
+            parents: vec![iris_drive_core::RootParent {
+                device_id: account.device_pubkey.clone(),
+                device_seq: first_root.device_seq,
+                root_cid: first.root_cid.clone(),
+            }],
+            observed: BTreeMap::new(),
+            created_at: second_time,
+        };
+        let second = iris_drive_core::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            work.path(),
+            Some(&first_cid),
+            second_time,
+            Some(&meta),
+        )
+        .await
+        .unwrap();
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let mut drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .clone();
+        drive.device_roots.insert(
+            account.device_pubkey.clone(),
+            DeviceRootRef::from_meta(second.to_string(), second_time, &meta),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let events = build_current_sync_events(cfg_dir.path(), &config, &account)
+            .await
+            .unwrap();
+
+        assert!(
+            events
+                .iter()
+                .any(|event| event.key.starts_with("drive-root:")
+                    && event.key.contains(&first.root_cid)),
+            "last real local root should still be re-announced: {events:#?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| !event.key.contains(&second.to_string())),
+            "materialized parent root must stay local-only: {events:#?}"
         );
     }
 

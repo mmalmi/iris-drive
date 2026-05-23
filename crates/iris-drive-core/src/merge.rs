@@ -209,6 +209,9 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
 
     for snap in snapshots {
+        if snap.root.materialized_only {
+            continue;
+        }
         if !allow.contains(snap.device_pubkey) {
             continue;
         }
@@ -1064,6 +1067,62 @@ mod tests {
         );
         assert!(view.files.is_empty());
         assert_eq!(view.suppressed_by_tombstone, vec!["shared".to_string()]);
+    }
+
+    #[test]
+    fn materialized_only_roots_do_not_compete_with_source_roots() {
+        let remote_v2 = causal_root("remote-v2", 100, 2, &[]);
+        let mut local_mirror_v1 =
+            causal_root("local-mirror-v1", 200, 1, &[("remote", 1, "remote-v1")]);
+        local_mirror_v1.materialized_only = true;
+
+        let view = merge_drives(
+            &["local", "remote"],
+            &[
+                snap(
+                    "local",
+                    &local_mirror_v1,
+                    vec![file("note.txt", 1, 5)],
+                    vec![],
+                ),
+                snap("remote", &remote_v2, vec![file("note.txt", 2, 7)], vec![]),
+            ],
+        );
+
+        assert_eq!(view.files.len(), 1);
+        assert_eq!(view.files[0].source_device, "remote");
+        assert_eq!(view.files[0].hash, [2; 32]);
+        assert!(view.conflicts.is_empty());
+    }
+
+    #[test]
+    fn materialized_only_roots_do_not_block_source_tombstones() {
+        let remote_delete = causal_root("remote-delete", 100, 2, &[]);
+        let mut local_mirror_v1 =
+            causal_root("local-mirror-v1", 200, 1, &[("remote", 1, "remote-v1")]);
+        local_mirror_v1.materialized_only = true;
+
+        let view = merge_drives(
+            &["local", "remote"],
+            &[
+                snap(
+                    "local",
+                    &local_mirror_v1,
+                    vec![file("note.txt", 1, 5)],
+                    vec![],
+                ),
+                snap(
+                    "remote",
+                    &remote_delete,
+                    vec![],
+                    vec![tomb("note.txt", 100)],
+                ),
+            ],
+        );
+
+        assert!(view.files.is_empty());
+        assert_eq!(view.suppressed_by_tombstone, vec!["note.txt"]);
+        assert!(view.conflicts.is_empty());
     }
 
     #[test]

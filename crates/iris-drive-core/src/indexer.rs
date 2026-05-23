@@ -711,6 +711,7 @@ mod tests {
             device_id: "device-a".into(),
             device_seq: 2,
             dck_generation: 1,
+            materialized_only: false,
             parents: vec![RootParent {
                 device_id: "device-a".into(),
                 device_seq: 1,
