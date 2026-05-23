@@ -445,7 +445,11 @@ impl Daemon {
         )
         .await?;
         let import = if materialize.changed() {
-            Some(self.import_materialized_working_dir(&working_dir).await?)
+            if materialize.skipped == 0 {
+                Some(self.import_materialized_working_dir(&working_dir).await?)
+            } else {
+                Some(self.import_working_dir(&working_dir).await?)
+            }
         } else {
             None
         };
@@ -652,6 +656,69 @@ mod tests {
             .get(&account.state.device_pubkey)
             .unwrap();
         assert!(!root.materialized_only);
+    }
+
+    #[tokio::test]
+    async fn materialize_with_skipped_local_edit_imports_publishable_root() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("shared.txt"), b"local base").unwrap();
+        daemon.import_working_dir(work.path()).await.unwrap();
+
+        std::fs::write(work.path().join("shared.txt"), b"local edit").unwrap();
+
+        let peer = Identity::generate(cfg_dir.path().join("peer_key"));
+        let peer_pubkey = peer.pubkey_hex();
+        let peer_work = tempdir().unwrap();
+        std::fs::write(peer_work.path().join("shared.txt"), b"peer edit").unwrap();
+        std::fs::write(peer_work.path().join("peer-only.txt"), b"peer only").unwrap();
+        let peer_root = crate::indexer::index_dir(daemon.tree(), peer_work.path())
+            .await
+            .unwrap();
+
+        let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = cfg.account.as_mut().unwrap();
+        let snap = state.app_keys.as_mut().unwrap();
+        snap.devices.push(crate::app_keys::DeviceEntry {
+            pubkey: peer_pubkey.clone(),
+            added_at: 1,
+            label: Some("peer".to_string()),
+        });
+        snap.normalize();
+        let mut drive = cfg.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            peer_pubkey,
+            DeviceRootRef::legacy(peer_root.to_string(), 2, 0),
+        );
+        cfg.upsert_drive(drive);
+        cfg.save(config_path_in(cfg_dir.path())).unwrap();
+
+        daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let report = daemon.materialize_primary_drive().await.unwrap().unwrap();
+        assert_eq!(report.materialize.written, 1);
+        assert_eq!(report.materialize.skipped, 1);
+        assert_eq!(
+            std::fs::read(work.path().join("shared.txt")).unwrap(),
+            b"local edit"
+        );
+        assert_eq!(
+            std::fs::read(work.path().join("peer-only.txt")).unwrap(),
+            b"peer only"
+        );
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert!(
+            !root.materialized_only,
+            "skipped local edits must not be hidden in a local-only materialized root"
+        );
     }
 
     #[tokio::test]
