@@ -2411,6 +2411,99 @@ async fn publish_current_state(
     Ok(report)
 }
 
+fn spawn_initial_publish(
+    client: nostr_sdk::Client,
+    config_dir: PathBuf,
+    startup_config: AppConfig,
+    startup_state: AccountState,
+) {
+    tokio::spawn(async move {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
+            publish_current_state(&client, &config_dir, &startup_config, &startup_state, true),
+        )
+        .await
+        {
+            Ok(Ok(report)) => {
+                let drive_iris_to_url = report
+                    .root_cid
+                    .as_ref()
+                    .and_then(|_| drive_iris_to_url_for_primary_drive(&startup_config));
+                let snapshot_url = report
+                    .root_cid
+                    .as_deref()
+                    .and_then(drive_iris_to_snapshot_url_for_root);
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish",
+                        "published_app_keys": report.published_app_keys,
+                        "app_keys_publish_error": report.app_keys_publish_error,
+                        "published_drive_root": report.published_drive_root,
+                        "drive_root_publish_error": report.drive_root_publish_error,
+                        "published_files_root": report.published_files_root,
+                        "files_root_publish_error": report.files_root_publish_error,
+                        "root_cid": report.root_cid,
+                        "drive_iris_to_url": drive_iris_to_url,
+                        "files_iris_to_url": drive_iris_to_url,
+                        "snapshot_url": snapshot_url,
+                        "permalink_url": snapshot_url,
+                        "blossom_upload_error": report.blossom_upload_error,
+                        "blossom_upload": report.blossom_upload.map(|r| json!({
+                            "total_hashes": r.total_hashes,
+                            "uploaded": r.uploaded,
+                            "already_present": r.already_present,
+                        })),
+                    })
+                );
+            }
+            Ok(Err(error)) => {
+                println!(
+                    "{}",
+                    json!({"event": "initial_publish_error", "error": error.to_string()})
+                );
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "initial_publish_error",
+                        "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
+                    })
+                );
+            }
+        }
+    });
+}
+
+fn spawn_startup_scan(
+    client: nostr_sdk::Client,
+    config_dir: PathBuf,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+) {
+    tokio::spawn(async move {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
+            scan_and_publish(&client, &config_dir, fips_blocks.as_deref(), true, true),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => println!(
+                "{}",
+                json!({"event": "startup_scan_error", "error": error.to_string()})
+            ),
+            Err(_) => println!(
+                "{}",
+                json!({
+                    "event": "startup_scan_error",
+                    "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
+                })
+            ),
+        }
+    });
+}
+
 async fn relay_publish_with_timeout<T, F>(future: F) -> std::result::Result<T, String>
 where
     F: std::future::Future<
@@ -2841,91 +2934,15 @@ fn cmd_daemon(
         // imported them. The fs-notify + periodic paths only publish on
         // change, so without this a freshly-imported device would sit
         // silent until its first edit.
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-            publish_current_state(&client, config_dir, &startup_config, &startup_state, true),
-        )
-        .await
-        {
-            Ok(Ok(report)) => {
-                let drive_iris_to_url = report
-                    .root_cid
-                    .as_ref()
-                    .and_then(|_| drive_iris_to_url_for_primary_drive(&startup_config));
-                let snapshot_url = report
-                    .root_cid
-                    .as_deref()
-                    .and_then(drive_iris_to_snapshot_url_for_root);
-                println!(
-                    "{}",
-                    json!({
-                        "event": "initial_publish",
-                        "published_app_keys": report.published_app_keys,
-                        "app_keys_publish_error": report.app_keys_publish_error,
-                        "published_drive_root": report.published_drive_root,
-                        "drive_root_publish_error": report.drive_root_publish_error,
-                        "published_files_root": report.published_files_root,
-                        "files_root_publish_error": report.files_root_publish_error,
-                        "root_cid": report.root_cid,
-                        "drive_iris_to_url": drive_iris_to_url,
-                        "files_iris_to_url": drive_iris_to_url,
-                        "snapshot_url": snapshot_url,
-                        "permalink_url": snapshot_url,
-                        "blossom_upload_error": report.blossom_upload_error,
-                        "blossom_upload": report.blossom_upload.map(|r| json!({
-                            "total_hashes": r.total_hashes,
-                            "uploaded": r.uploaded,
-                            "already_present": r.already_present,
-                        })),
-                    })
-                );
-            }
-            Ok(Err(e)) => {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "initial_publish_error",
-                        "error": e.to_string(),
-                    })
-                );
-            }
-            Err(_) => {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "initial_publish_error",
-                        "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
-                    })
-                );
-            }
-        }
         if working_dir.is_some() {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-                scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "startup_scan_error",
-                            "error": error.to_string(),
-                        })
-                    );
-                }
-                Err(_) => {
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "startup_scan_error",
-                            "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
-                        })
-                    );
-                }
-            }
+            spawn_startup_scan(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
+        } else {
+            spawn_initial_publish(
+                client.clone(),
+                config_dir.to_path_buf(),
+                startup_config,
+                startup_state,
+            );
         }
         if let Err(error) =
             announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
@@ -3005,7 +3022,7 @@ fn cmd_daemon(
                     }
                 }
                 Some(()) = fs_rx.recv() => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false, false).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
@@ -3056,7 +3073,7 @@ fn cmd_daemon(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), true).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), true, false).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
@@ -3281,6 +3298,7 @@ async fn scan_and_publish(
     config_dir: &std::path::Path,
     fips_blocks: Option<&FsFipsBlockSync>,
     retry_current_root: bool,
+    upload_current_to_blossom: bool,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -3307,7 +3325,14 @@ async fn scan_and_publish(
         .await?
     {
         if retry_current_root {
-            let report = publish_current_state(client, config_dir, &config, state, false).await?;
+            let report = publish_current_state(
+                client,
+                config_dir,
+                &config,
+                state,
+                upload_current_to_blossom,
+            )
+            .await?;
             println!(
                 "{}",
                 json!({
