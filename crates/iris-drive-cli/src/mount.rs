@@ -1,6 +1,8 @@
 #[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
+use std::process::Command;
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
@@ -180,17 +182,37 @@ fn remember_mountpoint(config_dir: &Path, mountpoint: &Path) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn prepare_mountpoint(mountpoint: &Path) -> Result<()> {
-    if mountpoint.exists() {
-        if !mountpoint.is_dir() {
-            anyhow::bail!(
-                "mountpoint exists but is not a directory: {}",
-                mountpoint.display()
-            );
+    match std::fs::metadata(mountpoint) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                anyhow::bail!(
+                    "mountpoint exists but is not a directory: {}",
+                    mountpoint.display()
+                );
+            }
+            if let Err(error) = std::fs::read_dir(mountpoint) {
+                if is_disconnected_mount(&error) {
+                    unmount_stale_mountpoint(mountpoint)?;
+                } else {
+                    return Err(error)
+                        .with_context(|| format!("reading mountpoint {}", mountpoint.display()));
+                }
+            }
+            Ok(())
         }
-        return Ok(());
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(mountpoint)
+                .with_context(|| format!("creating mountpoint {}", mountpoint.display()))
+        }
+        Err(error) if is_disconnected_mount(&error) => {
+            unmount_stale_mountpoint(mountpoint)?;
+            std::fs::create_dir_all(mountpoint)
+                .with_context(|| format!("creating mountpoint {}", mountpoint.display()))
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("checking mountpoint {}", mountpoint.display()))
+        }
     }
-    std::fs::create_dir_all(mountpoint)
-        .with_context(|| format!("creating mountpoint {}", mountpoint.display()))
 }
 
 #[cfg(target_os = "linux")]
@@ -215,6 +237,42 @@ fn wait_for_mountpoint_ready(mountpoint: &Path) -> Result<()> {
         }
         std::thread::sleep(MOUNT_READY_POLL_INTERVAL);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn is_disconnected_mount(error: &std::io::Error) -> bool {
+    const ENOTCONN: i32 = 107;
+    error.raw_os_error() == Some(ENOTCONN)
+        || error
+            .to_string()
+            .contains("Transport endpoint is not connected")
+}
+
+#[cfg(target_os = "linux")]
+fn unmount_stale_mountpoint(mountpoint: &Path) -> Result<()> {
+    let mut attempts = Vec::new();
+    for program in ["fusermount3", "fusermount", "umount"] {
+        let mut command = Command::new(program);
+        if program.starts_with("fusermount") {
+            command.arg("-u");
+        }
+        command.arg(mountpoint);
+
+        match command.status() {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => attempts.push(format!("{program} exited with {status}")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                attempts.push(format!("{program} not found"));
+            }
+            Err(error) => attempts.push(format!("{program}: {error}")),
+        }
+    }
+
+    anyhow::bail!(
+        "failed to unmount stale Iris Drive mount {} ({})",
+        mountpoint.display(),
+        attempts.join("; ")
+    )
 }
 
 #[cfg(not(target_os = "linux"))]

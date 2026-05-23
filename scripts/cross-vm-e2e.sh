@@ -382,8 +382,24 @@ case \" \$mount_labels \" in
 esac
 if [[ -f \"\$pidfile\" ]]; then
   old=\"\$(cat \"\$pidfile\" 2>/dev/null || true)\"
-  if [[ -n \"\$old\" ]]; then kill \"\$old\" 2>/dev/null || true; fi
+  if [[ -n \"\$old\" ]]; then
+    kill \"\$old\" 2>/dev/null || true
+    for _ in {1..30}; do
+      if kill -0 \"\$old\" 2>/dev/null; then
+        sleep 0.1
+      else
+        break
+      fi
+    done
+    kill -0 \"\$old\" 2>/dev/null && kill -9 \"\$old\" 2>/dev/null || true
+  fi
 fi
+case \" \$mount_labels \" in
+  *\" \$label \"*)
+    fusermount3 -u \"\$work\" 2>/dev/null || fusermount -u \"\$work\" 2>/dev/null || umount \"\$work\" 2>/dev/null || true
+    mkdir -p \"\$work\"
+    ;;
+esac
 nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway \"\${mount_args[@]}\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 echo \$! >\"\$pidfile\"
 "
@@ -395,10 +411,12 @@ stop_daemon() {
   local label="$1"
   local kind
   local pidfile
+  local work
   local daemon_ssh_pid
   local script
   kind="$(host_value "$label" kind)"
   pidfile="$(host_value "$label" pid)"
+  work="$(host_value "$label" work)"
   if [[ "$kind" == "windows" ]]; then
     daemon_ssh_pid="$(host_value "$label" daemon_ssh_pid)"
     if [[ -n "$daemon_ssh_pid" ]]; then
@@ -421,11 +439,29 @@ if (Test-Path -LiteralPath \$pidFile) {
       return
     fi
     script="
+label=$(sh_quote "$label")
 pidfile=$(sh_quote "$pidfile")
+work=$(sh_quote "$work")
+mount_labels=$(sh_quote "$MOUNT_LABELS")
 if [[ -f \"\$pidfile\" ]]; then
   pid=\"\$(cat \"\$pidfile\" 2>/dev/null || true)\"
-  if [[ -n \"\$pid\" ]]; then kill \"\$pid\" 2>/dev/null || true; fi
+  if [[ -n \"\$pid\" ]]; then
+    kill \"\$pid\" 2>/dev/null || true
+    for _ in {1..30}; do
+      if kill -0 \"\$pid\" 2>/dev/null; then
+        sleep 0.1
+      else
+        break
+      fi
+    done
+    kill -0 \"\$pid\" 2>/dev/null && kill -9 \"\$pid\" 2>/dev/null || true
+  fi
 fi
+case \" \$mount_labels \" in
+  *\" \$label \"*)
+    fusermount3 -u \"\$work\" 2>/dev/null || fusermount -u \"\$work\" 2>/dev/null || umount \"\$work\" 2>/dev/null || true
+    ;;
+esac
 "
   fi
   remote_exec "$label" "$script" || true
