@@ -800,18 +800,22 @@ async fn serve_file<S: Store>(
             .expect("response"));
     }
 
-    let range = match options
-        .headers
-        .get(RANGE)
-        .and_then(|value| value.to_str().ok())
-    {
-        Some(value) => Some(parse_byte_range(value, options.size).map_err(|message| {
-            (
-                StatusCode::RANGE_NOT_SATISFIABLE,
-                format!("invalid range: {message}"),
-            )
-        })?),
-        None => None,
+    let range = if options.size == 0 {
+        None
+    } else {
+        match options
+            .headers
+            .get(RANGE)
+            .and_then(|value| value.to_str().ok())
+        {
+            Some(value) => Some(parse_byte_range(value, options.size).map_err(|message| {
+                (
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    format!("invalid range: {message}"),
+                )
+            })?),
+            None => None,
+        }
     };
 
     let (start, end_exclusive, status) = if let Some((start, end)) = range {

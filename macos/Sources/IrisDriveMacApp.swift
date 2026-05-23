@@ -403,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(controlPanelItem)
 
         let showDriveItem = NSMenuItem(
-            title: "Show Drive Folder",
+            title: "Open Drive Folder",
             action: #selector(showDriveFolder),
             keyEquivalent: ""
         )

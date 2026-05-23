@@ -43,7 +43,7 @@ public sealed class IrisDriveStatusData
             : null;
         var hashtree = Object(root, "hashtree");
         var network = Object(root, "network");
-        var mountPath = ExtractMountPath(root) ?? ExtractWebDavPath(root);
+        var mountPath = ExtractDrivePath(root);
         var drives = DriveRows(root, mountPath);
 
         return new IrisDriveStatusData
@@ -121,26 +121,9 @@ public sealed class IrisDriveStatusData
         return "My Drive";
     }
 
-    private static string? ExtractMountPath(JsonElement root)
+    private static string? ExtractDrivePath(JsonElement root)
     {
-        var daemon = Object(root, "daemon");
-        var mount = daemon.HasValue ? Object(daemon.Value, "mount") : null;
-        if (mount.HasValue)
-        {
-            return String(mount.Value, "mountpoint");
-        }
-        return null;
-    }
-
-    private static string? ExtractWebDavPath(JsonElement root)
-    {
-        var daemon = Object(root, "daemon");
-        var gateway = daemon.HasValue ? Object(daemon.Value, "browser_gateway") : null;
-        if (!gateway.HasValue)
-        {
-            return null;
-        }
-        return String(gateway.Value, "webdav_unc") ?? String(gateway.Value, "webdav_url");
+        return Bool(root, "initialized") ? WindowsCloudFiles.SyncRootPath : null;
     }
 
     private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string? mountPath)
@@ -152,7 +135,7 @@ public sealed class IrisDriveStatusData
             {
                 var name = String(drive, "display_name") ?? String(drive, "name") ??
                     String(drive, "drive_id") ?? "main";
-                var path = mountPath ?? "Not mounted";
+                var path = mountPath ?? "Not ready";
                 var state = ShortText(String(drive, "last_root_cid") ?? "configured");
                 rows.Add(new DriveRow(name, path, state));
             }
@@ -160,7 +143,7 @@ public sealed class IrisDriveStatusData
 
         if (rows.Count == 0)
         {
-            rows.Add(new DriveRow("main", mountPath ?? "Not mounted", "-"));
+            rows.Add(new DriveRow("main", mountPath ?? "Not ready", "-"));
         }
 
         return rows;

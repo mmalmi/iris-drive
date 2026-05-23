@@ -121,6 +121,7 @@ fn run_cli() -> ExitCode {
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
+        Command::Materialize { dir } => cmd_materialize(&config_dir, &dir),
         Command::List { at } => cmd_list(&config_dir, at),
         Command::History { limit } => cmd_history(&config_dir, limit),
         Command::Event(ev) => match ev {

@@ -213,6 +213,7 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) {
             "owner_npub",
             "watch_interval_secs",
             "watch_debounce_ms",
+            "mount",
             "relay_statuses",
             "embedded_hashtree",
             "browser_gateway",
@@ -648,6 +649,28 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "discovery_scope": fips_status
             .and_then(|status| status.get("discovery_scope"))
             .and_then(Value::as_str),
+        "udp_enabled": fips_status
+            .and_then(|status| status.get("udp_enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "udp_bind_addr": fips_status
+            .and_then(|status| status.get("udp_bind_addr"))
+            .and_then(Value::as_str),
+        "udp_public": fips_status
+            .and_then(|status| status.get("udp_public"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "udp_external_addr": fips_status
+            .and_then(|status| status.get("udp_external_addr"))
+            .and_then(Value::as_str),
+        "webrtc_enabled": fips_status
+            .and_then(|status| status.get("webrtc_enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "mesh_peer_count": fips_status
+            .and_then(|status| status.get("mesh_peer_count"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         "roster_peer_count": authorized_peers.len(),
         "roster_connected_peer_count": roster_connected_peer_count,
         "authorized_peer_count": authorized_peers.len(),

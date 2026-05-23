@@ -55,6 +55,41 @@ pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::P
     })
 }
 
+pub(crate) fn cmd_materialize(
+    config_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let report = iris_drive_core::materialize_primary_drive(
+            daemon.tree_handle(),
+            daemon.config(),
+            target_dir,
+        )
+        .await
+        .with_context(|| format!("materializing {}", target_dir.display()))?;
+        println!(
+            "{}",
+            json!({
+                "target_dir": target_dir.display().to_string(),
+                "written": report.written,
+                "updated": report.updated,
+                "deleted": report.deleted,
+                "unchanged": report.unchanged,
+                "skipped": report.skipped,
+                "changed": report.changed(),
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
 pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

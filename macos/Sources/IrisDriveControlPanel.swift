@@ -235,7 +235,7 @@ struct IrisDriveControlPanel: View {
     private var actions: some View {
         HStack(spacing: 10) {
             Button(action: controller.showDriveFolder) {
-                Label("Drive", systemImage: "folder.fill")
+                Label("Open Drive Folder", systemImage: "folder.fill")
             }
             Button(action: controller.copyDriveLink) {
                 Label("Copy Snapshot", systemImage: "link")

@@ -82,16 +82,35 @@ pub(crate) fn approve_device(model: &AppRef) {
 
 pub(crate) fn open_drive_folder(model: &AppRef) {
     let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
-    ensure_daemon_running(model, &status);
-    let Some(folder) = mounted_dir(&status) else {
+    if !ensure_daemon_running(model, &status) {
+        model.ui.notice.set_text("Could not start sync");
+        return;
+    }
+
+    let Some(folder) = wait_for_mounted_dir(Duration::from_secs(3)) else {
         model.ui.notice.set_text("Drive mount unavailable");
         return;
     };
-    if !wait_for_path(&folder, Duration::from_secs(2)) {
-        model.ui.notice.set_text("Drive mount unavailable");
-        return;
-    }
     open_path(&folder);
+}
+
+pub(crate) fn wait_for_mounted_dir(timeout: Duration) -> Option<PathBuf> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Ok(status) = run_idrive_json(["status"])
+            && let Some(folder) = mounted_dir(&status)
+            && wait_for_path(&folder, Duration::from_millis(100))
+        {
+            return Some(folder);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let fallback = default_drive_dir();
+    if wait_for_path(&fallback, Duration::from_millis(100)) {
+        return Some(fallback);
+    }
+    None
 }
 
 pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {

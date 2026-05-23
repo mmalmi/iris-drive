@@ -124,7 +124,7 @@ public partial class MainWindow : Window
         AuthValue.Text = "-";
         ConfigPathValue.Text = "-";
         BlocksPathValue.Text = "-";
-        DrivePathValue.Text = "Not mounted";
+        DrivePathValue.Text = "Not ready";
         RootPathValue.Text = "-";
     }
 
@@ -167,7 +167,7 @@ public partial class MainWindow : Window
 
         ConfigPathValue.Text = status.ConfigDirectory ?? "-";
         BlocksPathValue.Text = status.BlocksDirectory ?? "-";
-        DrivePathValue.Text = status.WorkingDirectory ?? "Not mounted";
+        DrivePathValue.Text = status.WorkingDirectory ?? "Not ready";
         RootPathValue.Text = status.RootCid ?? "-";
 
         RenderDrives(status);
@@ -192,7 +192,7 @@ public partial class MainWindow : Window
         AuthValue.Text = "-";
         ConfigPathValue.Text = "-";
         BlocksPathValue.Text = "-";
-        DrivePathValue.Text = "Not mounted";
+        DrivePathValue.Text = "Not ready";
         RootPathValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
         OpenSnapshotButton.IsEnabled = false;
@@ -501,21 +501,55 @@ public partial class MainWindow : Window
         await RefreshAsync();
     }
 
-    private void OpenDrive_Click(object sender, RoutedEventArgs e)
+    private async void OpenDrive_Click(object sender, RoutedEventArgs e)
     {
-        OpenDriveMount();
+        await OpenDriveMountAsync();
+    }
+
+    private async Task OpenDriveMountAsync()
+    {
+        if (currentStatus is { Initialized: true } status && !EnsureDaemonRunning(status))
+        {
+            NoticeText.Text = "Could not start sync";
+            return;
+        }
+
+        if (currentStatus is { Initialized: true })
+        {
+            await Task.Delay(500);
+            try
+            {
+                currentStatus = await service.StatusAsync();
+            }
+            catch
+            {
+                // Keep the last known status; the native drive folder path is deterministic.
+            }
+        }
+
+        if (currentStatus is { Initialized: true })
+        {
+            try
+            {
+                var driveFolder = await service.PrepareDriveFolderAsync();
+                service.OpenPath(driveFolder.Path);
+                NoticeText.Text = driveFolder.NativeSyncRootReady
+                    ? "Opening drive folder"
+                    : driveFolder.Warning ?? "Opening local drive folder";
+            }
+            catch (Exception error)
+            {
+                NoticeText.Text = $"Could not open drive folder: {error.Message}";
+            }
+            return;
+        }
+
+        NoticeText.Text = "Setup needed";
     }
 
     private void OpenDriveMount()
     {
-        var path = currentStatus?.WorkingDirectory;
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            service.OpenPath(path);
-            return;
-        }
-
-        NoticeText.Text = "Drive mount unavailable";
+        _ = OpenDriveMountAsync();
     }
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)

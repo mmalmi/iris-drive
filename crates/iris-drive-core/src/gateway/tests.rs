@@ -157,6 +157,33 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("hello from webdav"), "{response}");
 
+    let response = http_request(
+        server.local_addr(),
+        "PUT",
+        "127.0.0.1",
+        "/dav/empty.txt",
+        &[],
+        b"",
+    )
+    .await;
+    assert!(response.starts_with("HTTP/1.1 201 Created"), "{response}");
+    let _root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let response = http_request(
+        server.local_addr(),
+        "GET",
+        "127.0.0.1",
+        "/dav/empty.txt",
+        &[("Range", "bytes=0-")],
+        b"",
+    )
+    .await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("content-length: 0"), "{response}");
+
     let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
     daemon.import_visible_root(root).await.unwrap();
 
@@ -165,6 +192,25 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
         "DELETE",
         "127.0.0.1",
         "/dav/created.txt",
+        &[],
+        b"",
+    )
+    .await;
+    assert!(
+        response.starts_with("HTTP/1.1 204 No Content"),
+        "{response}"
+    );
+    let root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    daemon.import_visible_root(root).await.unwrap();
+
+    let response = http_request(
+        server.local_addr(),
+        "DELETE",
+        "127.0.0.1",
+        "/dav/empty.txt",
         &[],
         b"",
     )
@@ -192,8 +238,12 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
         .await
         .unwrap();
     assert!(files.is_empty());
-    assert_eq!(tombstones.len(), 1);
-    assert_eq!(tombstones[0].path, "created.txt");
+    let mut tombstone_paths = tombstones
+        .iter()
+        .map(|tombstone| tombstone.path.as_str())
+        .collect::<Vec<_>>();
+    tombstone_paths.sort_unstable();
+    assert_eq!(tombstone_paths, ["created.txt", "empty.txt"]);
     server.shutdown().await.unwrap();
 }
 
