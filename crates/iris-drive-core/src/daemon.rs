@@ -3,10 +3,10 @@
 //! Owns:
 //! - A filesystem-backed hashtree store at `<config_dir>/blocks/`.
 //! - The user's `AppConfig` (drives, schema, identity reference).
-//! - A working-directory location for the primary drive.
+//! - Virtual mount/provider roots for the primary drive.
 //!
-//! Stays minimal for v1: one-shot import + status. Long-running watchers
-//! and live Nostr publish/subscribe land in a follow-up phase.
+//! Stays minimal for v1: one-shot import + status. Long-running sync is
+//! handled by the CLI daemon over virtual roots/providers.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -122,8 +122,6 @@ pub enum DaemonError {
     Index(#[from] IndexError),
     #[error("sync cache: {0}")]
     SyncCache(#[from] SyncCacheError),
-    #[error("materialize: {0}")]
-    Materialize(#[from] crate::MaterializeError),
     #[error("store: {0}")]
     Store(String),
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
@@ -138,7 +136,7 @@ pub enum DaemonError {
 #[derive(Debug, Clone)]
 pub struct ImportReport {
     pub root_cid: String,
-    pub working_dir: PathBuf,
+    pub source_dir: Option<PathBuf>,
     pub file_count: usize,
     pub top_level_entries: usize,
 }
@@ -150,13 +148,6 @@ pub struct ConflictResolveReport {
     pub previous_root_cid: String,
     pub root_cid: String,
     pub changed: bool,
-}
-
-/// Snapshot of applying the merged drive view to the working directory.
-#[derive(Debug, Clone)]
-pub struct MaterializeWorkingDirReport {
-    pub materialize: crate::MaterializeReport,
-    pub import: Option<ImportReport>,
 }
 
 pub struct Daemon {
@@ -225,45 +216,49 @@ impl Daemon {
             .and_then(|d| d.last_root_cid.as_deref())
     }
 
-    /// If the primary drive has a `working_dir` configured but this
-    /// device hasn't yet recorded a private root, run the initial import.
-    /// This also migrates legacy public roots created before private
-    /// htree storage became the default. Creates the working dir on disk
-    /// if it doesn't exist. Returns `Some(report)` if an import ran,
-    /// `None` otherwise.
-    pub async fn ensure_initial_import(&mut self) -> Result<Option<ImportReport>, DaemonError> {
-        let Some(account) = self.config.account.clone() else {
-            return Ok(None);
-        };
-        let Some(drive) = self.config.drive(PRIMARY_DRIVE_ID).cloned() else {
-            return Ok(None);
-        };
-        let has_private_root = match drive.device_roots.get(&account.device_pubkey) {
-            Some(root) => Cid::parse(&root.root_cid)
-                .map_err(|e| DaemonError::Store(e.to_string()))?
-                .key
-                .is_some(),
-            None => false,
-        };
-        if has_private_root {
-            return Ok(None);
-        }
-        let Some(working_dir) = drive.working_dir.clone() else {
-            return Ok(None);
-        };
-        std::fs::create_dir_all(&working_dir)?;
-        let report = self.import_working_dir(&working_dir).await?;
-        Ok(Some(report))
-    }
-
-    /// Bulk-index `working_dir` into the daemon's persistent store and
+    /// Bulk-index `source_dir` into the daemon's persistent store and
     /// stamp the resulting root CID onto the primary drive. The previous
     /// root remains addressable in the store; nothing is GC'd.
-    pub async fn import_working_dir(
+    pub async fn import_source_dir(
         &mut self,
-        working_dir: impl AsRef<Path>,
+        source_dir: impl AsRef<Path>,
     ) -> Result<ImportReport, DaemonError> {
-        self.import_working_dir_inner(working_dir, false).await
+        let source_dir = source_dir.as_ref();
+        // Look up this device's previous root, if any, so the indexer
+        // can diff against it and emit tombstones for removed files.
+        let previous_root_cid = self
+            .config
+            .account
+            .as_ref()
+            .and_then(|account| {
+                self.config
+                    .drive(PRIMARY_DRIVE_ID)
+                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
+            })
+            .map(|entry| entry.root_cid.clone());
+        let previous_root = match previous_root_cid.as_ref() {
+            Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
+            None => None,
+        };
+
+        let now = unix_now();
+        let root_meta = self.root_meta_for_import(now);
+        let root_cid = index_dir_with_history_and_meta(
+            &self.tree,
+            source_dir,
+            previous_root.as_ref(),
+            now,
+            root_meta.as_ref(),
+        )
+        .await?;
+
+        self.report_and_record_root(
+            root_cid,
+            Some(source_dir.to_path_buf()),
+            root_meta.as_ref(),
+            now,
+        )
+        .await
     }
 
     /// Persist a user-visible hashtree root produced by a virtual mount or
@@ -290,7 +285,7 @@ impl Daemon {
         };
 
         let now = unix_now();
-        let root_meta = self.root_meta_for_import(now, false);
+        let root_meta = self.root_meta_for_import(now);
         let root_cid = layer_history_and_meta_on_root(
             &self.tree,
             root,
@@ -300,68 +295,16 @@ impl Daemon {
         )
         .await?;
 
-        self.report_and_record_root(root_cid, None, root_meta.as_ref(), now, false)
+        self.report_and_record_root(root_cid, None, root_meta.as_ref(), now)
             .await
-    }
-
-    async fn import_materialized_working_dir(
-        &mut self,
-        working_dir: impl AsRef<Path>,
-    ) -> Result<ImportReport, DaemonError> {
-        self.import_working_dir_inner(working_dir, true).await
-    }
-
-    async fn import_working_dir_inner(
-        &mut self,
-        working_dir: impl AsRef<Path>,
-        materialized_only: bool,
-    ) -> Result<ImportReport, DaemonError> {
-        let working_dir = working_dir.as_ref();
-        // Look up this device's previous root, if any, so the indexer
-        // can diff against it and emit tombstones for removed files.
-        let previous_root_cid = self
-            .config
-            .account
-            .as_ref()
-            .and_then(|account| {
-                self.config
-                    .drive(PRIMARY_DRIVE_ID)
-                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
-            })
-            .map(|entry| entry.root_cid.clone());
-        let previous_root = match previous_root_cid.as_ref() {
-            Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
-            None => None,
-        };
-
-        let now = unix_now();
-        let root_meta = self.root_meta_for_import(now, materialized_only);
-        let root_cid = index_dir_with_history_and_meta(
-            &self.tree,
-            working_dir,
-            previous_root.as_ref(),
-            now,
-            root_meta.as_ref(),
-        )
-        .await?;
-
-        self.report_and_record_root(
-            root_cid,
-            Some(working_dir.to_path_buf()),
-            root_meta.as_ref(),
-            now,
-            materialized_only,
-        )
-        .await
     }
 
     async fn report_and_record_root(
         &mut self,
         root_cid: Cid,
-        working_dir: Option<PathBuf>,
+        source_dir: Option<PathBuf>,
         root_meta: Option<&DriveRootMeta>,
         published_at: i64,
-        materialized_only: bool,
     ) -> Result<ImportReport, DaemonError> {
         // Live-file count excludes the internal metadata directory from the
         // report.
@@ -378,19 +321,12 @@ impl Daemon {
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
 
-        self.update_primary_drive(
-            &root_cid,
-            working_dir.as_deref(),
-            root_meta,
-            published_at,
-            materialized_only,
-        )?;
+        self.update_primary_drive(&root_cid, root_meta, published_at)?;
         self.persist_sync_cache_with_current_base().await?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
-            working_dir: working_dir
-                .unwrap_or_else(|| crate::paths::default_working_dir_in(self.config_dir.as_path())),
+            source_dir,
             file_count: files.len(),
             top_level_entries,
         })
@@ -424,7 +360,7 @@ impl Daemon {
 
         record.state = ConflictState::Resolved;
         let now = unix_now();
-        let root_meta = self.root_meta_for_import(now, false);
+        let root_meta = self.root_meta_for_import(now);
         let mut root = layer_conflict_records(
             &self.tree,
             previous_root.clone(),
@@ -435,7 +371,7 @@ impl Daemon {
         if let Some(meta) = root_meta.as_ref() {
             root = layer_root_meta(&self.tree, root, meta).await?;
         }
-        self.update_primary_drive(&root, None, root_meta.as_ref(), now, false)?;
+        self.update_primary_drive(&root, root_meta.as_ref(), now)?;
         self.persist_sync_cache_with_current_base().await?;
 
         Ok(ConflictResolveReport {
@@ -482,40 +418,6 @@ impl Daemon {
         }
     }
 
-    /// Apply the merged primary drive view to this device's working directory.
-    /// If files changed on disk, re-import and persist a new local root.
-    pub async fn materialize_primary_drive(
-        &mut self,
-    ) -> Result<Option<MaterializeWorkingDirReport>, DaemonError> {
-        let Some(working_dir) = self
-            .config
-            .drive(PRIMARY_DRIVE_ID)
-            .and_then(|drive| drive.working_dir.clone())
-        else {
-            return Ok(None);
-        };
-
-        let materialize = crate::materialize_primary_drive(
-            self.tree_handle(),
-            &self.config,
-            working_dir.as_path(),
-        )
-        .await?;
-        let import = if materialize.changed() {
-            if materialize.skipped == 0 {
-                Some(self.import_materialized_working_dir(&working_dir).await?)
-            } else {
-                Some(self.import_working_dir(&working_dir).await?)
-            }
-        } else {
-            None
-        };
-        Ok(Some(MaterializeWorkingDirReport {
-            materialize,
-            import,
-        }))
-    }
-
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
         let mut cache =
             SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
@@ -529,10 +431,8 @@ impl Daemon {
     fn update_primary_drive(
         &mut self,
         root_cid: &Cid,
-        working_dir: Option<&Path>,
         root_meta: Option<&DriveRootMeta>,
         published_at: i64,
-        materialized_only: bool,
     ) -> Result<(), DaemonError> {
         let drive = match self.config.drive(PRIMARY_DRIVE_ID) {
             Some(d) => d.clone(),
@@ -540,9 +440,6 @@ impl Daemon {
         };
         let mut updated = drive;
         updated.last_root_cid = Some(root_cid.to_string());
-        if let Some(wd) = working_dir {
-            updated.working_dir = Some(wd.to_path_buf());
-        }
 
         // Per-device root entry, keyed by this device's pubkey.
         // Falls back to no-op when there is no account yet (legacy
@@ -556,7 +453,7 @@ impl Daemon {
                 || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
-            device_root.materialized_only = materialized_only;
+            device_root.materialized_only = false;
             updated
                 .device_roots
                 .insert(account.device_pubkey.clone(), device_root);
@@ -567,11 +464,7 @@ impl Daemon {
         Ok(())
     }
 
-    fn root_meta_for_import(
-        &self,
-        created_at: i64,
-        materialized_only: bool,
-    ) -> Option<DriveRootMeta> {
+    fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
         let account = self.config.account.as_ref()?;
         let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
         let previous = drive.device_roots.get(&account.device_pubkey);
@@ -608,7 +501,7 @@ impl Daemon {
             device_id: account.device_pubkey.clone(),
             device_seq,
             dck_generation,
-            materialized_only,
+            materialized_only: false,
             parents,
             observed,
             created_at,
@@ -629,7 +522,6 @@ mod tests {
     use crate::config::Drive;
     use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
     use crate::identity::Identity;
-    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn init_config(dir: &Path) -> Identity {
@@ -656,30 +548,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn import_persists_working_dir_on_primary_drive() {
+    async fn import_does_not_configure_plain_directory_mode() {
         let cfg_dir = tempdir().unwrap();
         init_config_with_account(cfg_dir.path());
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("a.txt"), b"a").unwrap();
-        daemon.import_working_dir(work.path()).await.unwrap();
+        daemon.import_source_dir(work.path()).await.unwrap();
 
-        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
-        assert_eq!(drive.working_dir.as_deref(), Some(work.path()));
-
-        // Survives reopen.
         drop(daemon);
-        let reopened = Daemon::open(cfg_dir.path()).unwrap();
-        assert_eq!(
-            reopened
-                .config()
-                .drive(PRIMARY_DRIVE_ID)
-                .unwrap()
-                .working_dir
-                .as_deref(),
-            Some(work.path())
-        );
+        let saved = std::fs::read_to_string(config_path_in(cfg_dir.path())).unwrap();
+        assert!(!saved.contains("working_dir"));
     }
 
     #[tokio::test]
@@ -691,7 +571,7 @@ mod tests {
         let first = tempdir().unwrap();
         std::fs::write(first.path().join("removed.txt"), b"gone from mount").unwrap();
         std::fs::write(first.path().join("kept.txt"), b"still mounted").unwrap();
-        daemon.import_working_dir(first.path()).await.unwrap();
+        daemon.import_source_dir(first.path()).await.unwrap();
 
         let visible = tempdir().unwrap();
         std::fs::write(visible.path().join("kept.txt"), b"still mounted").unwrap();
@@ -727,102 +607,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn materialized_import_is_local_only_until_user_imports() {
-        let cfg_dir = tempdir().unwrap();
-        let account = init_config_with_account(cfg_dir.path());
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("note.txt"), b"from peer").unwrap();
-        daemon
-            .import_materialized_working_dir(work.path())
-            .await
-            .unwrap();
-        let root = daemon
-            .config()
-            .drive(PRIMARY_DRIVE_ID)
-            .unwrap()
-            .device_roots
-            .get(&account.state.device_pubkey)
-            .unwrap();
-        assert!(root.materialized_only);
-
-        std::fs::write(work.path().join("note.txt"), b"local edit").unwrap();
-        daemon.import_working_dir(work.path()).await.unwrap();
-        let root = daemon
-            .config()
-            .drive(PRIMARY_DRIVE_ID)
-            .unwrap()
-            .device_roots
-            .get(&account.state.device_pubkey)
-            .unwrap();
-        assert!(!root.materialized_only);
-    }
-
-    #[tokio::test]
-    async fn materialize_with_skipped_local_edit_imports_publishable_root() {
-        let cfg_dir = tempdir().unwrap();
-        let account = init_config_with_account(cfg_dir.path());
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("shared.txt"), b"local base").unwrap();
-        daemon.import_working_dir(work.path()).await.unwrap();
-
-        std::fs::write(work.path().join("shared.txt"), b"local edit").unwrap();
-
-        let peer = Identity::generate(cfg_dir.path().join("peer_key"));
-        let peer_pubkey = peer.pubkey_hex();
-        let peer_work = tempdir().unwrap();
-        std::fs::write(peer_work.path().join("shared.txt"), b"peer edit").unwrap();
-        std::fs::write(peer_work.path().join("peer-only.txt"), b"peer only").unwrap();
-        let peer_root = crate::indexer::index_dir(daemon.tree(), peer_work.path())
-            .await
-            .unwrap();
-
-        let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-        let state = cfg.account.as_mut().unwrap();
-        let snap = state.app_keys.as_mut().unwrap();
-        snap.devices.push(crate::app_keys::DeviceEntry {
-            pubkey: peer_pubkey.clone(),
-            added_at: 1,
-            label: Some("peer".to_string()),
-        });
-        snap.normalize();
-        let mut drive = cfg.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-        drive.device_roots.insert(
-            peer_pubkey,
-            DeviceRootRef::legacy(peer_root.to_string(), 2, 0),
-        );
-        cfg.upsert_drive(drive);
-        cfg.save(config_path_in(cfg_dir.path())).unwrap();
-
-        daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.materialize_primary_drive().await.unwrap().unwrap();
-        assert_eq!(report.materialize.written, 1);
-        assert_eq!(report.materialize.skipped, 1);
-        assert_eq!(
-            std::fs::read(work.path().join("shared.txt")).unwrap(),
-            b"local edit"
-        );
-        assert_eq!(
-            std::fs::read(work.path().join("peer-only.txt")).unwrap(),
-            b"peer only"
-        );
-        let root = daemon
-            .config()
-            .drive(PRIMARY_DRIVE_ID)
-            .unwrap()
-            .device_roots
-            .get(&account.state.device_pubkey)
-            .unwrap();
-        assert!(
-            !root.materialized_only,
-            "skipped local edits must not be hidden in a local-only materialized root"
-        );
-    }
-
-    #[tokio::test]
     async fn import_persists_rebuildable_sync_cache_with_base_state() {
         let cfg_dir = tempdir().unwrap();
         let account = init_config_with_account(cfg_dir.path());
@@ -830,7 +614,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("note.txt"), b"hello cache").unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
 
         let cache =
             crate::sync_cache::SyncCache::load(crate::paths::sync_cache_path_in(cfg_dir.path()))
@@ -870,7 +654,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("note.txt"), b"hello cache").unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
 
         let cache_path = crate::paths::sync_cache_path_in(cfg_dir.path());
         std::fs::write(&cache_path, b"{ definitely not json").unwrap();
@@ -894,7 +678,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("hello.txt"), b"hi").unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
 
         let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
         assert_eq!(drive.device_roots.len(), 1);
@@ -917,7 +701,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("note.txt"), b"one").unwrap();
-        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        let first = daemon.import_source_dir(work.path()).await.unwrap();
         let first_cid = Cid::parse(&first.root_cid).unwrap();
         let first_meta = crate::indexer::read_root_meta(daemon.tree(), &first_cid)
             .await
@@ -930,7 +714,7 @@ mod tests {
         assert!(first_meta.parents.is_empty());
 
         std::fs::write(work.path().join("note.txt"), b"two").unwrap();
-        let second = daemon.import_working_dir(work.path()).await.unwrap();
+        let second = daemon.import_source_dir(work.path()).await.unwrap();
         let second_cid = Cid::parse(&second.root_cid).unwrap();
         let second_meta = crate::indexer::read_root_meta(daemon.tree(), &second_cid)
             .await
@@ -962,7 +746,7 @@ mod tests {
         let work = tempdir().unwrap();
         let secret = b"secret contents that must not appear as plaintext in blobs";
         std::fs::write(work.path().join("secret.txt"), secret).unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
 
         let cid = Cid::parse(&report.root_cid).unwrap();
         assert!(
@@ -1000,7 +784,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("report.pdf"), b"chosen").unwrap();
-        let imported = daemon.import_working_dir(work.path()).await.unwrap();
+        let imported = daemon.import_source_dir(work.path()).await.unwrap();
         let imported_root = Cid::parse(&imported.root_cid).unwrap();
         let record = conflict_record("conflict-a");
 
@@ -1013,13 +797,13 @@ mod tests {
                 .await
                 .unwrap();
         let now = unix_now();
-        let root_meta = daemon.root_meta_for_import(now, false).unwrap();
+        let root_meta = daemon.root_meta_for_import(now).unwrap();
         root_with_conflict =
             crate::indexer::layer_root_meta(daemon.tree(), root_with_conflict, &root_meta)
                 .await
                 .unwrap();
         daemon
-            .update_primary_drive(&root_with_conflict, None, Some(&root_meta), now, false)
+            .update_primary_drive(&root_with_conflict, Some(&root_meta), now)
             .unwrap();
 
         let report = daemon.resolve_conflict_record("conflict-a").await.unwrap();
@@ -1086,7 +870,7 @@ mod tests {
 
         let work = tempdir().unwrap();
         std::fs::write(work.path().join("hello.txt"), b"hi there").unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
         assert_eq!(report.top_level_entries, 1);
         assert!(!report.root_cid.is_empty());
 
@@ -1108,7 +892,7 @@ mod tests {
         std::fs::write(work.path().join("a.txt"), b"alpha").unwrap();
 
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.import_working_dir(work.path()).await.unwrap();
+        let report = daemon.import_source_dir(work.path()).await.unwrap();
         let root_cid = report.root_cid.clone();
         drop(daemon);
 
@@ -1128,10 +912,10 @@ mod tests {
 
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
         std::fs::write(work.path().join("a.txt"), b"first").unwrap();
-        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        let first = daemon.import_source_dir(work.path()).await.unwrap();
 
         std::fs::write(work.path().join("b.txt"), b"second").unwrap();
-        let second = daemon.import_working_dir(work.path()).await.unwrap();
+        let second = daemon.import_source_dir(work.path()).await.unwrap();
 
         assert_ne!(first.root_cid, second.root_cid);
         assert_eq!(daemon.primary_root().unwrap(), second.root_cid);
@@ -1149,132 +933,10 @@ mod tests {
 
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
         let work = tempdir().unwrap();
-        match daemon.import_working_dir(work.path()).await {
+        match daemon.import_source_dir(work.path()).await {
             Err(DaemonError::PrimaryDriveMissing) => {}
             other => panic!("expected PrimaryDriveMissing, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn ensure_initial_import_runs_when_working_dir_set_but_no_root() {
-        let cfg_dir = tempdir().unwrap();
-        let account = init_config_with_account(cfg_dir.path());
-
-        // Pre-stage a working_dir on the primary drive (mimics the
-        // tray-app bootstrap), but no device_roots entry yet.
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("note.txt"), b"hello").unwrap();
-        {
-            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-            let drive = cfg
-                .drives
-                .iter_mut()
-                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
-                .unwrap();
-            drive.working_dir = Some(work.path().to_path_buf());
-            cfg.save(config_path_in(cfg_dir.path())).unwrap();
-        }
-
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.ensure_initial_import().await.unwrap();
-        let report = report.expect("initial import should run");
-        assert_eq!(report.working_dir, work.path());
-
-        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
-        assert!(
-            drive
-                .device_roots
-                .contains_key(&account.state.device_pubkey)
-        );
-
-        // Second call is a no-op.
-        let again = daemon.ensure_initial_import().await.unwrap();
-        assert!(again.is_none());
-    }
-
-    #[tokio::test]
-    async fn ensure_initial_import_creates_working_dir_if_missing() {
-        let cfg_dir = tempdir().unwrap();
-        init_config_with_account(cfg_dir.path());
-
-        // Point working_dir at a path that does NOT exist yet.
-        let work_parent = tempdir().unwrap();
-        let missing = work_parent.path().join("Iris Drive");
-        assert!(!missing.exists());
-        {
-            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-            let drive = cfg
-                .drives
-                .iter_mut()
-                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
-                .unwrap();
-            drive.working_dir = Some(missing.clone());
-            cfg.save(config_path_in(cfg_dir.path())).unwrap();
-        }
-
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        daemon.ensure_initial_import().await.unwrap();
-        assert!(
-            missing.is_dir(),
-            "ensure_initial_import should create the working dir"
-        );
-    }
-
-    #[tokio::test]
-    async fn ensure_initial_import_reencrypts_legacy_public_root() {
-        let cfg_dir = tempdir().unwrap();
-        let account = init_config_with_account(cfg_dir.path());
-        let work = tempdir().unwrap();
-        std::fs::write(work.path().join("secret.txt"), b"legacy plaintext").unwrap();
-
-        let blocks_dir = cfg_dir.path().join("blocks");
-        std::fs::create_dir_all(&blocks_dir).unwrap();
-        let store = FsBlobStore::new(&blocks_dir).unwrap();
-        let public_tree = HashTree::new(HashTreeConfig::new(Arc::new(store)).public());
-        let public_root =
-            crate::indexer::index_dir_with_history(&public_tree, work.path(), None, unix_now())
-                .await
-                .unwrap();
-        assert!(public_root.key.is_none());
-
-        {
-            let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-            let drive = cfg
-                .drives
-                .iter_mut()
-                .find(|d| d.drive_id == PRIMARY_DRIVE_ID)
-                .unwrap();
-            drive.working_dir = Some(work.path().to_path_buf());
-            drive.device_roots.insert(
-                account.state.device_pubkey.clone(),
-                DeviceRootRef::legacy(
-                    public_root.to_string(),
-                    unix_now(),
-                    account.state.app_keys.as_ref().unwrap().dck_generation,
-                ),
-            );
-            cfg.save(config_path_in(cfg_dir.path())).unwrap();
-        }
-
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon
-            .ensure_initial_import()
-            .await
-            .unwrap()
-            .expect("legacy public root should be re-imported");
-
-        assert_ne!(report.root_cid, public_root.to_string());
-        let private_root = Cid::parse(&report.root_cid).unwrap();
-        assert!(private_root.key.is_some());
-    }
-
-    #[tokio::test]
-    async fn ensure_initial_import_noop_without_working_dir() {
-        let cfg_dir = tempdir().unwrap();
-        init_config_with_account(cfg_dir.path());
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let report = daemon.ensure_initial_import().await.unwrap();
-        assert!(report.is_none());
     }
 
     #[tokio::test]

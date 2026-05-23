@@ -693,7 +693,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configure(
             process,
             executable: idrive,
-            arguments: ["daemon", "--no-working-dir", "--watch-interval", "0"],
+            arguments: ["daemon", "--watch-interval", "0"],
             paths: paths
         )
         pipeLogs(from: process, label: "idrive")
@@ -881,7 +881,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let drives = json["drives"] as? [[String: Any]],
                let primary = drives.first(where: { $0["drive_id"] as? String == "main" }) {
                 status.driveName = primary["display_name"] as? String ?? "My Drive"
-                status.workingDirectory = primary["working_dir"] as? String
                 status.rootCID = primary["last_root_cid"] as? String
             }
 
@@ -962,8 +961,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             statuses: status.relayStatuses
                         )
                     }
-                    status.workingDirectory =
-                        json["working_dir"] as? String ?? status.workingDirectory
                 case "relay_status":
                     if let url = json["url"] as? String,
                        let relayStatus = json["status"] as? String {

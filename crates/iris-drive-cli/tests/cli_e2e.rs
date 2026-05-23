@@ -603,7 +603,7 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives.len(), 1);
     assert_eq!(drives[0]["drive_id"], "main");
     assert_eq!(drives[0]["role"], "owner");
-    assert_eq!(drives[0]["working_dir"], serde_json::Value::Null);
+    assert!(drives[0].get("working_dir").is_none());
     assert_eq!(v["network"]["authorized_device_count"], 1);
     assert_eq!(v["network"]["published_device_roots"], 0);
     assert_eq!(v["network"]["fips"]["enabled"], false);
@@ -1053,10 +1053,7 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(status_out.stdout).unwrap()).unwrap();
     assert_eq!(v["drives"][0]["last_root_cid"], root_cid);
-    assert_eq!(
-        v["drives"][0]["working_dir"],
-        work.path().display().to_string()
-    );
+    assert!(v["drives"][0].get("working_dir").is_none());
     assert_eq!(v["hashtree"]["current_root_cid"], root_cid);
     assert_eq!(v["hashtree"]["current_root_private"], true);
     let owner_npub = v["account"]["owner_npub"].as_str().unwrap();
@@ -1190,10 +1187,6 @@ async fn linked_devices_sync_each_others_files_through_cli() {
             > 0
     );
     assert_list_paths(cfg_b.path(), &["from-a.txt"]);
-    assert_eq!(
-        std::fs::read(work_b.path().join("from-a.txt")).unwrap(),
-        b"hello from a"
-    );
 
     std::fs::write(work_b.path().join("from-b.txt"), b"hello from b").unwrap();
     run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
@@ -1210,10 +1203,6 @@ async fn linked_devices_sync_each_others_files_through_cli() {
     );
     assert_eq!(sync_a["drive_root_events_applied"], 1);
     assert_list_paths(cfg_a.path(), &["from-a.txt", "from-b.txt"]);
-    assert_eq!(
-        std::fs::read(work_a.path().join("from-b.txt")).unwrap(),
-        b"hello from b"
-    );
 }
 
 fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {

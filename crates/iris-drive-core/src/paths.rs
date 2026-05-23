@@ -10,13 +10,9 @@ pub fn default_config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("iris-drive"))
 }
 
-/// Resolve the default user-visible working directory for the primary drive.
-///
-/// Most native shells keep config and synced files under one app-owned base:
-/// `<base>/Config` and `<base>/Drive`. Plain CLI installs use
-/// `<config_dir>/Drive`.
+/// Resolve the default mountpoint for the primary drive.
 #[must_use]
-pub fn default_working_dir_in(config_dir: &std::path::Path) -> PathBuf {
+pub fn default_mountpoint_in(config_dir: &std::path::Path) -> PathBuf {
     if config_dir.file_name().and_then(|s| s.to_str()) == Some("Config")
         && let Some(parent) = config_dir.parent()
     {
@@ -69,17 +65,17 @@ mod tests {
     }
 
     #[test]
-    fn default_working_dir_uses_config_sibling_for_native_layout() {
+    fn default_mountpoint_uses_config_sibling_for_native_layout() {
         assert_eq!(
-            default_working_dir_in(std::path::Path::new("/tmp/IrisDrive/Config")),
+            default_mountpoint_in(std::path::Path::new("/tmp/IrisDrive/Config")),
             PathBuf::from("/tmp/IrisDrive/Drive")
         );
     }
 
     #[test]
-    fn default_working_dir_uses_child_for_plain_cli_layout() {
+    fn default_mountpoint_uses_child_for_cli_layout() {
         assert_eq!(
-            default_working_dir_in(std::path::Path::new("/tmp/iris-drive")),
+            default_mountpoint_in(std::path::Path::new("/tmp/iris-drive")),
             PathBuf::from("/tmp/iris-drive/Drive")
         );
     }

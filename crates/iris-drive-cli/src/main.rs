@@ -17,11 +17,11 @@ use iris_drive_core::{
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
-    daemon::{Daemon, EmbeddedHashtreeHost, MaterializeWorkingDirReport},
+    daemon::{Daemon, EmbeddedHashtreeHost},
     gateway::{GatewayBind, GatewayServer},
     index_dir,
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
-    paths::{config_path_in, default_config_dir, default_working_dir_in, key_path_in},
+    paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{Event, PublicKey, RelayStatus};
@@ -38,7 +38,6 @@ const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
-const EVENT_MATERIALIZE_TIMEOUT_SECS: u64 = 30;
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
 const STATUS_PROBE_TIMEOUT_SECS: u64 = 2;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
@@ -130,7 +129,7 @@ enum Command {
     /// stamp the resulting root CID onto the primary drive. Survives
     /// across daemon restarts (blocks live under <config-dir>/blocks/).
     Import {
-        /// Working directory to import.
+        /// Source directory to import once.
         dir: PathBuf,
     },
     /// List the merged view of the primary drive — files across every
@@ -190,24 +189,16 @@ enum Command {
     },
     /// Run a long-running subscriber + publisher. Maintains open
     /// subscriptions for `AppKeys` + drive-root events, applies each
-    /// event in real time, and optionally watches the working directory
-    /// set by an explicit `idrive import`. fs-events trigger
-    /// near-immediately (debounced); a periodic timer provides a
-    /// fallback in case any events get missed. Stops on Ctrl+C.
+    /// event in real time, serves the local gateway, and keeps any active
+    /// virtual mount/provider refreshed. Stops on Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
         #[arg(long)]
         relay: Vec<String>,
-        /// Fallback periodic re-scan in seconds, in addition to
-        /// near-immediate fs-notify triggers. Set to 0 to disable the
-        /// periodic fallback (still get fs-notify). Set with no
-        /// `working_dir` to disable auto-publish entirely.
+        /// Reserved for virtual-provider refresh cadence.
         #[arg(long, default_value_t = 60)]
         watch_interval: u64,
-        /// Debounce window after the last fs-notify event before
-        /// kicking off a re-import, in milliseconds. Lower = faster
-        /// response; higher = fewer scans during bursts (e.g.,
-        /// editors that save via rename-on-temp).
+        /// Reserved for virtual-provider write coalescing.
         #[arg(long, default_value_t = 500)]
         watch_debounce_ms: u64,
         /// Start the loopback browser gateway on this port.
@@ -223,9 +214,6 @@ enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
-        /// Disable normal working-directory materialization and watching.
-        #[arg(long)]
-        no_working_dir: bool,
     },
 }
 
@@ -363,7 +351,6 @@ fn run_cli() -> ExitCode {
             no_gateway,
             mount,
             mountpoint,
-            no_working_dir,
         } => cmd_daemon(
             &config_dir,
             &relay,
@@ -373,7 +360,6 @@ fn run_cli() -> ExitCode {
             !no_gateway,
             mount,
             mountpoint,
-            no_working_dir,
         ),
     };
 
@@ -584,7 +570,6 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .unwrap_or_else(|| conflict_status_payload(&[]));
     let daemon_status = load_daemon_status(config_dir);
     let peers = peer_statuses(config_dir, &config, daemon_status.as_ref());
-    let default_working_dir = iris_drive_core::paths::default_working_dir_in(config_dir);
     let authorized_device_count = peers.len();
     let published_device_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
@@ -598,7 +583,6 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "default_working_dir": default_working_dir.display().to_string(),
             "pubkey_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
             "account": account_block,
             "drives": config.drives.iter().map(|d| json!({
@@ -607,7 +591,6 @@ fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "owner_pubkey": d.owner_pubkey,
                 "role": drive_role_label(d.role),
                 "last_root_cid": d.last_root_cid,
-                "working_dir": d.working_dir.as_ref().map(|p| p.display().to_string()),
                 "device_root_count": d.device_roots.len(),
             })).collect::<Vec<_>>(),
             "hashtree": {
@@ -765,7 +748,6 @@ fn write_daemon_status(config_dir: &Path, mut payload: Value) {
             "owner_npub",
             "watch_interval_secs",
             "watch_debounce_ms",
-            "working_dir",
             "relay_statuses",
             "embedded_hashtree",
             "browser_gateway",
@@ -1292,7 +1274,7 @@ fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Result<()> {
+fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::Path) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -1302,13 +1284,14 @@ fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Re
         let mut daemon = Daemon::open(config_dir)
             .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
         let report = daemon
-            .import_working_dir(working_dir)
+            .import_source_dir(source_dir)
             .await
-            .with_context(|| format!("importing {}", working_dir.display()))?;
+            .with_context(|| format!("importing {}", source_dir.display()))?;
+        let reported_source = report.source_dir.as_deref().unwrap_or(source_dir);
         println!(
             "{}",
             json!({
-                "working_dir": report.working_dir.display().to_string(),
+                "source_dir": reported_source.display().to_string(),
                 "root_cid": report.root_cid,
                 "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
                 "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
@@ -1391,6 +1374,7 @@ fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
                     .map(|e| json!({
                         "path": e.path,
                         "size": e.size,
+                        "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
                         "source_device": e.source_device,
                         "published_at": e.published_at,
                     }))
@@ -2532,23 +2516,6 @@ fn download_report_json(report: &DownloadReport) -> serde_json::Value {
     })
 }
 
-fn materialize_report_json(report: &MaterializeWorkingDirReport) -> serde_json::Value {
-    json!({
-        "written": report.materialize.written,
-        "updated": report.materialize.updated,
-        "deleted": report.materialize.deleted,
-        "unchanged": report.materialize.unchanged,
-        "skipped": report.materialize.skipped,
-        "changed": report.materialize.changed(),
-        "import": report.import.as_ref().map(|import| json!({
-            "working_dir": import.working_dir.display().to_string(),
-            "root_cid": import.root_cid,
-            "file_count": import.file_count,
-            "top_level_entries": import.top_level_entries,
-        })),
-    })
-}
-
 fn publish_state_report_json(report: &PublishStateReport) -> serde_json::Value {
     json!({
         "published_app_keys": report.published_app_keys,
@@ -2565,45 +2532,6 @@ fn publish_state_report_json(report: &PublishStateReport) -> serde_json::Value {
             "already_present": r.already_present,
         })),
     })
-}
-
-async fn materialize_working_dir(
-    config_dir: &std::path::Path,
-) -> Result<Option<MaterializeWorkingDirReport>> {
-    let mut daemon = Daemon::open(config_dir)
-        .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-    daemon
-        .materialize_primary_drive()
-        .await
-        .context("materializing merged drive")
-}
-
-async fn materialize_and_publish(
-    client: &nostr_sdk::Client,
-    config_dir: &std::path::Path,
-    event_name: &str,
-) -> Result<()> {
-    let Some(report) = materialize_working_dir(config_dir).await? else {
-        return Ok(());
-    };
-    if !report.materialize.changed() {
-        return Ok(());
-    }
-    let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(updated_state) = updated_config.account.clone() else {
-        return Err(anyhow::anyhow!("missing account after materialize"));
-    };
-    let publish =
-        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
-    println!(
-        "{}",
-        json!({
-            "event": event_name,
-            "materialize": materialize_report_json(&report),
-            "publish": publish_state_report_json(&publish),
-        })
-    );
-    Ok(())
 }
 
 async fn import_mount_root_and_publish(
@@ -2793,91 +2721,6 @@ fn spawn_initial_publish(
     });
 }
 
-#[derive(Clone, Copy)]
-struct ScanPublishRequest {
-    trigger: &'static str,
-    retry_current_root: bool,
-    upload_current_to_blossom: bool,
-}
-
-impl ScanPublishRequest {
-    fn merge(self, next: Self) -> Self {
-        Self {
-            trigger: if self.trigger == next.trigger {
-                self.trigger
-            } else {
-                "coalesced"
-            },
-            retry_current_root: self.retry_current_root || next.retry_current_root,
-            upload_current_to_blossom: self.upload_current_to_blossom
-                || next.upload_current_to_blossom,
-        }
-    }
-}
-
-struct ScanPublishResult {
-    trigger: &'static str,
-    error: Option<String>,
-}
-
-fn queue_scan_publish(
-    tx: &tokio::sync::mpsc::Sender<ScanPublishRequest>,
-    request: ScanPublishRequest,
-) {
-    use tokio::sync::mpsc::error::TrySendError;
-
-    if let Err(error) = tx.try_send(request) {
-        let reason = match error {
-            TrySendError::Full(_) => "full",
-            TrySendError::Closed(_) => "closed",
-        };
-        println!(
-            "{}",
-            json!({
-                "event": "scan_publish_queue_error",
-                "trigger": request.trigger,
-                "error": reason,
-            })
-        );
-    }
-}
-
-fn spawn_scan_publish_worker(
-    client: nostr_sdk::Client,
-    config_dir: PathBuf,
-    fips_blocks: Option<Arc<FsFipsBlockSync>>,
-    mut rx: tokio::sync::mpsc::Receiver<ScanPublishRequest>,
-    done_tx: tokio::sync::mpsc::Sender<ScanPublishResult>,
-) {
-    tokio::spawn(async move {
-        while let Some(mut request) = rx.recv().await {
-            while let Ok(next) = rx.try_recv() {
-                request = request.merge(next);
-            }
-            let error = scan_and_publish(
-                &client,
-                &config_dir,
-                fips_blocks.as_deref(),
-                request.retry_current_root,
-                request.upload_current_to_blossom,
-            )
-            .await
-            .err()
-            .map(|error| error.to_string());
-            if done_tx
-                .send(ScanPublishResult {
-                    trigger: request.trigger,
-                    error,
-                })
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
-}
-
 fn spawn_daemon_heartbeat(config_dir: PathBuf) {
     let _ = std::thread::Builder::new()
         .name("idrive-status-heartbeat".to_string())
@@ -3062,10 +2905,6 @@ fn cmd_sync(
         let mut fips_download_error: Option<String> = None;
         let mut blossom_download_report: Option<DownloadReport> = None;
         let mut blossom_download_error: Option<String> = None;
-        let mut materialize_report: Option<MaterializeWorkingDirReport> = None;
-        let mut materialize_error: Option<String> = None;
-        let mut materialize_publish_report: Option<PublishStateReport> = None;
-        let mut materialize_publish_error: Option<String> = None;
         if !root_cids_to_download.is_empty() {
             let fips_policy = fips_download_policy(&config);
             let mut block_config = config.clone();
@@ -3090,42 +2929,6 @@ fn cmd_sync(
             }
         }
 
-        match materialize_working_dir(config_dir).await {
-            Ok(report) => {
-                let changed = report
-                    .as_ref()
-                    .is_some_and(|report| report.materialize.changed());
-                materialize_report = report;
-                if changed {
-                    match AppConfig::load_or_default(config_path_in(config_dir)) {
-                        Ok(updated_config) => {
-                            if let Some(updated_state) = updated_config.account.clone() {
-                                match publish_current_state(
-                                    &client,
-                                    config_dir,
-                                    &updated_config,
-                                    &updated_state,
-                                    true,
-                                )
-                                .await
-                                {
-                                    Ok(report) => materialize_publish_report = Some(report),
-                                    Err(error) => {
-                                        materialize_publish_error = Some(format!("{error:#}"));
-                                    }
-                                }
-                            } else {
-                                materialize_publish_error =
-                                    Some("missing account after materialize".to_string());
-                            }
-                        }
-                        Err(error) => materialize_publish_error = Some(error.to_string()),
-                    }
-                }
-            }
-            Err(error) => materialize_error = Some(format!("{error:#}")),
-        }
-
         let _ = client.disconnect().await;
 
         println!(
@@ -3144,10 +2947,6 @@ fn cmd_sync(
                 "fips_download_error": fips_download_error,
                 "blossom_download": blossom_download_report.as_ref().map(download_report_json),
                 "blossom_download_error": blossom_download_error,
-                "materialize": materialize_report.as_ref().map(materialize_report_json),
-                "materialize_error": materialize_error,
-                "materialize_publish": materialize_publish_report.as_ref().map(publish_state_report_json),
-                "materialize_publish_error": materialize_publish_error,
             })
         );
         Ok::<_, anyhow::Error>(())
@@ -3164,7 +2963,6 @@ fn cmd_daemon(
     enable_gateway: bool,
     mount_drive: bool,
     mountpoint: Option<PathBuf>,
-    no_working_dir: bool,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
@@ -3179,40 +2977,6 @@ fn cmd_daemon(
         .build()
         .context("building tokio runtime")?;
 
-    // Zero-config bootstrap: if the tray app (or a future installer)
-    // staged an account + working_dir but never ran an initial import,
-    // do that now before we start the embedded hashtree host.
-    runtime.block_on(async {
-        if mount_drive || no_working_dir {
-            return Ok::<_, anyhow::Error>(());
-        }
-        if !key_path_in(config_dir).exists() {
-            return Ok::<_, anyhow::Error>(());
-        }
-        let mut daemon = Daemon::open(config_dir).context("opening daemon for bootstrap")?;
-        if let Some(report) = daemon
-            .ensure_initial_import()
-            .await
-            .context("initial import")?
-        {
-            println!(
-                "{}",
-                json!({
-                    "event": "initial_import",
-                    "root_cid": report.root_cid,
-                    "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
-                    "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
-                    "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
-                    "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
-                    "working_dir": report.working_dir.display().to_string(),
-                    "file_count": report.file_count,
-                    "entries": report.top_level_entries,
-                })
-            );
-        }
-        Ok::<_, anyhow::Error>(())
-    })?;
-
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account
@@ -3224,7 +2988,6 @@ fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
-    let working_dir = daemon_active_working_dir(&config, false, no_working_dir);
     let embedded_hashtree =
         EmbeddedHashtreeHost::start(config_dir, &config).context("starting embedded hashtree")?;
     let embedded_hashtree_status = embedded_hashtree.status_payload();
@@ -3237,13 +3000,15 @@ fn cmd_daemon(
                 Ok(sync) => (Some(Arc::new(sync)), None),
                 Err(error) => (None, Some(error.to_string())),
             };
+        let (webdav_root_tx, mut webdav_root_rx) = mpsc::unbounded_channel::<Cid>();
         let gateway = if enable_gateway {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
-                GatewayServer::bind_with_tree_and_htree_daemon(
+                GatewayServer::bind_with_tree_htree_daemon_and_root_updates(
                     config_dir,
                     daemon.tree_handle(),
                     embedded_hashtree.status().base_url.clone(),
+                    webdav_root_tx.clone(),
                     GatewayBind::loopback_v4(gateway_port),
                 )
                     .await
@@ -3261,6 +3026,8 @@ fn cmd_daemon(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
+                "webdav_url": format!("http://127.0.0.1:{port}/dav/"),
+                "webdav_unc": format!(r"\\127.0.0.1@{port}\dav"),
                 "hashtree_base_url": embedded_hashtree.status().base_url.clone(),
             })
         });
@@ -3279,8 +3046,7 @@ fn cmd_daemon(
         let mut mounted_drive = if mount_drive {
             let mountpoint = mountpoint
                 .clone()
-                .or_else(|| working_dir.clone())
-                .unwrap_or_else(|| default_working_dir_in(config_dir));
+                .unwrap_or_else(|| default_mountpoint_in(config_dir));
             let mounted = mount::start_iris_drive_mount(config_dir, mountpoint).await?;
             config = AppConfig::load_or_default(config_path_in(config_dir))?;
             Some(mounted)
@@ -3297,24 +3063,6 @@ fn cmd_daemon(
         } else {
             (None, None)
         };
-        let working_dir =
-            daemon_active_working_dir(&config, mounted_drive.is_some(), no_working_dir);
-
-        // Spawn an fs-notify watcher on the working dir. Events get
-        // debounced (notify-debouncer-mini) then forwarded over an
-        // mpsc; the main select! loop wakes up and calls
-        // scan_and_publish near-immediately, instead of waiting on
-        // the periodic timer.
-        let (fs_tx, mut fs_rx) = mpsc::channel::<()>(8);
-        let _watcher_guard = if let Some(dir) = working_dir.as_ref() {
-            Some(
-                spawn_fs_watcher(dir, watch_debounce_ms, fs_tx)
-                    .context("spawning fs watcher")?,
-            )
-        } else {
-            None
-        };
-
         let mount_status = mounted_drive.as_ref().map(|mounted| {
             json!({
                 "mountpoint": mounted.mountpoint().display().to_string(),
@@ -3327,8 +3075,6 @@ fn cmd_daemon(
                 "owner_npub": account_npub(&state.owner_pubkey),
                 "watch_interval_secs": watch_interval,
                 "watch_debounce_ms": watch_debounce_ms,
-                "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
-                "working_dir_disabled": no_working_dir,
                 "mount": mount_status,
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
@@ -3343,7 +3089,6 @@ fn cmd_daemon(
         let startup_config = config.clone();
         let startup_state = state.clone();
         spawn_root_apply_followup(
-            client.clone(),
             config_dir.to_path_buf(),
             config.clone(),
             None,
@@ -3352,38 +3097,12 @@ fn cmd_daemon(
             "startup_materialized",
             mount_refresh_tx.clone(),
         );
-        let (scan_tx, scan_rx) = mpsc::channel::<ScanPublishRequest>(8);
-        let (scan_done_tx, mut scan_done_rx) = mpsc::channel::<ScanPublishResult>(8);
-        spawn_scan_publish_worker(
+        spawn_initial_publish(
             client.clone(),
             config_dir.to_path_buf(),
-            fips_blocks.clone(),
-            scan_rx,
-            scan_done_tx,
+            startup_config,
+            startup_state,
         );
-
-        // Announce the current account roster and device root once on
-        // startup, and upload the initial blocks if this launch just
-        // imported them. The fs-notify + periodic paths only publish on
-        // change, so without this a freshly-imported device would sit
-        // silent until its first edit.
-        if working_dir.is_some() {
-            queue_scan_publish(
-                &scan_tx,
-                ScanPublishRequest {
-                    trigger: "startup",
-                    retry_current_root: true,
-                    upload_current_to_blossom: true,
-                },
-            );
-        } else {
-            spawn_initial_publish(
-                client.clone(),
-                config_dir.to_path_buf(),
-                startup_config,
-                startup_state,
-            );
-        }
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
@@ -3391,17 +3110,6 @@ fn cmd_daemon(
         let parent_exit = parent_exit_signal();
         tokio::pin!(parent_exit);
 
-        // Periodic fallback in addition to fs-notify (some editor
-        // patterns produce events fs-notify can miss; this catches
-        // drift).
-        let mut watch_timer = if watch_interval > 0 && working_dir.is_some() {
-            let period = std::time::Duration::from_secs(watch_interval);
-            let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            Some(interval)
-        } else {
-            None
-        };
         let relay_status_period = std::time::Duration::from_secs(10);
         let mut relay_status_timer = tokio::time::interval_at(
             tokio::time::Instant::now() + relay_status_period,
@@ -3460,22 +3168,6 @@ fn cmd_daemon(
                         }
                     }
                 }
-                Some(()) = async {
-                    if working_dir.is_some() {
-                        fs_rx.recv().await
-                    } else {
-                        std::future::pending::<Option<()>>().await
-                    }
-                } => {
-                    queue_scan_publish(
-                        &scan_tx,
-                        ScanPublishRequest {
-                            trigger: "fs",
-                            retry_current_root: false,
-                            upload_current_to_blossom: false,
-                        },
-                    );
-                }
                 Some(mut visible_root) = async {
                     if let Some(rx) = mount_root_updates.as_mut() {
                         rx.recv().await
@@ -3484,6 +3176,10 @@ fn cmd_daemon(
                     }
                 } => {
                     if let Some(rx) = mount_root_updates.as_mut() {
+                        while let Ok(next) = rx.try_recv() {
+                            visible_root = next;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
                         while let Ok(next) = rx.try_recv() {
                             visible_root = next;
                         }
@@ -3501,6 +3197,30 @@ fn cmd_daemon(
                         Err(error) => println!(
                             "{}",
                             json!({"event": "mount_publish_error", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
+                Some(mut visible_root) = webdav_root_rx.recv() => {
+                    while let Ok(next) = webdav_root_rx.try_recv() {
+                        visible_root = next;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
+                    while let Ok(next) = webdav_root_rx.try_recv() {
+                        visible_root = next;
+                    }
+                    match import_mount_root_and_publish(
+                        &client,
+                        config_dir,
+                        visible_root,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "virtual_publish_error", "error": format!("{error:#}")})
                         ),
                     }
                 }
@@ -3531,26 +3251,6 @@ fn cmd_daemon(
                         }
                     }
                 }
-                Some(result) = scan_done_rx.recv() => {
-                    if let Some(error) = result.error {
-                        println!(
-                            "{}",
-                            json!({"event": "auto_publish_error", "trigger": result.trigger, "error": error})
-                        );
-                    } else if let Err(error) =
-                        announce_current_state_direct(
-                            &mut direct_roots,
-                            config_dir,
-                            fips_blocks.as_deref(),
-                        )
-                        .await
-                    {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                        );
-                    }
-                }
                 _ = relay_status_timer.tick() => {
                     spawn_status_probe(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
                     direct_roots
@@ -3569,22 +3269,6 @@ fn cmd_daemon(
                             json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
                         );
                     }
-                }
-                () = async {
-                    if let Some(timer) = watch_timer.as_mut() {
-                        timer.tick().await;
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                } => {
-                    queue_scan_publish(
-                        &scan_tx,
-                        ScanPublishRequest {
-                            trigger: "timer",
-                            retry_current_root: false,
-                            upload_current_to_blossom: false,
-                        },
-                    );
                 }
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
@@ -3608,19 +3292,6 @@ fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
-}
-
-fn daemon_active_working_dir(
-    config: &AppConfig,
-    mounted_drive: bool,
-    no_working_dir: bool,
-) -> Option<PathBuf> {
-    if mounted_drive || no_working_dir {
-        return None;
-    }
-    config
-        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .and_then(|drive| drive.working_dir.clone())
 }
 
 fn spawn_status_probe(
@@ -3804,234 +3475,8 @@ async fn parent_exit_signal() {
     }
 }
 
-/// Spawn an fs-notify watcher on `dir`. The returned debouncer must be
-/// kept alive for the watcher to keep firing; drop it to stop.
-fn spawn_fs_watcher(
-    dir: &std::path::Path,
-    debounce_ms: u64,
-    tx: tokio::sync::mpsc::Sender<()>,
-) -> Result<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
-    use notify::RecursiveMode;
-    use notify_debouncer_mini::new_debouncer;
-    use std::time::Duration;
-
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(debounce_ms),
-        move |result: notify_debouncer_mini::DebounceEventResult| {
-            if let Ok(events) = result
-                && !events.is_empty()
-            {
-                // Coalesce a batch into a single nudge; the main loop
-                // re-reads disk state on each receive anyway.
-                let _ = tx.try_send(());
-            }
-        },
-    )
-    .context("creating notify debouncer")?;
-    debouncer
-        .watcher()
-        .watch(dir, RecursiveMode::Recursive)
-        .context("starting fs watch")?;
-    Ok(debouncer)
-}
-
-/// Re-import the configured working dir; if the new root CID differs
-/// from what's already recorded for this device, publish a new
-/// drive-root event. No-op when the root hasn't changed.
-#[allow(clippy::too_many_lines)]
-async fn scan_and_publish(
-    client: &nostr_sdk::Client,
-    config_dir: &std::path::Path,
-    fips_blocks: Option<&FsFipsBlockSync>,
-    retry_current_root: bool,
-    upload_current_to_blossom: bool,
-) -> Result<()> {
-    use iris_drive_core::relay_sync;
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    if let Some(sync) = fips_blocks {
-        sync.refresh_authorized_peers(&config).await;
-    }
-    let state = config
-        .account
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no account"))?;
-    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
-        return Ok(());
-    };
-    let Some(working_dir) = drive.working_dir.clone() else {
-        return Ok(());
-    };
-    let previous_root_cid = drive
-        .device_roots
-        .get(&state.device_pubkey)
-        .map(|r| r.root_cid.clone());
-
-    let mut daemon = Daemon::open(config_dir).context("opening daemon")?;
-    if working_dir_has_same_visible_files(&daemon, &working_dir, previous_root_cid.as_deref())
-        .await?
-    {
-        if retry_current_root {
-            let report = publish_current_state(
-                client,
-                config_dir,
-                &config,
-                state,
-                upload_current_to_blossom,
-            )
-            .await?;
-            println!(
-                "{}",
-                json!({
-                    "event": "republished_current_state",
-                    "published_app_keys": report.published_app_keys,
-                    "app_keys_publish_error": report.app_keys_publish_error,
-                    "published_drive_root": report.published_drive_root,
-                    "drive_root_publish_error": report.drive_root_publish_error,
-                    "published_files_root": report.published_files_root,
-                    "files_root_publish_error": report.files_root_publish_error,
-                    "root_cid": report.root_cid,
-                    "blossom_upload_error": report.blossom_upload_error,
-                    "blossom_upload": report.blossom_upload.as_ref().map(upload_report_json),
-                })
-            );
-        }
-        return Ok(());
-    }
-
-    let report = daemon
-        .import_working_dir(&working_dir)
-        .await
-        .context("re-importing working dir")?;
-    if previous_root_cid.as_deref() == Some(report.root_cid.as_str()) {
-        // No change — silently skip publish.
-        return Ok(());
-    }
-    let new_root = daemon
-        .config()
-        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .and_then(|d| d.device_roots.get(&state.device_pubkey))
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("device root missing after import"))?;
-
-    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
-    let (upload_report, upload_error) = maybe_upload_root_to_blossom(
-        config_dir,
-        &config,
-        &device,
-        &new_root.root_cid,
-        previous_root_cid.as_deref(),
-    )
-    .await?;
-    if let Some(error) = &upload_error {
-        println!(
-            "{}",
-            json!({"event": "blossom_upload_error", "error": error})
-        );
-    }
-
-    let mut published_drive_root = false;
-    match relay_publish_with_timeout(relay_sync::publish_drive_root(
-        client,
-        device.keys(),
-        &state.owner_pubkey,
-        iris_drive_core::PRIMARY_DRIVE_ID,
-        &new_root,
-        &authorized_device_pubkeys(state),
-    ))
-    .await
-    {
-        Ok(_) => published_drive_root = true,
-        Err(e) => println!(
-            "{}",
-            json!({"event": "drive_root_publish_error", "error": e})
-        ),
-    }
-
-    let mut published_files_root = false;
-    if state.has_owner_signing_authority {
-        let account = Account::load(state.clone(), config_dir).context("loading account")?;
-        let owner_keys = account
-            .owner_key
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-            .keys();
-        match relay_publish_with_timeout(relay_sync::publish_files_root(
-            client,
-            owner_keys,
-            iris_drive_core::PRIMARY_DRIVE_ID,
-            &new_root,
-        ))
-        .await
-        {
-            Ok(_) => published_files_root = true,
-            Err(e) => println!(
-                "{}",
-                json!({"event": "files_root_publish_error", "error": e})
-            ),
-        }
-    }
-
-    println!(
-        "{}",
-        json!({
-            "event": "auto_published",
-            "root_cid": report.root_cid,
-            "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
-            "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
-            "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
-            "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
-            "published_drive_root": published_drive_root,
-            "published_files_root": published_files_root,
-            "file_count": report.file_count,
-            "top_level_entries": report.top_level_entries,
-            "blossom_upload_error": upload_error,
-            "blossom_upload": upload_report.map(|r| json!({
-                "total_hashes": r.total_hashes,
-                "uploaded": r.uploaded,
-                "already_present": r.already_present,
-            })),
-        })
-    );
-    Ok(())
-}
-
-async fn working_dir_has_same_visible_files(
-    daemon: &Daemon,
-    working_dir: &std::path::Path,
-    previous_root_cid: Option<&str>,
-) -> Result<bool> {
-    let Some(previous_root_cid) = previous_root_cid else {
-        return Ok(false);
-    };
-    let previous_root = Cid::parse(previous_root_cid)
-        .with_context(|| format!("parsing previous root cid {previous_root_cid}"))?;
-    let current_root = index_dir(daemon.tree(), working_dir)
-        .await
-        .context("indexing working dir for change detection")?;
-    let (mut previous_files, _) = walk_device_tree(daemon.tree(), &previous_root)
-        .await
-        .with_context(|| format!("walking previous root {previous_root_cid}"))?;
-    let (mut current_files, _) = walk_device_tree(daemon.tree(), &current_root)
-        .await
-        .context("walking current working dir root")?;
-    sort_device_files(&mut previous_files);
-    sort_device_files(&mut current_files);
-    Ok(previous_files == current_files)
-}
-
-fn sort_device_files(files: &mut [DeviceFileEntry]) {
-    files.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then_with(|| a.hash.cmp(&b.hash))
-            .then_with(|| a.size.cmp(&b.size))
-            .then_with(|| a.whole_file_hash.cmp(&b.whole_file_hash))
-    });
-}
-
 async fn apply_one_event(
-    client: &nostr_sdk::Client,
+    _client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
@@ -4060,7 +3505,6 @@ async fn apply_one_event(
             return Ok(());
         };
         return apply_files_root_event(
-            client,
             config_dir,
             event,
             fips_blocks,
@@ -4106,7 +3550,6 @@ async fn apply_one_event(
         }
 
         spawn_root_apply_followup(
-            client.clone(),
             config_dir.to_path_buf(),
             config.clone(),
             root_cid_to_pull,
@@ -4125,7 +3568,6 @@ async fn apply_one_event(
 }
 
 async fn apply_files_root_event(
-    client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
@@ -4172,7 +3614,6 @@ async fn apply_files_root_event(
     );
     config.save(config_path_in(config_dir))?;
     spawn_root_apply_followup(
-        client.clone(),
         config_dir.to_path_buf(),
         config.clone(),
         root_cid_to_pull,
@@ -4185,7 +3626,6 @@ async fn apply_files_root_event(
 }
 
 fn spawn_root_apply_followup(
-    client: nostr_sdk::Client,
     config_dir: PathBuf,
     config: AppConfig,
     root_cid_to_pull: Option<String>,
@@ -4224,25 +3664,10 @@ fn spawn_root_apply_followup(
                 }
                 return;
             }
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(EVENT_MATERIALIZE_TIMEOUT_SECS),
-                materialize_and_publish(&client, &config_dir, materialize_event),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => println!(
-                    "{}",
-                    json!({"event": "materialize_error", "error": format!("{error:#}")})
-                ),
-                Err(_) => println!(
-                    "{}",
-                    json!({
-                        "event": "materialize_error",
-                        "error": format!("timed out after {EVENT_MATERIALIZE_TIMEOUT_SECS}s"),
-                    })
-                ),
-            }
+            println!(
+                "{}",
+                json!({"event": "mount_refresh_skipped", "reason": "no_virtual_mount"})
+            );
         }
     });
 }
@@ -4799,22 +4224,6 @@ mod daemon_lock_tests {
     }
 
     #[test]
-    fn daemon_no_working_dir_disables_stale_config_path() {
-        let dir = tempdir().unwrap();
-        let mut config = AppConfig::default();
-        let mut drive = Drive::primary("owner");
-        drive.working_dir = Some(dir.path().join("Iris Drive"));
-        config.upsert_drive(drive);
-
-        assert_eq!(
-            daemon_active_working_dir(&config, false, false),
-            Some(dir.path().join("Iris Drive"))
-        );
-        assert_eq!(daemon_active_working_dir(&config, false, true), None);
-        assert_eq!(daemon_active_working_dir(&config, true, false), None);
-    }
-
-    #[test]
     fn conflict_status_counts_unresolved_records() {
         let records = vec![
             iris_drive_core::ConflictRecord {
@@ -4876,59 +4285,6 @@ mod daemon_lock_tests {
     }
 
     #[tokio::test]
-    async fn working_dir_change_detection_ignores_snapshot_metadata() {
-        let cfg_dir = tempdir().unwrap();
-        let work = tempdir().unwrap();
-        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
-
-        std::fs::write(work.path().join("note.txt"), b"one").unwrap();
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let first = daemon.import_working_dir(work.path()).await.unwrap();
-        assert!(
-            working_dir_has_same_visible_files(&daemon, work.path(), Some(&first.root_cid))
-                .await
-                .unwrap()
-        );
-
-        let second = daemon.import_working_dir(work.path()).await.unwrap();
-        assert_ne!(
-            first.root_cid, second.root_cid,
-            "history metadata still creates a new root when explicitly imported"
-        );
-        assert!(
-            working_dir_has_same_visible_files(&daemon, work.path(), Some(&second.root_cid))
-                .await
-                .unwrap()
-        );
-
-        std::fs::write(work.path().join("note.txt"), b"two").unwrap();
-        assert!(
-            !working_dir_has_same_visible_files(&daemon, work.path(), Some(&second.root_cid))
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn working_dir_change_detection_detects_deletions() {
-        let cfg_dir = tempdir().unwrap();
-        let work = tempdir().unwrap();
-        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
-
-        std::fs::write(work.path().join("keep.txt"), b"keep").unwrap();
-        std::fs::write(work.path().join("delete-me.txt"), b"delete").unwrap();
-        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let first = daemon.import_working_dir(work.path()).await.unwrap();
-        std::fs::remove_file(work.path().join("delete-me.txt")).unwrap();
-
-        assert!(
-            !working_dir_has_same_visible_files(&daemon, work.path(), Some(&first.root_cid))
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
     async fn relay_publish_timeout_returns_control_to_daemon_loop() {
         let error =
             relay_publish_with_timeout_duration(
@@ -4951,7 +4307,7 @@ mod daemon_lock_tests {
 
         std::fs::write(work.path().join("from-peer.txt"), b"materialized copy").unwrap();
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        daemon.import_working_dir(work.path()).await.unwrap();
+        daemon.import_source_dir(work.path()).await.unwrap();
 
         let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
         let state = config.account.clone().unwrap();
@@ -4988,7 +4344,7 @@ mod daemon_lock_tests {
 
         std::fs::write(work.path().join("mine.txt"), b"local edit").unwrap();
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
-        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        let first = daemon.import_source_dir(work.path()).await.unwrap();
         let first_root = daemon
             .config()
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)

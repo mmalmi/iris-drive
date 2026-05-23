@@ -100,11 +100,11 @@ public sealed class IrisDriveService
 
     public Process StartDaemonProcess()
     {
+        TryStartWebClientService();
         var process = new Process
         {
             StartInfo = CreateStartInfo(
                 "daemon",
-                "--no-working-dir",
                 "--watch-interval",
                 "0"),
             EnableRaisingEvents = true,
@@ -117,6 +117,32 @@ public sealed class IrisDriveService
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         return process;
+    }
+
+    private static void TryStartWebClientService()
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "sc.exe",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                },
+            };
+            process.StartInfo.ArgumentList.Add("start");
+            process.StartInfo.ArgumentList.Add("WebClient");
+            process.Start();
+            process.WaitForExit(1500);
+        }
+        catch
+        {
+            // Best effort. If WebClient is unavailable, the daemon still serves WebDAV.
+        }
     }
 
     public bool DaemonLockIsRunning(IrisDriveStatusData status)

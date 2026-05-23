@@ -43,7 +43,7 @@ public sealed class IrisDriveStatusData
             : null;
         var hashtree = Object(root, "hashtree");
         var network = Object(root, "network");
-        var mountPath = ExtractMountPath(root);
+        var mountPath = ExtractMountPath(root) ?? ExtractWebDavPath(root);
         var drives = DriveRows(root, mountPath);
 
         return new IrisDriveStatusData
@@ -130,6 +130,17 @@ public sealed class IrisDriveStatusData
             return String(mount.Value, "mountpoint");
         }
         return null;
+    }
+
+    private static string? ExtractWebDavPath(JsonElement root)
+    {
+        var daemon = Object(root, "daemon");
+        var gateway = daemon.HasValue ? Object(daemon.Value, "browser_gateway") : null;
+        if (!gateway.HasValue)
+        {
+            return null;
+        }
+        return String(gateway.Value, "webdav_unc") ?? String(gateway.Value, "webdav_url");
     }
 
     private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string? mountPath)

@@ -68,6 +68,7 @@ pub enum DeviceAuthorizationState {
 
 /// Persisted account state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AccountState {
     pub owner_pubkey: String,
     pub device_pubkey: String,

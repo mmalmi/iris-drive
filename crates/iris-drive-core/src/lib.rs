@@ -50,17 +50,15 @@ pub use conflict::{
     ConflictDeletedSide, ConflictRecord, ConflictSide, ConflictState, FileSnapshot, SyncAction,
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,
 };
-pub use daemon::{
-    Daemon, DaemonError, ImportReport, MaterializeWorkingDirReport, PRIMARY_DRIVE_ID,
-};
+pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use hashtree_fips_transport::FipsAppMessage;
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use materialize::{
-    MaterializeError, MaterializeReport, PrimaryMergedRoot, PrimaryMergedView,
-    materialize_primary_drive, primary_merged_root, primary_merged_view,
+    MaterializeError, MaterializeReport, PrimaryMergedRoot, PrimaryMergedView, primary_merged_root,
+    primary_merged_view,
 };
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,
@@ -80,10 +78,12 @@ pub use sync_cache::{
 };
 
 /// Schema version for the iris-drive config file. Bump when fields are
-/// removed or repurposed so older installs can detect incompatible state.
+/// removed or repurposed so older installs fail closed instead of carrying
+/// stale state forward.
 ///
 /// v2: added optional `AccountState` for the owner/device key split + `AppKeys`.
-pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+/// v3: removed plain working-directory mode; configs are strict.
+pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 #[cfg(test)]
 mod tests {

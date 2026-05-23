@@ -1068,7 +1068,7 @@ fn refresh(model: &AppRef) {
             model
                 .ui
                 .folder
-                .set_text(&working_dir(&json).display().to_string());
+                .set_text(&drive_mount_text(&json));
             let account = account_json(&json);
             let owner_npub = find_string(account, &["owner_npub"]);
             let device_npub = find_string(account, &["device_npub"]);
@@ -1101,7 +1101,7 @@ fn refresh(model: &AppRef) {
             model
                 .ui
                 .drive_path
-                .set_text(&working_dir(&json).display().to_string());
+                .set_text(&drive_mount_text(&json));
             model.ui.root_path.set_text(
                 find_string(
                     json.get("hashtree").unwrap_or(&Value::Null),
@@ -1556,7 +1556,6 @@ fn spawn_daemon() -> Result<Child, std::io::Error> {
         .arg("2")
         .arg("--watch-debounce-ms")
         .arg("100")
-        .arg("--no-working-dir")
         .arg("--mount")
         .arg("--mountpoint")
         .arg(default_drive_dir())
@@ -1785,7 +1784,10 @@ fn approve_device(model: &AppRef) {
 fn open_drive_folder(model: &AppRef) {
     let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
     ensure_daemon_running(model, &status);
-    let folder = mounted_dir(&status).unwrap_or_else(default_drive_dir);
+    let Some(folder) = mounted_dir(&status) else {
+        model.ui.notice.set_text("Drive mount unavailable");
+        return;
+    };
     if !wait_for_path(&folder, Duration::from_secs(2)) {
         model.ui.notice.set_text("Drive mount unavailable");
         return;
@@ -1917,27 +1919,10 @@ fn default_drive_dir() -> PathBuf {
         .join("Iris Drive")
 }
 
-fn working_dir(json: &Value) -> PathBuf {
-    if let Some(path) = mounted_dir(json) {
-        return path;
-    }
-    if let Some(path) = json
-        .get("drives")
-        .and_then(Value::as_array)
-        .and_then(|drives| {
-            drives
-                .iter()
-                .find(|drive| drive.get("drive_id").and_then(Value::as_str) == Some("main"))
-        })
-        .and_then(|drive| drive.get("working_dir"))
-        .and_then(Value::as_str)
-    {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = json.get("default_working_dir").and_then(Value::as_str) {
-        return PathBuf::from(path);
-    }
-    default_drive_dir()
+fn drive_mount_text(json: &Value) -> String {
+    mounted_dir(json)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "Not mounted".to_string())
 }
 
 fn mounted_dir(json: &Value) -> Option<PathBuf> {
@@ -2017,7 +2002,7 @@ fn render_drives(list: &gtk::ListBox, json: &Value) {
     let Some(drives) = json.get("drives").and_then(Value::as_array) else {
         list.append(&drive_row(
             "main",
-            &working_dir(json).display().to_string(),
+            &drive_mount_text(json),
             "-",
         ));
         return;
@@ -2025,18 +2010,20 @@ fn render_drives(list: &gtk::ListBox, json: &Value) {
     if drives.is_empty() {
         list.append(&drive_row(
             "main",
-            &working_dir(json).display().to_string(),
+            &drive_mount_text(json),
             "-",
         ));
         return;
     }
     for drive in drives {
         let name = find_string(drive, &["name", "drive_id"]).unwrap_or("main");
-        let path = find_string(drive, &["working_dir", "local_path"]).unwrap_or("-");
+        let path = mounted_dir(json)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "Not mounted".to_string());
         let status = find_string(drive, &["status", "root_cid"])
             .map(short_text)
             .unwrap_or_else(|| "configured".to_string());
-        list.append(&drive_row(name, path, &status));
+        list.append(&drive_row(name, &path, &status));
     }
 }
 

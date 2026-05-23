@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 
 /// One authorized device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeviceEntry {
     /// Hex-encoded device pubkey.
     pub pubkey: String,
@@ -42,6 +43,7 @@ pub struct DeviceEntry {
 /// device retains anything it already downloaded but cannot decrypt the
 /// drive's new root once the next rotation lands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppKeysSnapshot {
     pub owner_pubkey: String,
     pub created_at: i64,

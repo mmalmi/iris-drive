@@ -27,7 +27,6 @@ pub enum ConfigError {
 /// Default Nostr relays for new installs. Users override via config or
 /// `--relay` flags. Kept in sync with hashtree's shared defaults.
 pub const DEFAULT_RELAYS: &[&str] = hashtree_config::DEFAULT_RELAYS;
-const LEGACY_IRIS_DRIVE_DEFAULT_RELAYS: &[&str] = &["wss://relay.damus.io", "wss://nos.lol"];
 
 /// Default Blossom servers for new installs — HTTP blob hosts used as a
 /// fallback/cache for htree block replication. Direct FIPS transfer between
@@ -38,6 +37,7 @@ pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
 
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub schema_version: u32,
     /// Account state. `None` until the user has run a create / restore
@@ -146,16 +146,12 @@ impl AppConfig {
             return Ok(Self::default());
         }
         let raw = fs::read_to_string(path)?;
-        let mut parsed: Self =
-            toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let parsed: Self = toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
         if parsed.schema_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::SchemaMismatch {
                 found: parsed.schema_version,
                 expected: CONFIG_SCHEMA_VERSION,
             });
-        }
-        if parsed.relays == LEGACY_IRIS_DRIVE_DEFAULT_RELAYS {
-            parsed.relays = default_relays();
         }
         Ok(parsed)
     }
@@ -193,6 +189,7 @@ pub enum BackupTargetKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackupTarget {
     pub id: String,
     pub kind: BackupTargetKind,
@@ -206,6 +203,7 @@ pub struct BackupTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackupTargetSync {
     pub state: String,
     pub root_cid: String,
@@ -229,6 +227,7 @@ impl DriveRole {
 /// A drive is one logical mount-point. The user's primary "My Drive" is
 /// stored as `drive_id = "main", role = Owner, owner_pubkey = self`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Drive {
     pub owner_pubkey: String,
     pub drive_id: String,
@@ -247,11 +246,6 @@ pub struct Drive {
     /// `device_roots[my_device_pubkey].root_cid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_root_cid: Option<String>,
-    /// Local filesystem path this device backs the drive with. Set on
-    /// the first `idrive import`; the daemon watches this dir for
-    /// changes and auto-republishes. `None` until first import.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_dir: Option<std::path::PathBuf>,
     /// Symmetric key for encrypted drives, hex-encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_hex: Option<String>,
@@ -261,6 +255,7 @@ pub struct Drive {
 /// publishes its own complete root tree. Causal fields are optional
 /// for legacy roots; new roots fill them from `.hashtree/root.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct DeviceRootRef {
     /// htree root CID the device most recently published.
     pub root_cid: String,
@@ -335,7 +330,6 @@ impl Drive {
             role: DriveRole::Owner,
             device_roots: BTreeMap::new(),
             last_root_cid: None,
-            working_dir: None,
             key_hex: None,
         }
     }
@@ -366,15 +360,26 @@ mod tests {
     }
 
     #[test]
-    fn legacy_iris_drive_default_relays_load_as_current_defaults() {
+    fn stale_drive_fields_are_rejected() {
         let raw = format!(
-            "schema_version = {CONFIG_SCHEMA_VERSION}\nrelays = [\"wss://relay.damus.io\", \"wss://nos.lol\"]\n"
+            r#"
+schema_version = {CONFIG_SCHEMA_VERSION}
+relays = ["wss://relay.example"]
+blossom_servers = ["https://upload.example"]
+
+[[drives]]
+owner_pubkey = "owner"
+drive_id = "main"
+display_name = "My Drive"
+role = "owner"
+working_dir = "/tmp/Iris Drive"
+"#
         );
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, raw).unwrap();
-        let cfg = AppConfig::load_or_default(&path).unwrap();
-        assert_eq!(cfg.relays, hashtree_config::DEFAULT_RELAYS);
+        let error = AppConfig::load_or_default(&path).unwrap_err();
+        assert!(error.to_string().contains("unknown field `working_dir`"));
     }
 
     #[test]
@@ -412,7 +417,6 @@ dck_generation = 1
             role: DriveRole::Reader,
             device_roots: BTreeMap::new(),
             last_root_cid: Some("Q123abc".into()),
-            working_dir: None,
             key_hex: Some("deadbeef".into()),
         });
 

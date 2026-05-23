@@ -28,7 +28,7 @@ Environment:
                                   Per SSH command timeout; 0 disables (default: 60).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
-  IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated host labels to run through idrive --mount.
+  IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should also expose FUSE mounts.
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
@@ -334,6 +334,34 @@ config=$(sh_quote "$config")
   remote_exec "$label" "$script" | tr -d '\r'
 }
 
+webdav_base_url() {
+  local label="$1"
+  local status url
+  status="$(idrive_cmd "$label" status)"
+  url="$(jq -r '.daemon.browser_gateway.webdav_url // empty' <<<"$status")"
+  if [[ -z "$url" ]]; then
+    echo "no WebDAV URL in daemon status for $label" >&2
+    exit 1
+  fi
+  printf "%s" "${url%/}"
+}
+
+webdav_path_url() {
+  local label="$1"
+  local rel="$2"
+  local base segment encoded out
+  local -a parts
+  base="$(webdav_base_url "$label")"
+  out="$base"
+  IFS='/' read -r -a parts <<<"$rel"
+  for segment in "${parts[@]}"; do
+    [[ -n "$segment" ]] || continue
+    encoded="$(jq -nr --arg value "$segment" '$value|@uri')"
+    out+="/$encoded"
+  done
+  printf "%s" "$out"
+}
+
 daemon_relay_args_posix() {
   local args=""
   local relay
@@ -390,7 +418,7 @@ if (Test-Path -LiteralPath \$pidFile) {
   \$old = Get-Content -LiteralPath \$pidFile -ErrorAction SilentlyContinue
   if (\$old) { Stop-Process -Id ([int]\$old) -Force -ErrorAction SilentlyContinue }
 }
-\$daemonArgs = @('--config-dir', \$config, 'daemon', '--watch-interval', '2', '--watch-debounce-ms', '100', '--no-gateway')
+\$daemonArgs = @('--config-dir', \$config, 'daemon', '--watch-interval', '2', '--watch-debounce-ms', '100', '--gateway-port', '0')
 $(daemon_relay_args_windows)
 Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
@@ -442,9 +470,9 @@ case \" \$mount_labels \" in
     ;;
 esac
 if (( mount_enabled )); then
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --gateway-port 0 --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 else
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --gateway-port 0$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 fi
 echo \$! >\"\$pidfile\"
 "
@@ -538,29 +566,23 @@ write_file() {
   local rel="$2"
   local content="$3"
   local kind
-  local work
+  local url
   local b64 script
   kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
+  url="$(webdav_path_url "$label" "$rel")"
   b64="$(printf "%s" "$content" | base64 | tr -d '\n')"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$work = $(ps_quote "$work")
-\$rel = $(ps_quote "$rel")
-\$path = \$work
-foreach (\$part in (\$rel -split '/')) { \$path = Join-Path \$path \$part }
-\$parent = Split-Path -Parent \$path
-New-Item -ItemType Directory -Force -Path \$parent | Out-Null
-[IO.File]::WriteAllBytes(\$path, [Convert]::FromBase64String($(ps_quote "$b64")))
+\$ErrorActionPreference = 'Stop'
+\$url = $(ps_quote "$url")
+\$bytes = [Convert]::FromBase64String($(ps_quote "$b64"))
+Invoke-WebRequest -UseBasicParsing -Method Put -Uri \$url -Body \$bytes | Out-Null
 "
   else
     script="
 set -Eeuo pipefail
-work=$(sh_quote "$work")
-rel=$(sh_quote "$rel")
-path=\"\$work/\$rel\"
-mkdir -p \"\$(dirname \"\$path\")\"
-printf '%s' $(sh_quote "$b64") | base64 -d >\"\$path\"
+url=$(sh_quote "$url")
+printf '%s' $(sh_quote "$b64") | base64 -d | curl -fsS -X PUT --data-binary @- \"\$url\" >/dev/null
 "
   fi
   remote_exec "$label" "$script"
@@ -571,30 +593,22 @@ write_zero_file() {
   local rel="$2"
   local bytes="$3"
   local kind
-  local work
+  local url
   local script
   kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
+  url="$(webdav_path_url "$label" "$rel")"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$work = $(ps_quote "$work")
-\$rel = $(ps_quote "$rel")
 \$bytes = [int]$(ps_quote "$bytes")
-\$path = \$work
-foreach (\$part in (\$rel -split '/')) { \$path = Join-Path \$path \$part }
-\$parent = Split-Path -Parent \$path
-New-Item -ItemType Directory -Force -Path \$parent | Out-Null
-[IO.File]::WriteAllBytes(\$path, [byte[]]::new(\$bytes))
+\$url = $(ps_quote "$url")
+Invoke-WebRequest -UseBasicParsing -Method Put -Uri \$url -Body ([byte[]]::new(\$bytes)) | Out-Null
 "
   else
     script="
 set -Eeuo pipefail
-work=$(sh_quote "$work")
-rel=$(sh_quote "$rel")
 bytes=$(sh_quote "$bytes")
-path=\"\$work/\$rel\"
-mkdir -p \"\$(dirname \"\$path\")\"
-dd if=/dev/zero of=\"\$path\" bs=\"\$bytes\" count=1 2>/dev/null
+url=$(sh_quote "$url")
+head -c \"\$bytes\" /dev/zero | curl -fsS -X PUT --data-binary @- \"\$url\" >/dev/null
 "
   fi
   remote_exec "$label" "$script"
@@ -604,18 +618,26 @@ mkdir_remote() {
   local label="$1"
   local rel="$2"
   local kind
-  local work
+  local url
   local script
   kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
+  url="$(webdav_path_url "$label" "$rel")"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$path = $(ps_quote "$work")
-foreach (\$part in ($(ps_quote "$rel") -split '/')) { \$path = Join-Path \$path \$part }
-New-Item -ItemType Directory -Force -Path \$path | Out-Null
+\$url = $(ps_quote "$url")
+try {
+  Invoke-WebRequest -UseBasicParsing -CustomMethod MKCOL -Uri \$url | Out-Null
+} catch {
+  if (\$_.Exception.Response.StatusCode.value__ -ne 405) { throw }
+}
 "
   else
-    script="mkdir -p $(sh_quote "$work/$rel")"
+    script="
+set -Eeuo pipefail
+url=$(sh_quote "$url")
+status=\$(curl -sS -o /dev/null -w '%{http_code}' -X MKCOL \"\$url\")
+[[ \"\$status\" == 201 || \"\$status\" == 405 ]]
+"
   fi
   remote_exec "$label" "$script"
 }
@@ -625,33 +647,24 @@ rename_remote() {
   local from="$2"
   local to="$3"
   local kind
-  local work
+  local from_url
+  local to_url
   local script
   kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
+  from_url="$(webdav_path_url "$label" "$from")"
+  to_url="$(webdav_path_url "$label" "$to")"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$work = $(ps_quote "$work")
-function Join-Rel([string]\$root, [string]\$rel) {
-  \$path = \$root
-  foreach (\$part in (\$rel -split '/')) { \$path = Join-Path \$path \$part }
-  return \$path
-}
-\$src = Join-Rel \$work $(ps_quote "$from")
-\$dst = Join-Rel \$work $(ps_quote "$to")
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent \$dst) | Out-Null
-Move-Item -LiteralPath \$src -Destination \$dst -Force
+\$from = $(ps_quote "$from_url")
+\$to = $(ps_quote "$to_url")
+Invoke-WebRequest -UseBasicParsing -CustomMethod MOVE -Uri \$from -Headers @{ Destination = \$to } | Out-Null
 "
   else
     script="
 set -Eeuo pipefail
-work=$(sh_quote "$work")
-from=$(sh_quote "$from")
-to=$(sh_quote "$to")
-src=\"\$work/\$from\"
-dst=\"\$work/\$to\"
-mkdir -p \"\$(dirname \"\$dst\")\"
-mv \"\$src\" \"\$dst\"
+from=$(sh_quote "$from_url")
+to=$(sh_quote "$to_url")
+curl -fsS -X MOVE -H \"Destination: \$to\" \"\$from\" >/dev/null
 "
   fi
   remote_exec "$label" "$script"
@@ -661,80 +674,35 @@ remove_remote() {
   local label="$1"
   local rel="$2"
   local kind
-  local work
+  local url
   local script
   kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
+  url="$(webdav_path_url "$label" "$rel")"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$path = $(ps_quote "$work")
-foreach (\$part in ($(ps_quote "$rel") -split '/')) { \$path = Join-Path \$path \$part }
-Remove-Item -LiteralPath \$path -Recurse -Force -ErrorAction SilentlyContinue
+\$url = $(ps_quote "$url")
+try {
+  Invoke-WebRequest -UseBasicParsing -Method Delete -Uri \$url | Out-Null
+} catch {
+  if (\$_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+}
 "
   else
-    script="rm -rf $(sh_quote "$work/$rel")"
+    script="
+set -Eeuo pipefail
+url=$(sh_quote "$url")
+status=\$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \"\$url\")
+[[ \"\$status\" == 204 || \"\$status\" == 404 ]]
+"
   fi
   remote_exec "$label" "$script"
 }
 
 snapshot() {
   local label="$1"
-  local kind
-  local work
-  local script
-  kind="$(host_value "$label" kind)"
-  work="$(host_value "$label" work)"
-  if [[ "$kind" == "windows" ]]; then
-    script="
-\$work = $(ps_quote "$work")
-\$tab = [char]9
-function Is-Ignored([string]\$rel) {
-  \$leaf = Split-Path -Leaf \$rel
-  if (\$rel -eq '.hashtree' -or \$rel.StartsWith('.hashtree/')) { return \$true }
-  if (@('.DS_Store', 'Thumbs.db', 'desktop.ini') -contains \$leaf) { return \$true }
-  if (\$leaf.StartsWith('._')) { return \$true }
-  if (\$leaf.EndsWith('~')) { return \$true }
-  if (\$leaf.StartsWith('#') -and \$leaf.EndsWith('#')) { return \$true }
-  if (\$leaf.EndsWith('.sbak')) { return \$true }
-  return \$false
-}
-\$rows = @()
-Get-ChildItem -LiteralPath \$work -Recurse -File -Force | ForEach-Object {
-  \$rel = \$_.FullName.Substring(\$work.Length).TrimStart([char]92, [char]47).Replace([string][char]92, '/')
-  if (-not (Is-Ignored \$rel)) {
-    \$hash = (Get-FileHash -LiteralPath \$_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    \$rows += (\$hash + \$tab + ([int64]\$_.Length).ToString() + \$tab + \$rel)
-  }
-}
-\$rows | Sort-Object
-"
-  else
-    script='
-set -Eeuo pipefail
-root='"$(sh_quote "$work")"'
-is_ignored() {
-  rel="$1"
-  name="${rel##*/}"
-  case "$rel" in .hashtree|.hashtree/*) return 0 ;; esac
-  case "$name" in .DS_Store|Thumbs.db|desktop.ini) return 0 ;; esac
-  [[ "$name" == ._* ]] && return 0
-  [[ "$name" == *~ ]] && return 0
-  [[ "$name" == \#*\# ]] && return 0
-  [[ "$name" == *.sbak ]] && return 0
-  return 1
-}
-while IFS= read -r -d "" file; do
-  rel="${file#"$root"/}"
-  if is_ignored "$rel"; then
-    continue
-  fi
-  hash="$(shasum -a 256 "$file" | awk "{print \$1}")"
-  size="$(wc -c <"$file" | tr -d " ")"
-  printf "%s\t%s\t%s\n" "$hash" "$size" "$rel"
-done < <(find "$root" -type f -print0) | LC_ALL=C sort
-'
-  fi
-  remote_exec "$label" "$script" | tr -d '\r'
+  idrive_cmd "$label" list |
+    jq -r '.files[] | [.sha256, (.size | tostring), .path] | @tsv' |
+    LC_ALL=C sort
 }
 
 union_snapshots() {
@@ -786,7 +754,7 @@ all_fresh() {
   local label status
   for label in "${LABELS[@]}"; do
     status="$(idrive_cmd "$label" status 2>/dev/null || true)"
-    jq -e '.daemon.running == true and .daemon.fresh == true' >/dev/null 2>&1 <<<"$status" || return 1
+    jq -e '.daemon.running == true and .daemon.fresh == true and (.daemon.browser_gateway.webdav_url | type == "string")' >/dev/null 2>&1 <<<"$status" || return 1
   done
 }
 
@@ -812,23 +780,6 @@ snapshot_file_count() {
     return
   fi
   printf "%s\n" "$snapshot" | sed '/^$/d' | wc -l | tr -d ' '
-}
-
-sha256_text() {
-  printf "%s" "$1" | shasum -a 256 | awk '{print $1}'
-}
-
-snapshot_has_hash_prefix() {
-  local hash="$1"
-  local prefix="$2"
-  awk -F '\t' -v hash="$hash" -v prefix="$prefix" \
-    '$1 == hash && index($3, prefix) == 1 { found = 1 } END { exit found ? 0 : 1 }'
-}
-
-snapshot_prefix_count() {
-  local prefix="$1"
-  awk -F '\t' -v prefix="$prefix" \
-    'index($3, prefix) == 1 { count++ } END { print count + 0 }'
 }
 
 wait_for_converged_union() {
@@ -880,95 +831,6 @@ source_root_matches_expected_count() {
 
 source_and_snapshots_match_expected() {
   snapshots_match_expected && source_root_matches_expected_count
-}
-
-prepare_offline_work_copy() {
-  local label="$1"
-  local kind
-  local base
-  local work
-  local script
-  kind="$(host_value "$label" kind)"
-  base="$(host_value "$label" base)"
-  work="$(host_value "$label" work)"
-  if [[ "$kind" == "windows" ]]; then
-    script="
-\$ErrorActionPreference = 'Stop'
-\$work = $(ps_quote "$work")
-\$offline = Join-Path $(ps_quote "$base") 'offline-work'
-if (Test-Path -LiteralPath \$offline) { Remove-Item -LiteralPath \$offline -Recurse -Force }
-New-Item -ItemType Directory -Force -Path \$offline | Out-Null
-Get-ChildItem -LiteralPath \$work -Force | ForEach-Object {
-  Copy-Item -LiteralPath \$_.FullName -Destination \$offline -Recurse -Force
-}
-"
-  else
-    script="
-set -Eeuo pipefail
-work=$(sh_quote "$work")
-offline=$(sh_quote "$base/offline-work")
-rm -rf \"\$offline\"
-mkdir -p \"\$offline\"
-if [[ -d \"\$work\" ]]; then
-  cp -a \"\$work\"/. \"\$offline\"/ 2>/dev/null || true
-fi
-"
-  fi
-  remote_exec "$label" "$script"
-}
-
-restore_offline_work_copy() {
-  local label="$1"
-  local kind
-  local base
-  local work
-  local script
-  kind="$(host_value "$label" kind)"
-  base="$(host_value "$label" base)"
-  work="$(host_value "$label" work)"
-  if [[ "$kind" == "windows" ]]; then
-    script="
-\$ErrorActionPreference = 'Stop'
-\$work = $(ps_quote "$work")
-\$offline = Join-Path $(ps_quote "$base") 'offline-work'
-if (Test-Path -LiteralPath \$work) { Remove-Item -LiteralPath \$work -Recurse -Force }
-New-Item -ItemType Directory -Force -Path \$work | Out-Null
-Get-ChildItem -LiteralPath \$offline -Force | ForEach-Object {
-  Copy-Item -LiteralPath \$_.FullName -Destination \$work -Recurse -Force
-}
-"
-  else
-    script="
-set -Eeuo pipefail
-work=$(sh_quote "$work")
-offline=$(sh_quote "$base/offline-work")
-rm -rf \"\$work\"
-mkdir -p \"\$work\"
-if [[ -d \"\$offline\" ]]; then
-  cp -a \"\$offline\"/. \"\$work\"/ 2>/dev/null || true
-fi
-"
-  fi
-  remote_exec "$label" "$script"
-}
-
-import_working_dir() {
-  local label="$1"
-  idrive_cmd "$label" import "$(host_value "$label" work)" >/dev/null
-}
-
-concurrent_edit_conflict_visible() {
-  local label current count
-  for label in "${LABELS[@]}"; do
-    current="$(snapshot "$label")"
-    printf "%s\n" "$current" |
-      snapshot_has_hash_prefix "$CONCURRENT_SOURCE_HASH" "conflicts/concurrent" || return 1
-    printf "%s\n" "$current" |
-      snapshot_has_hash_prefix "$CONCURRENT_TARGET_HASH" "conflicts/concurrent" || return 1
-    count="$(printf "%s\n" "$current" | snapshot_prefix_count "conflicts/concurrent")"
-    (( count >= 2 )) || return 1
-  done
-  return 0
 }
 
 run_step() {
@@ -1057,38 +919,28 @@ step_receiver_restart() {
 step_source_restart_delete() {
   write_file "$source_label" "stopped-source-delete/from-source.txt" "delete while $source_label is stopped"
   wait_for_source_snapshot "$source_label" "source restart delete baseline"
-  stop_daemon "$source_label"
   remove_remote "$source_label" "stopped-source-delete/from-source.txt"
+  wait_for_source_snapshot "$source_label" "source restart delete"
+  stop_daemon "$source_label"
   start_daemon "$source_label"
   wait_until "source daemon fresh after restart" all_fresh
-  wait_for_source_snapshot "$source_label" "source restart delete"
+  wait_for_source_snapshot "$source_label" "source restart delete after restart"
 }
 
 step_concurrent_same_path_edits() {
   CONCURRENT_SOURCE_CONTENT="concurrent edit from $source_label in $RUN_ID"
   CONCURRENT_TARGET_CONTENT="concurrent edit from $target_label in $RUN_ID"
-  CONCURRENT_SOURCE_HASH="$(sha256_text "$CONCURRENT_SOURCE_CONTENT")"
-  CONCURRENT_TARGET_HASH="$(sha256_text "$CONCURRENT_TARGET_CONTENT")"
 
   write_file "$source_label" "conflicts/concurrent.txt" "concurrent baseline in $RUN_ID"
   wait_for_source_snapshot "$source_label" "concurrent edit baseline"
 
-  prepare_offline_work_copy "$source_label"
-  prepare_offline_work_copy "$target_label"
-  stop_daemon "$source_label"
-  stop_daemon "$target_label"
-  restore_offline_work_copy "$source_label"
-  restore_offline_work_copy "$target_label"
+  write_file "$source_label" "conflicts/concurrent.txt" "$CONCURRENT_SOURCE_CONTENT" &
+  local source_pid="$!"
+  write_file "$target_label" "conflicts/concurrent.txt" "$CONCURRENT_TARGET_CONTENT" &
+  local target_pid="$!"
+  wait "$source_pid"
+  wait "$target_pid"
 
-  write_file "$source_label" "conflicts/concurrent.txt" "$CONCURRENT_SOURCE_CONTENT"
-  write_file "$target_label" "conflicts/concurrent.txt" "$CONCURRENT_TARGET_CONTENT"
-  import_working_dir "$source_label"
-  import_working_dir "$target_label"
-
-  start_daemon "$source_label"
-  start_daemon "$target_label"
-  wait_until "concurrent edit daemons fresh" all_fresh
-  wait_until "concurrent edit conflict copies" concurrent_edit_conflict_visible
   wait_for_converged_union "concurrent edit convergence"
 }
 
@@ -1142,19 +994,18 @@ for label in "${LABELS[@]}"; do
 done
 
 for label in "${LABELS[@]}"; do
-  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
-"
-  write_file "$label" "shared/same.txt" "same bytes from all devices
-"
-  idrive_cmd "$label" import "$(host_value "$label" work)" >/dev/null
-done
-
-for label in "${LABELS[@]}"; do
   start_daemon "$label"
 done
 
 run_step "authorization" wait_until "all devices authorized" all_authorized
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
+
+for label in "${LABELS[@]}"; do
+  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
+"
+  write_file "$label" "shared/same.txt" "same bytes from all devices
+"
+done
 
 run_step "initial multi-device merge" wait_for_converged_union "initial merge"
 

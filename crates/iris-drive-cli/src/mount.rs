@@ -22,8 +22,6 @@ use iris_drive_core::config::AppConfig;
 #[cfg(target_os = "linux")]
 use iris_drive_core::daemon::Daemon;
 #[cfg(target_os = "linux")]
-use iris_drive_core::paths::config_path_in;
-#[cfg(target_os = "linux")]
 use iris_drive_core::{PRIMARY_DRIVE_ID, PrimaryMergedRoot, primary_merged_root};
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
@@ -120,8 +118,6 @@ pub(crate) async fn start_iris_drive_mount(
             .await
             .context("rebuilding initial visible mount root")?;
     }
-    remember_mountpoint(config_dir, &mountpoint)?;
-
     let (tx, updates) = mpsc::unbounded_channel();
     let publisher = Arc::new(ChannelRootPublisher { tx });
     let fs = HashtreeFuse::new_with_publisher(
@@ -161,23 +157,6 @@ fn current_device_root_missing(config: &AppConfig) -> bool {
         .drive(PRIMARY_DRIVE_ID)
         .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
         .is_none()
-}
-
-#[cfg(target_os = "linux")]
-fn remember_mountpoint(config_dir: &Path, mountpoint: &Path) -> Result<()> {
-    let path = config_path_in(config_dir);
-    let mut config = AppConfig::load_or_default(&path)?;
-    let Some(drive) = config.drive(PRIMARY_DRIVE_ID).cloned() else {
-        return Ok(());
-    };
-    if drive.working_dir.as_deref() == Some(mountpoint) {
-        return Ok(());
-    }
-    let mut updated = drive;
-    updated.working_dir = Some(mountpoint.to_path_buf());
-    config.upsert_drive(updated);
-    config.save(path)?;
-    Ok(())
 }
 
 #[cfg(target_os = "linux")]

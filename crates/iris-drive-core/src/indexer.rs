@@ -38,7 +38,7 @@ pub enum IndexError {
     ConflictRecord(String),
 }
 
-fn should_ignore_name(name: &str) -> bool {
+pub(crate) fn should_ignore_name(name: &str) -> bool {
     IGNORED_NAMES.contains(&name)
         || name.starts_with("._")
         || name.ends_with('~')
@@ -896,7 +896,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn visible_root_history_emits_tombstone_without_working_dir() {
+    async fn visible_root_history_emits_tombstone_without_plain_directory() {
         let first_dir = tempdir().unwrap();
         std::fs::write(first_dir.path().join("removed.txt"), b"bye").unwrap();
         std::fs::write(first_dir.path().join("kept.txt"), b"still here").unwrap();

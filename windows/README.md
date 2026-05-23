@@ -30,8 +30,8 @@ for `win-x64`, copies `idrive.exe` next to `IrisDrive.exe`, and can recreate the
 desktop shortcut with the packaged Iris Drive icon.
 
 The app looks for `idrive.exe` next to the app, under `target\debug`, under
-`target\release`, or at `IRIS_DRIVE_CLI`. It starts the daemon without a normal
-working directory; the user-visible drive should be exposed by the Windows
-provider backend once WinFsp/Cloud Files support lands.
+`target\release`, or at `IRIS_DRIVE_CLI`. It starts the daemon with the
+loopback WebDAV drive surface enabled; the native provider backend can replace
+that surface once WinFsp/Cloud Files support lands.
 
 See [`docs/PARITY.md`](../docs/PARITY.md) for the current desktop parity matrix.

@@ -287,21 +287,20 @@ pub async fn primary_merged_root<S: Store>(
     })
 }
 
-/// Copy the merged primary-drive view into `working_dir`.
+/// Copy the merged primary-drive view into `target_dir`.
 ///
 /// Existing files are overwritten only when they still match this device's
-/// last imported root. If a user edited a file on disk and the daemon has not
-/// imported that edit yet, materialization skips that path and lets the normal
-/// scan/publish loop handle the local change.
+/// last imported root. If the target has diverged, materialization skips that
+/// path so the caller can decide how to handle the local change.
 pub async fn materialize_primary_drive<S>(
     tree: Arc<HashTree<S>>,
     config: &AppConfig,
-    working_dir: &Path,
+    target_dir: &Path,
 ) -> Result<MaterializeReport, MaterializeError>
 where
     S: Store + Send + Sync + 'static,
 {
-    std::fs::create_dir_all(working_dir)?;
+    std::fs::create_dir_all(target_dir)?;
     let account = config.account.as_ref().ok_or(MaterializeError::NoAccount)?;
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
@@ -322,23 +321,23 @@ where
             .filter(|path| !target_by_path.contains_key(path))
             .collect::<BTreeSet<_>>();
     let mut report = MaterializeReport::default();
-    materialize_target_dirs(working_dir, &target_dirs, &local_entries, &mut report)?;
+    materialize_target_dirs(target_dir, &target_dirs, &local_entries, &mut report)?;
     materialize_target_files(
         tree,
         drive,
-        working_dir,
+        target_dir,
         &target_by_path,
         &local_entries,
         &mut report,
     )
     .await?;
-    delete_removed_local_files(working_dir, &target_by_path, &local_entries, &mut report)?;
+    delete_removed_local_files(target_dir, &target_by_path, &local_entries, &mut report)?;
 
     Ok(report)
 }
 
 fn materialize_target_dirs(
-    working_dir: &Path,
+    target_dir: &Path,
     target_dirs: &BTreeSet<String>,
     local_entries: &BTreeMap<String, DeviceFileEntry>,
     report: &mut MaterializeReport,
@@ -348,7 +347,7 @@ fn materialize_target_dirs(
             report.skipped += 1;
             continue;
         };
-        let destination = working_dir.join(relative);
+        let destination = target_dir.join(relative);
         if destination.is_dir() {
             report.unchanged += 1;
             continue;
@@ -527,7 +526,7 @@ async fn set_visible_entry_with_meta<S: Store>(
 async fn materialize_target_files<S>(
     tree: Arc<HashTree<S>>,
     drive: &crate::config::Drive,
-    working_dir: &Path,
+    target_dir: &Path,
     target_by_path: &BTreeMap<String, MergedEntry>,
     local_entries: &BTreeMap<String, DeviceFileEntry>,
     report: &mut MaterializeReport,
@@ -540,9 +539,9 @@ where
             report.skipped += 1;
             continue;
         };
-        let destination = working_dir.join(relative);
+        let destination = target_dir.join(relative);
         if destination.is_dir() {
-            if !directory_matches_local_entries(working_dir, &entry.path, local_entries)? {
+            if !directory_matches_local_entries(target_dir, &entry.path, local_entries)? {
                 report.skipped += 1;
                 continue;
             }
@@ -586,7 +585,7 @@ where
 }
 
 fn delete_removed_local_files(
-    working_dir: &Path,
+    target_dir: &Path,
     target_by_path: &BTreeMap<String, MergedEntry>,
     local_entries: &BTreeMap<String, DeviceFileEntry>,
     report: &mut MaterializeReport,
@@ -599,7 +598,7 @@ fn delete_removed_local_files(
             report.skipped += 1;
             continue;
         };
-        let destination = working_dir.join(relative);
+        let destination = target_dir.join(relative);
         let snapshot = file_snapshot(&destination)?;
         if snapshot.is_none() {
             report.unchanged += 1;
@@ -828,15 +827,15 @@ fn may_replace_file_destination_with_directory(
 }
 
 fn directory_matches_local_entries(
-    working_dir: &Path,
+    target_dir: &Path,
     path: &str,
     local_entries: &BTreeMap<String, DeviceFileEntry>,
 ) -> Result<bool, MaterializeError> {
     let Some(relative) = safe_relative_path(path) else {
         return Ok(false);
     };
-    let directory = working_dir.join(relative);
-    let actual_files = collect_disk_file_paths(working_dir, &directory)?;
+    let directory = target_dir.join(relative);
+    let actual_files = collect_disk_file_paths(target_dir, &directory)?;
     let prefix = format!("{path}/");
     let local_subtree = local_entries
         .iter()
@@ -852,7 +851,7 @@ fn directory_matches_local_entries(
         let Some(relative) = safe_relative_path(&actual_path) else {
             return Ok(false);
         };
-        let snapshot = file_snapshot(&working_dir.join(relative))?;
+        let snapshot = file_snapshot(&target_dir.join(relative))?;
         if !snapshot.is_some_and(|snapshot| snapshot_matches_device_entry(snapshot, local_entry)) {
             return Ok(false);
         }
