@@ -19,30 +19,6 @@ public sealed class IrisDriveService
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "iris-drive");
 
-    public async Task<(IrisDriveStatusData Status, string? Notice)> StatusWithLocalImportAsync()
-    {
-        var status = await StatusAsync();
-        if (!status.Initialized)
-        {
-            return (status, null);
-        }
-        if (status.IsAwaitingLinkedApproval)
-        {
-            return (status, null);
-        }
-
-        try
-        {
-            await ImportDriveFolderAsync(status.WorkingDirectory ?? DefaultDriveDirectory);
-            status = await StatusAsync();
-            return (status, null);
-        }
-        catch (Exception error)
-        {
-            return (status, $"Could not scan drive folder: {error.Message}");
-        }
-    }
-
     public async Task<IrisDriveStatusData> StatusAsync()
     {
         using var document = await RunJsonAsync("status");

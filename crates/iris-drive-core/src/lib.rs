@@ -59,8 +59,8 @@ pub use hashtree_fips_transport::FipsAppMessage;
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
 pub use materialize::{
-    MaterializeError, MaterializeReport, PrimaryMergedView, materialize_primary_drive,
-    primary_merged_view,
+    MaterializeError, MaterializeReport, PrimaryMergedRoot, PrimaryMergedView,
+    materialize_primary_drive, primary_merged_root, primary_merged_view,
 };
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,

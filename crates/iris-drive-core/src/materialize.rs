@@ -67,6 +67,13 @@ impl PrimaryMergedView {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrimaryMergedRoot {
+    pub root_cid: Cid,
+    pub file_count: usize,
+    pub top_level_entries: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MaterializeReport {
     pub written: usize,
@@ -133,6 +140,49 @@ pub async fn primary_merged_view<S: Store>(
         view,
         authorized_devices: authorized.len(),
         device_roots_present: snapshots.len(),
+    })
+}
+
+/// Build a user-visible hashtree root for the merged primary drive.
+///
+/// This is the root a virtual mount/FileProvider surface should expose. It is
+/// intentionally free of Iris Drive's `.hashtree/` metadata; when the mounted
+/// view is edited, [`crate::daemon::Daemon::import_visible_root`] layers the
+/// metadata back onto the device's publishable root.
+pub async fn primary_merged_root<S: Store>(
+    tree: &HashTree<S>,
+    config: &AppConfig,
+) -> Result<PrimaryMergedRoot, MaterializeError> {
+    let account = config.account.as_ref().ok_or(MaterializeError::NoAccount)?;
+    let drive = config
+        .drive(PRIMARY_DRIVE_ID)
+        .ok_or(MaterializeError::PrimaryDriveMissing)?;
+    let authorized = authorized_device_pubkeys(account);
+    let merged = primary_merged_view(tree, config).await?;
+    let mut root = tree.put_directory(Vec::new()).await?;
+
+    let target_dirs = merged_user_directory_paths(tree, drive, &authorized).await?;
+    for dir in &target_dirs {
+        root = ensure_visible_dir(tree, root, dir).await?;
+    }
+
+    for entry in &merged.view.files {
+        root = ensure_visible_parent_dirs(tree, root, &entry.path).await?;
+        let source = source_entry_for_merged_entry(tree, drive, entry).await?;
+        let cid = Cid {
+            hash: source.hash,
+            key: source.key,
+        };
+        let (parent, name) = split_visible_path(&entry.path)?;
+        root = tree
+            .set_entry(&root, &parent, name, &cid, source.size, source.link_type)
+            .await?;
+    }
+
+    Ok(PrimaryMergedRoot {
+        root_cid: root,
+        file_count: merged.file_count(),
+        top_level_entries: merged.top_level_entries(),
     })
 }
 
@@ -213,6 +263,108 @@ fn materialize_target_dirs(
         report.written += 1;
     }
     Ok(())
+}
+
+fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), MaterializeError> {
+    let mut segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let name = segments
+        .pop()
+        .ok_or_else(|| HashTreeError::PathNotFound(path.to_string()))?;
+    Ok((segments, name))
+}
+
+async fn ensure_visible_parent_dirs<S: Store>(
+    tree: &HashTree<S>,
+    root: Cid,
+    path: &str,
+) -> Result<Cid, MaterializeError> {
+    let (parent, _) = split_visible_path(path)?;
+    let mut current_root = root;
+    for depth in 1..=parent.len() {
+        current_root = ensure_visible_dir_segments(tree, current_root, &parent[..depth]).await?;
+    }
+    Ok(current_root)
+}
+
+async fn ensure_visible_dir<S: Store>(
+    tree: &HashTree<S>,
+    root: Cid,
+    path: &str,
+) -> Result<Cid, MaterializeError> {
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let mut current_root = root;
+    for depth in 1..=segments.len() {
+        current_root = ensure_visible_dir_segments(tree, current_root, &segments[..depth]).await?;
+    }
+    Ok(current_root)
+}
+
+async fn ensure_visible_dir_segments<S: Store>(
+    tree: &HashTree<S>,
+    root: Cid,
+    segments: &[&str],
+) -> Result<Cid, MaterializeError> {
+    if segments.is_empty() {
+        return Ok(root);
+    }
+    let path = segments.join("/");
+    if let Some(existing) = tree.resolve(&root, &path).await? {
+        if tree.is_dir(&existing).await? {
+            return Ok(root);
+        }
+        return Err(HashTreeError::PathNotFound(path).into());
+    }
+
+    let dir = tree.put_directory(Vec::new()).await?;
+    let (name, parent) = segments
+        .split_last()
+        .expect("non-empty segments checked above");
+    tree.set_entry(&root, parent, name, &dir, 0, LinkType::Dir)
+        .await
+        .map_err(Into::into)
+}
+
+async fn source_entry_for_merged_entry<S: Store>(
+    tree: &HashTree<S>,
+    drive: &crate::config::Drive,
+    entry: &MergedEntry,
+) -> Result<hashtree_core::TreeEntry, MaterializeError> {
+    let root = drive
+        .device_roots
+        .get(&entry.source_device)
+        .ok_or_else(|| HashTreeError::PathNotFound(entry.source_device.clone()))?;
+    let root = Cid::parse(&root.root_cid).map_err(|source| MaterializeError::RootCid {
+        device_id: entry.source_device.clone(),
+        root_cid: root.root_cid.clone(),
+        source,
+    })?;
+    tree_entry_at_path(tree, &root, &entry.path).await
+}
+
+async fn tree_entry_at_path<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &str,
+) -> Result<hashtree_core::TreeEntry, MaterializeError> {
+    let (parent, name) = split_visible_path(path)?;
+    let parent_cid = if parent.is_empty() {
+        root.clone()
+    } else {
+        tree.resolve(root, &parent.join("/"))
+            .await?
+            .ok_or_else(|| HashTreeError::PathNotFound(parent.join("/")))?
+    };
+    tree.list_directory(&parent_cid)
+        .await?
+        .into_iter()
+        .find(|entry| entry.name == name)
+        .ok_or_else(|| HashTreeError::EntryNotFound(name.to_string()).into())
 }
 
 async fn materialize_target_files<S>(
@@ -614,6 +766,13 @@ fn is_windows_reserved_name(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::Account;
+    use crate::config::{AppConfig, DeviceRootRef, Drive};
+    use crate::indexer::index_dir_with_history_and_meta;
+    use crate::root_meta::DriveRootMeta;
+    use hashtree_core::{HashTreeConfig, MemoryStore};
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn safe_relative_path_rejects_traversal() {
@@ -635,5 +794,67 @@ mod tests {
 
         assert!(may_replace_destination(None, None, false));
         assert!(!may_replace_destination(None, Some(&local_entry), false));
+    }
+
+    #[tokio::test]
+    async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
+        let cfg_dir = tempdir().unwrap();
+        let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+        let source = tempdir().unwrap();
+        std::fs::create_dir(source.path().join("empty")).unwrap();
+        std::fs::create_dir(source.path().join("docs")).unwrap();
+        std::fs::write(source.path().join("docs").join("note.txt"), b"mounted").unwrap();
+        let meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.to_string(),
+            device_id: account.state.device_pubkey.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 1,
+        };
+        let source_root =
+            index_dir_with_history_and_meta(&tree, source.path(), None, 1, Some(&meta))
+                .await
+                .unwrap();
+
+        let mut config = AppConfig {
+            account: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+        drive.device_roots.insert(
+            account.state.device_pubkey.clone(),
+            DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
+        );
+        config.upsert_drive(drive);
+
+        let merged = primary_merged_root(&tree, &config).await.unwrap();
+        let top = tree.list_directory(&merged.root_cid).await.unwrap();
+        let top_names = top
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(top_names, vec!["docs", "empty"]);
+        assert_eq!(merged.file_count, 1);
+        assert_eq!(merged.top_level_entries, 1);
+
+        let note = tree
+            .resolve(&merged.root_cid, "docs/note.txt")
+            .await
+            .unwrap()
+            .expect("note exists");
+        let bytes = tree.get(&note, None).await.unwrap().unwrap();
+        assert_eq!(bytes, b"mounted");
+        assert!(
+            tree.resolve(&merged.root_cid, ".hashtree")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

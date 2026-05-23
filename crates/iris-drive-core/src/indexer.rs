@@ -90,7 +90,10 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
 ) -> Result<Cid, IndexError> {
     let mut root = index_dir(tree, dir).await?;
     if let Some(prev) = previous_root {
-        root = attach_history(tree, dir, root, prev, now_unix_seconds).await?;
+        let mut current_paths: BTreeSet<String> = BTreeSet::new();
+        collect_local_file_paths(dir, "", &mut current_paths)?;
+        root = attach_history_for_current_paths(tree, root, prev, now_unix_seconds, &current_paths)
+            .await?;
     }
     if let Some(meta) = root_meta {
         root = layer_root_meta(tree, root, meta).await?;
@@ -98,16 +101,39 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
     Ok(root)
 }
 
-async fn attach_history<S: Store>(
+/// Like [`index_dir_with_history_and_meta`], but starts from a hashtree root
+/// that already represents the user-visible directory. This is used by
+/// virtual mounts / file-provider adapters where bytes live in hashtree rather
+/// than a normal materialized folder on disk.
+pub async fn layer_history_and_meta_on_root<S: Store>(
     tree: &HashTree<S>,
-    dir: &Path,
+    mut root: Cid,
+    previous_root: Option<&Cid>,
+    now_unix_seconds: i64,
+    root_meta: Option<&DriveRootMeta>,
+) -> Result<Cid, IndexError> {
+    if let Some(prev) = previous_root {
+        let (current_files, _) = walk_device_tree(tree, &root)
+            .await
+            .map_err(IndexError::Tree)?;
+        let current_paths: BTreeSet<String> =
+            current_files.into_iter().map(|file| file.path).collect();
+        root = attach_history_for_current_paths(tree, root, prev, now_unix_seconds, &current_paths)
+            .await?;
+    }
+    if let Some(meta) = root_meta {
+        root = layer_root_meta(tree, root, meta).await?;
+    }
+    Ok(root)
+}
+
+async fn attach_history_for_current_paths<S: Store>(
+    tree: &HashTree<S>,
     mut root: Cid,
     prev: &Cid,
     now_unix_seconds: i64,
+    current_paths: &BTreeSet<String>,
 ) -> Result<Cid, IndexError> {
-    let mut current_paths: BTreeSet<String> = BTreeSet::new();
-    collect_local_file_paths(dir, "", &mut current_paths)?;
-
     let (prev_files, prev_tombstones) = walk_device_tree(tree, prev)
         .await
         .map_err(IndexError::Tree)?;
@@ -867,6 +893,31 @@ mod tests {
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].path, "removed.txt");
         assert_eq!(tombstones[0].tombstoned_at, 1234);
+    }
+
+    #[tokio::test]
+    async fn visible_root_history_emits_tombstone_without_working_dir() {
+        let first_dir = tempdir().unwrap();
+        std::fs::write(first_dir.path().join("removed.txt"), b"bye").unwrap();
+        std::fs::write(first_dir.path().join("kept.txt"), b"still here").unwrap();
+        let tree = new_tree();
+        let first = index_dir(&tree, first_dir.path()).await.unwrap();
+
+        let visible_dir = tempdir().unwrap();
+        std::fs::write(visible_dir.path().join("kept.txt"), b"still here").unwrap();
+        let visible_root = index_dir(&tree, visible_dir.path()).await.unwrap();
+        let second = layer_history_and_meta_on_root(&tree, visible_root, Some(&first), 5678, None)
+            .await
+            .unwrap();
+
+        let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+            .await
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "kept.txt");
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].path, "removed.txt");
+        assert_eq!(tombstones[0].tombstoned_at, 5678);
     }
 
     #[tokio::test]

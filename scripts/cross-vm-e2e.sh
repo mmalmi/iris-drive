@@ -6,10 +6,16 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/cross-vm-e2e.sh --host LABEL=KIND:SSH_HOST [--host ...]
+  scripts/cross-vm-three-platform-e2e.sh
 
 KIND is one of:
   posix     Linux or macOS host reachable by SSH with bash
   windows   Windows host reachable by SSH with PowerShell
+
+For the standard macOS + Ubuntu + Windows matrix, prefer
+scripts/cross-vm-three-platform-e2e.sh with hostnames supplied through
+environment variables. That keeps private SSH hostnames out of the repo while
+still making the intended three-platform test obvious.
 
 The script creates isolated temp config/work directories on every host, links
 them into one Iris Drive account, starts real idrive daemons, mutates files,
@@ -850,6 +856,16 @@ step_receiver_restart() {
   wait_for_source_snapshot "$source_label" "receiver restart"
 }
 
+step_source_restart_delete() {
+  write_file "$source_label" "stopped-source-delete/from-source.txt" "delete while $source_label is stopped"
+  wait_for_source_snapshot "$source_label" "source restart delete baseline"
+  stop_daemon "$source_label"
+  remove_remote "$source_label" "stopped-source-delete/from-source.txt"
+  start_daemon "$source_label"
+  wait_until "source daemon fresh after restart" all_fresh
+  wait_for_source_snapshot "$source_label" "source restart delete"
+}
+
 step_many_small_files() {
   local i
   for i in $(seq 1 "$MANY_FILES"); do
@@ -924,6 +940,7 @@ run_step "file type replacements" step_file_type_replacements
 run_step "seafile-style rename chain" step_rename_chain
 run_step "ignored desktop/editor noise" step_ignored_noise
 run_step "receiver restart convergence" step_receiver_restart
+run_step "source restart delete propagation" step_source_restart_delete
 run_step "many small files" step_many_small_files
 run_step "large file" step_large_file
 

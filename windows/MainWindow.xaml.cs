@@ -39,6 +39,7 @@ public partial class MainWindow : Window
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
         SelectPage("Drive");
+        RenderLoading();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -73,7 +74,7 @@ public partial class MainWindow : Window
         refreshing = true;
         try
         {
-            var (status, notice) = await service.StatusWithLocalImportAsync();
+            var status = await service.StatusAsync();
             currentStatus = status;
             if (!status.Initialized)
             {
@@ -86,13 +87,13 @@ public partial class MainWindow : Window
             var syncRunning = EnsureDaemonRunning(status);
             if (status.IsAwaitingLinkedApproval)
             {
-                RenderAwaitingApproval(status, syncRunning, notice);
+                RenderAwaitingApproval(status, syncRunning, null);
                 return;
             }
 
             SetupRoot.Visibility = Visibility.Collapsed;
             MainRoot.Visibility = Visibility.Visible;
-            RenderStatus(status, syncRunning, notice);
+            RenderStatus(status, syncRunning, null);
         }
         catch (Exception error)
         {
@@ -104,6 +105,27 @@ public partial class MainWindow : Window
         {
             refreshing = false;
         }
+    }
+
+    private void RenderLoading()
+    {
+        SetupRoot.Visibility = Visibility.Collapsed;
+        MainRoot.Visibility = Visibility.Visible;
+        DriveTitle.Text = "My Drive";
+        DriveMessage.Text = "Starting sync";
+        StatusPill.Text = "Starting";
+        FilesValue.Text = "0";
+        BlocksValue.Text = "0";
+        StorageValue.Text = "0 B";
+        DevicesValue.Text = "0/0";
+        NoticeText.Text = "";
+        OwnerValue.Text = "-";
+        DeviceValue.Text = "-";
+        AuthValue.Text = "-";
+        ConfigPathValue.Text = "-";
+        BlocksPathValue.Text = "-";
+        DrivePathValue.Text = service.DefaultDriveDirectory;
+        RootPathValue.Text = "-";
     }
 
     private void RenderAwaitingApproval(

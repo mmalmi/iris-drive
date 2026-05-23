@@ -566,6 +566,36 @@ async fn live_daemons_reconnect_sender_and_receiver_without_losing_updates() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_publish_delete_made_while_source_was_stopped() {
+    let _guard = live_daemon_test_guard().await;
+    let mut cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
+
+    cluster
+        .write(
+            Client::Ubuntu,
+            "stopped-source-delete/from-ubuntu.txt",
+            b"delete me after the source daemon stops",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "stopped source delete baseline")
+        .await;
+
+    cluster.stop_daemon(Client::Ubuntu);
+    cluster
+        .remove(Client::Ubuntu, "stopped-source-delete/from-ubuntu.txt")
+        .await;
+    cluster.start_daemon(Client::Ubuntu);
+    cluster.wait_until_direct_peers_connected().await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "stopped source delete")
+        .await;
+    cluster.assert_missing(Client::Windows, "stopped-source-delete/from-ubuntu.txt");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "transfer bench; run with `cargo test -p idrive --test daemon_sync_matrix -- --ignored --nocapture`"]
 async fn bench_live_daemon_transfer_many_files() {
     let _guard = live_daemon_test_guard().await;

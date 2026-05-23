@@ -20,8 +20,8 @@ use thiserror::Error;
 use crate::config::{AppConfig, ConfigError, DeviceRootRef};
 use crate::conflict::ConflictState;
 use crate::indexer::{
-    IndexError, index_dir_with_history_and_meta, layer_conflict_records, layer_prev_link,
-    layer_root_meta, read_conflict_records,
+    IndexError, index_dir_with_history_and_meta, layer_conflict_records,
+    layer_history_and_meta_on_root, layer_prev_link, layer_root_meta, read_conflict_records,
 };
 use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
@@ -266,6 +266,44 @@ impl Daemon {
         self.import_working_dir_inner(working_dir, false).await
     }
 
+    /// Persist a user-visible hashtree root produced by a virtual mount or
+    /// platform file-provider adapter as this device's latest contribution.
+    ///
+    /// The input root should contain only visible user files/directories. This
+    /// method layers Iris Drive history, tombstones, and causal metadata before
+    /// recording the root in config, so mount-backed edits sync with the same
+    /// merge semantics as folder imports.
+    pub async fn import_visible_root(&mut self, root: Cid) -> Result<ImportReport, DaemonError> {
+        let previous_root_cid = self
+            .config
+            .account
+            .as_ref()
+            .and_then(|account| {
+                self.config
+                    .drive(PRIMARY_DRIVE_ID)
+                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
+            })
+            .map(|entry| entry.root_cid.clone());
+        let previous_root = match previous_root_cid.as_ref() {
+            Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
+            None => None,
+        };
+
+        let now = unix_now();
+        let root_meta = self.root_meta_for_import(now, false);
+        let root_cid = layer_history_and_meta_on_root(
+            &self.tree,
+            root,
+            previous_root.as_ref(),
+            now,
+            root_meta.as_ref(),
+        )
+        .await?;
+
+        self.report_and_record_root(root_cid, None, root_meta.as_ref(), now, false)
+            .await
+    }
+
     async fn import_materialized_working_dir(
         &mut self,
         working_dir: impl AsRef<Path>,
@@ -307,6 +345,24 @@ impl Daemon {
         )
         .await?;
 
+        self.report_and_record_root(
+            root_cid,
+            Some(working_dir.to_path_buf()),
+            root_meta.as_ref(),
+            now,
+            materialized_only,
+        )
+        .await
+    }
+
+    async fn report_and_record_root(
+        &mut self,
+        root_cid: Cid,
+        working_dir: Option<PathBuf>,
+        root_meta: Option<&DriveRootMeta>,
+        published_at: i64,
+        materialized_only: bool,
+    ) -> Result<ImportReport, DaemonError> {
         // Live-file count excludes the internal metadata directory from the
         // report.
         let listing = self
@@ -324,16 +380,17 @@ impl Daemon {
 
         self.update_primary_drive(
             &root_cid,
-            Some(working_dir),
-            root_meta.as_ref(),
-            now,
+            working_dir.as_deref(),
+            root_meta,
+            published_at,
             materialized_only,
         )?;
         self.persist_sync_cache_with_current_base().await?;
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),
-            working_dir: working_dir.to_path_buf(),
+            working_dir: working_dir
+                .unwrap_or_else(|| crate::paths::default_working_dir_in(self.config_dir.as_path())),
             file_count: files.len(),
             top_level_entries,
         })
@@ -623,6 +680,50 @@ mod tests {
                 .as_deref(),
             Some(work.path())
         );
+    }
+
+    #[tokio::test]
+    async fn import_visible_root_records_mount_deletions_as_tombstones() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let first = tempdir().unwrap();
+        std::fs::write(first.path().join("removed.txt"), b"gone from mount").unwrap();
+        std::fs::write(first.path().join("kept.txt"), b"still mounted").unwrap();
+        daemon.import_working_dir(first.path()).await.unwrap();
+
+        let visible = tempdir().unwrap();
+        std::fs::write(visible.path().join("kept.txt"), b"still mounted").unwrap();
+        let visible_root = crate::indexer::index_dir(daemon.tree(), visible.path())
+            .await
+            .unwrap();
+        let report = daemon.import_visible_root(visible_root).await.unwrap();
+
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert_eq!(report.root_cid, root.root_cid);
+        assert!(!root.materialized_only);
+        assert_eq!(root.device_seq, 2);
+
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+            .await
+            .unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["kept.txt"]
+        );
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].path, "removed.txt");
     }
 
     #[tokio::test]

@@ -1035,8 +1035,8 @@ fn tray_menu_item(
 }
 
 fn refresh(model: &AppRef) {
-    match status_with_local_import() {
-        Ok((json, scan_notice)) => {
+    match run_idrive_json(["status"]) {
+        Ok(json) => {
             let initialized = json
                 .get("initialized")
                 .and_then(Value::as_bool)
@@ -1109,9 +1109,6 @@ fn refresh(model: &AppRef) {
                 )
                 .unwrap_or("-"),
             );
-            if let Some(scan_notice) = scan_notice {
-                model.ui.notice.set_text(&scan_notice);
-            }
             let has_snapshot = snapshot_link(&json).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
@@ -1150,33 +1147,6 @@ fn refresh(model: &AppRef) {
             clear_list(&model.ui.relays);
             clear_list(&model.ui.blossom);
         }
-    }
-}
-
-fn status_with_local_import() -> Result<(Value, Option<String>), String> {
-    let mut status = run_idrive_json(["status"])?;
-    let initialized = status
-        .get("initialized")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !initialized {
-        return Ok((status, None));
-    }
-    if is_awaiting_link_approval(&status) {
-        return Ok((status, None));
-    }
-
-    match import_drive_folder(&working_dir(&status)) {
-        Ok(()) => {
-            if let Ok(updated) = run_idrive_json(["status"]) {
-                status = updated;
-            }
-            Ok((status, None))
-        }
-        Err(error) => Ok((
-            status,
-            Some(format!("Could not scan drive folder: {error}")),
-        )),
     }
 }
 
