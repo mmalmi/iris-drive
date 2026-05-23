@@ -2823,33 +2823,17 @@ fn cmd_daemon(
         write_daemon_status(config_dir, subscribed_status.clone());
         println!("{subscribed_status}");
 
-        let mut startup_config = config.clone();
-        let mut startup_state = state.clone();
-        match materialize_working_dir(config_dir).await {
-            Ok(Some(report)) => {
-                if report.materialize.changed() {
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "startup_materialized",
-                            "materialize": materialize_report_json(&report),
-                        })
-                    );
-                    startup_config = AppConfig::load_or_default(config_path_in(config_dir))?;
-                    startup_state = startup_config
-                        .account
-                        .clone()
-                        .ok_or_else(|| anyhow::anyhow!("missing account after materialize"))?;
-                }
-            }
-            Ok(None) => {}
-            Err(error) => {
-                println!(
-                    "{}",
-                    json!({"event": "startup_materialize_error", "error": format!("{error:#}")})
-                );
-            }
-        }
+        let startup_config = config.clone();
+        let startup_state = state.clone();
+        spawn_root_apply_followup(
+            client.clone(),
+            config_dir.to_path_buf(),
+            config.clone(),
+            None,
+            fips_blocks.clone(),
+            true,
+            "startup_materialized",
+        );
 
         // Announce the current account roster and device root once on
         // startup, and upload the initial blocks if this launch just
