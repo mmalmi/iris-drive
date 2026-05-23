@@ -33,6 +33,7 @@ const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
 const EVENT_MATERIALIZE_TIMEOUT_SECS: u64 = 30;
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
+const STATUS_PROBE_TIMEOUT_SECS: u64 = 2;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
@@ -736,7 +737,20 @@ fn write_daemon_status(config_dir: &Path, mut payload: Value) {
         && let Ok(existing) = serde_json::from_str::<Value>(&raw)
         && let Some(existing_object) = existing.as_object()
     {
-        for key in ["last_block_sync", "block_sync_by_root"] {
+        for key in [
+            "last_block_sync",
+            "block_sync_by_root",
+            "relays",
+            "owner_npub",
+            "watch_interval_secs",
+            "watch_debounce_ms",
+            "working_dir",
+            "relay_statuses",
+            "embedded_hashtree",
+            "browser_gateway",
+            "fips_block_sync",
+            "fips_block_sync_error",
+        ] {
             if !payload_object.contains_key(key)
                 && let Some(value) = existing_object.get(key)
             {
@@ -3113,10 +3127,29 @@ fn cmd_daemon(
                     }
                 }
                 _ = relay_status_timer.tick() => {
+                    write_daemon_status(config_dir, json!({"event": "heartbeat"}));
+                    let relay_statuses = match tokio::time::timeout(
+                        std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
+                        relay_status_payload(&client),
+                    )
+                    .await
+                    {
+                        Ok(statuses) => statuses,
+                        Err(_) => vec![json!({"url": "*", "status": "timeout"})],
+                    };
+                    let fips_status = match tokio::time::timeout(
+                        std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
+                        fips_block_sync_status(fips_blocks.as_deref()),
+                    )
+                    .await
+                    {
+                        Ok(status) => status,
+                        Err(_) => Some(json!({"status": "timeout"})),
+                    };
                     let status = json!({
                             "event": "relay_statuses",
-                            "relay_statuses": relay_status_payload(&client).await,
-                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_deref()).await,
+                            "relay_statuses": relay_statuses,
+                            "fips_block_sync": fips_status,
                     });
                     write_daemon_status(config_dir, status.clone());
                     println!("{status}");
