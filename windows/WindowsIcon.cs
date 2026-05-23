@@ -13,22 +13,24 @@ internal static class WindowsIcon
     public static System.Drawing.Icon TrayIcon()
     {
         var iconPath = PackagedIconPath();
-        if (File.Exists(iconPath))
+        var trayIcon = LoadIcon(iconPath, System.Windows.Forms.SystemInformation.SmallIconSize);
+        if (trayIcon is not null)
         {
-            return new System.Drawing.Icon(iconPath);
+            return trayIcon;
         }
 
         var processPath = Environment.ProcessPath;
         if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
         {
-            var icon = System.Drawing.Icon.ExtractAssociatedIcon(processPath);
-            if (icon is not null)
+            using var icon = System.Drawing.Icon.ExtractAssociatedIcon(processPath);
+            var associatedIcon = CloneIcon(icon, System.Windows.Forms.SystemInformation.SmallIconSize);
+            if (associatedIcon is not null)
             {
-                return icon;
+                return associatedIcon;
             }
         }
 
-        return System.Drawing.SystemIcons.Application;
+        return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
     }
 
     public static ImageSource? LoadWindowIcon()
@@ -83,6 +85,50 @@ internal static class WindowsIcon
     private static string PackagedIconPath()
     {
         return Path.Combine(AppContext.BaseDirectory, "IrisDrive.ico");
+    }
+
+    private static System.Drawing.Icon? LoadIcon(string iconPath, System.Drawing.Size size)
+    {
+        if (!File.Exists(iconPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var icon = new System.Drawing.Icon(iconPath, size);
+            return (System.Drawing.Icon)icon.Clone();
+        }
+        catch
+        {
+            try
+            {
+                using var icon = new System.Drawing.Icon(iconPath);
+                return (System.Drawing.Icon)icon.Clone();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private static System.Drawing.Icon? CloneIcon(System.Drawing.Icon? icon, System.Drawing.Size size)
+    {
+        if (icon is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var sizedIcon = new System.Drawing.Icon(icon, size);
+            return (System.Drawing.Icon)sizedIcon.Clone();
+        }
+        catch
+        {
+            return (System.Drawing.Icon)icon.Clone();
+        }
     }
 
     private static IEnumerable<string> ShortcutSearchPaths()
