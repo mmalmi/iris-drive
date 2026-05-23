@@ -2577,14 +2577,14 @@ fn spawn_scan_publish_worker(
 }
 
 fn spawn_daemon_heartbeat(config_dir: PathBuf) {
-    tokio::spawn(async move {
-        let mut timer = tokio::time::interval(std::time::Duration::from_secs(2));
-        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            timer.tick().await;
-            write_daemon_status(&config_dir, json!({"event": "heartbeat"}));
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("idrive-status-heartbeat".to_string())
+        .spawn(move || {
+            loop {
+                write_daemon_status(&config_dir, json!({"event": "heartbeat"}));
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
 }
 
 async fn relay_publish_with_timeout<T, F>(future: F) -> std::result::Result<T, String>
