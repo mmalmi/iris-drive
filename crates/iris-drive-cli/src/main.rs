@@ -2868,7 +2868,8 @@ fn cmd_daemon(
 
     let _daemon_lock = DaemonProcessLock::acquire(config_dir)?;
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
         .enable_all()
         .build()
         .context("building tokio runtime")?;
