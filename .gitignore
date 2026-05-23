@@ -4,6 +4,7 @@ node_modules/
 **/node_modules/
 dist/
 .claude/
+.local/
 **/*.rs.bk
 .DS_Store
 *.log
