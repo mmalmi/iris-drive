@@ -1272,7 +1272,8 @@ fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
 }
 
 fn cmd_import(config_dir: &std::path::Path, working_dir: &std::path::Path) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
         .enable_all()
         .build()
         .context("building tokio runtime")?;
