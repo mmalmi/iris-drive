@@ -3049,7 +3049,13 @@ fn cmd_daemon(
         } else {
             None
         };
-        let mut relay_status_timer = tokio::time::interval(std::time::Duration::from_secs(2));
+        let mut heartbeat_timer = tokio::time::interval(std::time::Duration::from_secs(2));
+        heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let relay_status_period = std::time::Duration::from_secs(10);
+        let mut relay_status_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + relay_status_period,
+            relay_status_period,
+        );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -3126,33 +3132,11 @@ fn cmd_daemon(
                         );
                     }
                 }
-                _ = relay_status_timer.tick() => {
+                _ = heartbeat_timer.tick() => {
                     write_daemon_status(config_dir, json!({"event": "heartbeat"}));
-                    let relay_statuses = match tokio::time::timeout(
-                        std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
-                        relay_status_payload(&client),
-                    )
-                    .await
-                    {
-                        Ok(statuses) => statuses,
-                        Err(_) => vec![json!({"url": "*", "status": "timeout"})],
-                    };
-                    let fips_status = match tokio::time::timeout(
-                        std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
-                        fips_block_sync_status(fips_blocks.as_deref()),
-                    )
-                    .await
-                    {
-                        Ok(status) => status,
-                        Err(_) => Some(json!({"status": "timeout"})),
-                    };
-                    let status = json!({
-                            "event": "relay_statuses",
-                            "relay_statuses": relay_statuses,
-                            "fips_block_sync": fips_status,
-                    });
-                    write_daemon_status(config_dir, status.clone());
-                    println!("{status}");
+                }
+                _ = relay_status_timer.tick() => {
+                    spawn_status_probe(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
                     direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await;
@@ -3203,6 +3187,40 @@ fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn spawn_status_probe(
+    client: nostr_sdk::Client,
+    config_dir: PathBuf,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+) {
+    tokio::spawn(async move {
+        let relay_statuses = match tokio::time::timeout(
+            std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
+            relay_status_payload(&client),
+        )
+        .await
+        {
+            Ok(statuses) => statuses,
+            Err(_) => vec![json!({"url": "*", "status": "timeout"})],
+        };
+        let fips_status = match tokio::time::timeout(
+            std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
+            fips_block_sync_status(fips_blocks.as_deref()),
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(_) => Some(json!({"status": "timeout"})),
+        };
+        let status = json!({
+            "event": "relay_statuses",
+            "relay_statuses": relay_statuses,
+            "fips_block_sync": fips_status,
+        });
+        write_daemon_status(&config_dir, status.clone());
+        println!("{status}");
+    });
 }
 
 async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Value> {
