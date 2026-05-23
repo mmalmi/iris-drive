@@ -24,6 +24,8 @@ and waits until every host has the same visible SHA-256 snapshot.
 Environment:
   IRIS_DRIVE_E2E_RELAYS          Space-separated relay URLs passed to daemons.
   IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 180).
+  IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS
+                                  Per SSH command timeout; 0 disables (default: 60).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
   IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated host labels to run through idrive --mount.
@@ -34,6 +36,7 @@ USAGE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-180}"
+REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
 POLL_SECS="${IRIS_DRIVE_E2E_POLL_SECS:-3}"
 MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
 LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
@@ -176,7 +179,7 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
-remote_exec() {
+run_remote_exec() {
   local label="$1"
   local script="$2"
   local kind
@@ -188,6 +191,44 @@ remote_exec() {
   else
     printf "%s" "$script" | ssh "$ssh_host" 'bash -se'
   fi
+}
+
+remote_exec() {
+  local label="$1"
+  local script="$2"
+  local pid
+  local watchdog
+  local status
+
+  if (( REMOTE_TIMEOUT_SECS <= 0 )); then
+    run_remote_exec "$label" "$script"
+    return
+  fi
+
+  run_remote_exec "$label" "$script" &
+  pid="$!"
+  (
+    deadline=$((SECONDS + REMOTE_TIMEOUT_SECS))
+    while kill -0 "$pid" 2>/dev/null; do
+      if (( SECONDS >= deadline )); then
+        echo "remote command timed out after ${REMOTE_TIMEOUT_SECS}s on $label" >&2
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -9 "$pid" 2>/dev/null || true
+        exit 0
+      fi
+      sleep 1
+    done
+  ) >/dev/null &
+  watchdog="$!"
+
+  set +e
+  wait "$pid"
+  status="$?"
+  set -e
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
 }
 
 setup_host() {
