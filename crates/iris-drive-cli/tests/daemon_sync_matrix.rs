@@ -596,6 +596,71 @@ async fn live_daemons_publish_delete_made_while_source_was_stopped() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_preserve_both_same_path_concurrent_edits() {
+    let _guard = live_daemon_test_guard().await;
+    let mut cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
+
+    cluster
+        .write(
+            Client::Windows,
+            "conflicts/concurrent.txt",
+            b"baseline before concurrent edit",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "concurrent edit baseline")
+        .await;
+
+    cluster.stop_daemon(Client::Windows);
+    cluster.stop_daemon(Client::Ubuntu);
+    cluster
+        .write(
+            Client::Windows,
+            "conflicts/concurrent.txt",
+            b"windows concurrent edit",
+        )
+        .await;
+    cluster
+        .write(
+            Client::Ubuntu,
+            "conflicts/concurrent.txt",
+            b"ubuntu concurrent edit",
+        )
+        .await;
+    cluster.import_working_dir(Client::Windows);
+    cluster.import_working_dir(Client::Ubuntu);
+
+    cluster.start_daemon(Client::Windows);
+    cluster.start_daemon(Client::Ubuntu);
+    cluster.wait_until_direct_peers_connected().await;
+
+    let expected_hashes = [
+        to_hex(&sha256(b"windows concurrent edit")),
+        to_hex(&sha256(b"ubuntu concurrent edit")),
+    ];
+    cluster
+        .wait_until("concurrent edit conflict copies", || {
+            snapshot_has_hashes_with_prefix(
+                &dir_snapshot(cluster.path(Client::Windows)),
+                "conflicts/concurrent",
+                &expected_hashes,
+            ) && snapshot_has_hashes_with_prefix(
+                &dir_snapshot(cluster.path(Client::Ubuntu)),
+                "conflicts/concurrent",
+                &expected_hashes,
+            )
+        })
+        .await;
+
+    let expected = dir_snapshot(cluster.path(Client::Windows));
+    cluster
+        .wait_for_snapshot(&expected, "concurrent edit convergence")
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "transfer bench; run with `cargo test -p idrive --test daemon_sync_matrix -- --ignored --nocapture`"]
 async fn bench_live_daemon_transfer_many_files() {
     let _guard = live_daemon_test_guard().await;
@@ -940,6 +1005,14 @@ impl SyncCluster {
         *slot = Some(DaemonChild::spawn(config_dir, &self.relay.url, log_path));
     }
 
+    fn import_working_dir(&self, client: Client) {
+        let (config_dir, work_dir) = match client {
+            Client::Windows => (self.windows_cfg.path(), self.windows_work.path()),
+            Client::Ubuntu => (self.ubuntu_cfg.path(), self.ubuntu_work.path()),
+        };
+        run_json(config_dir, &["import", work_dir.to_str().unwrap()]);
+    }
+
     fn debug_state(&self) -> String {
         format!(
             "windows: {:#?}\nubuntu: {:#?}\nwindows status: {}\nubuntu status: {}\nwindows log:\n{}\nubuntu log:\n{}",
@@ -1061,6 +1134,21 @@ fn visible_dir_snapshot(root: &Path) -> DirSnapshot {
     let mut snapshot = BTreeMap::new();
     collect_dir_snapshot(root, root, &mut snapshot, SnapshotFilter::UserVisible);
     snapshot
+}
+
+fn snapshot_has_hashes_with_prefix(
+    snapshot: &DirSnapshot,
+    prefix: &str,
+    expected_hashes: &[String],
+) -> bool {
+    let matching = snapshot
+        .iter()
+        .filter(|(path, _)| path.starts_with(prefix))
+        .collect::<Vec<_>>();
+    matching.len() >= expected_hashes.len()
+        && expected_hashes
+            .iter()
+            .all(|hash| matching.iter().any(|(_, file)| &file.sha256 == hash))
 }
 
 #[derive(Clone, Copy)]

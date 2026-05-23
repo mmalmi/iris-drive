@@ -814,6 +814,23 @@ snapshot_file_count() {
   printf "%s\n" "$snapshot" | sed '/^$/d' | wc -l | tr -d ' '
 }
 
+sha256_text() {
+  printf "%s" "$1" | shasum -a 256 | awk '{print $1}'
+}
+
+snapshot_has_hash_prefix() {
+  local hash="$1"
+  local prefix="$2"
+  awk -F '\t' -v hash="$hash" -v prefix="$prefix" \
+    '$1 == hash && index($3, prefix) == 1 { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+snapshot_prefix_count() {
+  local prefix="$1"
+  awk -F '\t' -v prefix="$prefix" \
+    'index($3, prefix) == 1 { count++ } END { print count + 0 }'
+}
+
 wait_for_converged_union() {
   local label="$1"
   wait_until "$label" snapshots_match_current_union
@@ -863,6 +880,95 @@ source_root_matches_expected_count() {
 
 source_and_snapshots_match_expected() {
   snapshots_match_expected && source_root_matches_expected_count
+}
+
+prepare_offline_work_copy() {
+  local label="$1"
+  local kind
+  local base
+  local work
+  local script
+  kind="$(host_value "$label" kind)"
+  base="$(host_value "$label" base)"
+  work="$(host_value "$label" work)"
+  if [[ "$kind" == "windows" ]]; then
+    script="
+\$ErrorActionPreference = 'Stop'
+\$work = $(ps_quote "$work")
+\$offline = Join-Path $(ps_quote "$base") 'offline-work'
+if (Test-Path -LiteralPath \$offline) { Remove-Item -LiteralPath \$offline -Recurse -Force }
+New-Item -ItemType Directory -Force -Path \$offline | Out-Null
+Get-ChildItem -LiteralPath \$work -Force | ForEach-Object {
+  Copy-Item -LiteralPath \$_.FullName -Destination \$offline -Recurse -Force
+}
+"
+  else
+    script="
+set -Eeuo pipefail
+work=$(sh_quote "$work")
+offline=$(sh_quote "$base/offline-work")
+rm -rf \"\$offline\"
+mkdir -p \"\$offline\"
+if [[ -d \"\$work\" ]]; then
+  cp -a \"\$work\"/. \"\$offline\"/ 2>/dev/null || true
+fi
+"
+  fi
+  remote_exec "$label" "$script"
+}
+
+restore_offline_work_copy() {
+  local label="$1"
+  local kind
+  local base
+  local work
+  local script
+  kind="$(host_value "$label" kind)"
+  base="$(host_value "$label" base)"
+  work="$(host_value "$label" work)"
+  if [[ "$kind" == "windows" ]]; then
+    script="
+\$ErrorActionPreference = 'Stop'
+\$work = $(ps_quote "$work")
+\$offline = Join-Path $(ps_quote "$base") 'offline-work'
+if (Test-Path -LiteralPath \$work) { Remove-Item -LiteralPath \$work -Recurse -Force }
+New-Item -ItemType Directory -Force -Path \$work | Out-Null
+Get-ChildItem -LiteralPath \$offline -Force | ForEach-Object {
+  Copy-Item -LiteralPath \$_.FullName -Destination \$work -Recurse -Force
+}
+"
+  else
+    script="
+set -Eeuo pipefail
+work=$(sh_quote "$work")
+offline=$(sh_quote "$base/offline-work")
+rm -rf \"\$work\"
+mkdir -p \"\$work\"
+if [[ -d \"\$offline\" ]]; then
+  cp -a \"\$offline\"/. \"\$work\"/ 2>/dev/null || true
+fi
+"
+  fi
+  remote_exec "$label" "$script"
+}
+
+import_working_dir() {
+  local label="$1"
+  idrive_cmd "$label" import "$(host_value "$label" work)" >/dev/null
+}
+
+concurrent_edit_conflict_visible() {
+  local label current count
+  for label in "${LABELS[@]}"; do
+    current="$(snapshot "$label")"
+    printf "%s\n" "$current" |
+      snapshot_has_hash_prefix "$CONCURRENT_SOURCE_HASH" "conflicts/concurrent" || return 1
+    printf "%s\n" "$current" |
+      snapshot_has_hash_prefix "$CONCURRENT_TARGET_HASH" "conflicts/concurrent" || return 1
+    count="$(printf "%s\n" "$current" | snapshot_prefix_count "conflicts/concurrent")"
+    (( count >= 2 )) || return 1
+  done
+  return 0
 }
 
 run_step() {
@@ -958,6 +1064,34 @@ step_source_restart_delete() {
   wait_for_source_snapshot "$source_label" "source restart delete"
 }
 
+step_concurrent_same_path_edits() {
+  CONCURRENT_SOURCE_CONTENT="concurrent edit from $source_label in $RUN_ID"
+  CONCURRENT_TARGET_CONTENT="concurrent edit from $target_label in $RUN_ID"
+  CONCURRENT_SOURCE_HASH="$(sha256_text "$CONCURRENT_SOURCE_CONTENT")"
+  CONCURRENT_TARGET_HASH="$(sha256_text "$CONCURRENT_TARGET_CONTENT")"
+
+  write_file "$source_label" "conflicts/concurrent.txt" "concurrent baseline in $RUN_ID"
+  wait_for_source_snapshot "$source_label" "concurrent edit baseline"
+
+  prepare_offline_work_copy "$source_label"
+  prepare_offline_work_copy "$target_label"
+  stop_daemon "$source_label"
+  stop_daemon "$target_label"
+  restore_offline_work_copy "$source_label"
+  restore_offline_work_copy "$target_label"
+
+  write_file "$source_label" "conflicts/concurrent.txt" "$CONCURRENT_SOURCE_CONTENT"
+  write_file "$target_label" "conflicts/concurrent.txt" "$CONCURRENT_TARGET_CONTENT"
+  import_working_dir "$source_label"
+  import_working_dir "$target_label"
+
+  start_daemon "$source_label"
+  start_daemon "$target_label"
+  wait_until "concurrent edit daemons fresh" all_fresh
+  wait_until "concurrent edit conflict copies" concurrent_edit_conflict_visible
+  wait_for_converged_union "concurrent edit convergence"
+}
+
 step_many_small_files() {
   local i
   for i in $(seq 1 "$MANY_FILES"); do
@@ -1033,6 +1167,7 @@ run_step "seafile-style rename chain" step_rename_chain
 run_step "ignored desktop/editor noise" step_ignored_noise
 run_step "receiver restart convergence" step_receiver_restart
 run_step "source restart delete propagation" step_source_restart_delete
+run_step "same-path concurrent edits" step_concurrent_same_path_edits
 run_step "many small files" step_many_small_files
 run_step "large file" step_large_file
 

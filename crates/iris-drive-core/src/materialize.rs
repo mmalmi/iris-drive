@@ -8,16 +8,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use hashtree_core::{Cid, CidParseError, HashTree, HashTreeError, LinkType, Store, sha256};
+use hashtree_core::{
+    Cid, CidParseError, DirEntry, HashTree, HashTreeError, LinkType, Store, from_hex, sha256,
+    to_hex,
+};
 use hashtree_provider::{HashTreeProviderFs, ProviderError, ProviderFs};
 use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
 use crate::account::AccountState;
 use crate::config::{AppConfig, DeviceRootRef};
+use crate::conflict::conflict_filename;
 use crate::indexer::{IndexError, read_root_meta};
 use crate::merge::{
-    DeviceFileEntry, DeviceSnapshot, MergedEntry, MergedView, merge_drives, walk_device_tree,
+    DeviceFileEntry, DeviceSnapshot, MergedConflictFile, MergedConflictKind, MergedEntry,
+    MergedView, merge_drives, walk_device_tree,
 };
 
 #[derive(Debug, Error)]
@@ -135,12 +140,110 @@ pub async fn primary_merged_view<S: Store>(
             tombstones: tombstones.clone(),
         })
         .collect();
-    let view = merge_drives(&authorized_refs, &snapshots);
+    let mut view = merge_drives(&authorized_refs, &snapshots);
+    add_visible_conflict_entries(&mut view)?;
     Ok(PrimaryMergedView {
         view,
         authorized_devices: authorized.len(),
         device_roots_present: snapshots.len(),
     })
+}
+
+fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), MaterializeError> {
+    let winners_by_path = view
+        .files
+        .iter()
+        .map(|entry| (entry.path.clone(), entry.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut occupied_paths = winners_by_path.keys().cloned().collect::<BTreeSet<_>>();
+    let mut conflict_entries = Vec::new();
+
+    for conflict in &view.conflict_details {
+        if conflict.kind != MergedConflictKind::WriteWrite {
+            continue;
+        }
+        let Some(winner) = winners_by_path.get(&conflict.path) else {
+            continue;
+        };
+
+        for file in &conflict.files {
+            if conflict_file_matches_entry(file, winner) {
+                continue;
+            }
+            let path =
+                next_visible_conflict_path(&conflict.path, &file.device_id, &mut occupied_paths);
+            conflict_entries.push(MergedEntry {
+                path,
+                source_path: Some(conflict.path.clone()),
+                hash: parse_conflict_hash(&file.content_cid_hash, &conflict.path)?,
+                size: file.size,
+                whole_file_hash: parse_conflict_whole_file_hash(file, &conflict.path)?,
+                source_device: file.device_id.clone(),
+                published_at: winner.published_at,
+            });
+        }
+    }
+
+    if !conflict_entries.is_empty() {
+        view.files.extend(conflict_entries);
+        view.files.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+
+    Ok(())
+}
+
+fn conflict_file_matches_entry(file: &MergedConflictFile, entry: &MergedEntry) -> bool {
+    file.device_id == entry.source_device
+        && file.content_cid_hash == to_hex(&entry.hash)
+        && file.content_hash == entry_identity_hash_hex(entry)
+        && file.size == entry.size
+}
+
+fn entry_identity_hash_hex(entry: &MergedEntry) -> String {
+    entry
+        .whole_file_hash
+        .map(|hash| to_hex(&hash))
+        .unwrap_or_else(|| to_hex(&entry.hash))
+}
+
+fn next_visible_conflict_path(
+    original_path: &str,
+    device_id: &str,
+    occupied_paths: &mut BTreeSet<String>,
+) -> String {
+    for index in 1..=256 {
+        let label = if index == 1 {
+            device_id.to_string()
+        } else {
+            format!("{device_id} {index}")
+        };
+        let path = conflict_filename(original_path, &label);
+        if occupied_paths.insert(path.clone()) {
+            return path;
+        }
+    }
+
+    conflict_filename(original_path, &format!("{device_id} 257"))
+}
+
+fn parse_conflict_hash(hex: &str, path: &str) -> Result<[u8; 32], MaterializeError> {
+    from_hex(hex).map_err(|error| {
+        HashTreeError::Store(format!("invalid conflict hash for {path}: {error}")).into()
+    })
+}
+
+fn parse_conflict_whole_file_hash(
+    file: &MergedConflictFile,
+    path: &str,
+) -> Result<Option<[u8; 32]>, MaterializeError> {
+    if file.content_hash == file.content_cid_hash {
+        return Ok(None);
+    }
+    parse_conflict_hash(&file.content_hash, path).map(Some)
+}
+
+fn merged_entry_source_path(entry: &MergedEntry) -> &str {
+    entry.source_path.as_deref().unwrap_or(&entry.path)
 }
 
 /// Build a user-visible hashtree root for the merged primary drive.
@@ -174,9 +277,7 @@ pub async fn primary_merged_root<S: Store>(
             key: source.key,
         };
         let (parent, name) = split_visible_path(&entry.path)?;
-        root = tree
-            .set_entry(&root, &parent, name, &cid, source.size, source.link_type)
-            .await?;
+        root = set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source).await?;
     }
 
     Ok(PrimaryMergedRoot {
@@ -344,7 +445,7 @@ async fn source_entry_for_merged_entry<S: Store>(
         root_cid: root.root_cid.clone(),
         source,
     })?;
-    tree_entry_at_path(tree, &root, &entry.path).await
+    tree_entry_at_path(tree, &root, merged_entry_source_path(entry)).await
 }
 
 async fn tree_entry_at_path<S: Store>(
@@ -365,6 +466,62 @@ async fn tree_entry_at_path<S: Store>(
         .into_iter()
         .find(|entry| entry.name == name)
         .ok_or_else(|| HashTreeError::EntryNotFound(name.to_string()).into())
+}
+
+async fn set_visible_entry_with_meta<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    parent: &[&str],
+    name: &str,
+    cid: &Cid,
+    source: &hashtree_core::TreeEntry,
+) -> Result<Cid, MaterializeError> {
+    let parent_cid = if parent.is_empty() {
+        root.clone()
+    } else {
+        tree.resolve(root, &parent.join("/"))
+            .await?
+            .ok_or_else(|| HashTreeError::PathNotFound(parent.join("/")))?
+    };
+    let mut entries = tree
+        .list_directory(&parent_cid)
+        .await?
+        .into_iter()
+        .filter(|entry| entry.name != name)
+        .map(|entry| DirEntry {
+            name: entry.name,
+            hash: entry.hash,
+            size: entry.size,
+            key: entry.key,
+            link_type: entry.link_type,
+            meta: entry.meta,
+        })
+        .collect::<Vec<_>>();
+    entries.push(DirEntry {
+        name: name.to_string(),
+        hash: cid.hash,
+        size: source.size,
+        key: cid.key,
+        link_type: source.link_type,
+        meta: source.meta.clone(),
+    });
+    let new_parent_cid = tree.put_directory(entries).await?;
+    if parent.is_empty() {
+        return Ok(new_parent_cid);
+    }
+
+    let parent_of_parent = &parent[..parent.len() - 1];
+    let dir_name = parent[parent.len() - 1];
+    tree.set_entry(
+        root,
+        parent_of_parent,
+        dir_name,
+        &new_parent_cid,
+        0,
+        LinkType::Dir,
+    )
+    .await
+    .map_err(Into::into)
 }
 
 async fn materialize_target_files<S>(
@@ -408,7 +565,12 @@ where
             report.skipped += 1;
             continue;
         };
-        let bytes = read_file_from_root(tree.clone(), &source_root.root_cid, &entry.path).await?;
+        let bytes = read_file_from_root(
+            tree.clone(),
+            &source_root.root_cid,
+            merged_entry_source_path(entry),
+        )
+        .await?;
         if destination_snapshot.is_some_and(|snapshot| snapshot.hash == sha256(&bytes)) {
             report.unchanged += 1;
             continue;
@@ -509,7 +671,7 @@ async fn merge_root_for_device<S: Store>(
             parent_root.device_seq = parent.device_seq;
             return Ok(Some(parent_root));
         };
-        current = DeviceRootRef::from_meta(parent.root_cid.clone(), current.published_at, &meta);
+        current = DeviceRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
     }
     Ok(None)
 }
@@ -767,9 +929,10 @@ fn is_windows_reserved_name(segment: &str) -> bool {
 mod tests {
     use super::*;
     use crate::account::Account;
+    use crate::app_keys::DeviceEntry;
     use crate::config::{AppConfig, DeviceRootRef, Drive};
     use crate::indexer::index_dir_with_history_and_meta;
-    use crate::root_meta::DriveRootMeta;
+    use crate::root_meta::{DriveRootMeta, RootParent};
     use hashtree_core::{HashTreeConfig, MemoryStore};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -850,11 +1013,216 @@ mod tests {
             .expect("note exists");
         let bytes = tree.get(&note, None).await.unwrap().unwrap();
         assert_eq!(bytes, b"mounted");
+        let (files, _) = walk_device_tree(&tree, &merged.root_cid).await.unwrap();
+        let note_entry = files
+            .iter()
+            .find(|entry| entry.path == "docs/note.txt")
+            .expect("note is visible to merge walker");
+        assert_eq!(note_entry.whole_file_hash, Some(sha256(b"mounted")));
         assert!(
             tree.resolve(&merged.root_cid, ".hashtree")
                 .await
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
+        let cfg_dir = tempdir().unwrap();
+        let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+        let peer_device =
+            "2222222222222222222222222222222222222222222222222222222222222222".to_string();
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+        let owner_root =
+            index_device_note_root(&tree, &account.state.device_pubkey, b"owner edit", 1, 10).await;
+        let peer_root = index_device_note_root(&tree, &peer_device, b"peer edit", 1, 11).await;
+
+        let mut account_state = account.state.clone();
+        account_state
+            .app_keys
+            .as_mut()
+            .expect("created account has app keys")
+            .devices
+            .push(DeviceEntry {
+                pubkey: peer_device.clone(),
+                added_at: 1,
+                label: Some("peer".into()),
+            });
+
+        let mut config = AppConfig {
+            account: Some(account_state),
+            ..AppConfig::default()
+        };
+        let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+        drive.device_roots.insert(
+            account.state.device_pubkey.clone(),
+            DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+        );
+        drive.device_roots.insert(
+            peer_device,
+            DeviceRootRef::from_meta(peer_root.0.to_string(), 11, &peer_root.1),
+        );
+        config.upsert_drive(drive);
+
+        let view = primary_merged_view(&tree, &config).await.unwrap();
+        assert_eq!(view.view.conflicts, vec!["docs/note.txt"]);
+        assert_eq!(view.file_count(), 2);
+        assert!(
+            view.view
+                .files
+                .iter()
+                .any(|entry| entry.path == "docs/note.txt")
+        );
+        assert!(view.view.files.iter().any(|entry| {
+            entry.path.starts_with("docs/note (conflict from ")
+                && entry.path.ends_with(").txt")
+                && entry.source_path.as_deref() == Some("docs/note.txt")
+        }));
+
+        let merged = primary_merged_root(&tree, &config).await.unwrap();
+        assert_eq!(merged.file_count, 2);
+        let docs_cid = tree
+            .resolve(&merged.root_cid, "docs")
+            .await
+            .unwrap()
+            .expect("docs exists");
+        let names = tree
+            .list_directory(&docs_cid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().any(|name| name == "note.txt"));
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("note (conflict from ") && name.ends_with(").txt"))
+        );
+
+        let mut contents = Vec::new();
+        for name in names {
+            let cid = tree
+                .resolve(&merged.root_cid, &format!("docs/{name}"))
+                .await
+                .unwrap()
+                .expect("visible file exists");
+            contents.push(String::from_utf8(tree.get(&cid, None).await.unwrap().unwrap()).unwrap());
+        }
+        contents.sort();
+        assert_eq!(contents, vec!["owner edit", "peer edit"]);
+    }
+
+    #[tokio::test]
+    async fn primary_merged_view_ignores_materialized_root_publish_time() {
+        let cfg_dir = tempdir().unwrap();
+        let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+        let peer_device =
+            "3333333333333333333333333333333333333333333333333333333333333333".to_string();
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+        let owner_source =
+            index_device_note_root(&tree, &account.state.device_pubkey, b"owner source", 1, 10)
+                .await;
+        let peer_source = index_device_note_root(&tree, &peer_device, b"peer source", 1, 11).await;
+        let owner_mirror_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.to_string(),
+            device_id: account.state.device_pubkey.clone(),
+            device_seq: 2,
+            dck_generation: 1,
+            materialized_only: true,
+            parents: vec![RootParent {
+                device_id: account.state.device_pubkey.clone(),
+                device_seq: 1,
+                root_cid: owner_source.0.to_string(),
+            }],
+            observed: BTreeMap::new(),
+            created_at: 20,
+        };
+        let owner_mirror = index_device_note_root_with_meta(
+            &tree,
+            b"materialized mirror",
+            20,
+            owner_mirror_meta.clone(),
+        )
+        .await;
+
+        let mut account_state = account.state.clone();
+        account_state
+            .app_keys
+            .as_mut()
+            .expect("created account has app keys")
+            .devices
+            .push(DeviceEntry {
+                pubkey: peer_device.clone(),
+                added_at: 1,
+                label: Some("peer".into()),
+            });
+
+        let mut config = AppConfig {
+            account: Some(account_state),
+            ..AppConfig::default()
+        };
+        let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+        drive.device_roots.insert(
+            account.state.device_pubkey.clone(),
+            DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
+        );
+        drive.device_roots.insert(
+            peer_device.clone(),
+            DeviceRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
+        );
+        config.upsert_drive(drive);
+
+        let view = primary_merged_view(&tree, &config).await.unwrap();
+        let original = view
+            .view
+            .files
+            .iter()
+            .find(|entry| entry.path == "docs/note.txt")
+            .expect("original path remains visible");
+        assert_eq!(original.source_device, peer_device);
+    }
+
+    async fn index_device_note_root(
+        tree: &HashTree<MemoryStore>,
+        device_id: &str,
+        bytes: &[u8],
+        device_seq: u64,
+        published_at: i64,
+    ) -> (Cid, DriveRootMeta) {
+        let meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.to_string(),
+            device_id: device_id.to_string(),
+            device_seq,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: published_at,
+        };
+        let root = index_device_note_root_with_meta(tree, bytes, published_at, meta.clone()).await;
+        (root, meta)
+    }
+
+    async fn index_device_note_root_with_meta(
+        tree: &HashTree<MemoryStore>,
+        bytes: &[u8],
+        published_at: i64,
+        meta: DriveRootMeta,
+    ) -> Cid {
+        let source = tempdir().unwrap();
+        std::fs::create_dir(source.path().join("docs")).unwrap();
+        std::fs::write(source.path().join("docs").join("note.txt"), bytes).unwrap();
+        let root =
+            index_dir_with_history_and_meta(tree, source.path(), None, published_at, Some(&meta))
+                .await
+                .unwrap();
+        root
     }
 }

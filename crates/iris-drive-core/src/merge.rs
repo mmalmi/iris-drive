@@ -101,6 +101,8 @@ pub struct DeviceSnapshot<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedEntry {
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     pub hash: [u8; 32],
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,6 +220,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
         for f in &snap.files {
             let candidate = MergedEntry {
                 path: f.path.clone(),
+                source_path: None,
                 hash: f.hash,
                 size: f.size,
                 whole_file_hash: f.whole_file_hash,
