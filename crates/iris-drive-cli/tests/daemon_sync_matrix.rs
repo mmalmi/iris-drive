@@ -706,11 +706,11 @@ impl SyncCluster {
         configure_local_blossom(windows_cfg.path(), &blossom.url);
         configure_local_blossom(ubuntu_cfg.path(), &blossom.url);
 
-        let init = run_json(windows_cfg.path(), &["init", "--label", "win11-dev"]);
+        let init = run_json(windows_cfg.path(), &["init", "--label", "windows-peer"]);
         let owner_npub = init["owner_npub"].as_str().unwrap();
         let linked = run_json(
             ubuntu_cfg.path(),
-            &["link", owner_npub, "--label", "ubuntu-dev"],
+            &["link", owner_npub, "--label", "linux-peer"],
         );
         let request = linked["device_link_request"]["url"].as_str().unwrap();
         run_json(windows_cfg.path(), &["approve", request]);

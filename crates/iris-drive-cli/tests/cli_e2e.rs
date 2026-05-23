@@ -252,7 +252,7 @@ fn owner_approves_device_request_link() {
 
     let linked = run_json(
         linked_dir.path(),
-        &["link", &owner_npub, "--label", "win11-dev"],
+        &["link", &owner_npub, "--label", "windows-peer"],
     );
     let request_url = linked["device_link_request"]["url"].as_str().unwrap();
 
@@ -270,7 +270,7 @@ fn owner_approves_device_request_link() {
     assert!(
         devices
             .iter()
-            .any(|device| device["label"].as_str() == Some("win11-dev"))
+            .any(|device| device["label"].as_str() == Some("windows-peer"))
     );
 }
 
