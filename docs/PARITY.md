@@ -12,8 +12,8 @@ file-provider backends differ.
 | Copy owner/device keys | Yes | Yes | Yes |
 | Approve linked device from request link | Yes | Yes | Yes |
 | Start/stop/restart sync daemon | Yes | Yes | Yes |
-| Auto-scan local drive folder | Yes | Yes | Yes |
-| Open drive folder | Yes | Yes | Yes |
+| Auto-scan local drive folder | No; mount publishes writes | No | No |
+| Open drive folder | Yes, mounted | FileProvider domain | Not mounted yet |
 | Copy/open snapshot link | Yes | Yes | Yes |
 | Devices list and auth state | Yes | Yes | Yes |
 | Device online/sync status | Yes | Planned | Yes |
@@ -24,18 +24,18 @@ file-provider backends differ.
 | Hashtree config/block/root paths | Yes | Yes | Yes |
 | Tray/menu-bar control | Yes | Yes | Yes |
 | Close to tray/menu-bar | Yes | Yes | Yes |
-| Native OS file-provider mount | Backing folder today; FUSE planned | FileProvider scaffold | Backing folder today; WinFsp planned |
+| Native OS file-provider mount | FUSE mount | FileProvider scaffold | WinFsp/Cloud Files planned |
 
 ## Desktop test target
 
-The minimum parity smoke for Linux/Windows is:
+The minimum parity smoke for Linux is:
 
 1. Create an owner profile on one VM.
 2. Link the other VM as a secondary device from the GUI and copy its request link.
 3. Paste the request link into the owner GUI and approve it.
 4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
-5. Create a file in each drive folder.
-6. Confirm each side sees both files after daemon sync.
+5. Create, rename, edit, and delete files inside the mounted drive.
+6. Confirm authorized peers receive the new roots without falling back to a normal folder scan.
 
 The same flow is valid for macOS once the visible app has the latest control
 panel build.

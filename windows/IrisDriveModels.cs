@@ -35,7 +35,7 @@ public sealed class IrisDriveStatusData
     public IReadOnlyDictionary<string, string> RelayStatuses { get; init; } =
         new Dictionary<string, string>();
 
-    public static IrisDriveStatusData FromJson(JsonElement root, string defaultDriveDirectory)
+    public static IrisDriveStatusData FromJson(JsonElement root)
     {
         var account = Object(root, "account");
         var deviceLinkRequest = account.HasValue
@@ -43,7 +43,8 @@ public sealed class IrisDriveStatusData
             : null;
         var hashtree = Object(root, "hashtree");
         var network = Object(root, "network");
-        var drives = DriveRows(root, defaultDriveDirectory);
+        var mountPath = ExtractMountPath(root);
+        var drives = DriveRows(root, mountPath);
 
         return new IrisDriveStatusData
         {
@@ -63,7 +64,7 @@ public sealed class IrisDriveStatusData
                 network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
             PublishedDeviceRoots =
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
-            WorkingDirectory = ExtractWorkingDirectory(root, defaultDriveDirectory),
+            WorkingDirectory = mountPath,
             ConfigDirectory = String(root, "config_dir"),
             BlocksDirectory = hashtree.HasValue ? String(hashtree.Value, "blocks_dir") : null,
             RootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
@@ -120,23 +121,18 @@ public sealed class IrisDriveStatusData
         return "My Drive";
     }
 
-    private static string ExtractWorkingDirectory(JsonElement root, string fallback)
+    private static string? ExtractMountPath(JsonElement root)
     {
-        if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)
+        var daemon = Object(root, "daemon");
+        var mount = daemon.HasValue ? Object(daemon.Value, "mount") : null;
+        if (mount.HasValue)
         {
-            foreach (var drive in drives.EnumerateArray())
-            {
-                if (String(drive, "drive_id") == "main")
-                {
-                    return String(drive, "working_dir") ?? fallback;
-                }
-            }
+            return String(mount.Value, "mountpoint");
         }
-
-        return String(root, "default_working_dir") ?? fallback;
+        return null;
     }
 
-    private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string fallback)
+    private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string? mountPath)
     {
         var rows = new List<DriveRow>();
         if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)
@@ -145,7 +141,7 @@ public sealed class IrisDriveStatusData
             {
                 var name = String(drive, "display_name") ?? String(drive, "name") ??
                     String(drive, "drive_id") ?? "main";
-                var path = String(drive, "working_dir") ?? String(drive, "local_path") ?? fallback;
+                var path = mountPath ?? "Not mounted";
                 var state = ShortText(String(drive, "last_root_cid") ?? "configured");
                 rows.Add(new DriveRow(name, path, state));
             }
@@ -153,7 +149,7 @@ public sealed class IrisDriveStatusData
 
         if (rows.Count == 0)
         {
-            rows.Add(new DriveRow("main", fallback, "-"));
+            rows.Add(new DriveRow("main", mountPath ?? "Not mounted", "-"));
         }
 
         return rows;

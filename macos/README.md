@@ -39,8 +39,9 @@ release-only signing or notarization inputs. If Xcode has no account signed in,
 without requiring a local provisioning profile.
 
 The app-launched daemon uses the shared app-group container for its config and
-working tree. The user-visible drive folder should come from the File Provider
-domain, not from a separate `~/Iris Drive` directory.
+hashtree blocks, with normal working-directory sync disabled. The user-visible
+drive folder should come from the File Provider domain, not from a separate
+`~/Iris Drive` directory.
 
 ## Smoke test
 

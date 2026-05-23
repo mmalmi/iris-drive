@@ -195,8 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func showDriveFolder() {
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        openDriveFolder(currentWorkingDirectoryURL(fallback: paths.workingDirectory), source: "working")
+        showMountedDriveFolder()
     }
 
     @objc func copyDriveLink() {
@@ -591,29 +590,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             let status = try runIDrive(idrive, arguments: ["status"], paths: paths)
             applyStatusData(status)
-            let workingDirectory = workingDirectoryURL(from: status) ?? paths.workingDirectory
-            try FileManager.default.createDirectory(
-                at: workingDirectory,
-                withIntermediateDirectories: true
-            )
             let initialized = statusJSON(from: status)["initialized"] as? Bool ?? false
             if !initialized {
                 updateStatus("Setup needed")
                 return
-            }
-
-            let latestWorkingDirectory = workingDirectoryURL(from: status) ?? workingDirectory
-            try FileManager.default.createDirectory(
-                at: latestWorkingDirectory,
-                withIntermediateDirectories: true
-            )
-            if primaryDriveRootCID(from: status) == nil {
-                _ = try runIDrive(
-                    idrive,
-                    arguments: ["import", latestWorkingDirectory.path],
-                    paths: paths
-                )
-                applyStatusData(try runIDrive(idrive, arguments: ["status"], paths: paths))
             }
 
             startDaemon(idrive, paths: paths)
@@ -644,15 +624,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     withIntermediateDirectories: true
                 )
                 _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                try FileManager.default.createDirectory(
-                    at: paths.workingDirectory,
-                    withIntermediateDirectories: true
-                )
-                _ = try self.runIDrive(
-                    idrive,
-                    arguments: ["import", paths.workingDirectory.path],
-                    paths: paths
-                )
                 self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
                 DispatchQueue.main.async {
                     self.userRequestedSyncStop = false
@@ -665,10 +636,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func showMountedDriveFolder(fallbackURL: URL) {
+    private func showMountedDriveFolder() {
         if fileProviderDomainState == .unavailable {
-            NSLog("Iris Drive FileProvider domain unavailable; opening backing drive folder")
-            openDriveFolder(fallbackURL, source: "backing")
+            NSLog("Iris Drive FileProvider domain unavailable")
+            updateStatus("Drive mount unavailable")
+            NSSound.beep()
             return
         }
 
@@ -677,8 +649,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             displayName: irisDriveDisplayName
         )
         guard let manager = NSFileProviderManager(for: domain) else {
-            NSLog("Iris Drive FileProvider manager unavailable; opening backing drive folder")
-            openDriveFolder(fallbackURL, source: "backing")
+            NSLog("Iris Drive FileProvider manager unavailable")
+            updateStatus("Drive mount unavailable")
+            NSSound.beep()
             return
         }
 
@@ -686,42 +659,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let url {
-                    self.openDriveFolder(url, source: "mounted")
+                    self.openMountedDriveFolder(url)
                     return
                 }
 
                 if let error {
-                    NSLog("Iris Drive mounted folder unavailable; opening backing drive folder: \(error)")
+                    NSLog("Iris Drive mounted folder unavailable: \(error)")
                 } else {
-                    NSLog("Iris Drive mounted folder unavailable; opening backing drive folder")
+                    NSLog("Iris Drive mounted folder unavailable")
                 }
-                self.openDriveFolder(fallbackURL, source: "backing")
+                self.updateStatus("Drive mount unavailable")
+                NSSound.beep()
             }
         }
     }
 
-    private func openDriveFolder(_ url: URL, source: String) {
-        do {
-            try FileManager.default.createDirectory(
-                at: url,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            NSLog("Iris Drive failed to create drive folder: \(error)")
-            return
-        }
-
-        let didStartSecurityScope = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStartSecurityScope {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
+    private func openMountedDriveFolder(_ url: URL) {
         if NSWorkspace.shared.open(url) {
-            NSLog("Iris Drive drive folder opened (\(source)): \(url.path)")
+            NSLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
-            NSLog("Iris Drive failed to open \(source) drive folder: \(url.path)")
+            NSLog("Iris Drive failed to open mounted drive folder: \(url.path)")
+            updateStatus("Drive mount unavailable")
+            NSSound.beep()
         }
     }
 
@@ -731,7 +690,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         daemonRestartWorkItem = nil
 
         let process = Process()
-        configure(process, executable: idrive, arguments: ["daemon"], paths: paths)
+        configure(
+            process,
+            executable: idrive,
+            arguments: ["daemon", "--no-working-dir", "--watch-interval", "0"],
+            paths: paths
+        )
         pipeLogs(from: process, label: "idrive")
 
         do {
@@ -887,27 +851,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func statusJSON(from data: Data) -> [String: Any] {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-    }
-
-    private func workingDirectoryURL(from data: Data) -> URL? {
-        let json = statusJSON(from: data)
-        if let drives = json["drives"] as? [[String: Any]],
-           let path = drives
-               .first(where: { $0["drive_id"] as? String == "main" })?["working_dir"] as? String,
-           !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        if let path = json["default_working_dir"] as? String, !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        return nil
-    }
-
-    private func currentWorkingDirectoryURL(fallback: URL) -> URL {
-        if let path = IrisDriveStatus.shared.workingDirectory, !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        return fallback
     }
 
     private func applyStatusData(_ data: Data) {
@@ -1096,15 +1039,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             NSLog("Iris Drive relays updated")
         }
-    }
-
-    private func primaryDriveRootCID(from data: Data) -> String? {
-        let json = statusJSON(from: data)
-        guard let drives = json["drives"] as? [[String: Any]] else {
-            return nil
-        }
-        return drives
-            .first(where: { $0["drive_id"] as? String == "main" })?["last_root_cid"] as? String
     }
 
     private func updateStatus(_ message: String) {

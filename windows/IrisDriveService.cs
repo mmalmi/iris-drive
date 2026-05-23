@@ -9,11 +9,6 @@ namespace IrisDrive.WindowsShell;
 
 public sealed class IrisDriveService
 {
-    public string DefaultDriveDirectory =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Iris Drive");
-
     public string DefaultConfigDirectory =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -22,7 +17,7 @@ public sealed class IrisDriveService
     public async Task<IrisDriveStatusData> StatusAsync()
     {
         using var document = await RunJsonAsync("status");
-        return IrisDriveStatusData.FromJson(document.RootElement, DefaultDriveDirectory);
+        return IrisDriveStatusData.FromJson(document.RootElement);
     }
 
     public Task CreateProfileAsync(string label)
@@ -103,17 +98,15 @@ public sealed class IrisDriveService
         return RunAsync("backups", "sync");
     }
 
-    public async Task ImportDriveFolderAsync(string folder)
-    {
-        Directory.CreateDirectory(folder);
-        await RunAsync("import", folder);
-    }
-
     public Process StartDaemonProcess()
     {
         var process = new Process
         {
-            StartInfo = CreateStartInfo("daemon", "--watch-interval", "10"),
+            StartInfo = CreateStartInfo(
+                "daemon",
+                "--no-working-dir",
+                "--watch-interval",
+                "0"),
             EnableRaisingEvents = true,
         };
         process.StartInfo.Environment["IRIS_DRIVE_PARENT_PID"] =
@@ -164,7 +157,6 @@ public sealed class IrisDriveService
 
     public void OpenPath(string path)
     {
-        Directory.CreateDirectory(path);
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     }
 
@@ -189,9 +181,7 @@ public sealed class IrisDriveService
 
     private async Task FinishSetupAsync(string[] arguments)
     {
-        Directory.CreateDirectory(DefaultDriveDirectory);
         await RunAsync(arguments);
-        await ImportDriveFolderAsync(DefaultDriveDirectory);
     }
 
     private static string[] BuildLabelArgs(string[] prefix, string label)

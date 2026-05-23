@@ -603,10 +603,7 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives.len(), 1);
     assert_eq!(drives[0]["drive_id"], "main");
     assert_eq!(drives[0]["role"], "owner");
-    assert_eq!(
-        drives[0]["working_dir"],
-        dir.path().join("Drive").display().to_string()
-    );
+    assert_eq!(drives[0]["working_dir"], serde_json::Value::Null);
     assert_eq!(v["network"]["authorized_device_count"], 1);
     assert_eq!(v["network"]["published_device_roots"], 0);
     assert_eq!(v["network"]["fips"]["enabled"], false);

@@ -190,12 +190,10 @@ enum Command {
     },
     /// Run a long-running subscriber + publisher. Maintains open
     /// subscriptions for `AppKeys` + drive-root events, applies each
-    /// event in real time, and watches the working directory (set by
-    /// the first `idrive import`) for changes — auto-publishing a new
-    /// drive-root event whenever the root CID changes. fs-events
-    /// trigger near-immediately (debounced); a periodic timer
-    /// provides a fallback in case any events get missed. Stops on
-    /// Ctrl+C.
+    /// event in real time, and optionally watches the working directory
+    /// set by an explicit `idrive import`. fs-events trigger
+    /// near-immediately (debounced); a periodic timer provides a
+    /// fallback in case any events get missed. Stops on Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
         #[arg(long)]
@@ -225,6 +223,9 @@ enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
+        /// Disable normal working-directory materialization and watching.
+        #[arg(long)]
+        no_working_dir: bool,
     },
 }
 
@@ -362,6 +363,7 @@ fn run_cli() -> ExitCode {
             no_gateway,
             mount,
             mountpoint,
+            no_working_dir,
         } => cmd_daemon(
             &config_dir,
             &relay,
@@ -371,6 +373,7 @@ fn run_cli() -> ExitCode {
             !no_gateway,
             mount,
             mountpoint,
+            no_working_dir,
         ),
     };
 
@@ -420,9 +423,7 @@ fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Resul
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     config.account = Some(account.state.clone());
     if config.drive(PRIMARY_DRIVE_ID).is_none() {
-        let mut drive = Drive::primary(&account.state.owner_pubkey);
-        drive.working_dir = Some(iris_drive_core::paths::default_working_dir_in(config_dir));
-        config.upsert_drive(drive);
+        config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
     }
     config.save(config_path_in(config_dir))?;
     println!(
@@ -2609,6 +2610,8 @@ async fn import_mount_root_and_publish(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     visible_root: Cid,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
@@ -2620,6 +2623,11 @@ async fn import_mount_root_and_publish(
     let Some(updated_state) = updated_config.account.clone() else {
         return Err(anyhow::anyhow!("missing account after mount import"));
     };
+    let direct_root_mesh_error =
+        match announce_current_state_direct(direct_roots, config_dir, fips_blocks).await {
+            Ok(()) => None,
+            Err(error) => Some(format!("{error:#}")),
+        };
     let publish =
         publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
     println!(
@@ -2631,6 +2639,7 @@ async fn import_mount_root_and_publish(
                 "file_count": import.file_count,
                 "top_level_entries": import.top_level_entries,
             },
+            "direct_root_mesh_error": direct_root_mesh_error,
             "publish": publish_state_report_json(&publish),
         })
     );
@@ -3155,6 +3164,7 @@ fn cmd_daemon(
     enable_gateway: bool,
     mount_drive: bool,
     mountpoint: Option<PathBuf>,
+    no_working_dir: bool,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
@@ -3173,6 +3183,9 @@ fn cmd_daemon(
     // staged an account + working_dir but never ran an initial import,
     // do that now before we start the embedded hashtree host.
     runtime.block_on(async {
+        if mount_drive || no_working_dir {
+            return Ok::<_, anyhow::Error>(());
+        }
         if !key_path_in(config_dir).exists() {
             return Ok::<_, anyhow::Error>(());
         }
@@ -3211,9 +3224,7 @@ fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
-    let working_dir = config
-        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .and_then(|d| d.working_dir.clone());
+    let working_dir = daemon_active_working_dir(&config, false, no_working_dir);
     let embedded_hashtree =
         EmbeddedHashtreeHost::start(config_dir, &config).context("starting embedded hashtree")?;
     let embedded_hashtree_status = embedded_hashtree.status_payload();
@@ -3286,13 +3297,8 @@ fn cmd_daemon(
         } else {
             (None, None)
         };
-        let working_dir = if mounted_drive.is_some() {
-            None
-        } else {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|d| d.working_dir.clone())
-        };
+        let working_dir =
+            daemon_active_working_dir(&config, mounted_drive.is_some(), no_working_dir);
 
         // Spawn an fs-notify watcher on the working dir. Events get
         // debounced (notify-debouncer-mini) then forwarded over an
@@ -3322,6 +3328,7 @@ fn cmd_daemon(
                 "watch_interval_secs": watch_interval,
                 "watch_debounce_ms": watch_debounce_ms,
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
+                "working_dir_disabled": no_working_dir,
                 "mount": mount_status,
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
@@ -3481,22 +3488,16 @@ fn cmd_daemon(
                             visible_root = next;
                         }
                     }
-                    match import_mount_root_and_publish(&client, config_dir, visible_root).await {
-                        Ok(()) => {
-                            if let Err(error) =
-                                announce_current_state_direct(
-                                    &mut direct_roots,
-                                    config_dir,
-                                    fips_blocks.as_deref(),
-                                )
-                                .await
-                            {
-                                println!(
-                                    "{}",
-                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                );
-                            }
-                        }
+                    match import_mount_root_and_publish(
+                        &client,
+                        config_dir,
+                        visible_root,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
                         Err(error) => println!(
                             "{}",
                             json!({"event": "mount_publish_error", "error": format!("{error:#}")})
@@ -3607,6 +3608,19 @@ fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn daemon_active_working_dir(
+    config: &AppConfig,
+    mounted_drive: bool,
+    no_working_dir: bool,
+) -> Option<PathBuf> {
+    if mounted_drive || no_working_dir {
+        return None;
+    }
+    config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .and_then(|drive| drive.working_dir.clone())
 }
 
 fn spawn_status_probe(
@@ -4782,6 +4796,22 @@ mod daemon_lock_tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("daemon.lock"), "99999999\n").unwrap();
         assert!(DaemonProcessLock::acquire(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn daemon_no_working_dir_disables_stale_config_path() {
+        let dir = tempdir().unwrap();
+        let mut config = AppConfig::default();
+        let mut drive = Drive::primary("owner");
+        drive.working_dir = Some(dir.path().join("Iris Drive"));
+        config.upsert_drive(drive);
+
+        assert_eq!(
+            daemon_active_working_dir(&config, false, false),
+            Some(dir.path().join("Iris Drive"))
+        );
+        assert_eq!(daemon_active_working_dir(&config, false, true), None);
+        assert_eq!(daemon_active_working_dir(&config, true, false), None);
     }
 
     #[test]

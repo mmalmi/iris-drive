@@ -124,7 +124,7 @@ public partial class MainWindow : Window
         AuthValue.Text = "-";
         ConfigPathValue.Text = "-";
         BlocksPathValue.Text = "-";
-        DrivePathValue.Text = service.DefaultDriveDirectory;
+        DrivePathValue.Text = "Not mounted";
         RootPathValue.Text = "-";
     }
 
@@ -167,7 +167,7 @@ public partial class MainWindow : Window
 
         ConfigPathValue.Text = status.ConfigDirectory ?? "-";
         BlocksPathValue.Text = status.BlocksDirectory ?? "-";
-        DrivePathValue.Text = status.WorkingDirectory ?? service.DefaultDriveDirectory;
+        DrivePathValue.Text = status.WorkingDirectory ?? "Not mounted";
         RootPathValue.Text = status.RootCid ?? "-";
 
         RenderDrives(status);
@@ -192,7 +192,7 @@ public partial class MainWindow : Window
         AuthValue.Text = "-";
         ConfigPathValue.Text = "-";
         BlocksPathValue.Text = "-";
-        DrivePathValue.Text = service.DefaultDriveDirectory;
+        DrivePathValue.Text = "Not mounted";
         RootPathValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
         OpenSnapshotButton.IsEnabled = false;
@@ -503,7 +503,19 @@ public partial class MainWindow : Window
 
     private void OpenDrive_Click(object sender, RoutedEventArgs e)
     {
-        service.OpenPath(currentStatus?.WorkingDirectory ?? service.DefaultDriveDirectory);
+        OpenDriveMount();
+    }
+
+    private void OpenDriveMount()
+    {
+        var path = currentStatus?.WorkingDirectory;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            service.OpenPath(path);
+            return;
+        }
+
+        NoticeText.Text = "Drive mount unavailable";
     }
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)
@@ -788,8 +800,7 @@ public partial class MainWindow : Window
     {
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Show Iris Drive", null, (_, _) => ShowFromTray());
-        menu.Items.Add("Open Drive Folder", null, (_, _) =>
-            service.OpenPath(currentStatus?.WorkingDirectory ?? service.DefaultDriveDirectory));
+        menu.Items.Add("Open Drive Folder", null, (_, _) => OpenDriveMount());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Start Sync", null, async (_, _) =>
         {

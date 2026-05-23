@@ -1486,8 +1486,7 @@ fn create_profile(label: &str) -> Result<(), String> {
         init_args.push(label.to_string());
     }
 
-    run_idrive_owned(&init_args)?;
-    import_default_drive()
+    run_idrive_owned(&init_args)
 }
 
 fn restore_profile(secret: &str, label: &str) -> Result<(), String> {
@@ -1497,8 +1496,7 @@ fn restore_profile(secret: &str, label: &str) -> Result<(), String> {
         args.push("--label".to_string());
         args.push(label.to_string());
     }
-    run_idrive_owned(&args)?;
-    import_default_drive()
+    run_idrive_owned(&args)
 }
 
 fn link_device(owner: &str, label: &str) -> Result<(), String> {
@@ -1508,25 +1506,11 @@ fn link_device(owner: &str, label: &str) -> Result<(), String> {
         args.push("--label".to_string());
         args.push(label.to_string());
     }
-    run_idrive_owned(&args)?;
-    import_default_drive()
+    run_idrive_owned(&args)
 }
 
 fn revoke_device(device: &str) -> Result<(), String> {
     run_idrive(["revoke", device])
-}
-
-fn import_default_drive() -> Result<(), String> {
-    import_drive_folder(&default_drive_dir())
-}
-
-fn import_drive_folder(folder: &PathBuf) -> Result<(), String> {
-    if let Err(error) = std::fs::create_dir_all(folder) {
-        return Err(format!("Could not create drive folder: {error}"));
-    }
-
-    let folder_arg = folder.display().to_string();
-    run_idrive(["import", folder_arg.as_str()])
 }
 
 fn start_daemon(model: &AppRef) {
@@ -1569,7 +1553,10 @@ fn spawn_daemon() -> Result<Child, std::io::Error> {
     Command::new(idrive_path())
         .arg("daemon")
         .arg("--watch-interval")
-        .arg("10")
+        .arg("2")
+        .arg("--watch-debounce-ms")
+        .arg("100")
+        .arg("--no-working-dir")
         .arg("--mount")
         .arg("--mountpoint")
         .arg(default_drive_dir())
@@ -1796,17 +1783,25 @@ fn approve_device(model: &AppRef) {
 }
 
 fn open_drive_folder(model: &AppRef) {
-    let folder = run_idrive_json(["status"])
-        .map(|json| working_dir(&json))
-        .unwrap_or_else(|_| default_drive_dir());
-    if let Err(error) = std::fs::create_dir_all(&folder) {
-        model
-            .ui
-            .notice
-            .set_text(&format!("Could not create drive folder: {error}"));
+    let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
+    ensure_daemon_running(model, &status);
+    let folder = mounted_dir(&status).unwrap_or_else(default_drive_dir);
+    if !wait_for_path(&folder, Duration::from_secs(2)) {
+        model.ui.notice.set_text("Drive mount unavailable");
         return;
     }
     open_path(&folder);
+}
+
+fn wait_for_path(path: &Path, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if path.exists() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    path.exists()
 }
 
 fn copy_snapshot_link(model: &AppRef) {
@@ -1923,6 +1918,9 @@ fn default_drive_dir() -> PathBuf {
 }
 
 fn working_dir(json: &Value) -> PathBuf {
+    if let Some(path) = mounted_dir(json) {
+        return path;
+    }
     if let Some(path) = json
         .get("drives")
         .and_then(Value::as_array)
@@ -1940,6 +1938,15 @@ fn working_dir(json: &Value) -> PathBuf {
         return PathBuf::from(path);
     }
     default_drive_dir()
+}
+
+fn mounted_dir(json: &Value) -> Option<PathBuf> {
+    json.get("daemon")
+        .and_then(|daemon| daemon.get("mount"))
+        .and_then(|mount| mount.get("mountpoint"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }
 
 fn drive_name(json: &Value) -> String {
