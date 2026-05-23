@@ -2476,30 +2476,87 @@ fn spawn_initial_publish(
     });
 }
 
-fn spawn_startup_scan(
+#[derive(Clone, Copy)]
+struct ScanPublishRequest {
+    trigger: &'static str,
+    retry_current_root: bool,
+    upload_current_to_blossom: bool,
+}
+
+impl ScanPublishRequest {
+    fn merge(self, next: Self) -> Self {
+        Self {
+            trigger: if self.trigger == next.trigger {
+                self.trigger
+            } else {
+                "coalesced"
+            },
+            retry_current_root: self.retry_current_root || next.retry_current_root,
+            upload_current_to_blossom: self.upload_current_to_blossom
+                || next.upload_current_to_blossom,
+        }
+    }
+}
+
+struct ScanPublishResult {
+    trigger: &'static str,
+    error: Option<String>,
+}
+
+fn queue_scan_publish(
+    tx: &tokio::sync::mpsc::Sender<ScanPublishRequest>,
+    request: ScanPublishRequest,
+) {
+    use tokio::sync::mpsc::error::TrySendError;
+
+    if let Err(error) = tx.try_send(request) {
+        let reason = match error {
+            TrySendError::Full(_) => "full",
+            TrySendError::Closed(_) => "closed",
+        };
+        println!(
+            "{}",
+            json!({
+                "event": "scan_publish_queue_error",
+                "trigger": request.trigger,
+                "error": reason,
+            })
+        );
+    }
+}
+
+fn spawn_scan_publish_worker(
     client: nostr_sdk::Client,
     config_dir: PathBuf,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mut rx: tokio::sync::mpsc::Receiver<ScanPublishRequest>,
+    done_tx: tokio::sync::mpsc::Sender<ScanPublishResult>,
 ) {
     tokio::spawn(async move {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-            scan_and_publish(&client, &config_dir, fips_blocks.as_deref(), true, true),
-        )
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => println!(
-                "{}",
-                json!({"event": "startup_scan_error", "error": error.to_string()})
-            ),
-            Err(_) => println!(
-                "{}",
-                json!({
-                    "event": "startup_scan_error",
-                    "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
+        while let Some(mut request) = rx.recv().await {
+            while let Ok(next) = rx.try_recv() {
+                request = request.merge(next);
+            }
+            let error = scan_and_publish(
+                &client,
+                &config_dir,
+                fips_blocks.as_deref(),
+                request.retry_current_root,
+                request.upload_current_to_blossom,
+            )
+            .await
+            .err()
+            .map(|error| error.to_string());
+            if done_tx
+                .send(ScanPublishResult {
+                    trigger: request.trigger,
+                    error,
                 })
-            ),
+                .await
+                .is_err()
+            {
+                break;
+            }
         }
     });
 }
@@ -2928,6 +2985,15 @@ fn cmd_daemon(
             true,
             "startup_materialized",
         );
+        let (scan_tx, scan_rx) = mpsc::channel::<ScanPublishRequest>(8);
+        let (scan_done_tx, mut scan_done_rx) = mpsc::channel::<ScanPublishResult>(8);
+        spawn_scan_publish_worker(
+            client.clone(),
+            config_dir.to_path_buf(),
+            fips_blocks.clone(),
+            scan_rx,
+            scan_done_tx,
+        );
 
         // Announce the current account roster and device root once on
         // startup, and upload the initial blocks if this launch just
@@ -2935,7 +3001,14 @@ fn cmd_daemon(
         // change, so without this a freshly-imported device would sit
         // silent until its first edit.
         if working_dir.is_some() {
-            spawn_startup_scan(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
+            queue_scan_publish(
+                &scan_tx,
+                ScanPublishRequest {
+                    trigger: "startup",
+                    retry_current_root: true,
+                    upload_current_to_blossom: true,
+                },
+            );
         } else {
             spawn_initial_publish(
                 client.clone(),
@@ -2944,18 +3017,6 @@ fn cmd_daemon(
                 startup_state,
             );
         }
-        if let Err(error) =
-            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
-                .await
-        {
-            println!(
-                "{}",
-                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-            );
-        }
-        direct_roots
-            .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
-            .await;
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
@@ -2967,8 +3028,8 @@ fn cmd_daemon(
         // patterns produce events fs-notify can miss; this catches
         // drift).
         let mut watch_timer = if watch_interval > 0 && working_dir.is_some() {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(watch_interval));
+            let period = std::time::Duration::from_secs(watch_interval);
+            let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             Some(interval)
         } else {
@@ -3022,10 +3083,20 @@ fn cmd_daemon(
                     }
                 }
                 Some(()) = fs_rx.recv() => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false, false).await {
+                    queue_scan_publish(
+                        &scan_tx,
+                        ScanPublishRequest {
+                            trigger: "fs",
+                            retry_current_root: false,
+                            upload_current_to_blossom: false,
+                        },
+                    );
+                }
+                Some(result) = scan_done_rx.recv() => {
+                    if let Some(error) = result.error {
                         println!(
                             "{}",
-                            json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
+                            json!({"event": "auto_publish_error", "trigger": result.trigger, "error": error})
                         );
                     } else if let Err(error) =
                         announce_current_state_direct(
@@ -3042,6 +3113,13 @@ fn cmd_daemon(
                     }
                 }
                 _ = relay_status_timer.tick() => {
+                    let status = json!({
+                            "event": "relay_statuses",
+                            "relay_statuses": relay_status_payload(&client).await,
+                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_deref()).await,
+                    });
+                    write_daemon_status(config_dir, status.clone());
+                    println!("{status}");
                     direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await;
@@ -3058,13 +3136,6 @@ fn cmd_daemon(
                             json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
                         );
                     }
-                    let status = json!({
-                            "event": "relay_statuses",
-                            "relay_statuses": relay_status_payload(&client).await,
-                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_deref()).await,
-                    });
-                    write_daemon_status(config_dir, status.clone());
-                    println!("{status}");
                 }
                 () = async {
                     if let Some(timer) = watch_timer.as_mut() {
@@ -3073,24 +3144,14 @@ fn cmd_daemon(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), true, false).await {
-                        println!(
-                            "{}",
-                            json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
-                        );
-                    } else if let Err(error) =
-                        announce_current_state_direct(
-                            &mut direct_roots,
-                            config_dir,
-                            fips_blocks.as_deref(),
-                        )
-                        .await
-                    {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                        );
-                    }
+                    queue_scan_publish(
+                        &scan_tx,
+                        ScanPublishRequest {
+                            trigger: "timer",
+                            retry_current_root: false,
+                            upload_current_to_blossom: false,
+                        },
+                    );
                 }
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
