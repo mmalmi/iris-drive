@@ -31,6 +31,7 @@ const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
+const EVENT_MATERIALIZE_TIMEOUT_SECS: u64 = 30;
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
@@ -1832,7 +1833,7 @@ impl DirectRootExchange {
         &mut self,
         client: &nostr_sdk::Client,
         config_dir: &Path,
-        sync: &FsFipsBlockSync,
+        sync: Arc<FsFipsBlockSync>,
     ) -> Result<()> {
         for message in sync.drain_mesh_pubsub_events().await {
             if !message
@@ -1852,7 +1853,9 @@ impl DirectRootExchange {
                 return Err(anyhow::anyhow!("direct mesh root event id mismatch"));
             }
             self.seen_keys.insert(frame.key.clone());
-            if let Err(error) = apply_one_event(client, config_dir, &event, Some(sync)).await {
+            if let Err(error) =
+                apply_one_event(client, config_dir, &event, Some(sync.clone())).await
+            {
                 self.seen_keys.remove(&frame.key);
                 return Err(error);
             }
@@ -1870,7 +1873,7 @@ impl DirectRootExchange {
             );
             let config = AppConfig::load_or_default(config_path_in(config_dir))?;
             if let Some(state) = config.account.as_ref() {
-                self.announce_current_state(config_dir, &config, state, Some(sync))
+                self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
                     .await?;
             }
         }
@@ -2747,7 +2750,7 @@ fn cmd_daemon(
         block_config.relays = relays.clone();
         let (fips_blocks, fips_block_sync_error) =
             match start_fips_block_sync(config_dir, &block_config).await {
-                Ok(sync) => (Some(sync), None),
+                Ok(sync) => (Some(Arc::new(sync)), None),
                 Err(error) => (None, Some(error.to_string())),
             };
         let gateway = if enable_gateway {
@@ -2787,7 +2790,7 @@ fn cmd_daemon(
             .context("opening subscription")?;
         let mut notifications = client.notifications();
         let mut direct_roots = DirectRootExchange::default();
-        let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_ref()).await;
+        let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
 
         // Spawn an fs-notify watcher on the working dir. Events get
         // debounced (notify-debouncer-mini) then forwarded over an
@@ -2914,7 +2917,7 @@ fn cmd_daemon(
         if working_dir.is_some() {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-                scan_and_publish(&client, config_dir, fips_blocks.as_ref(), false),
+                scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false),
             )
             .await
             {
@@ -2940,7 +2943,8 @@ fn cmd_daemon(
             }
         }
         if let Err(error) =
-            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_ref()).await
+            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
+                .await
         {
             println!(
                 "{}",
@@ -2948,7 +2952,7 @@ fn cmd_daemon(
             );
         }
         direct_roots
-            .request_roots_from_new_peers(config_dir, fips_blocks.as_ref())
+            .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
             .await;
         println!("(running — Ctrl+C to stop)");
 
@@ -2987,7 +2991,7 @@ fn cmd_daemon(
                     match recv {
                         Ok(RelayPoolNotification::Event { event, .. }) => {
                             if let Err(e) =
-                                apply_one_event(&client, config_dir, &event, fips_blocks.as_ref()).await
+                                apply_one_event(&client, config_dir, &event, fips_blocks.clone()).await
                             {
                                 println!(
                                     "{}",
@@ -2997,7 +3001,7 @@ fn cmd_daemon(
                                 announce_current_state_direct(
                                     &mut direct_roots,
                                     config_dir,
-                                    fips_blocks.as_ref(),
+                                    fips_blocks.as_deref(),
                                 )
                                 .await
                             {
@@ -3016,7 +3020,7 @@ fn cmd_daemon(
                     }
                 }
                 Some(()) = fs_rx.recv() => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref(), false).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), false).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "fs", "error": e.to_string()})
@@ -3025,7 +3029,7 @@ fn cmd_daemon(
                         announce_current_state_direct(
                             &mut direct_roots,
                             config_dir,
-                            fips_blocks.as_ref(),
+                            fips_blocks.as_deref(),
                         )
                         .await
                     {
@@ -3037,13 +3041,13 @@ fn cmd_daemon(
                 }
                 _ = relay_status_timer.tick() => {
                     direct_roots
-                        .request_roots_from_new_peers(config_dir, fips_blocks.as_ref())
+                        .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await;
                     if let Err(error) =
                         announce_current_state_direct(
                             &mut direct_roots,
                             config_dir,
-                            fips_blocks.as_ref(),
+                            fips_blocks.as_deref(),
                         )
                         .await
                     {
@@ -3055,7 +3059,7 @@ fn cmd_daemon(
                     let status = json!({
                             "event": "relay_statuses",
                             "relay_statuses": relay_status_payload(&client).await,
-                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_ref()).await,
+                            "fips_block_sync": fips_block_sync_status(fips_blocks.as_deref()).await,
                     });
                     write_daemon_status(config_dir, status.clone());
                     println!("{status}");
@@ -3067,7 +3071,7 @@ fn cmd_daemon(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_ref(), true).await {
+                    if let Err(e) = scan_and_publish(&client, config_dir, fips_blocks.as_deref(), true).await {
                         println!(
                             "{}",
                             json!({"event": "auto_publish_error", "trigger": "timer", "error": e.to_string()})
@@ -3076,7 +3080,7 @@ fn cmd_daemon(
                         announce_current_state_direct(
                             &mut direct_roots,
                             config_dir,
-                            fips_blocks.as_ref(),
+                            fips_blocks.as_deref(),
                         )
                         .await
                     {
@@ -3089,7 +3093,7 @@ fn cmd_daemon(
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
                         && let Err(error) = direct_roots
-                            .drain_mesh_events(&client, config_dir, sync)
+                            .drain_mesh_events(&client, config_dir, sync.clone())
                             .await
                     {
                         println!(
@@ -3474,7 +3478,7 @@ async fn apply_one_event(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
-    fips_blocks: Option<&FsFipsBlockSync>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -3491,7 +3495,7 @@ async fn apply_one_event(
                 "outcome": format!("{outcome:?}"),
             })
         );
-        if let Some(sync) = fips_blocks {
+        if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
     } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
@@ -3539,30 +3543,19 @@ async fn apply_one_event(
             })
         );
         config.save(config_path_in(config_dir))?;
-        if let Some(sync) = fips_blocks {
+        if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
 
-        // If we applied a fresh drive root, pull the underlying blocks
-        // so `idrive list` can walk the remote device's tree.
-        if let Some(root_cid) = root_cid_to_pull
-            && let Err(error) =
-                pull_blocks_for_root_bounded(config_dir, &config, &root_cid, fips_blocks).await
-        {
-            println!(
-                "{}",
-                json!({"event": "block_download_error", "error": error})
-            );
-        }
-        if (was_applied || stale_current_root)
-            && let Err(error) =
-                materialize_and_publish(client, config_dir, "materialized_drive_root").await
-        {
-            println!(
-                "{}",
-                json!({"event": "materialize_error", "error": format!("{error:#}")})
-            );
-        }
+        spawn_root_apply_followup(
+            client.clone(),
+            config_dir.to_path_buf(),
+            config.clone(),
+            root_cid_to_pull,
+            fips_blocks,
+            was_applied || stale_current_root,
+            "materialized_drive_root",
+        );
         return Ok(());
     } else {
         // Unknown kind; ignore.
@@ -3576,7 +3569,7 @@ async fn apply_files_root_event(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
-    fips_blocks: Option<&FsFipsBlockSync>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
     config: &mut AppConfig,
     account_state: AccountState,
 ) -> Result<()> {
@@ -3618,26 +3611,69 @@ async fn apply_files_root_event(
         })
     );
     config.save(config_path_in(config_dir))?;
-    if was_applied
-        && let Some(root_cid) = root_cid_to_pull
-        && let Err(error) =
-            pull_blocks_for_root_bounded(config_dir, config, &root_cid, fips_blocks).await
-    {
-        println!(
-            "{}",
-            json!({"event": "block_download_error", "error": error})
-        );
-    }
-    if was_applied
-        && let Err(error) =
-            materialize_and_publish(client, config_dir, "materialized_files_root").await
-    {
-        println!(
-            "{}",
-            json!({"event": "materialize_error", "error": format!("{error:#}")})
-        );
-    }
+    spawn_root_apply_followup(
+        client.clone(),
+        config_dir.to_path_buf(),
+        config.clone(),
+        root_cid_to_pull,
+        fips_blocks,
+        was_applied,
+        "materialized_files_root",
+    );
     Ok(())
+}
+
+fn spawn_root_apply_followup(
+    client: nostr_sdk::Client,
+    config_dir: PathBuf,
+    config: AppConfig,
+    root_cid_to_pull: Option<String>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    should_materialize: bool,
+    materialize_event: &'static str,
+) {
+    if root_cid_to_pull.is_none() && !should_materialize {
+        return;
+    }
+
+    tokio::spawn(async move {
+        if let Some(root_cid) = root_cid_to_pull
+            && let Err(error) = pull_blocks_for_root_bounded(
+                &config_dir,
+                &config,
+                &root_cid,
+                fips_blocks.as_deref(),
+            )
+            .await
+        {
+            println!(
+                "{}",
+                json!({"event": "block_download_error", "error": error})
+            );
+        }
+
+        if should_materialize {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(EVENT_MATERIALIZE_TIMEOUT_SECS),
+                materialize_and_publish(&client, &config_dir, materialize_event),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => println!(
+                    "{}",
+                    json!({"event": "materialize_error", "error": format!("{error:#}")})
+                ),
+                Err(_) => println!(
+                    "{}",
+                    json!({
+                        "event": "materialize_error",
+                        "error": format!("timed out after {EVENT_MATERIALIZE_TIMEOUT_SECS}s"),
+                    })
+                ),
+            }
+        }
+    });
 }
 
 async fn pull_blocks_for_root(
