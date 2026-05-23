@@ -31,6 +31,7 @@ const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 10;
+const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[2, 5, 10, 20, 30, 45, 60];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
@@ -2343,9 +2344,11 @@ async fn publish_current_state(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
             .keys();
-        match relay_sync::publish_app_keys(client, owner_keys, snap).await {
+        match relay_publish_with_timeout(relay_sync::publish_app_keys(client, owner_keys, snap))
+            .await
+        {
             Ok(_) => report.published_app_keys = true,
-            Err(error) => report.app_keys_publish_error = Some(error.to_string()),
+            Err(error) => report.app_keys_publish_error = Some(error),
         }
     }
 
@@ -2364,18 +2367,18 @@ async fn publish_current_state(
             report.blossom_upload_error = blossom_upload_error;
         }
 
-        match relay_sync::publish_drive_root(
+        match relay_publish_with_timeout(relay_sync::publish_drive_root(
             client,
             device.keys(),
             &state.owner_pubkey,
             &drive.drive_id,
             &root,
             &authorized_device_pubkeys(state),
-        )
+        ))
         .await
         {
             Ok(_) => report.published_drive_root = true,
-            Err(error) => report.drive_root_publish_error = Some(error.to_string()),
+            Err(error) => report.drive_root_publish_error = Some(error),
         }
 
         if state.has_owner_signing_authority {
@@ -2385,16 +2388,52 @@ async fn publish_current_state(
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
                 .keys();
-            match relay_sync::publish_files_root(client, owner_keys, &drive.drive_id, &root).await {
+            match relay_publish_with_timeout(relay_sync::publish_files_root(
+                client,
+                owner_keys,
+                &drive.drive_id,
+                &root,
+            ))
+            .await
+            {
                 Ok(_) => report.published_files_root = true,
                 Err(error) => {
-                    report.files_root_publish_error = Some(error.to_string());
+                    report.files_root_publish_error = Some(error);
                 }
             }
         }
     }
 
     Ok(report)
+}
+
+async fn relay_publish_with_timeout<T, F>(future: F) -> std::result::Result<T, String>
+where
+    F: std::future::Future<
+            Output = std::result::Result<T, iris_drive_core::relay_sync::RelayError>,
+        >,
+{
+    relay_publish_with_timeout_duration(
+        std::time::Duration::from_secs(RELAY_PUBLISH_TIMEOUT_SECS),
+        future,
+    )
+    .await
+}
+
+async fn relay_publish_with_timeout_duration<T, F>(
+    timeout: std::time::Duration,
+    future: F,
+) -> std::result::Result<T, String>
+where
+    F: std::future::Future<
+            Output = std::result::Result<T, iris_drive_core::relay_sync::RelayError>,
+        >,
+{
+    match tokio::time::timeout(timeout, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("timed out after {}s", timeout.as_secs())),
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -3332,20 +3371,20 @@ async fn scan_and_publish(
     }
 
     let mut published_drive_root = false;
-    match relay_sync::publish_drive_root(
+    match relay_publish_with_timeout(relay_sync::publish_drive_root(
         client,
         device.keys(),
         &state.owner_pubkey,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &new_root,
         &authorized_device_pubkeys(state),
-    )
+    ))
     .await
     {
         Ok(_) => published_drive_root = true,
         Err(e) => println!(
             "{}",
-            json!({"event": "drive_root_publish_error", "error": e.to_string()})
+            json!({"event": "drive_root_publish_error", "error": e})
         ),
     }
 
@@ -3357,18 +3396,18 @@ async fn scan_and_publish(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
             .keys();
-        match relay_sync::publish_files_root(
+        match relay_publish_with_timeout(relay_sync::publish_files_root(
             client,
             owner_keys,
             iris_drive_core::PRIMARY_DRIVE_ID,
             &new_root,
-        )
+        ))
         .await
         {
             Ok(_) => published_files_root = true,
             Err(e) => println!(
                 "{}",
-                json!({"event": "files_root_publish_error", "error": e.to_string()})
+                json!({"event": "files_root_publish_error", "error": e})
             ),
         }
     }
@@ -4245,6 +4284,40 @@ mod daemon_lock_tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn working_dir_change_detection_detects_deletions() {
+        let cfg_dir = tempdir().unwrap();
+        let work = tempdir().unwrap();
+        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+
+        std::fs::write(work.path().join("keep.txt"), b"keep").unwrap();
+        std::fs::write(work.path().join("delete-me.txt"), b"delete").unwrap();
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let first = daemon.import_working_dir(work.path()).await.unwrap();
+        std::fs::remove_file(work.path().join("delete-me.txt")).unwrap();
+
+        assert!(
+            !working_dir_has_same_visible_files(&daemon, work.path(), Some(&first.root_cid))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_publish_timeout_returns_control_to_daemon_loop() {
+        let error =
+            relay_publish_with_timeout_duration(
+                std::time::Duration::from_millis(1),
+                std::future::pending::<
+                    std::result::Result<(), iris_drive_core::relay_sync::RelayError>,
+                >(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.starts_with("timed out after"));
     }
 
     #[tokio::test]
