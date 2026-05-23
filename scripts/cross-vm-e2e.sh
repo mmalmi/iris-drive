@@ -417,9 +417,9 @@ err=$(sh_quote "$err")
 pidfile=$(sh_quote "$pidfile")
 work=$(sh_quote "$work")
 mount_labels=$(sh_quote "$MOUNT_LABELS")
-mount_args=()
+mount_enabled=0
 case \" \$mount_labels \" in
-  *\" \$label \"*) mount_args=(--mount --mountpoint \"\$work\") ;;
+  *\" \$label \"*) mount_enabled=1 ;;
 esac
 if [[ -f \"\$pidfile\" ]]; then
   old=\"\$(cat \"\$pidfile\" 2>/dev/null || true)\"
@@ -441,7 +441,11 @@ case \" \$mount_labels \" in
     mkdir -p \"\$work\"
     ;;
 esac
-nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway \"\${mount_args[@]}\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+if (( mount_enabled )); then
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+else
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+fi
 echo \$! >\"\$pidfile\"
 "
   fi
