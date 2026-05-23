@@ -26,6 +26,7 @@ info:
     @echo
     @echo "Checks"
     @echo "  just test"
+    @echo "  just structure"
     @echo "  just fmt"
     @echo "  just clippy"
 
@@ -94,6 +95,9 @@ release:
 test:
     cargo test --workspace
 
+structure:
+    ./scripts/check-rust-file-length.sh
+
 docker-cli-e2e:
     ./scripts/docker-cli-e2e.sh
 
@@ -101,4 +105,5 @@ fmt:
     cargo fmt --all
 
 clippy:
+    just structure
     cargo clippy --workspace --all-targets -- -D warnings

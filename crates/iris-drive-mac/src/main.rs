@@ -65,10 +65,10 @@ fn main() -> Result<()> {
     let config_dir = iris_drive_core::paths::default_config_dir();
     // First-launch bootstrap creates account/config only. The visible drive
     // surface is provided by native virtual providers, not by a backing folder.
-    if let Some(dir) = config_dir.as_ref() {
-        if let Err(e) = bootstrap_first_launch(dir) {
-            eprintln!("first-launch bootstrap failed: {e:#}");
-        }
+    if let Some(dir) = config_dir.as_ref()
+        && let Err(e) = bootstrap_first_launch(dir)
+    {
+        eprintln!("first-launch bootstrap failed: {e:#}");
     }
 
     // Spawn `idrive daemon` and pump its stdout into the event loop.

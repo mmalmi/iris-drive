@@ -262,6 +262,7 @@ pub(crate) struct IrisDriveMount;
 pub(crate) struct IrisDriveMountHandle;
 
 #[cfg(not(target_os = "linux"))]
+#[allow(clippy::unused_self)]
 impl IrisDriveMount {
     pub(crate) fn mountpoint(&self) -> &std::path::Path {
         std::path::Path::new("")
@@ -280,11 +281,13 @@ impl IrisDriveMount {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(clippy::unused_self)]
 impl IrisDriveMountHandle {
     pub(crate) fn mountpoint(&self) -> &std::path::Path {
         std::path::Path::new("")
     }
 
+    #[allow(clippy::unused_async)]
     pub(crate) async fn refresh_from_config(
         &self,
         _config_dir: &std::path::Path,
@@ -294,6 +297,7 @@ impl IrisDriveMountHandle {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(clippy::unused_async)]
 pub(crate) async fn start_iris_drive_mount(
     _config_dir: &std::path::Path,
     _mountpoint: std::path::PathBuf,
