@@ -79,6 +79,16 @@ pub(crate) fn device_count_value(json: &Value) -> String {
     format!("{published}/{authorized}")
 }
 
+pub(crate) fn sidebar_online_value(json: &Value) -> String {
+    let fips = json
+        .get("network")
+        .and_then(|network| network.get("fips"))
+        .unwrap_or(&Value::Null);
+    let online = find_number(fips, &["roster_connected_peer_count"]).unwrap_or(0);
+    let expected = find_number(fips, &["roster_peer_count"]).unwrap_or(0);
+    format!("{online}/{expected} online")
+}
+
 pub(crate) fn find_string<'a>(json: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| json.get(*key).and_then(Value::as_str))

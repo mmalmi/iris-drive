@@ -23,6 +23,9 @@ pub(crate) fn install_css() {
         .iris-sidebar-button.selected label {
           font-weight: 700;
         }
+        .iris-sidebar-summary {
+          padding: 2px 8px;
+        }
         .iris-actions flowboxchild,
         .iris-metrics flowboxchild {
           padding: 0;

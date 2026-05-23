@@ -14,8 +14,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
     header.set_title_widget(Some(&adw::WindowTitle::new("Iris Drive", "")));
     root.append(&header);
 
-    let folder_button =
-        action_button("folder-open-symbolic", "Open Drive Folder", "Open drive folder");
+    let folder_button = action_button(
+        "folder-open-symbolic",
+        "Open Drive Folder",
+        "Open drive folder",
+    );
     let copy_snapshot_button = action_button(
         "insert-link-symbolic",
         "Copy Snapshot",
@@ -284,6 +287,17 @@ pub(crate) fn build_ui(app: &adw::Application) {
         sidebar.append(&button);
         nav_buttons.push((name.to_string(), button));
     }
+
+    sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let sidebar_summary = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    sidebar_summary.add_css_class("iris-sidebar-summary");
+    let sidebar_online = gtk::Label::new(Some("0/0 online"));
+    sidebar_online.add_css_class("caption");
+    sidebar_online.add_css_class("dim-label");
+    sidebar_online.set_xalign(0.0);
+    sidebar_summary.append(&sidebar_online);
+    sidebar.append(&sidebar_summary);
+
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     sidebar.append(&spacer);
@@ -313,6 +327,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
         ui: Ui {
             sidebar,
             setup,
+            sidebar_online,
             main_view,
             main,
             drive_title,

@@ -42,6 +42,7 @@ thread_local! {
 struct Ui {
     sidebar: gtk::Box,
     setup: gtk::Box,
+    sidebar_online: gtk::Label,
     main_view: gtk::ScrolledWindow,
     main: gtk::Box,
     drive_title: gtk::Label,

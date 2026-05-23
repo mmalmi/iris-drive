@@ -53,6 +53,10 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.devices.set_text(&device_count_value(&json));
             model
                 .ui
+                .sidebar_online
+                .set_text(&sidebar_online_value(&json));
+            model
+                .ui
                 .config_path
                 .set_text(find_string(&json, &["config_dir"]).unwrap_or("-"));
             model.ui.blocks_path.set_text(
@@ -99,6 +103,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.blocks.set_text("0");
             model.ui.storage.set_text("0 B");
             model.ui.devices.set_text("0/0");
+            model.ui.sidebar_online.set_text("0/0 online");
             model.ui.copy_snapshot_button.set_sensitive(false);
             model.ui.open_snapshot_button.set_sensitive(false);
             model.ui.notice.set_text(&error);
