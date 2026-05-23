@@ -21,12 +21,14 @@ use iris_drive_core::{
     gateway::{GatewayBind, GatewayServer},
     index_dir,
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
-    paths::{config_path_in, default_config_dir, key_path_in},
+    paths::{config_path_in, default_config_dir, default_working_dir_in, key_path_in},
 };
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{Event, PublicKey, RelayStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod mount;
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
@@ -216,6 +218,13 @@ enum Command {
         /// Disable the loopback browser gateway.
         #[arg(long)]
         no_gateway: bool,
+        /// Mount My Drive with hashtree FUSE instead of watching a normal folder.
+        /// Currently supported on Linux.
+        #[arg(long)]
+        mount: bool,
+        /// Mountpoint for --mount. Defaults to the configured/default drive path.
+        #[arg(long)]
+        mountpoint: Option<PathBuf>,
     },
 }
 
@@ -351,6 +360,8 @@ fn run_cli() -> ExitCode {
             watch_debounce_ms,
             gateway_port,
             no_gateway,
+            mount,
+            mountpoint,
         } => cmd_daemon(
             &config_dir,
             &relay,
@@ -358,6 +369,8 @@ fn run_cli() -> ExitCode {
             watch_debounce_ms,
             gateway_port,
             !no_gateway,
+            mount,
+            mountpoint,
         ),
     };
 
@@ -2091,6 +2104,7 @@ impl DirectRootExchange {
         client: &nostr_sdk::Client,
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     ) -> Result<()> {
         for message in sync.drain_mesh_pubsub_events().await {
             if !message
@@ -2110,8 +2124,14 @@ impl DirectRootExchange {
                 return Err(anyhow::anyhow!("direct mesh root event id mismatch"));
             }
             self.seen_keys.insert(frame.key.clone());
-            if let Err(error) =
-                apply_one_event(client, config_dir, &event, Some(sync.clone())).await
+            if let Err(error) = apply_one_event(
+                client,
+                config_dir,
+                &event,
+                Some(sync.clone()),
+                mount_refresh.clone(),
+            )
+            .await
             {
                 self.seen_keys.remove(&frame.key);
                 return Err(error);
@@ -2579,6 +2599,38 @@ async fn materialize_and_publish(
         json!({
             "event": event_name,
             "materialize": materialize_report_json(&report),
+            "publish": publish_state_report_json(&publish),
+        })
+    );
+    Ok(())
+}
+
+async fn import_mount_root_and_publish(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    visible_root: Cid,
+) -> Result<()> {
+    let mut daemon = Daemon::open(config_dir)
+        .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+    let import = daemon
+        .import_visible_root(visible_root)
+        .await
+        .context("importing mounted root")?;
+    let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(updated_state) = updated_config.account.clone() else {
+        return Err(anyhow::anyhow!("missing account after mount import"));
+    };
+    let publish =
+        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
+    println!(
+        "{}",
+        json!({
+            "event": "mounted_root",
+            "import": {
+                "root_cid": import.root_cid,
+                "file_count": import.file_count,
+                "top_level_entries": import.top_level_entries,
+            },
             "publish": publish_state_report_json(&publish),
         })
     );
@@ -3101,6 +3153,8 @@ fn cmd_daemon(
     watch_debounce_ms: u64,
     gateway_port: u16,
     enable_gateway: bool,
+    mount_drive: bool,
+    mountpoint: Option<PathBuf>,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
@@ -3210,6 +3264,35 @@ fn cmd_daemon(
         let mut notifications = client.notifications();
         let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
+        let mut config = config.clone();
+        let mut mounted_drive = if mount_drive {
+            let mountpoint = mountpoint
+                .clone()
+                .or_else(|| working_dir.clone())
+                .unwrap_or_else(|| default_working_dir_in(config_dir));
+            let mounted = mount::start_iris_drive_mount(config_dir, mountpoint).await?;
+            config = AppConfig::load_or_default(config_path_in(config_dir))?;
+            Some(mounted)
+        } else {
+            None
+        };
+        let mount_refresh = mounted_drive.as_ref().map(mount::IrisDriveMount::handle);
+        let mut mount_root_updates = mounted_drive
+            .as_mut()
+            .map(mount::IrisDriveMount::take_updates);
+        let (mount_refresh_tx, mut mount_refresh_rx) = if mounted_drive.is_some() {
+            let (tx, rx) = mpsc::channel::<&'static str>(8);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+        let working_dir = if mounted_drive.is_some() {
+            None
+        } else {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|d| d.working_dir.clone())
+        };
 
         // Spawn an fs-notify watcher on the working dir. Events get
         // debounced (notify-debouncer-mini) then forwarded over an
@@ -3226,6 +3309,12 @@ fn cmd_daemon(
             None
         };
 
+        let mount_status = mounted_drive.as_ref().map(|mounted| {
+            json!({
+                "mountpoint": mounted.mountpoint().display().to_string(),
+                "backend": "hashtree-fuse",
+            })
+        });
         let subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
@@ -3233,6 +3322,7 @@ fn cmd_daemon(
                 "watch_interval_secs": watch_interval,
                 "watch_debounce_ms": watch_debounce_ms,
                 "working_dir": working_dir.as_ref().map(|p| p.display().to_string()),
+                "mount": mount_status,
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
                 "browser_gateway": gateway_status,
@@ -3253,6 +3343,7 @@ fn cmd_daemon(
             fips_blocks.clone(),
             true,
             "startup_materialized",
+            mount_refresh_tx.clone(),
         );
         let (scan_tx, scan_rx) = mpsc::channel::<ScanPublishRequest>(8);
         let (scan_done_tx, mut scan_done_rx) = mpsc::channel::<ScanPublishResult>(8);
@@ -3327,7 +3418,14 @@ fn cmd_daemon(
                     match recv {
                         Ok(RelayPoolNotification::Event { event, .. }) => {
                             if let Err(e) =
-                                apply_one_event(&client, config_dir, &event, fips_blocks.clone()).await
+                                apply_one_event(
+                                    &client,
+                                    config_dir,
+                                    &event,
+                                    fips_blocks.clone(),
+                                    mount_refresh_tx.clone(),
+                                )
+                                .await
                             {
                                 println!(
                                     "{}",
@@ -3355,7 +3453,13 @@ fn cmd_daemon(
                         }
                     }
                 }
-                Some(()) = fs_rx.recv() => {
+                Some(()) = async {
+                    if working_dir.is_some() {
+                        fs_rx.recv().await
+                    } else {
+                        std::future::pending::<Option<()>>().await
+                    }
+                } => {
                     queue_scan_publish(
                         &scan_tx,
                         ScanPublishRequest {
@@ -3364,6 +3468,67 @@ fn cmd_daemon(
                             upload_current_to_blossom: false,
                         },
                     );
+                }
+                Some(mut visible_root) = async {
+                    if let Some(rx) = mount_root_updates.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<Cid>>().await
+                    }
+                } => {
+                    if let Some(rx) = mount_root_updates.as_mut() {
+                        while let Ok(next) = rx.try_recv() {
+                            visible_root = next;
+                        }
+                    }
+                    match import_mount_root_and_publish(&client, config_dir, visible_root).await {
+                        Ok(()) => {
+                            if let Err(error) =
+                                announce_current_state_direct(
+                                    &mut direct_roots,
+                                    config_dir,
+                                    fips_blocks.as_deref(),
+                                )
+                                .await
+                            {
+                                println!(
+                                    "{}",
+                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                );
+                            }
+                        }
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "mount_publish_error", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
+                Some(reason) = async {
+                    if let Some(rx) = mount_refresh_rx.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<&'static str>>().await
+                    }
+                } => {
+                    if let Some(handle) = mount_refresh.as_ref() {
+                        match handle.refresh_from_config(config_dir).await {
+                            Ok(visible) => println!(
+                                "{}",
+                                json!({
+                                    "event": "mount_refreshed",
+                                    "trigger": reason,
+                                    "mountpoint": handle.mountpoint().display().to_string(),
+                                    "root_cid": visible.root_cid.to_string(),
+                                    "file_count": visible.file_count,
+                                    "top_level_entries": visible.top_level_entries,
+                                })
+                            ),
+                            Err(error) => println!(
+                                "{}",
+                                json!({"event": "mount_refresh_error", "trigger": reason, "error": format!("{error:#}")})
+                            ),
+                        }
+                    }
                 }
                 Some(result) = scan_done_rx.recv() => {
                     if let Some(error) = result.error {
@@ -3423,7 +3588,12 @@ fn cmd_daemon(
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
                         && let Err(error) = direct_roots
-                            .drain_mesh_events(&client, config_dir, sync.clone())
+                            .drain_mesh_events(
+                                &client,
+                                config_dir,
+                                sync.clone(),
+                                mount_refresh_tx.clone(),
+                            )
                             .await
                     {
                         println!(
@@ -3851,6 +4021,7 @@ async fn apply_one_event(
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -3879,6 +4050,7 @@ async fn apply_one_event(
             config_dir,
             event,
             fips_blocks,
+            mount_refresh,
             &mut config,
             account_state,
         )
@@ -3927,6 +4099,7 @@ async fn apply_one_event(
             fips_blocks,
             was_applied || stale_current_root,
             "materialized_drive_root",
+            mount_refresh,
         );
         return Ok(());
     } else {
@@ -3942,6 +4115,7 @@ async fn apply_files_root_event(
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     config: &mut AppConfig,
     account_state: AccountState,
 ) -> Result<()> {
@@ -3991,6 +4165,7 @@ async fn apply_files_root_event(
         fips_blocks,
         was_applied,
         "materialized_files_root",
+        mount_refresh,
     );
     Ok(())
 }
@@ -4003,6 +4178,7 @@ fn spawn_root_apply_followup(
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     should_materialize: bool,
     materialize_event: &'static str,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
 ) {
     if root_cid_to_pull.is_none() && !should_materialize {
         return;
@@ -4025,6 +4201,15 @@ fn spawn_root_apply_followup(
         }
 
         if should_materialize {
+            if let Some(tx) = mount_refresh {
+                if tx.send(materialize_event).await.is_err() {
+                    println!(
+                        "{}",
+                        json!({"event": "mount_refresh_error", "error": "mount refresh worker stopped"})
+                    );
+                }
+                return;
+            }
             match tokio::time::timeout(
                 std::time::Duration::from_secs(EVENT_MATERIALIZE_TIMEOUT_SECS),
                 materialize_and_publish(&client, &config_dir, materialize_event),

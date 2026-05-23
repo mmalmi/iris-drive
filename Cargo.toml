@@ -49,6 +49,7 @@ hashtree-config = { path = "../hashtree/rust/crates/hashtree-config" }
 hashtree-embedded = { path = "../hashtree/rust/crates/hashtree-embedded" }
 hashtree-fips-transport = { path = "../hashtree/rust/crates/hashtree-fips-transport", features = ["webrtc"] }
 hashtree-fs = { path = "../hashtree/rust/crates/hashtree-fs" }
+hashtree-fuse = { path = "../hashtree/rust/crates/fuse", features = ["fuse"] }
 hashtree-lmdb = { path = "../hashtree/rust/crates/hashtree-lmdb" }
 hashtree-nostr = { path = "../hashtree/rust/crates/hashtree-nostr" }
 hashtree-provider = { path = "crates/hashtree-provider" }

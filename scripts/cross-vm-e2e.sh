@@ -26,6 +26,7 @@ Environment:
   IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 180).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
+  IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated host labels to run through idrive --mount.
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
@@ -37,6 +38,7 @@ POLL_SECS="${IRIS_DRIVE_E2E_POLL_SECS:-3}"
 MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
 LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
 KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
+MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -316,6 +318,7 @@ start_daemon() {
   local config
   local log
   local err
+  local work
   local pidfile
   local script
   local ssh_host
@@ -325,6 +328,7 @@ start_daemon() {
   config="$(host_value "$label" config)"
   log="$(host_value "$label" log)"
   err="$(host_value "$label" err)"
+  work="$(host_value "$label" work)"
   pidfile="$(host_value "$label" pid)"
   if [[ "$kind" == "windows" ]]; then
     ssh_host="$(host_value "$label" ssh)"
@@ -364,16 +368,23 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
   else
     script="
 set -Eeuo pipefail
+label=$(sh_quote "$label")
 idrive=$(sh_quote "$idrive")
 config=$(sh_quote "$config")
 log=$(sh_quote "$log")
 err=$(sh_quote "$err")
 pidfile=$(sh_quote "$pidfile")
+work=$(sh_quote "$work")
+mount_labels=$(sh_quote "$MOUNT_LABELS")
+mount_args=()
+case \" \$mount_labels \" in
+  *\" \$label \"*) mount_args=(--mount --mountpoint \"\$work\") ;;
+esac
 if [[ -f \"\$pidfile\" ]]; then
   old=\"\$(cat \"\$pidfile\" 2>/dev/null || true)\"
   if [[ -n \"\$old\" ]]; then kill \"\$old\" 2>/dev/null || true; fi
 fi
-nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway \"\${mount_args[@]}\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 echo \$! >\"\$pidfile\"
 "
   fi

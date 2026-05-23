@@ -30,6 +30,9 @@ notify-debouncer-mini.workspace = true
 futures.workspace = true
 rustls.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+hashtree-fuse.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 assert_cmd = "2"
