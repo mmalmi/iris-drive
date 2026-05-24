@@ -782,7 +782,9 @@ run_macos() {
   local idrive="$iris_repo/target/debug/idrive"
   local app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
-  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Application Support/Iris Drive Dev}"
+  local sandbox_app_base="$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev"
+  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$sandbox_app_base}"
+  local old_dev_app_base="$HOME/Library/Application Support/Iris Drive Dev"
   local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
   local app_stdout="/tmp/iris-drive-macos-app.out"
@@ -813,13 +815,18 @@ run_macos() {
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
   pkill -x idrive >/dev/null 2>&1 || true
   mkdir -p "$config_dir"
-  if [[ ! -f "$config_dir/key" && -f "$legacy_app_base/Config/key" ]]; then
-    log "migrating macOS dev app data into FileProvider runtime base"
-    mkdir -p "$app_base"
-    ditto "$legacy_app_base/Config" "$config_dir"
-    if [[ -d "$legacy_app_base/Hashtree" ]]; then
-      ditto "$legacy_app_base/Hashtree" "$app_base/Hashtree"
-    fi
+  if [[ ! -f "$config_dir/key" ]]; then
+    for migration_source in "$old_dev_app_base" "$legacy_app_base"; do
+      [[ "$migration_source" != "$app_base" ]] || continue
+      [[ -f "$migration_source/Config/key" ]] || continue
+      log "migrating macOS dev app data from $migration_source"
+      mkdir -p "$app_base"
+      ditto "$migration_source/Config" "$config_dir"
+      if [[ -d "$migration_source/Hashtree" ]]; then
+        ditto "$migration_source/Hashtree" "$app_base/Hashtree"
+      fi
+      break
+    done
   fi
   write_macos_fileprovider_runtime \
     "$app_base" \
@@ -838,6 +845,7 @@ run_macos() {
     --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
     --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
+    --env "IRIS_DRIVE_APP_BASE_DIR=$app_base" \
     --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true" \
     "$app"
   for _ in {1..30}; do
@@ -1212,7 +1220,7 @@ remote_status_json() {
       ssh "$host" 'bash -se' <<'REMOTE_SH'
 set -Eeuo pipefail
 idrive="$HOME/src/iris-drive/target/debug/idrive"
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}/Config"
+config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
 "$idrive" --config-dir "$config_dir" status
 REMOTE_SH
       ;;

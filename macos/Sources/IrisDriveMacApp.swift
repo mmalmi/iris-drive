@@ -68,12 +68,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
         }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            ensureFileProviderDomainRegistered { state in
-                DispatchQueue.main.async {
-                    self?.fileProviderDomainState = state
+        if fileProviderIntegrationEnabled {
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                ensureFileProviderDomainRegistered { state in
+                    DispatchQueue.main.async {
+                        self?.fileProviderDomainState = state
+                    }
                 }
             }
+        } else {
+            NSLog("Iris Drive FileProvider disabled for this signing mode")
+            fileProviderDomainState = .unavailable
         }
     }
 
@@ -670,6 +675,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showMountedDriveFolder() {
+        guard fileProviderIntegrationEnabled else {
+            handleFileProviderOpenFailure("disabled for this signing mode")
+            return
+        }
         let paths = runtimePathsForMenu ?? runtimePaths()
         prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
         ensureFileProviderDomainRegistered { [weak self] state in
@@ -915,8 +924,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            !override.isEmpty {
             baseDirectory = URL(fileURLWithPath: override, isDirectory: true)
         } else {
-            baseDirectory = currentProcessAppGroupContainerURL()
-                ?? fileProviderApplicationSupportFallbackDirectory()
+            let appGroupDirectory = fileProviderIntegrationEnabled
+                ? currentProcessAppGroupContainerURL()
+                : nil
+            baseDirectory = appGroupDirectory ?? fileProviderApplicationSupportFallbackDirectory()
         }
 
         return IrisDriveRuntimePaths(
@@ -930,6 +941,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var externalFileProviderRuntimeMode: Bool {
         environmentFlag("IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL")
+    }
+
+    private var fileProviderIntegrationEnabled: Bool {
+        guard !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER") else {
+            return false
+        }
+        return currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode")
+            || currentProcessHasTeamIdentifier()
     }
 
     private func environmentFlag(_ name: String) -> Bool {
@@ -1263,7 +1282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func fileProviderRuntimeDirectories(paths: IrisDriveRuntimePaths) -> [URL] {
         var directories = [URL]()
         directories.append(paths.configDirectory.deletingLastPathComponent())
-        if let appGroup = currentProcessAppGroupContainerURL() {
+        if fileProviderIntegrationEnabled, let appGroup = currentProcessAppGroupContainerURL() {
             directories.append(appGroup)
         }
         if ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] == nil {
@@ -1277,6 +1296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func signalFileProviderDomain() {
+        guard fileProviderIntegrationEnabled else { return }
         let domain = NSFileProviderDomain(
             identifier: irisDriveDomainIdentifier,
             displayName: irisDriveDisplayName
@@ -1502,6 +1522,15 @@ private func currentProcessHasEntitlement(_ name: String) -> Bool {
         return false
     }
     return (value as? Bool) == true
+}
+
+private func currentProcessHasTeamIdentifier() -> Bool {
+    guard let value = currentProcessEntitlementValue("com.apple.developer.team-identifier")
+            as? String
+    else {
+        return false
+    }
+    return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }
 
 private func currentProcessAppGroupContainerURL() -> URL? {

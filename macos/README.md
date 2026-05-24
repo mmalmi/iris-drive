@@ -44,7 +44,7 @@ surface. The user-visible drive folder comes from the File Provider domain, not
 from a separate `~/Iris Drive` directory. Unsigned/ad-hoc dev runs cannot mount
 the real File Provider domain, and the app must fail visibly in that state
 rather than opening a materialized normal folder. When the app-group container
-is unavailable, dev builds use their own Application Support runtime path
+is unavailable, dev builds use their own sandboxed Application Support runtime path
 instead of hand-building a `~/Library/Group Containers` path, which would
 trigger macOS privacy prompts for other apps' data.
 
