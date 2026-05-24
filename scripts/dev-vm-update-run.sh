@@ -42,6 +42,11 @@ Environment:
   IRIS_DRIVE_DEV_VM_TARGET_BRANCH     Branch name checked out in VM worktrees.
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
   IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM build caches below this free space.
+  IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK=1
+                                      Skip the final all-VM FIPS online check.
+  IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
+                                      Seconds to wait for all selected peers to
+                                      report fips_online=true (default: 60).
   IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY
                                       macOS codesign identity; defaults to first
                                       Apple Development identity, else ad-hoc.
@@ -531,6 +536,40 @@ run_linux() {
     | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
 }
 
+write_macos_fileprovider_runtime() {
+  local app_base="$1"
+  local config_dir="$2"
+  local drive_dir="$3"
+  local idrive_path="$4"
+
+  python3 - "$config_dir" "$drive_dir" "$idrive_path" \
+    "$app_base" \
+    "$HOME/Library/Group Containers/group.to.iris.drive" \
+    "$HOME/Library/Application Support/Iris Drive" <<'PY'
+import json
+import os
+import sys
+
+config_dir, drive_dir, idrive_path, *directories = sys.argv[1:]
+payload = {
+    "config_dir": config_dir,
+    "drive_dir": drive_dir,
+    "idrive_executable": idrive_path,
+}
+seen = set()
+for directory in directories:
+    directory = os.path.abspath(os.path.expanduser(directory))
+    if directory in seen:
+        continue
+    seen.add(directory)
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, "fileprovider-runtime.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, separators=(",", ":"))
+        handle.write("\n")
+PY
+}
+
 run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
@@ -574,6 +613,11 @@ run_macos() {
       ditto "$legacy_app_base/Hashtree" "$app_base/Hashtree"
     fi
   fi
+  write_macos_fileprovider_runtime \
+    "$app_base" \
+    "$config_dir" \
+    "$app_base/Drive" \
+    "$app/Contents/MacOS/idrive"
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
   rm -f "$app_stdout" "$app_stderr" "$daemon_log"
@@ -587,6 +631,7 @@ run_macos() {
     --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
     --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
+    --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true" \
     "$app"
   for _ in {1..30}; do
     if pgrep -x "Iris Drive" >/dev/null 2>&1; then
@@ -619,16 +664,16 @@ run_macos() {
       exit 4
     fi
     if "$idrive" --config-dir "$config_dir" status 2>/dev/null \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") and f.get("fresh") else 1)' \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") else 1)' \
       >/dev/null 2>&1; then
       break
     fi
     sleep 0.5
   done
   if ! "$idrive" --config-dir "$config_dir" status 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") and f.get("fresh") else 1)' \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") else 1)' \
     >/dev/null 2>&1; then
-    log "macOS idrive daemon did not report fresh FIPS status"
+    log "macOS idrive daemon did not report running FIPS status"
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
@@ -896,6 +941,14 @@ try {
   Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
 }
 Start-Sleep -Seconds 8
+if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
+  Write-Log "scheduled launch did not create an IrisDrive process; starting in SSH session"
+  Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
+  Start-Sleep -Seconds 5
+}
+if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
+  throw "Windows app did not start"
+}
 
 $Idrive = Join-Path $PublishDir "idrive.exe"
 try {
@@ -909,6 +962,135 @@ try {
 }
 REMOTE_PS
   } | ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+}
+
+remote_status_json() {
+  local kind="$1"
+  local host="$2"
+
+  case "$kind" in
+    macos)
+      ssh "$host" 'bash -se' <<'REMOTE_SH'
+set -Eeuo pipefail
+idrive="$HOME/src/iris-drive/target/debug/idrive"
+config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}/Config"
+"$idrive" --config-dir "$config_dir" status
+REMOTE_SH
+      ;;
+    linux)
+      ssh "$host" 'bash -se' <<'REMOTE_SH'
+set -Eeuo pipefail
+idrive="$HOME/src/iris-drive/target/debug/idrive"
+config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
+"$idrive" --config-dir "$config_dir" status
+REMOTE_SH
+      ;;
+    windows)
+      ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS'
+$ErrorActionPreference = "Stop"
+$PublishDir = Join-Path $HOME "src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish"
+$Idrive = Join-Path $PublishDir "idrive.exe"
+if (-not (Test-Path $Idrive)) {
+  $Idrive = Join-Path $HOME "src\iris-drive\target\debug\idrive.exe"
+}
+& $Idrive status
+REMOTE_PS
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+status_missing_peers() {
+  local status="$1"
+  shift
+  STATUS_JSON="$status" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+wanted = sys.argv[1:]
+try:
+    data = json.loads(os.environ["STATUS_JSON"])
+except Exception as exc:
+    print(f"invalid status json: {exc}")
+    raise SystemExit(1)
+
+peers = {peer.get("label"): peer for peer in data.get("peers", [])}
+missing = []
+for label in wanted:
+    peer = peers.get(label)
+    if peer is None:
+        missing.append(f"{label}:missing")
+    elif peer.get("fips_online") is not True:
+        missing.append(
+            f"{label}:online={peer.get('fips_online')} state={peer.get('sync_state')}"
+        )
+
+if missing:
+    print("; ".join(missing))
+    raise SystemExit(1)
+
+fips = (data.get("network") or {}).get("fips") or {}
+connected = fips.get("connected_peers") or []
+print("connected_peers=[" + ",".join(connected) + "]")
+PY
+}
+
+check_dev_vm_connectivity() {
+  local timeout="${IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT:-60}"
+  local start
+  local now
+  local i
+  local j
+  local expected=()
+  local status=""
+  local summary=""
+  local failures=()
+
+  [[ "$NO_RUN" == "1" ]] && return 0
+  [[ "${IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK:-0}" == "1" ]] && return 0
+  if [[ ${#LABELS[@]} -lt 2 ]]; then
+    return 0
+  fi
+
+  log "waiting for selected VMs to see each other online over FIPS"
+  start="$(date +%s)"
+  while true; do
+    failures=()
+    for i in "${!LABELS[@]}"; do
+      expected=()
+      for j in "${!LABELS[@]}"; do
+        [[ "$i" == "$j" ]] && continue
+        expected+=("$(target_peer_hint_key "${HOSTS[$j]}")")
+      done
+
+      if ! status="$(remote_status_json "${KINDS[$i]}" "${HOSTS[$i]}" 2>/dev/null)"; then
+        failures+=("${LABELS[$i]}: status unavailable")
+        continue
+      fi
+      if ! summary="$(status_missing_peers "$status" "${expected[@]}" 2>&1)"; then
+        failures+=("${LABELS[$i]}: $summary")
+      else
+        log "${LABELS[$i]} FIPS online: ${summary}"
+      fi
+    done
+
+    if [[ ${#failures[@]} -eq 0 ]]; then
+      log "all selected VMs report each other online over FIPS"
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if (( now - start >= timeout )); then
+      printf '[dev-vms] FIPS connectivity check failed after %ss:\n' "$timeout" >&2
+      printf '[dev-vms]   %s\n' "${failures[@]}" >&2
+      return 5
+    fi
+
+    sleep 5
+  done
 }
 
 for i in "${!LABELS[@]}"; do
@@ -926,4 +1108,5 @@ for i in "${!LABELS[@]}"; do
   esac
 done
 
+check_dev_vm_connectivity
 log "done"

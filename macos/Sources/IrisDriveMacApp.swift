@@ -7,6 +7,7 @@ private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveAppGroupIdentifier = "group.to.iris.drive"
+private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveAssociatedHosts: Set<String> = [
@@ -933,6 +934,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environmentFlag("IRIS_DRIVE_EXTERNAL_DAEMON")
     }
 
+    private var externalFileProviderRuntimeMode: Bool {
+        environmentFlag("IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL")
+    }
+
     private func environmentFlag(_ name: String) -> Bool {
         guard let value = ProcessInfo.processInfo.environment[name]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -948,6 +953,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Group Containers", isDirectory: true)
             .appendingPathComponent(irisDriveAppGroupIdentifier, isDirectory: true)
+    }
+
+    private func fileProviderApplicationSupportFallbackDirectory() -> URL {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        return base.appendingPathComponent("Iris Drive", isDirectory: true)
     }
 
     private func statusJSON(from data: Data) -> [String: Any] {
@@ -1246,9 +1259,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try ensureDirectory(paths.workingDirectory)
             try ensureDirectory(paths.configDirectory)
+            if externalFileProviderRuntimeMode {
+                NSLog("Iris Drive FileProvider runtime managed externally")
+                return
+            }
+            try writeFileProviderRuntime(paths: paths, idrive: idrive)
             NSLog("Iris Drive FileProvider runtime prepared")
         } catch {
             NSLog("Iris Drive FileProvider runtime preparation failed: \(error)")
+        }
+    }
+
+    private func writeFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) throws {
+        let runtime = FileProviderRuntimeConfig(
+            configDirectory: paths.configDirectory.path,
+            driveDirectory: paths.workingDirectory.path,
+            idriveExecutable: idrive?.path
+        )
+        let data = try JSONEncoder().encode(runtime)
+
+        for directory in fileProviderRuntimeDirectories(paths: paths) {
+            try ensureDirectory(directory)
+            let url = directory.appendingPathComponent(irisDriveFileProviderRuntimeFileName)
+            try data.write(to: url)
+        }
+    }
+
+    private func fileProviderRuntimeDirectories(paths: IrisDriveRuntimePaths) -> [URL] {
+        var directories = [URL]()
+        directories.append(paths.configDirectory.deletingLastPathComponent())
+        if let appGroup = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: irisDriveAppGroupIdentifier
+        ) {
+            directories.append(appGroup)
+        }
+        directories.append(appGroupContainerFallbackDirectory())
+        directories.append(fileProviderApplicationSupportFallbackDirectory())
+
+        var seen = Set<String>()
+        return directories.filter { directory in
+            seen.insert(directory.standardizedFileURL.path).inserted
         }
     }
 
@@ -1408,13 +1458,28 @@ private struct IrisDriveRuntimePaths {
     let workingDirectory: URL
 }
 
+private struct FileProviderRuntimeConfig: Encodable {
+    let configDirectory: String
+    let driveDirectory: String
+    let idriveExecutable: String?
+
+    enum CodingKeys: String, CodingKey {
+        case configDirectory = "config_dir"
+        case driveDirectory = "drive_dir"
+        case idriveExecutable = "idrive_executable"
+    }
+}
+
 private enum FileProviderDomainState {
     case unknown
     case registered
     case unavailable
 }
 
-private func registerFileProviderDomain(_ completion: @escaping (FileProviderDomainState) -> Void) {
+private func registerFileProviderDomain(
+    attempt: Int = 1,
+    _ completion: @escaping (FileProviderDomainState) -> Void
+) {
     let domain = NSFileProviderDomain(
         identifier: irisDriveDomainIdentifier,
         displayName: irisDriveDisplayName
@@ -1427,6 +1492,16 @@ private func registerFileProviderDomain(_ completion: @escaping (FileProviderDom
 
     NSFileProviderManager.add(domain) { error in
         if let error {
+            if attempt < 5 {
+                let delay = Double(attempt)
+                NSLog(
+                    "Iris Drive FileProvider registration attempt \(attempt) failed; retrying in \(delay)s: \(error)"
+                )
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
+                    registerFileProviderDomain(attempt: attempt + 1, completion)
+                }
+                return
+            }
             NSLog("Iris Drive FileProvider registration failed: \(error)")
             completion(.unavailable)
         } else {

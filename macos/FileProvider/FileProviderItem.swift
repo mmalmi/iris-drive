@@ -93,9 +93,7 @@ enum FileProviderStorage {
     }
 
     static var baseDirectory: URL {
-        FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) ?? fallbackApplicationSupportDirectory()
+        runtimeDirectory ?? runtimeDirectories[0]
     }
 
     static var driveRoot: URL {
@@ -113,9 +111,40 @@ enum FileProviderStorage {
     }
 
     static var runtime: Runtime? {
-        let url = baseDirectory.appendingPathComponent(runtimeFileName)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Runtime.self, from: data)
+        for directory in runtimeDirectories {
+            let url = directory.appendingPathComponent(runtimeFileName)
+            guard let data = try? Data(contentsOf: url) else { continue }
+            do {
+                return try JSONDecoder().decode(Runtime.self, from: data)
+            } catch {
+                NSLog("Iris Drive FileProvider runtime decode failed at \(url.path): \(error)")
+            }
+        }
+        return nil
+    }
+
+    private static var runtimeDirectory: URL? {
+        runtimeDirectories.first { directory in
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(runtimeFileName).path
+            )
+        }
+    }
+
+    private static var runtimeDirectories: [URL] {
+        var directories = [URL]()
+        if let appGroup = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) {
+            directories.append(appGroup)
+        }
+        directories.append(fallbackGroupContainerDirectory())
+        directories.append(fallbackApplicationSupportDirectory())
+
+        var seen = Set<String>()
+        return directories.filter { directory in
+            seen.insert(directory.standardizedFileURL.path).inserted
+        }
     }
 
     static var idriveExecutable: String? {
@@ -356,5 +385,12 @@ enum FileProviderStorage {
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return base.appendingPathComponent("Iris Drive", isDirectory: true)
+    }
+
+    private static func fallbackGroupContainerDirectory() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Group Containers", isDirectory: true)
+            .appendingPathComponent(appGroupIdentifier, isDirectory: true)
     }
 }
