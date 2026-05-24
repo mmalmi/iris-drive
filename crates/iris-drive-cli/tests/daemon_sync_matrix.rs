@@ -490,7 +490,28 @@ impl SyncCluster {
     }
 
     async fn wait_for_visible_snapshot(&self, expected: &DirSnapshot, label: &str) {
-        self.wait_for_snapshot(expected, label).await;
+        let start = Instant::now();
+        while start.elapsed() < WAIT_TIMEOUT {
+            self.refresh_view(Client::Windows).await;
+            self.refresh_view(Client::Ubuntu).await;
+            let windows = visible_dir_snapshot(self.windows_work.path());
+            let ubuntu = visible_dir_snapshot(self.ubuntu_work.path());
+            if windows == *expected && ubuntu == *expected {
+                return;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        self.refresh_view(Client::Windows).await;
+        self.refresh_view(Client::Ubuntu).await;
+        let windows = visible_dir_snapshot(self.windows_work.path());
+        let ubuntu = visible_dir_snapshot(self.ubuntu_work.path());
+        if windows == *expected && ubuntu == *expected {
+            return;
+        }
+        panic!(
+            "timed out waiting for {label}\nexpected visible: {expected:#?}\nwindows visible: {windows:#?}\nubuntu visible: {ubuntu:#?}\n{}",
+            self.debug_state()
+        );
     }
 
     async fn wait_until(&self, label: &str, mut ready: impl FnMut() -> bool) {
@@ -920,8 +941,9 @@ fn percent_encode_path_segment(segment: &str) -> String {
 fn should_ignore_name(name: &str) -> bool {
     matches!(
         name,
-        ".DS_Store" | ".hashtree" | "Thumbs.db" | "desktop.ini"
+        ".DS_Store" | ".hashtree" | ".Trash" | "$RECYCLE.BIN" | "Thumbs.db" | "desktop.ini"
     ) || name.starts_with("._")
+        || name.starts_with(".Trash-")
         || name.ends_with('~')
         || (name.starts_with('#') && name.ends_with('#'))
         || Path::new(name)

@@ -20,7 +20,14 @@ use crate::merge::{
 };
 use crate::root_meta::DriveRootMeta;
 
-const IGNORED_NAMES: &[&str] = &[".DS_Store", ".hashtree", "Thumbs.db", "desktop.ini"];
+const IGNORED_NAMES: &[&str] = &[
+    ".DS_Store",
+    ".hashtree",
+    ".Trash",
+    "$RECYCLE.BIN",
+    "Thumbs.db",
+    "desktop.ini",
+];
 
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -41,6 +48,7 @@ pub enum IndexError {
 pub(crate) fn should_ignore_name(name: &str) -> bool {
     IGNORED_NAMES.contains(&name)
         || name.starts_with("._")
+        || name.starts_with(".Trash-")
         || name.ends_with('~')
         || (name.starts_with('#') && name.ends_with('#'))
         || Path::new(name)

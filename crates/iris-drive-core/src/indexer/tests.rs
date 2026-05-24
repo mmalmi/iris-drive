@@ -102,6 +102,21 @@ async fn built_in_noise_files_are_ignored() {
     std::fs::write(dir.path().join("backup.sbak"), b"seafile backup").unwrap();
     std::fs::create_dir(dir.path().join(".hashtree")).unwrap();
     std::fs::write(dir.path().join(".hashtree").join("prev"), b"internal").unwrap();
+    std::fs::create_dir_all(dir.path().join(".Trash-1000").join("files")).unwrap();
+    std::fs::write(
+        dir.path().join(".Trash-1000").join("files").join("old.txt"),
+        b"trash",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("$RECYCLE.BIN").join("S-1-5-21")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join("$RECYCLE.BIN")
+            .join("S-1-5-21")
+            .join("old.txt"),
+        b"recycle",
+    )
+    .unwrap();
 
     let tree = new_tree();
     let cid = index_dir(&tree, dir.path()).await.unwrap();
@@ -120,6 +135,15 @@ async fn ignored_files_do_not_keep_removed_files_alive() {
     let first = index_dir(&tree, dir.path()).await.unwrap();
 
     std::fs::remove_file(dir.path().join("removed.txt")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".Trash-1000").join("files")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join(".Trash-1000")
+            .join("files")
+            .join("removed.txt"),
+        b"bye",
+    )
+    .unwrap();
     let second = index_dir_with_history(&tree, dir.path(), Some(&first), 1234)
         .await
         .unwrap();

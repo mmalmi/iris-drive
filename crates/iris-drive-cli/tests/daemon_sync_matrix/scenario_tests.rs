@@ -267,6 +267,16 @@ async fn live_daemons_ignore_noise_and_temporary_files() {
     cluster
         .write(Client::Windows, ".hashtree/prev", b"internal")
         .await;
+    cluster
+        .write(Client::Windows, ".Trash-1000/files/removed.txt", b"trash")
+        .await;
+    cluster
+        .write(
+            Client::Windows,
+            "$RECYCLE.BIN/S-1-5-21/removed.txt",
+            b"recycle",
+        )
+        .await;
     #[cfg(unix)]
     std::os::unix::fs::symlink(
         cluster.path(Client::Windows).join("noise/keep.txt"),
@@ -288,6 +298,8 @@ async fn live_daemons_ignore_noise_and_temporary_files() {
         "noise/#draft#",
         "noise/backup.sbak",
         ".hashtree/prev",
+        ".Trash-1000/files/removed.txt",
+        "$RECYCLE.BIN/S-1-5-21/removed.txt",
         "noise/link.txt",
     ] {
         cluster.assert_missing(Client::Ubuntu, ignored);
