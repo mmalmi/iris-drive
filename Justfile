@@ -20,6 +20,7 @@ info:
     @echo "  just release"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
+    @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
     @echo "  just docker-cli-e2e"
@@ -88,6 +89,9 @@ macos-xcodeproj:
 
 macos-build:
     xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug CODE_SIGNING_ALLOWED=NO build
+
+dev-vms *args:
+    ./scripts/dev-vm-update-run.sh {{args}}
 
 release:
     cargo build --workspace --release
