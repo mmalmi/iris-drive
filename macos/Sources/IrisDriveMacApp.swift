@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import FileProvider
 import Security
 import SwiftUI
@@ -59,6 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
     private var statusRefreshTimer: Timer?
+    private var externalStatusFileSource: DispatchSourceFileSystemObject?
+    private var externalStatusDirectorySource: DispatchSourceFileSystemObject?
+    private var externalStatusFileDescriptor: CInt = -1
+    private var externalStatusDirectoryDescriptor: CInt = -1
+    private var externalStatusRefreshWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -108,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stopSync()
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
+        stopExternalDaemonStatusWatcher()
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }
@@ -308,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         daemonRestartWorkItem = nil
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
+        stopExternalDaemonStatusWatcher()
         if externalDaemonMode {
             setDaemonRunning(true)
             updateStatus("Sync managed externally")
@@ -791,7 +799,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive external daemon mode enabled; app will not spawn bundled idrive")
             setDaemonRunning(true)
             updateStatus("Sync running")
-            startStatusRefreshTimer(interval: 1.0)
+            startStatusRefreshTimer(interval: 10.0)
+            startExternalDaemonStatusWatcher(paths: paths)
             refreshStatus()
             return
         }
@@ -832,6 +841,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.statusRefreshTimer = timer
             RunLoop.main.add(timer, forMode: .common)
         }
+    }
+
+    private func startExternalDaemonStatusWatcher(paths: IrisDriveRuntimePaths) {
+        DispatchQueue.main.async {
+            self.stopExternalDaemonStatusWatcher()
+            self.startExternalDaemonStatusDirectoryWatcher(paths: paths)
+            self.startExternalDaemonStatusFileWatcher(paths: paths)
+        }
+    }
+
+    private func stopExternalDaemonStatusWatcher() {
+        externalStatusRefreshWorkItem?.cancel()
+        externalStatusRefreshWorkItem = nil
+        externalStatusFileSource?.cancel()
+        externalStatusFileSource = nil
+        externalStatusDirectorySource?.cancel()
+        externalStatusDirectorySource = nil
+    }
+
+    private func startExternalDaemonStatusDirectoryWatcher(paths: IrisDriveRuntimePaths) {
+        let directory = paths.configDirectory
+        let descriptor = open(directory.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            NSLog("Iris Drive daemon status directory watch unavailable: \(directory.path)")
+            return
+        }
+        externalStatusDirectoryDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.startExternalDaemonStatusFileWatcher(paths: paths)
+            self.scheduleExternalDaemonStatusRefresh(paths: paths)
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.externalStatusDirectoryDescriptor == descriptor {
+                self.externalStatusDirectoryDescriptor = -1
+            }
+        }
+        externalStatusDirectorySource = source
+        source.resume()
+    }
+
+    private func startExternalDaemonStatusFileWatcher(paths: IrisDriveRuntimePaths) {
+        externalStatusFileSource?.cancel()
+        externalStatusFileSource = nil
+        let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
+        let descriptor = open(statusURL.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        externalStatusFileDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .attrib, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let data = source.data
+            if data.contains(.delete) || data.contains(.rename) {
+                self.startExternalDaemonStatusFileWatcher(paths: paths)
+            }
+            self.scheduleExternalDaemonStatusRefresh(paths: paths)
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.externalStatusFileDescriptor == descriptor {
+                self.externalStatusFileDescriptor = -1
+            }
+        }
+        externalStatusFileSource = source
+        source.resume()
+        NSLog("Iris Drive watching daemon status file: \(statusURL.path)")
+    }
+
+    private func scheduleExternalDaemonStatusRefresh(paths: IrisDriveRuntimePaths) {
+        externalStatusRefreshWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.refreshExternalDaemonStatusFile(paths: paths)
+        }
+        externalStatusRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
     }
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
@@ -1278,6 +1375,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func refreshExternalDaemonStatusFile(paths: IrisDriveRuntimePaths) {
+        DispatchQueue.global(qos: .utility).async {
+            let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
+            do {
+                let data = try Data(contentsOf: statusURL)
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else {
+                    return
+                }
+                self.applyExternalDaemonStatusPayload(json)
+            } catch {
+                NSLog("Iris Drive external daemon status file refresh failed: \(error)")
+            }
+        }
+    }
+
     private func applyExternalDaemonStatusPayload(_ json: [String: Any]) {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
@@ -1400,7 +1513,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {
-        var parts = [json["event"] as? String ?? ""]
+        var parts = [String]()
+        parts.append(json["root_cid"] as? String ?? "")
+        parts.append(json["root_key"] as? String ?? "")
         if let lastBlockSync = json["last_block_sync"] as? [String: Any] {
             parts.append(lastBlockSync["root_cid"] as? String ?? "")
             parts.append("\(Self.int64Value(lastBlockSync["updated_at"]) ?? 0)")

@@ -1,6 +1,11 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
+    write_daemon_status(config_dir, payload.clone());
+    println!("{payload}");
+}
+
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -345,14 +350,13 @@ pub(crate) fn cmd_daemon(
                         )
                         .await
                         {
-                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => println!(
-                                "{}",
-                                json!({
+                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
+                                emit_daemon_status_event(config_dir, json!({
                                     "event": "windows_cloud_root_published",
                                     "root_cid": root_cid,
                                     "paths": paths,
-                                })
-                            ),
+                                }));
+                            }
                             Ok(WindowsCloudImportOutcome::Unchanged) => {}
                             Err(error) => println!(
                                 "{}",
@@ -372,17 +376,14 @@ pub(crate) fn cmd_daemon(
                         match handle.refresh_from_config(config_dir).await {
                             Ok(visible) => {
                                 mount_tombstone_base = Some(visible.root_cid.clone());
-                                println!(
-                                    "{}",
-                                    json!({
-                                        "event": "mount_refreshed",
-                                        "trigger": reason,
-                                        "mountpoint": handle.mountpoint().display().to_string(),
-                                        "root_cid": visible.root_cid.to_string(),
-                                        "file_count": visible.file_count,
-                                        "top_level_entries": visible.top_level_entries,
-                                    })
-                                )
+                                emit_daemon_status_event(config_dir, json!({
+                                    "event": "mount_refreshed",
+                                    "trigger": reason,
+                                    "mountpoint": handle.mountpoint().display().to_string(),
+                                    "root_cid": visible.root_cid.to_string(),
+                                    "file_count": visible.file_count,
+                                    "top_level_entries": visible.top_level_entries,
+                                }));
                             }
                             Err(error) => println!(
                                 "{}",
@@ -422,14 +423,13 @@ pub(crate) fn cmd_daemon(
                         )
                         .await
                         {
-                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => println!(
-                                "{}",
-                                json!({
+                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
+                                emit_daemon_status_event(config_dir, json!({
                                     "event": "windows_cloud_root_published",
                                     "root_cid": root_cid,
                                     "paths": paths,
-                                })
-                            ),
+                                }));
+                            }
                             Ok(WindowsCloudImportOutcome::Unchanged) => {}
                             Err(error) => println!(
                                 "{}",
@@ -505,14 +505,14 @@ async fn publish_provider_root_if_changed(
         };
     let publish =
         publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
-    println!(
-        "{}",
+    emit_daemon_status_event(
+        config_dir,
         json!({
             "event": "provider_root_published",
             "root_key": current_key,
             "direct_root_mesh_error": direct_root_mesh_error,
             "publish": publish_state_report_json(&publish),
-        })
+        }),
     );
 
     Ok(Some(updated_config))
@@ -1575,14 +1575,15 @@ pub(crate) async fn apply_one_event(
             .as_ref()
             .filter(|_| was_applied || stale_current_root)
             .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
-        println!(
-            "{}",
+        emit_daemon_status_event(
+            config_dir,
             json!({
                 "event": "drive_root",
                 "event_id": event.id.to_hex(),
                 "author": account_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
-            })
+                "root_cid": root_cid_to_pull.clone(),
+            }),
         );
         config.save(config_path_in(config_dir))?;
         if let Some(sync) = fips_blocks.as_deref() {
@@ -1643,14 +1644,15 @@ pub(crate) fn apply_files_root_event(
     } else {
         None
     };
-    println!(
-        "{}",
+    emit_daemon_status_event(
+        config_dir,
         json!({
             "event": "files_root",
             "event_id": event.id.to_hex(),
             "author": account_npub(&event.pubkey.to_hex()),
             "outcome": files_root_apply_label(&outcome),
-        })
+            "root_cid": root_cid_to_pull.clone(),
+        }),
     );
     config.save(config_path_in(config_dir))?;
     spawn_root_apply_followup(
