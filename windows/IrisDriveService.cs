@@ -120,7 +120,10 @@ public sealed class IrisDriveService
     public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
     {
         var entries = await ProviderEntriesAsync();
+        var previousState = WindowsCloudFiles.LoadLocalState(DefaultConfigDirectory);
         var preparation = WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
+        WindowsCloudFiles.RemoveStaleSyncedLocalItems(entries, previousState);
+        WindowsCloudFiles.WriteLocalState(DefaultConfigDirectory, entries);
         WriteProviderPathCache(entries);
         return preparation;
     }

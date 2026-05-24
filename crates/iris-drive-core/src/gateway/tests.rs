@@ -148,10 +148,11 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
     )
     .await;
     assert!(response.starts_with("HTTP/1.1 201 Created"), "{response}");
-    let root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+    let update = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
         .await
         .unwrap()
         .unwrap();
+    let root = update.visible_root;
 
     let response = http_get(server.local_addr(), "127.0.0.1", "/dav/created.txt").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
@@ -167,7 +168,7 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
     )
     .await;
     assert!(response.starts_with("HTTP/1.1 201 Created"), "{response}");
-    let _root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+    let _update = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
         .await
         .unwrap()
         .unwrap();
@@ -200,10 +201,11 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
         response.starts_with("HTTP/1.1 204 No Content"),
         "{response}"
     );
-    let root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+    let update = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
         .await
         .unwrap()
         .unwrap();
+    let root = update.visible_root;
     daemon.import_visible_root(root).await.unwrap();
 
     let response = http_request(
@@ -219,10 +221,11 @@ async fn webdav_writes_and_deletes_emit_visible_roots() {
         response.starts_with("HTTP/1.1 204 No Content"),
         "{response}"
     );
-    let root = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+    let update = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
         .await
         .unwrap()
         .unwrap();
+    let root = update.visible_root;
     daemon.import_visible_root(root).await.unwrap();
 
     let root = daemon

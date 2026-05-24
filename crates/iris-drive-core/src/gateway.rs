@@ -96,6 +96,12 @@ pub struct GatewayServer {
     handle: Option<JoinHandle<Result<(), GatewayError>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct VirtualRootUpdate {
+    pub base_root: Cid,
+    pub visible_root: Cid,
+}
+
 impl GatewayServer {
     pub async fn bind(
         config_dir: impl Into<PathBuf>,
@@ -134,7 +140,7 @@ impl GatewayServer {
         config_dir: impl Into<PathBuf>,
         tree: Arc<HashTree<FsBlobStore>>,
         htree_daemon_addr: impl Into<String>,
-        root_update_tx: mpsc::UnboundedSender<Cid>,
+        root_update_tx: mpsc::UnboundedSender<VirtualRootUpdate>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
         Self::bind_inner(
@@ -151,7 +157,7 @@ impl GatewayServer {
         config_dir: impl Into<PathBuf>,
         tree: Arc<HashTree<FsBlobStore>>,
         htree_daemon_addr: Option<String>,
-        root_update_tx: Option<mpsc::UnboundedSender<Cid>>,
+        root_update_tx: Option<mpsc::UnboundedSender<VirtualRootUpdate>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
         let listener = TcpListener::bind(bind.addr).await?;
@@ -215,7 +221,7 @@ struct GatewayState {
     config_dir: Arc<PathBuf>,
     tree: Arc<HashTree<FsBlobStore>>,
     htree_daemon_addr: Option<Arc<String>>,
-    root_update_tx: Option<mpsc::UnboundedSender<Cid>>,
+    root_update_tx: Option<mpsc::UnboundedSender<VirtualRootUpdate>>,
     webdav_root: Arc<Mutex<WebDavRootCache>>,
 }
 

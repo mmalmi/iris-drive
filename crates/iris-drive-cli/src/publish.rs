@@ -632,13 +632,14 @@ pub(crate) async fn import_mount_root_and_publish(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     visible_root: Cid,
+    tombstone_base_root: Option<Cid>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
     let import = daemon
-        .import_visible_root(visible_root)
+        .import_visible_root_with_tombstone_base(visible_root, tombstone_base_root)
         .await
         .context("importing mounted root")?;
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;

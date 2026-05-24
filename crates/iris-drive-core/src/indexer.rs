@@ -108,8 +108,15 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
     if let Some(prev) = previous_root {
         let mut current_paths: BTreeSet<String> = BTreeSet::new();
         collect_local_file_paths(dir, "", &mut current_paths)?;
-        root = attach_history_for_current_paths(tree, root, prev, now_unix_seconds, &current_paths)
-            .await?;
+        root = attach_history_for_current_paths(
+            tree,
+            root,
+            Some(prev),
+            Some(prev),
+            now_unix_seconds,
+            &current_paths,
+        )
+        .await?;
     }
     if let Some(meta) = root_meta {
         root = layer_root_meta(tree, root, meta).await?;
@@ -123,20 +130,48 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
 /// than a normal materialized folder on disk.
 pub async fn layer_history_and_meta_on_root<S: Store>(
     tree: &HashTree<S>,
-    mut root: Cid,
+    root: Cid,
     previous_root: Option<&Cid>,
     now_unix_seconds: i64,
     root_meta: Option<&DriveRootMeta>,
 ) -> Result<Cid, IndexError> {
+    layer_history_and_meta_on_root_with_tombstone_base(
+        tree,
+        root,
+        previous_root,
+        previous_root,
+        now_unix_seconds,
+        root_meta,
+    )
+    .await
+}
+
+/// Like [`layer_history_and_meta_on_root`], but lets virtual providers pass the
+/// merged root that was actually displayed to the user as the deletion base.
+pub async fn layer_history_and_meta_on_root_with_tombstone_base<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    previous_root: Option<&Cid>,
+    tombstone_base_root: Option<&Cid>,
+    now_unix_seconds: i64,
+    root_meta: Option<&DriveRootMeta>,
+) -> Result<Cid, IndexError> {
     root = filter_ignored_entries_from_root(tree, &root).await?;
-    if let Some(prev) = previous_root {
+    if previous_root.is_some() || tombstone_base_root.is_some() {
         let (current_files, _) = walk_device_tree(tree, &root)
             .await
             .map_err(IndexError::Tree)?;
         let current_paths: BTreeSet<String> =
             current_files.into_iter().map(|file| file.path).collect();
-        root = attach_history_for_current_paths(tree, root, prev, now_unix_seconds, &current_paths)
-            .await?;
+        root = attach_history_for_current_paths(
+            tree,
+            root,
+            previous_root,
+            tombstone_base_root,
+            now_unix_seconds,
+            &current_paths,
+        )
+        .await?;
     }
     if let Some(meta) = root_meta {
         root = layer_root_meta(tree, root, meta).await?;
@@ -202,28 +237,42 @@ fn filter_ignored_entries_from_dir<'a, S: Store>(
 async fn attach_history_for_current_paths<S: Store>(
     tree: &HashTree<S>,
     mut root: Cid,
-    prev: &Cid,
+    previous_root: Option<&Cid>,
+    tombstone_base_root: Option<&Cid>,
     now_unix_seconds: i64,
     current_paths: &BTreeSet<String>,
 ) -> Result<Cid, IndexError> {
-    let (prev_files, prev_tombstones) = walk_device_tree(tree, prev)
-        .await
-        .map_err(IndexError::Tree)?;
-
     let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
-    // Files that were in the previous root but are no longer on disk
-    // get a fresh tombstone stamped at the import time.
-    for f in prev_files {
-        if !current_paths.contains(&f.path) {
-            tombstones.insert(f.path, now_unix_seconds);
+
+    // Files that were in the root being edited but are no longer visible get a
+    // fresh tombstone stamped at import time.
+    if let Some(base) = tombstone_base_root {
+        let (base_files, _base_tombstones) = walk_device_tree(tree, base)
+            .await
+            .map_err(IndexError::Tree)?;
+        for f in base_files {
+            if !current_paths.contains(&f.path) {
+                tombstones.insert(f.path, now_unix_seconds);
+            }
         }
     }
-    // Tombstones from the previous root carry forward when the file is
-    // still absent (preserves original removal time). When the file is
-    // present again, the tombstone silently drops.
-    for t in prev_tombstones {
-        if !current_paths.contains(&t.path) {
-            tombstones.entry(t.path).or_insert(t.tombstoned_at);
+
+    if let Some(prev) = previous_root {
+        let (prev_files, prev_tombstones) = walk_device_tree(tree, prev)
+            .await
+            .map_err(IndexError::Tree)?;
+        for f in prev_files {
+            if !current_paths.contains(&f.path) {
+                tombstones.entry(f.path).or_insert(now_unix_seconds);
+            }
+        }
+        // Tombstones from the previous root carry forward when the file is
+        // still absent (preserves original removal time). When the file is
+        // present again, the tombstone silently drops.
+        for t in prev_tombstones {
+            if !current_paths.contains(&t.path) {
+                tombstones.entry(t.path).or_insert(t.tombstoned_at);
+            }
         }
     }
 
@@ -235,7 +284,9 @@ async fn attach_history_for_current_paths<S: Store>(
     // at the prior root's Cid (hash + key). Capability propagates
     // automatically when readers decrypt the new TreeNode — the prior
     // TreeNode is now navigable from the current one.
-    root = layer_prev_link(tree, root, prev).await?;
+    if let Some(prev) = previous_root {
+        root = layer_prev_link(tree, root, prev).await?;
+    }
 
     Ok(root)
 }

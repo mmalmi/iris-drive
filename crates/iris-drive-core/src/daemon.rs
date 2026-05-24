@@ -21,7 +21,8 @@ use crate::config::{AppConfig, ConfigError, DeviceRootRef};
 use crate::conflict::ConflictState;
 use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
-    layer_history_and_meta_on_root, layer_prev_link, layer_root_meta, read_conflict_records,
+    layer_history_and_meta_on_root, layer_history_and_meta_on_root_with_tombstone_base,
+    layer_prev_link, layer_root_meta, read_conflict_records,
 };
 use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
@@ -269,6 +270,15 @@ impl Daemon {
     /// recording the root in config, so mount-backed edits sync with the same
     /// merge semantics as folder imports.
     pub async fn import_visible_root(&mut self, root: Cid) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base(root, None)
+            .await
+    }
+
+    pub async fn import_visible_root_with_tombstone_base(
+        &mut self,
+        root: Cid,
+        tombstone_base_root: Option<Cid>,
+    ) -> Result<ImportReport, DaemonError> {
         let previous_root_cid = self
             .config
             .account
@@ -286,14 +296,26 @@ impl Daemon {
 
         let now = unix_now();
         let root_meta = self.root_meta_for_import(now);
-        let root_cid = layer_history_and_meta_on_root(
-            &self.tree,
-            root,
-            previous_root.as_ref(),
-            now,
-            root_meta.as_ref(),
-        )
-        .await?;
+        let root_cid = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
+            layer_history_and_meta_on_root_with_tombstone_base(
+                &self.tree,
+                root,
+                previous_root.as_ref(),
+                Some(tombstone_base_root),
+                now,
+                root_meta.as_ref(),
+            )
+            .await?
+        } else {
+            layer_history_and_meta_on_root(
+                &self.tree,
+                root,
+                previous_root.as_ref(),
+                now,
+                root_meta.as_ref(),
+            )
+            .await?
+        };
 
         self.report_and_record_root(root_cid, None, root_meta.as_ref(), now)
             .await
@@ -519,9 +541,13 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    use crate::app_keys::DeviceEntry;
     use crate::config::Drive;
     use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
     use crate::identity::Identity;
+    use crate::root_meta::DriveRootMeta;
     use tempfile::tempdir;
 
     fn init_config(dir: &Path) -> Identity {
@@ -604,6 +630,114 @@ mod tests {
         );
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].path, "removed.txt");
+    }
+
+    #[tokio::test]
+    async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = config.account.as_mut().unwrap();
+        state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
+            pubkey: remote.clone(),
+            added_at: 100,
+            label: Some("remote".into()),
+        });
+        state.app_keys.as_mut().unwrap().normalize();
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let remote_dir = tempdir().unwrap();
+        std::fs::write(
+            remote_dir.path().join("foreign.txt"),
+            b"from another device",
+        )
+        .unwrap();
+        let remote_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.into(),
+            device_id: remote.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 100,
+        };
+        let remote_root = crate::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            100,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap();
+        drop(daemon);
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            remote.clone(),
+            DeviceRootRef::from_meta(
+                remote_root.to_string(),
+                remote_meta.created_at,
+                &remote_meta,
+            ),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        assert!(
+            daemon
+                .tree()
+                .resolve(&visible.root_cid, "foreign.txt")
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        let edited_visible_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+        daemon
+            .import_visible_root_with_tombstone_base(
+                edited_visible_root,
+                Some(visible.root_cid.clone()),
+            )
+            .await
+            .unwrap();
+
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+            .await
+            .unwrap();
+        assert!(files.is_empty());
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].path, "foreign.txt");
+
+        let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        assert!(
+            merged
+                .view
+                .files
+                .iter()
+                .all(|entry| entry.path != "foreign.txt"),
+            "foreign file should be suppressed by the local tombstone"
+        );
     }
 
     #[tokio::test]

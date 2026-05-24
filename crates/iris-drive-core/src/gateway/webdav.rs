@@ -182,6 +182,7 @@ pub(crate) async fn webdav_put(
         return Ok(status_response(StatusCode::NO_CONTENT));
     }
     let mut root = current_webdav_root(state).await?;
+    let base_root = root.clone();
     root = ensure_webdav_parent_dirs(&state.tree, root, parent).await?;
     let (cid, size) = state
         .tree
@@ -204,7 +205,7 @@ pub(crate) async fn webdav_put(
         .set_entry(&root, parent_refs.as_slice(), name, &cid, size, link_type)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    publish_webdav_root(state, root).await?;
+    publish_webdav_root(state, base_root, root).await?;
     Ok(status_response(if existed {
         StatusCode::NO_CONTENT
     } else {
@@ -221,6 +222,7 @@ pub(crate) async fn webdav_delete(
         return Ok(status_response(StatusCode::NO_CONTENT));
     }
     let root = current_webdav_root(state).await?;
+    let base_root = root.clone();
     let parent_refs = path_refs(parent);
     let parent_cid = resolve_dir(&state.tree, &root, parent_refs.as_slice()).await?;
     if find_entry(&state.tree, &parent_cid, name)
@@ -235,7 +237,7 @@ pub(crate) async fn webdav_delete(
         .remove_entry(&root, parent_refs.as_slice(), name)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    publish_webdav_root(state, root).await?;
+    publish_webdav_root(state, base_root, root).await?;
     Ok(status_response(StatusCode::NO_CONTENT))
 }
 
@@ -248,6 +250,7 @@ pub(crate) async fn webdav_mkcol(
         return Ok(status_response(StatusCode::CREATED));
     }
     let mut root = current_webdav_root(state).await?;
+    let base_root = root.clone();
     root = ensure_webdav_parent_dirs(&state.tree, root, parent).await?;
     let parent_refs = path_refs(parent);
     let parent_cid = resolve_dir(&state.tree, &root, parent_refs.as_slice()).await?;
@@ -268,7 +271,7 @@ pub(crate) async fn webdav_mkcol(
         .set_entry(&root, parent_refs.as_slice(), name, &dir, 0, LinkType::Dir)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    publish_webdav_root(state, root).await?;
+    publish_webdav_root(state, base_root, root).await?;
     Ok(status_response(StatusCode::CREATED))
 }
 
@@ -296,6 +299,7 @@ pub(crate) async fn webdav_move_or_copy(
         .is_none_or(|value| !value.eq_ignore_ascii_case("f"));
 
     let mut root = current_webdav_root(state).await?;
+    let base_root = root.clone();
     let source_parent_refs = path_refs(source_parent);
     let source_parent_cid = resolve_dir(&state.tree, &root, source_parent_refs.as_slice()).await?;
     let source_entry = find_entry(&state.tree, &source_parent_cid, source_name)
@@ -335,7 +339,7 @@ pub(crate) async fn webdav_move_or_copy(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-    publish_webdav_root(state, root).await?;
+    publish_webdav_root(state, base_root, root).await?;
     Ok(status_response(StatusCode::CREATED))
 }
 
@@ -413,6 +417,7 @@ pub(crate) async fn webdav_root_including_pending_root(
 
 pub(crate) async fn publish_webdav_root(
     state: &GatewayState,
+    base_root: Cid,
     root: Cid,
 ) -> Result<(), (StatusCode, String)> {
     let Some(tx) = state.root_update_tx.as_ref() else {
@@ -427,7 +432,11 @@ pub(crate) async fn publish_webdav_root(
         cache.config_mtime = config_modified_time(&state.config_dir);
         cache.pinned_until = Some(Instant::now() + WEBDAV_WRITE_PIN);
     }
-    tx.send(root).map_err(|_| {
+    tx.send(VirtualRootUpdate {
+        base_root,
+        visible_root: root,
+    })
+    .map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             "root update worker stopped".into(),

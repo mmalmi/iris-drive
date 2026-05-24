@@ -73,6 +73,10 @@ impl IrisDriveMount {
         }
     }
 
+    pub(crate) fn current_visible_root(&self) -> Cid {
+        self.fs.current_root()
+    }
+
     pub(crate) fn take_updates(&mut self) -> mpsc::UnboundedReceiver<Cid> {
         self.updates
             .take()
@@ -277,6 +281,13 @@ impl IrisDriveMount {
     ) -> tokio::sync::mpsc::UnboundedReceiver<hashtree_core::Cid> {
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
         rx
+    }
+
+    pub(crate) fn current_visible_root(&self) -> hashtree_core::Cid {
+        hashtree_core::Cid {
+            hash: [0; 32],
+            key: None,
+        }
     }
 }
 

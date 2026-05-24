@@ -52,7 +52,8 @@ pub(crate) fn cmd_daemon(
                 Ok(sync) => (Some(Arc::new(sync)), None),
                 Err(error) => (None, Some(error.to_string())),
             };
-        let (webdav_root_tx, mut webdav_root_rx) = mpsc::unbounded_channel::<Cid>();
+        let (webdav_root_tx, mut webdav_root_rx) =
+            mpsc::unbounded_channel::<iris_drive_core::gateway::VirtualRootUpdate>();
         #[cfg(windows)]
         let (
             windows_cloud_root,
@@ -133,6 +134,9 @@ pub(crate) fn cmd_daemon(
         let mut mount_root_updates = mounted_drive
             .as_mut()
             .map(mount::IrisDriveMount::take_updates);
+        let mut mount_tombstone_base = mounted_drive
+            .as_ref()
+            .map(mount::IrisDriveMount::current_visible_root);
         let (mount_refresh_tx, mut mount_refresh_rx) = if mounted_drive.is_some() {
             let (tx, rx) = mpsc::channel::<&'static str>(8);
             (Some(tx), Some(rx))
@@ -268,34 +272,39 @@ pub(crate) fn cmd_daemon(
                             visible_root = next;
                         }
                     }
+                    let imported_visible_root = visible_root.clone();
                     match import_mount_root_and_publish(
                         &client,
                         config_dir,
                         visible_root,
+                        mount_tombstone_base.clone(),
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                     )
                     .await
                     {
-                        Ok(()) => {}
+                        Ok(()) => {
+                            mount_tombstone_base = Some(imported_visible_root);
+                        }
                         Err(error) => println!(
                             "{}",
                             json!({"event": "mount_publish_error", "error": format!("{error:#}")})
                         ),
                     }
                 }
-                Some(mut visible_root) = webdav_root_rx.recv() => {
+                Some(mut update) = webdav_root_rx.recv() => {
                     while let Ok(next) = webdav_root_rx.try_recv() {
-                        visible_root = next;
+                        update.visible_root = next.visible_root;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
                     while let Ok(next) = webdav_root_rx.try_recv() {
-                        visible_root = next;
+                        update.visible_root = next.visible_root;
                     }
                     match import_mount_root_and_publish(
                         &client,
                         config_dir,
-                        visible_root,
+                        update.visible_root,
+                        Some(update.base_root),
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                     )
@@ -361,17 +370,20 @@ pub(crate) fn cmd_daemon(
                 } => {
                     if let Some(handle) = mount_refresh.as_ref() {
                         match handle.refresh_from_config(config_dir).await {
-                            Ok(visible) => println!(
-                                "{}",
-                                json!({
-                                    "event": "mount_refreshed",
-                                    "trigger": reason,
-                                    "mountpoint": handle.mountpoint().display().to_string(),
-                                    "root_cid": visible.root_cid.to_string(),
-                                    "file_count": visible.file_count,
-                                    "top_level_entries": visible.top_level_entries,
-                                })
-                            ),
+                            Ok(visible) => {
+                                mount_tombstone_base = Some(visible.root_cid.clone());
+                                println!(
+                                    "{}",
+                                    json!({
+                                        "event": "mount_refreshed",
+                                        "trigger": reason,
+                                        "mountpoint": handle.mountpoint().display().to_string(),
+                                        "root_cid": visible.root_cid.to_string(),
+                                        "file_count": visible.file_count,
+                                        "top_level_entries": visible.top_level_entries,
+                                    })
+                                )
+                            }
                             Err(error) => println!(
                                 "{}",
                                 json!({"event": "mount_refresh_error", "trigger": reason, "error": format!("{error:#}")})
@@ -698,9 +710,16 @@ async fn import_windows_cloud_root_changes_and_publish(
         return Ok(WindowsCloudImportOutcome::Unchanged);
     }
 
-    import_mount_root_and_publish(client, config_dir, root.clone(), direct_roots, fips_blocks)
-        .await
-        .context("publishing Windows Cloud Files root")?;
+    import_mount_root_and_publish(
+        client,
+        config_dir,
+        root.clone(),
+        Some(before),
+        direct_roots,
+        fips_blocks,
+    )
+    .await
+    .context("publishing Windows Cloud Files root")?;
 
     Ok(WindowsCloudImportOutcome::Changed {
         root_cid: root.to_string(),
