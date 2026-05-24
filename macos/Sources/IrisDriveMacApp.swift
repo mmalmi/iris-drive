@@ -758,13 +758,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         process.standardOutput = stdout
         process.standardError = stderr
 
+        var output = Data()
+        var errorOutput = Data()
+        let outputGroup = DispatchGroup()
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            output = stdout.fileHandleForReading.readDataToEndOfFile()
+            outputGroup.leave()
+        }
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+            outputGroup.leave()
+        }
+
         try process.run()
         process.waitUntilExit()
+        outputGroup.wait()
 
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
         if process.terminationStatus != 0 {
             let errorText = String(
-                data: stderr.fileHandleForReading.readDataToEndOfFile(),
+                data: errorOutput,
                 encoding: .utf8
             ) ?? ""
             throw NSError(
