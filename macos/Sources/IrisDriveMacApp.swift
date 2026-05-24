@@ -6,6 +6,7 @@ import SwiftUI
 
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
+private let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveShowControlPanelNotification =
@@ -764,7 +765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func openFileProviderDriveFolder() {
         let domain = NSFileProviderDomain(
             identifier: irisDriveDomainIdentifier,
-            displayName: irisDriveDisplayName
+            displayName: irisDriveFileProviderDomainDisplayName
         )
         guard let manager = NSFileProviderManager(for: domain) else {
             NSLog("Iris Drive FileProvider manager unavailable")
@@ -1787,7 +1788,7 @@ private func irisDriveFileProviderDomain(
 ) -> NSFileProviderDomain {
     let domain = NSFileProviderDomain(
         identifier: irisDriveDomainIdentifier,
-        displayName: irisDriveDisplayName
+        displayName: irisDriveFileProviderDomainDisplayName
     )
     if let runtime, #available(macOS 15.0, *) {
         domain.userInfo = runtime.domainUserInfo

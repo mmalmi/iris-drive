@@ -75,7 +75,7 @@ extension FileProviderItem {
         FileProviderItem(
             itemIdentifier: .rootContainer,
             parentItemIdentifier: .rootContainer,
-            filename: "Iris Drive",
+            filename: "My Drive",
             contentType: .folder,
             versionIdentifier: "root:\(anchor ?? "initial")"
         )
@@ -263,6 +263,12 @@ enum FileProviderStorage {
             return []
         }
         return Set(snapshot.identifiers)
+    }
+
+    static func hasStoredSnapshot() -> Bool {
+        let url = snapshotURL()
+        guard let data = try? Data(contentsOf: url) else { return false }
+        return (try? JSONDecoder().decode(ProviderSnapshot.self, from: data)) != nil
     }
 
     static func recordCurrentSnapshot() {

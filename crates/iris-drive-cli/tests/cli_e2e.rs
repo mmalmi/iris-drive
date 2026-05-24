@@ -445,6 +445,46 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
 }
 
 #[test]
+fn status_marks_current_device_fips_online_when_daemon_is_running() {
+    let dir = tempdir().unwrap();
+    let init = run_json(dir.path(), &["init", "--label", "macos"]);
+    let device_npub = init["device_npub"].as_str().unwrap().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        dir.path().join("daemon.lock"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": now,
+            "fips_block_sync": {
+                "endpoint_npub": device_npub,
+                "authorized_peers": [],
+                "connected_peers": [],
+                "mesh_peers": [],
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = run_json(dir.path(), &["status"]);
+    let current_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["is_current_device"] == true)
+        .expect("current device peer");
+    assert_eq!(current_peer["fips_online"], true);
+    assert_eq!(current_peer["fips_online_via"], "local");
+}
+
+#[test]
 fn conflicts_resolve_marks_record_resolved_in_current_root() {
     let cfg = tempdir().unwrap();
     let work = tempdir().unwrap();

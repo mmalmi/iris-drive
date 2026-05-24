@@ -27,17 +27,21 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from syncAnchor: NSFileProviderSyncAnchor
     ) {
+        let hasSnapshot = FileProviderStorage.hasStoredSnapshot()
         let previousIdentifiers = FileProviderStorage.storedSnapshotIdentifiers()
         let (items, currentAnchor) = FileProviderStorage.allItemsAndAnchor()
         let currentIdentifiers = Set(items.map(\.itemIdentifier.rawValue))
         let deletedIdentifiers = previousIdentifiers.subtracting(currentIdentifiers)
-        if syncAnchor.rawValue != currentAnchor.rawValue || !deletedIdentifiers.isEmpty {
+        if !items.isEmpty
+            || !hasSnapshot
+            || syncAnchor.rawValue != currentAnchor.rawValue
+            || !deletedIdentifiers.isEmpty {
             let deleted = deletedIdentifiers.map { NSFileProviderItemIdentifier($0) }
             if !deleted.isEmpty {
                 observer.didDeleteItems(withIdentifiers: deleted)
             }
             NSLog(
-                "Iris Drive FileProvider enumerate changes update=\(items.count) delete=\(deleted.count)"
+                "Iris Drive FileProvider enumerate changes update=\(items.count) delete=\(deleted.count) bootstrap=\(!hasSnapshot)"
             )
             observer.didUpdate(items)
         }
@@ -46,6 +50,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
+        guard FileProviderStorage.hasStoredSnapshot() else {
+            completionHandler(nil)
+            return
+        }
         completionHandler(FileProviderStorage.currentAnchor())
     }
 }

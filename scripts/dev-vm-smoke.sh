@@ -99,6 +99,21 @@ config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.
 REMOTE_SH
 }
 
+macos_visible_drive_has() {
+  local path="$1"
+  ssh "$MACOS_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+while IFS= read -r root; do
+  [[ -n "$root" ]] || continue
+  if [[ -e "$root/$path" ]]; then
+    exit 0
+  fi
+done < <(find "$HOME/Library/CloudStorage" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null || true)
+exit 1
+REMOTE_SH
+}
+
 windows_provider_has() {
   local path="$1"
   win_ps <<REMOTE_PS
@@ -400,6 +415,8 @@ run_sync_smoke() {
   write_windows_file "$windows_file" "from windows $RUN_ID"
   wait_for "Windows file reaches Ubuntu" 60 wait_ubuntu_file_has "$windows_file"
   wait_for "Windows file reaches macOS provider" 60 macos_provider_has "$windows_file"
+  wait_for "Windows file reaches macOS visible FileProvider folder" 60 \
+    macos_visible_drive_has "$windows_file"
   delete_ubuntu_path "$windows_file"
   wait_for "Ubuntu delete removes Windows disk file" 60 wait_windows_disk_missing "$windows_file"
   wait_for "Ubuntu delete removes Windows provider file" 60 windows_provider_missing "$windows_file"

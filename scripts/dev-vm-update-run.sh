@@ -62,7 +62,11 @@ Environment:
                                       (default: FIPS sync branch, to avoid
                                       clobbering local fips feature branches).
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
-  IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM build caches below this free space.
+  IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM incremental build caches below
+                                      this free space.
+  IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE=1
+                                      Also prune compiled Cargo deps/build
+                                      artifacts when below MIN_FREE_KB.
   IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK=1
                                       Skip the final all-VM FIPS online check.
   IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
@@ -591,6 +595,7 @@ run_posix_target() {
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf 'STATIC_PEERS=%s\n' "$(sh_quote "$static_peers")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
+    printf 'PRUNE_COMPILED_CACHE=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE:-0}")"
     printf 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}")"
@@ -658,17 +663,25 @@ free_kb() {
   df -Pk "$1" | awk 'NR == 2 { print $4 }'
 }
 
-prune_rust_target_caches() {
+prune_rust_incremental_caches() {
+  local target_dir="$1"
+  [[ -d "$target_dir" ]] || return 0
+  rm -rf "$target_dir/debug/incremental"
+  for debug_dir in "$target_dir"/*/debug; do
+    [[ -d "$debug_dir" ]] || continue
+    rm -rf "$debug_dir/incremental"
+  done
+}
+
+prune_rust_compiled_caches() {
   local target_dir="$1"
   [[ -d "$target_dir" ]] || return 0
   rm -rf \
-    "$target_dir/debug/incremental" \
     "$target_dir/debug/build" \
     "$target_dir/debug/deps"
   for debug_dir in "$target_dir"/*/debug; do
     [[ -d "$debug_dir" ]] || continue
     rm -rf \
-      "$debug_dir/incremental" \
       "$debug_dir/build" \
       "$debug_dir/deps"
   done
@@ -686,22 +699,65 @@ ensure_build_space() {
     return 0
   fi
 
-  log "low disk before $phase ($((available / 1024)) MiB free); pruning generated build caches"
-  prune_rust_target_caches "$repo/target"
+  log "low disk before $phase ($((available / 1024)) MiB free); pruning incremental build caches"
+  prune_rust_incremental_caches "$repo/target"
   rm -rf \
     "$repo/macos/.build/DerivedData/Build/Intermediates.noindex" \
     "$repo/macos/.build/DerivedData/Index.noindex"
 
   available="$(free_kb "$repo" 2>/dev/null || true)"
+  if [[ -n "$available" && "$available" -lt "$MIN_FREE_KB" && "$PRUNE_COMPILED_CACHE" == "1" ]]; then
+    log "still below disk target; pruning compiled Cargo caches because IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE=1"
+    prune_rust_compiled_caches "$repo/target"
+  fi
+
+  available="$(free_kb "$repo" 2>/dev/null || true)"
   if [[ -n "$available" && "$available" -lt "$MIN_FREE_KB" && -d "$companion_target" ]]; then
-    log "still below disk target; pruning generated nostr-vpn Rust caches"
-    prune_rust_target_caches "$companion_target"
+    log "still below disk target; pruning nostr-vpn incremental caches"
+    prune_rust_incremental_caches "$companion_target"
+    if [[ "$PRUNE_COMPILED_CACHE" == "1" ]]; then
+      prune_rust_compiled_caches "$companion_target"
+    fi
   fi
 
   available="$(free_kb "$repo" 2>/dev/null || true)"
   if [[ -n "$available" && "$available" -lt "$MIN_FREE_KB" ]]; then
     log "warning: only $((available / 1024)) MiB free after pruning; build may still fail"
   fi
+}
+
+repo_head() {
+  git -C "$1" rev-parse HEAD 2>/dev/null || printf 'unknown'
+}
+
+idrive_build_stamp() {
+  local iris_repo="$1"
+  printf 'iris=%s\n' "$(repo_head "$iris_repo")"
+  printf 'hashtree=%s\n' "$(repo_head "$HOME/src/hashtree")"
+  printf 'fips=%s\n' "$(repo_head "$HOME/src/fips")"
+  rustc -Vv 2>/dev/null | sed 's/^/rustc:/'
+  cargo -V 2>/dev/null | sed 's/^/cargo:/'
+}
+
+build_idrive_if_needed() {
+  local iris_repo="$1"
+  local idrive="$2"
+  local phase="$3"
+  local stamp_file="$iris_repo/target/.iris-drive-idrive-build.stamp"
+  local expected
+
+  expected="$(idrive_build_stamp "$iris_repo")"
+  if [[ -x "$idrive" && -f "$stamp_file" ]] \
+    && cmp -s <(printf '%s\n' "$expected") "$stamp_file"; then
+    log "idrive helper already built for deployed revisions"
+    return 0
+  fi
+
+  ensure_build_space "$iris_repo" "$phase"
+  log "building idrive helper"
+  (cd "$iris_repo" && cargo build -p idrive)
+  mkdir -p "$(dirname "$stamp_file")"
+  printf '%s\n' "$expected" > "$stamp_file"
 }
 
 detect_overlay_ip() {
@@ -783,9 +839,7 @@ run_linux() {
   local config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
   local mountpoint="${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-$HOME/Iris Drive}"
 
-  ensure_build_space "$iris_repo" "Linux build"
-  log "building idrive"
-  (cd "$iris_repo" && cargo build -p idrive)
+  build_idrive_if_needed "$iris_repo" "$idrive" "Linux build"
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
@@ -988,9 +1042,7 @@ run_macos() {
   local daemon_log="/tmp/iris-drive-macos-daemon.log"
   local daemon_pid=""
 
-  ensure_build_space "$iris_repo" "idrive helper build"
-  log "building idrive helper"
-  (cd "$iris_repo" && cargo build -p idrive)
+  build_idrive_if_needed "$iris_repo" "$idrive" "idrive helper build"
   ensure_build_space "$iris_repo" "macOS app build"
   unlock_macos_build_keychain
   ensure_macos_codesign_chain
@@ -1436,6 +1488,52 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch 
   }
 }
 
+function Get-RepoHead([string]$Repo) {
+  try {
+    $Head = git -C $Repo rev-parse HEAD
+    if ($LASTEXITCODE -eq 0 -and $Head) {
+      return ($Head -join "").Trim()
+    }
+  } catch {}
+  return "unknown"
+}
+
+function Get-IdriveBuildStamp([string]$IrisRepo) {
+  $HashtreeRepo = Join-Path $HOME "src\hashtree"
+  $FipsRepo = Join-Path $HOME "src\fips"
+  $Lines = @(
+    "iris=$(Get-RepoHead $IrisRepo)",
+    "hashtree=$(Get-RepoHead $HashtreeRepo)",
+    "fips=$(Get-RepoHead $FipsRepo)"
+  )
+  try {
+    $Lines += @(& rustc -Vv 2>$null | ForEach-Object { "rustc:$_" })
+  } catch {}
+  try {
+    $Lines += @(& cargo -V 2>$null | ForEach-Object { "cargo:$_" })
+  } catch {}
+  return ($Lines -join "`n")
+}
+
+function Build-IdriveIfNeeded([string]$IrisRepo) {
+  $Idrive = Join-Path $IrisRepo "target\debug\idrive.exe"
+  $StampFile = Join-Path $IrisRepo "target\.iris-drive-idrive-build.stamp"
+  $Expected = Get-IdriveBuildStamp $IrisRepo
+  if ((Test-Path $Idrive) -and (Test-Path $StampFile)) {
+    $Existing = (Get-Content -Raw $StampFile).TrimEnd()
+    if ($Existing -eq $Expected) {
+      Write-Log "idrive helper already built for deployed revisions"
+      return
+    }
+  }
+
+  Write-Log "building idrive helper"
+  cargo build -p idrive --locked
+  if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StampFile) | Out-Null
+  Set-Content -Encoding UTF8 -NoNewline -Path $StampFile -Value $Expected
+}
+
 function Detect-OverlayIp {
   $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
   if (-not $Nvpn) {
@@ -1526,15 +1624,15 @@ Sync-Repo $IrisRepo "iris-drive" $IrisBare
 Set-Location $IrisRepo
 if ($NoRun -eq "1") {
   Write-Log "building Windows dev app"
-  cargo build -p idrive --locked
-  if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+  Build-IdriveIfNeeded $IrisRepo
   dotnet build .\windows\IrisDrive.Windows.csproj -c Debug -r win-x64 --self-contained true -p:WindowsPackageType=None
   if ($LASTEXITCODE -ne 0) { throw "windows build failed" }
   exit 0
 }
 
 Write-Log "publishing Windows dev app"
-$PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\windows-publish.ps1", "-Configuration", "Debug", "-StopRunningApp")
+Build-IdriveIfNeeded $IrisRepo
+$PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\windows-publish.ps1", "-Configuration", "Debug", "-StopRunningApp", "-SkipCliBuild")
 powershell @PublishArgs
 if ($LASTEXITCODE -ne 0) { throw "windows publish failed" }
 
