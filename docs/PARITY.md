@@ -13,7 +13,7 @@ file-provider backends differ.
 | Approve linked device from request link | Yes | Yes | Yes |
 | Start/stop/restart sync daemon | Yes | Yes | Yes |
 | Auto-scan local drive folder | No; mount publishes writes | No | No |
-| Open drive folder | Yes, mounted | FileProvider domain | Not mounted yet |
+| Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders |
 | Copy/open snapshot link | Yes | Yes | Yes |
 | Devices list and auth state | Yes | Yes | Yes |
 | Device online/sync status | Yes | Planned | Yes |
@@ -24,7 +24,7 @@ file-provider backends differ.
 | Hashtree config/block/root paths | Yes | Yes | Yes |
 | Tray/menu-bar control | Yes | Yes | Yes |
 | Close to tray/menu-bar | Yes | Yes | Yes |
-| Native OS file-provider mount | FUSE mount | FileProvider scaffold | WinFsp/Cloud Files planned |
+| Native OS file-provider mount | FUSE mount | FileProvider scaffold | Cloud Files read hydration |
 
 ## Desktop test target
 

@@ -519,10 +519,15 @@ public partial class MainWindow : Window
             try
             {
                 var driveFolder = await service.PrepareDriveFolderAsync();
-                service.OpenPath(driveFolder.Path);
-                NoticeText.Text = driveFolder.NativeSyncRootReady
-                    ? "Opening drive folder"
-                    : driveFolder.Warning ?? "Opening local drive folder";
+                if (driveFolder.NativeSyncRootReady)
+                {
+                    service.OpenPath(driveFolder.Path);
+                }
+
+                NoticeText.Text = driveFolder.Warning ??
+                    (driveFolder.NativeSyncRootReady
+                        ? "Opening drive folder"
+                        : "Windows Cloud Files unavailable");
             }
             catch (Exception error)
             {

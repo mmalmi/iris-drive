@@ -121,9 +121,8 @@ public sealed class IrisDriveService
 
     public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
     {
-        var driveFolder = WindowsCloudFiles.EnsureSyncRoot();
-        await RunAsync("materialize", driveFolder.Path);
-        return driveFolder;
+        var entries = await ProviderEntriesAsync();
+        return WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
     }
 
     public bool DaemonLockIsRunning(IrisDriveStatusData status)
@@ -210,6 +209,45 @@ public sealed class IrisDriveService
         return RunForOutputAsync(arguments);
     }
 
+    private async Task<IReadOnlyList<WindowsCloudFileEntry>> ProviderEntriesAsync()
+    {
+        using var document = await RunJsonAsync("provider", "list");
+        if (!document.RootElement.TryGetProperty("entries", out var entries) ||
+            entries.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<WindowsCloudFileEntry>();
+        }
+
+        return entries
+            .EnumerateArray()
+            .Select(WindowsCloudFileEntry.FromJson)
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Path))
+            .ToArray();
+    }
+
+    private byte[] ReadProviderFile(string path)
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "iris-drive");
+        Directory.CreateDirectory(tempDirectory);
+        var tempFile = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.bin");
+        try
+        {
+            RunForOutput("provider", "read", path, tempFile);
+            return File.ReadAllBytes(tempFile);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempFile);
+            }
+            catch
+            {
+                // Best-effort cleanup for provider callback scratch files.
+            }
+        }
+    }
+
     private async Task<string> RunForOutputAsync(params string[] arguments)
     {
         using var process = new Process { StartInfo = CreateStartInfo(arguments) };
@@ -217,6 +255,23 @@ public sealed class IrisDriveService
         var stdout = await process.StandardOutput.ReadToEndAsync();
         var stderr = await process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
+
+        if (process.ExitCode == 0)
+        {
+            return stdout;
+        }
+
+        var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        throw new InvalidOperationException(message.Trim());
+    }
+
+    private string RunForOutput(params string[] arguments)
+    {
+        using var process = new Process { StartInfo = CreateStartInfo(arguments) };
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
 
         if (process.ExitCode == 0)
         {

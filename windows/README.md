@@ -35,7 +35,9 @@ loopback gateway and opens a native Windows drive folder instead of relying on
 the Windows WebClient redirector.
 
 The **Open Drive Folder** action registers `%USERPROFILE%\Iris Drive` as an
-Iris Drive Cloud Files sync root when the Windows Cloud Files API is available,
-materializes the merged drive into that local folder, and opens it in Explorer.
+Iris Drive Cloud Files sync root when the Windows Cloud Files API is available.
+It pre-populates the provider namespace as Cloud Files placeholders from
+`idrive provider list`, keeps a `CfConnectSyncRoot` connection alive while the
+shell is running, and hydrates file reads through `idrive provider read`.
 
 See [`docs/PARITY.md`](../docs/PARITY.md) for the current desktop parity matrix.
