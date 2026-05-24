@@ -767,8 +767,10 @@ async fn apply_windows_cloud_upsert(
             continue;
         }
         if metadata.is_dir() {
-            create_provider_dir(provider, &path).await?;
-            changed = true;
+            if !provider_dir_exists(provider, &path).await? {
+                create_provider_dir(provider, &path).await?;
+                changed = true;
+            }
             let mut children = Vec::new();
             for entry in
                 std::fs::read_dir(&full_path).with_context(|| format!("reading {}", path))?
@@ -800,11 +802,44 @@ async fn apply_windows_cloud_upsert(
                     return Err(error).with_context(|| format!("reading {}", full_path.display()));
                 }
             };
+            if provider_file_matches(provider, &path, &bytes).await? {
+                continue;
+            }
             write_provider_file(provider, &path, &bytes).await?;
             changed = true;
         }
     }
     Ok(changed)
+}
+
+async fn provider_dir_exists(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<bool> {
+    match provider.item(&path.to_string()).await {
+        Ok(item) => Ok(item.kind == ItemKind::Directory),
+        Err(_) => Ok(false),
+    }
+}
+
+async fn provider_file_matches(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+    bytes: &[u8],
+) -> Result<bool> {
+    let path = path.to_string();
+    let item = match provider.item(&path).await {
+        Ok(item) if item.kind == ItemKind::File => item,
+        Ok(_) | Err(_) => return Ok(false),
+    };
+    if item.size != bytes.len() as u64 {
+        return Ok(false);
+    }
+    let existing = provider
+        .read(&path, 0, item.size)
+        .await
+        .with_context(|| format!("reading provider file {path}"))?;
+    Ok(existing == bytes)
 }
 
 async fn prune_ignored_provider_paths(
@@ -1570,5 +1605,41 @@ mod tests {
         assert!(provider.item(&recycle).await.is_err());
         assert!(provider.item(&noise).await.is_ok());
         assert!(provider.item(&keep).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_upsert_skips_matching_existing_file() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "remote.txt", b"same")
+            .await
+            .unwrap();
+        let before = provider.current_root().await;
+
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::write(sync_root.path().join("remote.txt"), b"same").unwrap();
+
+        assert!(
+            !apply_windows_cloud_upsert(&provider, sync_root.path(), "remote.txt")
+                .await
+                .unwrap()
+        );
+        assert_eq!(provider.current_root().await, before);
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_upsert_skips_existing_directory() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        create_provider_dir(&provider, "existing").await.unwrap();
+        let before = provider.current_root().await;
+
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(sync_root.path().join("existing")).unwrap();
+
+        assert!(
+            !apply_windows_cloud_upsert(&provider, sync_root.path(), "existing")
+                .await
+                .unwrap()
+        );
+        assert_eq!(provider.current_root().await, before);
     }
 }

@@ -707,6 +707,7 @@ terminate_pid() {
 
 stop_idrive_daemon() {
   local config_dir="$1"
+  local mountpoint="${2:-}"
   local status_file="$config_dir/daemon-status.json"
   local lock_file="$config_dir/daemon.lock"
   local status_pid=""
@@ -723,6 +724,26 @@ stop_idrive_daemon() {
   if [[ "$lock_pid" != "$status_pid" ]]; then
     terminate_pid "$lock_pid"
   fi
+
+  # The Linux dev app can leave behind an idrive daemon that owns the FUSE
+  # mount but was not started with the lab config dir. Kill stale daemons by
+  # mountpoint too so a lab deploy really replaces the running VM app.
+  if [[ -n "$mountpoint" ]] && command -v pgrep >/dev/null 2>&1; then
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      [[ "$pid" != "$status_pid" && "$pid" != "$lock_pid" ]] || continue
+      local cmdline=""
+      if [[ -r "/proc/$pid/cmdline" ]]; then
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+      else
+        cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+      fi
+      [[ "$cmdline" == *"idrive"*" daemon "* ]] || continue
+      if [[ "$cmdline" == *"$mountpoint"* || "$cmdline" == *"$config_dir"* ]]; then
+        terminate_pid "$pid"
+      fi
+    done < <(pgrep -u "$(id -u)" -f "idrive.* daemon " 2>/dev/null || true)
+  fi
 }
 
 run_linux() {
@@ -738,7 +759,7 @@ run_linux() {
 
   log "restarting idrive daemon"
   mkdir -p "$config_dir" "$mountpoint"
-  stop_idrive_daemon "$config_dir"
+  stop_idrive_daemon "$config_dir" "$mountpoint"
   rm -f "$config_dir/daemon.lock"
   nohup env \
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
@@ -749,10 +770,28 @@ run_linux() {
     "$idrive" --config-dir "$config_dir" daemon \
       --watch-interval 2 \
       --watch-debounce-ms 100 \
+      --no-gateway \
       --mount \
       --mountpoint "$mountpoint" \
       > /tmp/iris-drive-daemon.log 2>&1 < /dev/null &
-  sleep 3
+  local daemon_pid="$!"
+  local daemon_ready=0
+  for _ in {1..50}; do
+    if ! process_running "$daemon_pid"; then
+      tail -120 /tmp/iris-drive-daemon.log >&2 || true
+      die "idrive daemon exited during startup"
+    fi
+    if "$idrive" --config-dir "$config_dir" status 2>/dev/null \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; raise SystemExit(0 if f.get("enabled") and f.get("running") else 1)' 2>/dev/null; then
+      daemon_ready=1
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ "$daemon_ready" != "1" ]]; then
+    tail -120 /tmp/iris-drive-daemon.log >&2 || true
+    die "idrive daemon did not report running FIPS"
+  fi
   "$idrive" --config-dir "$config_dir" status \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
 }
