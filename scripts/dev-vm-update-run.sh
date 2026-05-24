@@ -171,6 +171,83 @@ remote_url_parts() {
   printf '%s\t%s\n' "${url%%:*}" "${url#*:}"
 }
 
+ensure_remote_bare_repo() {
+  local kind="$1"
+  local host="$2"
+  local repo="$3"
+
+  case "$kind" in
+    windows)
+      {
+        printf '$BareRepo = %s\n' "$(ps_quote "$repo")"
+        cat <<'REMOTE_PS'
+$ErrorActionPreference = "Stop"
+
+function Expand-RemotePath([string]$Path) {
+  if ($Path -eq "~") {
+    return $HOME
+  }
+  if ($Path.StartsWith("~/") -or $Path.StartsWith("~\")) {
+    return (Join-Path $HOME $Path.Substring(2))
+  }
+  if (-not [System.IO.Path]::IsPathRooted($Path)) {
+    return (Join-Path $HOME $Path)
+  }
+  return $Path
+}
+
+$BareRepo = Expand-RemotePath $BareRepo
+if (Test-Path $BareRepo) {
+  $IsBare = git --git-dir $BareRepo rev-parse --is-bare-repository
+  if ($LASTEXITCODE -ne 0 -or ($IsBare -join "").Trim() -ne "true") {
+    throw "sync target exists but is not a bare git repo: $BareRepo"
+  }
+  exit 0
+}
+
+$Parent = Split-Path -Parent $BareRepo
+if ($Parent) {
+  New-Item -ItemType Directory -Force -Path $Parent | Out-Null
+}
+git init --bare $BareRepo | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "failed to create bare git repo: $BareRepo"
+}
+REMOTE_PS
+      } | ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+      ;;
+    *)
+      {
+        printf 'BARE_REPO=%s\n' "$(sh_quote "$repo")"
+        cat <<'REMOTE_SH'
+set -Eeuo pipefail
+
+expand_path() {
+  case "$1" in
+    "~") printf '%s\n' "$HOME" ;;
+    "~/"*) printf '%s/%s\n' "$HOME" "${1:2}" ;;
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$HOME" "$1" ;;
+  esac
+}
+
+bare_repo="$(expand_path "$BARE_REPO")"
+if [[ -e "$bare_repo" ]]; then
+  if [[ "$(git --git-dir "$bare_repo" rev-parse --is-bare-repository 2>/dev/null || true)" != "true" ]]; then
+    printf 'sync target exists but is not a bare git repo: %s\n' "$bare_repo" >&2
+    exit 6
+  fi
+  exit 0
+fi
+
+mkdir -p "$(dirname "$bare_repo")"
+git init --bare "$bare_repo" >/dev/null
+REMOTE_SH
+      } | ssh "$host" 'bash -se'
+      ;;
+  esac
+}
+
 declare -a LABELS=()
 declare -a KINDS=()
 declare -a HOSTS=()
@@ -363,6 +440,11 @@ build_static_peer_hints
 
 if [[ "$SKIP_PUSH" != "1" ]]; then
   for i in "${!LABELS[@]}"; do
+    log "ensuring VM bare git repos exist for ${LABELS[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${HASHTREE_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${FIPS_BARES[$i]}"
+
     log "pushing iris-drive HEAD to ${LABELS[$i]} (${IRIS_REMOTES[$i]}:$SYNC_BRANCH)"
     git -C "$ROOT" push "${IRIS_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
     log "pushing hashtree HEAD to ${LABELS[$i]} (${HASHTREE_REMOTES[$i]}:$SYNC_BRANCH)"
@@ -407,7 +489,8 @@ expand_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
     "~/"*) printf '%s/%s\n' "$HOME" "${1:2}" ;;
-    *) printf '%s\n' "$1" ;;
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$HOME" "$1" ;;
   esac
 }
 
@@ -878,6 +961,9 @@ function Expand-RemotePath([string]$Path) {
   }
   if ($Path.StartsWith("~/") -or $Path.StartsWith("~\")) {
     return (Join-Path $HOME $Path.Substring(2))
+  }
+  if (-not [System.IO.Path]::IsPathRooted($Path)) {
+    return (Join-Path $HOME $Path)
   }
   return $Path
 }
