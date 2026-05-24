@@ -793,10 +793,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         if let executable {
             process.executableURL = executable
-            process.arguments = arguments
+            process.arguments = ["--config-dir", paths.configDirectory.path] + arguments
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["idrive"] + arguments
+            process.arguments = ["idrive", "--config-dir", paths.configDirectory.path] + arguments
         }
     }
 

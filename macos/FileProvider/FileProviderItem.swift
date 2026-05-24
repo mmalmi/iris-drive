@@ -276,7 +276,7 @@ enum FileProviderStorage {
         guard let executable = runtime?.idriveExecutable, !executable.isEmpty else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["import", driveRoot.path]
+        process.arguments = ["--config-dir", configDirectory.path, "import", driveRoot.path]
         var environment = ProcessInfo.processInfo.environment
         environment["IRIS_DRIVE_CONFIG_DIR"] = configDirectory.path
         process.environment = environment

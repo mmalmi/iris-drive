@@ -536,6 +536,7 @@ sign_macos_app() {
 
   if [[ -z "$sign_identity" ]]; then
     sign_identity="-"
+    app_entitlements=""
     dev_entitlements="$(mktemp -t iris-drive-dev-entitlements.XXXXXX.plist)"
     cat > "$dev_entitlements" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -553,20 +554,27 @@ sign_macos_app() {
 </dict>
 </plist>
 EOF
-    app_entitlements="$dev_entitlements"
     appex_entitlements="$dev_entitlements"
-    log "codesigning macOS app ad-hoc with launch-safe FileProvider app-group entitlements"
+    log "codesigning macOS app ad-hoc; FileProvider extension keeps app-group entitlements"
   else
     log "codesigning macOS app with identity: $sign_identity"
   fi
 
   codesign --force --sign "$sign_identity" "$app/Contents/MacOS/idrive" >/dev/null
-  codesign --force --sign "$sign_identity" \
-    --entitlements "$appex_entitlements" \
-    "$appex" >/dev/null
-  codesign --force --sign "$sign_identity" \
-    --entitlements "$app_entitlements" \
-    "$app" >/dev/null
+  if [[ -n "$appex_entitlements" ]]; then
+    codesign --force --sign "$sign_identity" \
+      --entitlements "$appex_entitlements" \
+      "$appex" >/dev/null
+  else
+    codesign --force --sign "$sign_identity" "$appex" >/dev/null
+  fi
+  if [[ -n "$app_entitlements" ]]; then
+    codesign --force --sign "$sign_identity" \
+      --entitlements "$app_entitlements" \
+      "$app" >/dev/null
+  else
+    codesign --force --sign "$sign_identity" "$app" >/dev/null
+  fi
   rm -f "$dev_entitlements"
   codesign --verify --deep --strict --verbose=2 "$app" >/dev/null
 }
