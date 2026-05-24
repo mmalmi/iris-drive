@@ -259,7 +259,13 @@ if (-not $Nvpn) {
 if ($Nvpn) {
   try {
     $Status = & $Nvpn status --json | ConvertFrom-Json
-    (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
+    $Running = $true
+    if ($Status.daemon -and $null -ne $Status.daemon.running) {
+      $Running = [bool]$Status.daemon.running
+    }
+    if ($Running -and $Status.tunnel_ip) {
+      (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
+    }
   } catch {}
 }
 REMOTE_PS
@@ -268,14 +274,17 @@ REMOTE_PS
     ip="$(ssh "$host" 'bash -se' <<'REMOTE_SH' 2>/dev/null || true
 set -Eeuo pipefail
 nvpn=""
-if command -v nvpn >/dev/null 2>&1; then
-  nvpn="$(command -v nvpn)"
-elif [[ -x "$HOME/src/nostr-vpn/target/debug/nvpn" ]]; then
-  nvpn="$HOME/src/nostr-vpn/target/debug/nvpn"
-fi
-[[ -n "$nvpn" ]] || exit 0
-"$nvpn" status --json \
-  | python3 -c 'import json,sys; print((json.load(sys.stdin).get("tunnel_ip") or "").split("/")[0])' 2>/dev/null || true
+for candidate in \
+  "$(command -v nvpn 2>/dev/null || true)" \
+  "$HOME/src/nostr-vpn/target/debug/nvpn" \
+  "$HOME/src/nostr-vpn/target/aarch64-apple-darwin/debug/nvpn" \
+  "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn"
+do
+  [[ -n "$candidate" && -x "$candidate" ]] || continue
+  if "$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); daemon=d.get("daemon") or {}; running=daemon.get("running"); source=d.get("status_source"); ip=(d.get("tunnel_ip") or "").split("/")[0]; sys.exit(1 if not ip or (running is False and source != "daemon") else 0); print(ip)'; then
+    exit 0
+  fi
+done
 REMOTE_SH
 )"
   fi
