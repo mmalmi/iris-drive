@@ -905,7 +905,8 @@ xcodebuild_macos_app() {
 run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
-  local app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
+  local built_app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
+  local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$HOME/Applications/Iris Drive.app}"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
   local sandbox_app_base="$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev"
   local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$sandbox_app_base}"
@@ -926,7 +927,7 @@ run_macos() {
   log "building macOS app"
   xcodebuild_macos_app "$iris_repo"
   if macos_fileprovider_required; then
-    MACOS_XCODE_SIGNED_IDENTITY="$(codesign -dv --verbose=4 "$app" 2>&1 \
+    MACOS_XCODE_SIGNED_IDENTITY="$(codesign -dv --verbose=4 "$built_app" 2>&1 \
       | sed -n 's/^Authority=\(Apple Development.*\)$/\1/p' \
       | head -n 1 || true)"
     if [[ -n "$MACOS_XCODE_SIGNED_IDENTITY" && -n "$MACOS_CODESIGN_KEYCHAIN" ]]; then
@@ -935,14 +936,16 @@ run_macos() {
         -c "$MACOS_XCODE_SIGNED_IDENTITY" \
         "$MACOS_CODESIGN_KEYCHAIN" 2>/dev/null \
         | sed -n 's/^SHA-1 hash: //p' \
-        | head -n 1 || true)"
+      | head -n 1 || true)"
     fi
   fi
+  install_macos_dev_app "$built_app" "$app"
   cp "$idrive" "$app/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
   sign_macos_app "$iris_repo" "$app" "$appex"
   check_macos_fileprovider_signing "$app" "$appex"
-  register_fileprovider_plugin "$appex"
+  register_macos_app_bundle "$app" "$built_app"
+  register_fileprovider_plugin "$app" "$appex"
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting macOS app"
@@ -966,6 +969,7 @@ run_macos() {
     "$app_base" \
     "$config_dir" \
     "$app/Contents/MacOS/idrive"
+  pregrant_macos_dev_app_tcc
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
   rm -f "$app_stdout" "$app_stderr" "$daemon_log"
@@ -1124,9 +1128,50 @@ EOF
   codesign --verify --deep --strict --verbose=2 "$app" >/dev/null
 }
 
+install_macos_dev_app() {
+  local built_app="$1"
+  local app="$2"
+
+  [[ -d "$built_app" ]] || die "built macOS app not found at $built_app"
+  [[ "$app" == *.app && "$app" != "/" ]] || die "unsafe macOS app install path: $app"
+  mkdir -p "$(dirname "$app")"
+  rm -rf "$app"
+  ditto "$built_app" "$app"
+}
+
+register_macos_app_bundle() {
+  local app="$1"
+  local built_app="$2"
+  local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  local candidate
+
+  [[ -x "$lsregister" ]] || return 0
+  "$lsregister" -u "$built_app" >/dev/null 2>&1 || true
+  if command -v mdfind >/dev/null 2>&1; then
+    mdfind "kMDItemCFBundleIdentifier == 'to.iris.drive.macos'" 2>/dev/null \
+      | while IFS= read -r candidate; do
+          [[ -n "$candidate" && "$candidate" != "$app" ]] || continue
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+        done
+  fi
+  if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
+    find "$HOME/Library/Developer/Xcode/DerivedData" \
+      -path "*/Build/Products/Debug/Iris Drive.app" \
+      -type d -prune -print 2>/dev/null \
+      | while IFS= read -r candidate; do
+          [[ -n "$candidate" && "$candidate" != "$app" ]] || continue
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+          rm -rf "$candidate"
+        done
+  fi
+  "$lsregister" -f -R -trusted "$app" >/dev/null 2>&1 || true
+}
+
 register_fileprovider_plugin() {
-  local appex="$1"
+  local app="$1"
+  local appex="$2"
   local plugin_id="to.iris.drive.macos.FileProvider"
+  local plugin
   command -v pluginkit >/dev/null 2>&1 || return 0
 
   pluginkit -m -i "$plugin_id" -ADv 2>/dev/null \
@@ -1136,8 +1181,60 @@ register_fileprovider_plugin() {
           pluginkit -r "$plugin" >/dev/null 2>&1 || true
         fi
       done
+  register_macos_app_bundle "$app" "$app"
   pluginkit -a "$appex" >/dev/null 2>&1 || true
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
+}
+
+pregrant_macos_dev_app_tcc() {
+  case "${IRIS_DRIVE_DEV_VM_MACOS_PREGRANT_TCC:-1}" in
+    0|false|FALSE|no|NO|off|OFF) return 0 ;;
+  esac
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+
+  local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+  [[ -f "$tcc_db" && -w "$tcc_db" ]] || return 0
+
+  sqlite3 "$tcc_db" <<'SQL' >/dev/null 2>&1 || true
+INSERT OR REPLACE INTO access(
+  service,
+  client,
+  client_type,
+  auth_value,
+  auth_reason,
+  auth_version,
+  csreq,
+  policy_id,
+  indirect_object_identifier_type,
+  indirect_object_identifier,
+  indirect_object_code_identity,
+  flags,
+  last_modified,
+  pid,
+  pid_version,
+  boot_uuid,
+  last_reminded
+) VALUES (
+  'kTCCServiceSystemPolicyAppData',
+  'to.iris.drive.macos',
+  0,
+  2,
+  4,
+  2,
+  NULL,
+  NULL,
+  0,
+  'UNUSED',
+  NULL,
+  0,
+  CAST(strftime('%s','now') AS INTEGER),
+  NULL,
+  NULL,
+  'UNUSED',
+  CAST(strftime('%s','now') AS INTEGER)
+);
+SQL
+  killall tccd >/dev/null 2>&1 || true
 }
 
 check_macos_fileprovider_signing() {

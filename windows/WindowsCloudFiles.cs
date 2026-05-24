@@ -144,6 +144,11 @@ public static partial class WindowsCloudFiles
     {
         var placeholderCount = 0;
         var skippedLocalItems = 0;
+        var expectedPaths = new HashSet<string>(
+            PlaceholderEntries(entries).Select(entry => entry.Path),
+            StringComparer.Ordinal);
+
+        RemoveStalePlaceholders(syncRootPath, expectedPaths);
 
         foreach (var entry in PlaceholderEntries(entries))
         {
@@ -158,7 +163,12 @@ public static partial class WindowsCloudFiles
             }
 
             var itemFullPath = Path.Combine(parentFullPath, FileName(entry.Path));
-            if (ExistingNonPlaceholder(itemFullPath))
+            if (ExistingPlaceholder(itemFullPath))
+            {
+                continue;
+            }
+
+            if (ExistingLocalItem(itemFullPath))
             {
                 skippedLocalItems++;
                 continue;
@@ -169,6 +179,46 @@ public static partial class WindowsCloudFiles
         }
 
         return new PlaceholderPopulationReport(placeholderCount, skippedLocalItems);
+    }
+
+    private static void RemoveStalePlaceholders(string syncRootPath, HashSet<string> expectedPaths)
+    {
+        if (!Directory.Exists(syncRootPath))
+        {
+            return;
+        }
+
+        foreach (var fullPath in Directory
+            .EnumerateFileSystemEntries(syncRootPath, "*", SearchOption.AllDirectories)
+            .OrderByDescending(path => path.Count(ch => ch == Path.DirectorySeparatorChar)))
+        {
+            var relative = NormalizeVirtualPath(Path.GetRelativePath(syncRootPath, fullPath));
+            if (string.IsNullOrEmpty(relative) || expectedPaths.Contains(relative))
+            {
+                continue;
+            }
+
+            if (!ExistingPlaceholder(fullPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (Directory.Exists(fullPath))
+                {
+                    Directory.Delete(fullPath, recursive: true);
+                }
+                else
+                {
+                    File.Delete(fullPath);
+                }
+            }
+            catch
+            {
+                // Explorer or Cloud Files may have a transient handle; the next refresh retries.
+            }
+        }
     }
 
     private static IEnumerable<WindowsCloudFileEntry> PlaceholderEntries(
@@ -264,7 +314,7 @@ public static partial class WindowsCloudFiles
         }
     }
 
-    private static bool ExistingNonPlaceholder(string fullPath)
+    private static bool ExistingLocalItem(string fullPath)
     {
         if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
         {
@@ -273,6 +323,17 @@ public static partial class WindowsCloudFiles
 
         var attributes = File.GetAttributes(fullPath);
         return (attributes & FileAttributes.ReparsePoint) == 0;
+    }
+
+    private static bool ExistingPlaceholder(string fullPath)
+    {
+        if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+        {
+            return false;
+        }
+
+        var attributes = File.GetAttributes(fullPath);
+        return (attributes & FileAttributes.ReparsePoint) != 0;
     }
 
     private static void RegisterSyncRoot(string path)

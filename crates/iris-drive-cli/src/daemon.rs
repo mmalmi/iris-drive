@@ -53,6 +53,30 @@ pub(crate) fn cmd_daemon(
                 Err(error) => (None, Some(error.to_string())),
             };
         let (webdav_root_tx, mut webdav_root_rx) = mpsc::unbounded_channel::<Cid>();
+        #[cfg(windows)]
+        let (
+            windows_cloud_root,
+            mut windows_cloud_root_rx,
+            _windows_cloud_root_watcher,
+            windows_cloud_status,
+        ) = match start_windows_cloud_root_watch() {
+            Ok(watch) => watch,
+            Err(error) => {
+                let status = json!({
+                    "root": null,
+                    "watching": false,
+                    "error": format!("{error:#}"),
+                });
+                println!("{}", json!({"event": "windows_cloud_root_watch_error", "error": format!("{error:#}")}));
+                (None, None, None, Some(status))
+            }
+        };
+        #[cfg(not(windows))]
+        let (windows_cloud_root, mut windows_cloud_root_rx, windows_cloud_status) = (
+            None::<PathBuf>,
+            None::<mpsc::UnboundedReceiver<WindowsCloudRootChange>>,
+            None::<Value>,
+        );
         let gateway = if enable_gateway {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
@@ -131,6 +155,7 @@ pub(crate) fn cmd_daemon(
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
                 "browser_gateway": gateway_status,
+                "windows_cloud_root": windows_cloud_status,
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
@@ -170,6 +195,13 @@ pub(crate) fn cmd_daemon(
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let provider_root_period = std::time::Duration::from_secs(watch_interval.max(1));
+        let mut provider_root_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + provider_root_period,
+            provider_root_period,
+        );
+        provider_root_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_provider_root_key = current_device_root_key(&config);
 
         loop {
             tokio::select! {
@@ -276,6 +308,50 @@ pub(crate) fn cmd_daemon(
                         ),
                     }
                 }
+                Some(change) = async {
+                    if let Some(rx) = windows_cloud_root_rx.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<WindowsCloudRootChange>>().await
+                    }
+                } => {
+                    let mut changes = vec![change];
+                    if let Some(rx) = windows_cloud_root_rx.as_mut() {
+                        while let Ok(next) = rx.try_recv() {
+                            changes.push(next);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
+                        while let Ok(next) = rx.try_recv() {
+                            changes.push(next);
+                        }
+                    }
+                    if let Some(root) = windows_cloud_root.as_ref() {
+                        match import_windows_cloud_root_changes_and_publish(
+                            &client,
+                            config_dir,
+                            root,
+                            changes,
+                            &mut direct_roots,
+                            fips_blocks.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => println!(
+                                "{}",
+                                json!({
+                                    "event": "windows_cloud_root_published",
+                                    "root_cid": root_cid,
+                                    "paths": paths,
+                                })
+                            ),
+                            Ok(WindowsCloudImportOutcome::Unchanged) => {}
+                            Err(error) => println!(
+                                "{}",
+                                json!({"event": "windows_cloud_root_publish_error", "error": format!("{error:#}")})
+                            ),
+                        }
+                    }
+                }
                 Some(reason) = async {
                     if let Some(rx) = mount_refresh_rx.as_mut() {
                         rx.recv().await
@@ -322,6 +398,24 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
+                _ = provider_root_timer.tick() => {
+                    match publish_provider_root_if_changed(
+                        &client,
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(Some(_updated_config)) => {}
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
                         && let Err(error) = direct_roots
@@ -344,6 +438,403 @@ pub(crate) fn cmd_daemon(
         let _ = client.disconnect().await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+async fn publish_provider_root_if_changed(
+    client: &nostr_sdk::Client,
+    config_dir: &Path,
+    last_root_key: &mut Option<String>,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<Option<AppConfig>> {
+    let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let current_key = current_device_root_key(&updated_config);
+    if current_key == *last_root_key {
+        return Ok(None);
+    }
+    *last_root_key = current_key.clone();
+    let Some(current_key) = current_key else {
+        return Ok(Some(updated_config));
+    };
+    let Some(updated_state) = updated_config.account.clone() else {
+        return Ok(Some(updated_config));
+    };
+
+    let direct_root_mesh_error =
+        match announce_current_state_direct(direct_roots, config_dir, fips_blocks).await {
+            Ok(()) => None,
+            Err(error) => Some(format!("{error:#}")),
+        };
+    let publish =
+        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
+    println!(
+        "{}",
+        json!({
+            "event": "provider_root_published",
+            "root_key": current_key,
+            "direct_root_mesh_error": direct_root_mesh_error,
+            "publish": publish_state_report_json(&publish),
+        })
+    );
+
+    Ok(Some(updated_config))
+}
+
+fn current_device_root_key(config: &AppConfig) -> Option<String> {
+    let state = config.account.as_ref()?;
+    let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
+    let root = drive.device_roots.get(&state.device_pubkey)?;
+    Some(format!(
+        "{}:{}:{}",
+        drive.drive_id, state.device_pubkey, root.root_cid
+    ))
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum WindowsCloudRootChange {
+    Upsert(String),
+    Delete(String),
+    Rename { old_path: String, new_path: String },
+    Rescan,
+}
+
+#[derive(Debug)]
+enum WindowsCloudImportOutcome {
+    Changed {
+        root_cid: String,
+        paths: Vec<String>,
+    },
+    Unchanged,
+}
+
+#[cfg(windows)]
+fn start_windows_cloud_root_watch() -> Result<(
+    Option<PathBuf>,
+    Option<tokio::sync::mpsc::UnboundedReceiver<WindowsCloudRootChange>>,
+    Option<notify::RecommendedWatcher>,
+    Option<Value>,
+)> {
+    use notify::{RecursiveMode, Watcher};
+
+    let home = dirs::home_dir().context("finding Windows profile directory")?;
+    let root = home.join("Iris Drive");
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("creating Windows Cloud Files root {}", root.display()))?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let callback_tx = tx.clone();
+    let callback_root = root.clone();
+    let mut watcher = notify::recommended_watcher(move |result| match result {
+        Ok(event) => {
+            for change in windows_cloud_changes_from_event(&callback_root, event) {
+                let _ = callback_tx.send(change);
+            }
+        }
+        Err(error) => {
+            eprintln!("windows cloud root watch error: {error:#}");
+        }
+    })
+    .context("creating Windows Cloud Files watcher")?;
+    watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .with_context(|| format!("watching Windows Cloud Files root {}", root.display()))?;
+    let _ = tx.send(WindowsCloudRootChange::Rescan);
+
+    Ok((
+        Some(root.clone()),
+        Some(rx),
+        Some(watcher),
+        Some(json!({
+            "root": root.display().to_string(),
+            "watching": true,
+        })),
+    ))
+}
+
+#[cfg(windows)]
+fn windows_cloud_changes_from_event(
+    root: &Path,
+    event: notify::Event,
+) -> Vec<WindowsCloudRootChange> {
+    use notify::event::{EventKind, ModifyKind, RenameMode};
+
+    match event.kind {
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if event.paths.len() >= 2 => {
+            match (
+                windows_cloud_relative_path(root, &event.paths[0]),
+                windows_cloud_relative_path(root, &event.paths[1]),
+            ) {
+                (Some(old_path), Some(new_path)) => {
+                    vec![WindowsCloudRootChange::Rename { old_path, new_path }]
+                }
+                _ => Vec::new(),
+            }
+        }
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) | EventKind::Remove(_) => event
+            .paths
+            .iter()
+            .filter_map(|path| windows_cloud_relative_path(root, path))
+            .map(WindowsCloudRootChange::Delete)
+            .collect(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+        | EventKind::Modify(ModifyKind::Name(RenameMode::To))
+        | EventKind::Modify(ModifyKind::Name(RenameMode::Any))
+        | EventKind::Modify(ModifyKind::Name(RenameMode::Other))
+        | EventKind::Create(_)
+        | EventKind::Modify(ModifyKind::Any)
+        | EventKind::Modify(ModifyKind::Data(_))
+        | EventKind::Modify(ModifyKind::Metadata(_))
+        | EventKind::Modify(ModifyKind::Other)
+        | EventKind::Any
+        | EventKind::Other => event
+            .paths
+            .iter()
+            .filter_map(|path| windows_cloud_relative_path(root, path))
+            .map(WindowsCloudRootChange::Upsert)
+            .collect(),
+        EventKind::Access(_) => Vec::new(),
+    }
+}
+
+async fn import_windows_cloud_root_changes_and_publish(
+    client: &nostr_sdk::Client,
+    config_dir: &Path,
+    sync_root: &Path,
+    changes: Vec<WindowsCloudRootChange>,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<WindowsCloudImportOutcome> {
+    let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
+    let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+        .await
+        .context("building Windows Cloud Files provider root")?;
+    let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
+    let before = provider.current_root().await;
+    let mut changed_paths = BTreeSet::new();
+
+    for change in changes {
+        match change {
+            WindowsCloudRootChange::Upsert(path) => {
+                if apply_windows_cloud_upsert(&provider, sync_root, &path).await? {
+                    changed_paths.insert(path);
+                }
+            }
+            WindowsCloudRootChange::Delete(path) => {
+                if apply_windows_cloud_delete(&provider, &path).await? {
+                    changed_paths.insert(path);
+                }
+            }
+            WindowsCloudRootChange::Rename { old_path, new_path } => {
+                if apply_windows_cloud_rename(&provider, sync_root, &old_path, &new_path).await? {
+                    changed_paths.insert(old_path);
+                    changed_paths.insert(new_path);
+                }
+            }
+            WindowsCloudRootChange::Rescan => {
+                for path in windows_cloud_local_materialized_paths(sync_root)? {
+                    if apply_windows_cloud_upsert(&provider, sync_root, &path).await? {
+                        changed_paths.insert(path);
+                    }
+                }
+            }
+        }
+    }
+
+    let root = provider.current_root().await;
+    drop(provider);
+    drop(daemon);
+
+    if root == before {
+        return Ok(WindowsCloudImportOutcome::Unchanged);
+    }
+
+    import_mount_root_and_publish(client, config_dir, root.clone(), direct_roots, fips_blocks)
+        .await
+        .context("publishing Windows Cloud Files root")?;
+
+    Ok(WindowsCloudImportOutcome::Changed {
+        root_cid: root.to_string(),
+        paths: changed_paths.into_iter().collect(),
+    })
+}
+
+async fn apply_windows_cloud_rename(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    sync_root: &Path,
+    old_path: &str,
+    new_path: &str,
+) -> Result<bool> {
+    let old_path = normalize_provider_path(old_path)?;
+    let new_path = normalize_provider_path(new_path)?;
+    let new_full_path = windows_cloud_full_path(sync_root, &new_path);
+    if windows_cloud_path_is_reparse_point(&new_full_path) {
+        match provider.item(&old_path).await {
+            Ok(_) => {
+                rename_provider_path(provider, &old_path, &new_path).await?;
+                return Ok(true);
+            }
+            Err(_) => return Ok(false),
+        }
+    }
+
+    let deleted = apply_windows_cloud_delete(provider, &old_path).await?;
+    let upserted = apply_windows_cloud_upsert(provider, sync_root, &new_path).await?;
+    Ok(deleted || upserted)
+}
+
+async fn apply_windows_cloud_delete(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<bool> {
+    let path = match normalize_provider_path(path) {
+        Ok(path) => path,
+        Err(_) => return Ok(false),
+    };
+    match provider.item(&path).await {
+        Ok(_) => {
+            delete_provider_path(provider, &path).await?;
+            Ok(true)
+        }
+        Err(_) => Ok(false),
+    }
+}
+
+async fn apply_windows_cloud_upsert(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    sync_root: &Path,
+    path: &str,
+) -> Result<bool> {
+    let path = match normalize_provider_path(path) {
+        Ok(path) => path,
+        Err(_) => return Ok(false),
+    };
+    let mut changed = false;
+    let mut stack = vec![path];
+    while let Some(path) = stack.pop() {
+        let full_path = windows_cloud_full_path(sync_root, &path);
+        let metadata = match std::fs::symlink_metadata(&full_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("reading metadata for {}", full_path.display()));
+            }
+        };
+        if windows_cloud_metadata_is_reparse_point(&metadata) {
+            continue;
+        }
+        if metadata.is_dir() {
+            create_provider_dir(provider, &path).await?;
+            changed = true;
+            let mut children = Vec::new();
+            for entry in
+                std::fs::read_dir(&full_path).with_context(|| format!("reading {}", path))?
+            {
+                let entry = entry?;
+                let child = entry.path();
+                let child_metadata = match std::fs::symlink_metadata(&child) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("reading metadata for {}", child.display()));
+                    }
+                };
+                if windows_cloud_metadata_is_reparse_point(&child_metadata) {
+                    continue;
+                }
+                if let Some(relative) = windows_cloud_relative_path(sync_root, &child) {
+                    children.push(relative);
+                }
+            }
+            children.sort_by(|a, b| b.cmp(a));
+            stack.extend(children);
+        } else if metadata.is_file() {
+            let bytes = std::fs::read(&full_path)
+                .with_context(|| format!("reading {}", full_path.display()))?;
+            write_provider_file(provider, &path, &bytes).await?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    if !root.is_dir() {
+        return Ok(paths);
+    }
+    for entry in std::fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("reading metadata for {}", path.display()));
+            }
+        };
+        if windows_cloud_metadata_is_reparse_point(&metadata) {
+            continue;
+        }
+        let Some(relative) = windows_cloud_relative_path(root, &path) else {
+            continue;
+        };
+        paths.push(relative);
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn windows_cloud_full_path(root: &Path, virtual_path: &str) -> PathBuf {
+    let mut full_path = root.to_path_buf();
+    for part in virtual_path.split('/').filter(|part| !part.is_empty()) {
+        full_path.push(part);
+    }
+    full_path
+}
+
+fn windows_cloud_relative_path(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let part = part.to_string_lossy();
+                if part.is_empty() || part == "." || part == ".." {
+                    return None;
+                }
+                parts.push(part.into_owned());
+            }
+            _ => return None,
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn windows_cloud_path_is_reparse_point(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| windows_cloud_metadata_is_reparse_point(&metadata))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn windows_cloud_metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn windows_cloud_metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 pub(crate) fn spawn_status_probe(

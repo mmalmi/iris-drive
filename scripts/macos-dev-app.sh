@@ -45,6 +45,7 @@ CONFIGURATION="${IRIS_DRIVE_MACOS_XCODE_CONFIGURATION:-Debug}"
 BUILD_DIR="${IRIS_DRIVE_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_MACOS_BUILD_LOG:-/tmp/iris-drive-macos-build.log}"
+INSTALL_APP_PATH="${IRIS_DRIVE_MACOS_INSTALL_APP:-$HOME/Applications/Iris Drive.app}"
 HOST_ARCH="$(uname -m)"
 APP_PROCESS_NAME="Iris Drive"
 
@@ -65,6 +66,9 @@ Environment:
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID
       Optional App Store Connect API key for provisioning updates when Xcode
       has no signed-in account.
+  IRIS_DRIVE_MACOS_INSTALL_APP
+      Stable app bundle to install and launch. Defaults to
+      ~/Applications/Iris Drive.app.
 EOF
 }
 
@@ -141,6 +145,73 @@ resolve_app_path() {
   fi
 
   find "$DERIVED_DATA/Build/Products" -maxdepth 3 -name 'Iris Drive.app' -type d -print -quit 2>/dev/null || true
+}
+
+launch_services_tool() {
+  printf '%s\n' "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+}
+
+install_app_bundle() {
+  local built_app_path="$1"
+
+  if [[ "$INSTALL_APP_PATH" != *.app || "$INSTALL_APP_PATH" == "/" ]]; then
+    echo "Unsafe IRIS_DRIVE_MACOS_INSTALL_APP: $INSTALL_APP_PATH" >&2
+    exit 2
+  fi
+  mkdir -p "$(dirname "$INSTALL_APP_PATH")"
+  rm -rf "$INSTALL_APP_PATH"
+  ditto "$built_app_path" "$INSTALL_APP_PATH"
+  printf '%s\n' "$INSTALL_APP_PATH"
+}
+
+register_app_bundle() {
+  local app_path="$1"
+  local built_app_path="$2"
+  local lsregister
+  local candidate
+
+  lsregister="$(launch_services_tool)"
+  [[ -x "$lsregister" ]] || return 0
+
+  "$lsregister" -u "$built_app_path" >/dev/null 2>&1 || true
+  if command -v mdfind >/dev/null 2>&1; then
+    mdfind "kMDItemCFBundleIdentifier == 'to.iris.drive.macos'" 2>/dev/null \
+      | while IFS= read -r candidate; do
+          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+        done
+  fi
+  if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
+    find "$HOME/Library/Developer/Xcode/DerivedData" \
+      -path "*/Build/Products/Debug/Iris Drive.app" \
+      -type d -prune -print 2>/dev/null \
+      | while IFS= read -r candidate; do
+          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+          rm -rf "$candidate"
+        done
+  fi
+  "$lsregister" -f -R -trusted "$app_path" >/dev/null 2>&1 || true
+}
+
+register_fileprovider_plugin() {
+  local app_path="$1"
+  local appex="$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"
+  local plugin_id="to.iris.drive.macos.FileProvider"
+  local plugin
+
+  [[ -d "$appex" ]] || return 0
+  command -v pluginkit >/dev/null 2>&1 || return 0
+
+  pluginkit -m -i "$plugin_id" -ADv 2>/dev/null \
+    | awk -F '\t' 'NF >= 4 { print $4 }' \
+    | while IFS= read -r plugin; do
+        if [[ -n "$plugin" && "$plugin" != "$appex" ]]; then
+          pluginkit -r "$plugin" >/dev/null 2>&1 || true
+        fi
+      done
+  pluginkit -a "$appex" >/dev/null 2>&1 || true
+  pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }
 
 build_xcode_app() {
@@ -239,6 +310,7 @@ terminate_running_app() {
 build_app() {
   local mode
   local target_dir
+  local built_app_path
   local app_path
   local signing_identity=""
 
@@ -251,11 +323,12 @@ build_app() {
   target_dir="$(resolve_target_dir)"
 
   build_xcode_app "$mode"
-  app_path="$(resolve_app_path)"
-  if [[ -z "${app_path:-}" || ! -d "$app_path" ]]; then
+  built_app_path="$(resolve_app_path)"
+  if [[ -z "${built_app_path:-}" || ! -d "$built_app_path" ]]; then
     echo "Built macOS app not found. Build log: $BUILD_LOG" >&2
     exit 1
   fi
+  app_path="$(install_app_bundle "$built_app_path")"
 
   if [[ "$mode" == "development" ]]; then
     signing_identity="$(signing_identity_for_app "$app_path")"
@@ -267,8 +340,8 @@ build_app() {
   finalize_app_signature "$app_path" "$mode" "$signing_identity"
 
   touch "$app_path"
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-    -f -R -trusted "$app_path" >/dev/null 2>&1 || true
+  register_app_bundle "$app_path" "$built_app_path"
+  register_fileprovider_plugin "$app_path"
 
   printf '%s\n' "$app_path"
 }

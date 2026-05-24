@@ -10,6 +10,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     let itemSize: NSNumber?
     let created: Date?
     let modified: Date?
+    let itemVersion: NSFileProviderItemVersion
 
     init(
         itemIdentifier: NSFileProviderItemIdentifier,
@@ -18,7 +19,8 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         contentType: UTType,
         itemSize: NSNumber? = nil,
         created: Date? = nil,
-        modified: Date? = nil
+        modified: Date? = nil,
+        versionIdentifier: String = "iris-drive-provider-v1"
     ) {
         self.itemIdentifier = itemIdentifier
         self.parentItemIdentifier = parentItemIdentifier
@@ -27,16 +29,18 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.itemSize = itemSize
         self.created = created
         self.modified = modified
-    }
-
-    var itemVersion: NSFileProviderItemVersion {
-        let version = Data("iris-drive-provider-v1".utf8)
-        return NSFileProviderItemVersion(contentVersion: version, metadataVersion: version)
+        let version = Data(versionIdentifier.utf8)
+        self.itemVersion = NSFileProviderItemVersion(
+            contentVersion: version,
+            metadataVersion: version
+        )
     }
 
     var capabilities: NSFileProviderItemCapabilities {
         if contentType == .folder {
             return [
+                .allowsReading,
+                .allowsWriting,
                 .allowsContentEnumerating,
                 .allowsAddingSubItems,
                 .allowsRenaming,
@@ -67,12 +71,15 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 }
 
 extension FileProviderItem {
-    static let root = FileProviderItem(
-        itemIdentifier: .rootContainer,
-        parentItemIdentifier: .rootContainer,
-        filename: "Iris Drive",
-        contentType: .folder
-    )
+    static func root(anchor: String? = nil) -> FileProviderItem {
+        FileProviderItem(
+            itemIdentifier: .rootContainer,
+            parentItemIdentifier: .rootContainer,
+            filename: "Iris Drive",
+            contentType: .folder,
+            versionIdentifier: "root:\(anchor ?? "initial")"
+        )
+    }
 }
 
 enum FileProviderStorage {
@@ -186,14 +193,15 @@ enum FileProviderStorage {
 
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
         if identifier == .rootContainer || identifier == .workingSet {
-            return .root
+            return .root(anchor: providerList().anchor)
         }
+        let list = providerList()
         guard let path = path(for: identifier),
-              let entry = providerList().entries.first(where: { $0.path == path })
+              let entry = list.entries.first(where: { $0.path == path })
         else {
             return nil
         }
-        return item(for: entry)
+        return item(for: entry, anchor: list.anchor)
     }
 
     static func path(for identifier: NSFileProviderItemIdentifier) -> String? {
@@ -222,10 +230,16 @@ enum FileProviderStorage {
 
     static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
         guard let parent = path(for: containerIdentifier) else { return [] }
-        return providerList().entries
+        let list = providerList()
+        return list.entries
             .filter { parentPath(for: $0.path) == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-            .map(item(for:))
+            .map { item(for: $0, anchor: list.anchor) }
+    }
+
+    static func allItems() -> [FileProviderItem] {
+        let list = providerList()
+        return list.entries.map { item(for: $0, anchor: list.anchor) }
     }
 
     static func createItem(
@@ -234,6 +248,7 @@ enum FileProviderStorage {
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination = joinedPath(parent: parent, name: template.filename)
+        NSLog("Iris Drive FileProvider create path=\(destination)")
         if (template.contentType ?? .data).conforms(to: .folder) {
             _ = try runIDrive(arguments: ["provider", "mkdir", destination])
         } else if let contents {
@@ -247,6 +262,7 @@ enum FileProviderStorage {
                 withIdentifier: template.itemIdentifier
             )
         }
+        NSLog("Iris Drive FileProvider created path=\(destination)")
         return item
     }
 
@@ -258,6 +274,7 @@ enum FileProviderStorage {
         guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
+        NSLog("Iris Drive FileProvider modify path=\(original)")
         var destination = original
         if changedFields.contains(.filename), item.filename != fileName(for: original) {
             destination = joinedPath(parent: parentPath(for: original), name: item.filename)
@@ -269,6 +286,7 @@ enum FileProviderStorage {
         guard let updated = self.item(for: identifier(for: destination)) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
+        NSLog("Iris Drive FileProvider modified path=\(destination)")
         return updated
     }
 
@@ -276,6 +294,7 @@ enum FileProviderStorage {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
+        NSLog("Iris Drive FileProvider delete path=\(path)")
         _ = try runIDrive(arguments: ["provider", "delete", path])
     }
 
@@ -287,6 +306,7 @@ enum FileProviderStorage {
         let output = directory
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
             .appendingPathExtension((path as NSString).pathExtension)
+        NSLog("Iris Drive FileProvider fetch contents path=\(path)")
         _ = try runIDrive(arguments: ["provider", "read", path, output.path])
         return output
     }
@@ -296,7 +316,7 @@ enum FileProviderStorage {
         return NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
     }
 
-    private static func item(for entry: ProviderEntry) -> FileProviderItem {
+    private static func item(for entry: ProviderEntry, anchor: String?) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
             ? UTType.folder
@@ -308,7 +328,8 @@ enum FileProviderStorage {
             contentType: contentType,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: nil,
-            modified: nil
+            modified: nil,
+            versionIdentifier: "\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size)"
         )
     }
 

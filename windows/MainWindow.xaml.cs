@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer refreshTimer;
     private Process? daemon;
     private IrisDriveStatusData? currentStatus;
+    private bool preparingDriveFolder;
+    private string? preparedDriveRootCid;
     private bool refreshing;
     private bool quitRequested;
     private Forms.NotifyIcon? trayIcon;
@@ -85,6 +87,7 @@ public partial class MainWindow : Window
             }
 
             var syncRunning = EnsureDaemonRunning(status);
+            ScheduleDriveFolderRefresh(status);
             if (status.IsAwaitingLinkedApproval)
             {
                 RenderAwaitingApproval(status, syncRunning, null);
@@ -519,6 +522,7 @@ public partial class MainWindow : Window
             try
             {
                 var driveFolder = await service.PrepareDriveFolderAsync();
+                preparedDriveRootCid = currentStatus?.CurrentRootCid;
                 if (driveFolder.NativeSyncRootReady)
                 {
                     service.OpenPath(driveFolder.Path);
@@ -542,6 +546,39 @@ public partial class MainWindow : Window
     private void OpenDriveMount()
     {
         _ = OpenDriveMountAsync();
+    }
+
+    private void ScheduleDriveFolderRefresh(IrisDriveStatusData status)
+    {
+        if (!status.Initialized || string.IsNullOrWhiteSpace(status.CurrentRootCid))
+        {
+            return;
+        }
+
+        if (preparingDriveFolder || preparedDriveRootCid == status.CurrentRootCid)
+        {
+            return;
+        }
+
+        preparingDriveFolder = true;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await service.PrepareDriveFolderAsync();
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    preparedDriveRootCid = status.CurrentRootCid;
+                });
+            }
+            catch
+            {
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() => preparingDriveFolder = false);
+            }
+        });
     }
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)

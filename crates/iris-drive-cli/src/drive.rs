@@ -281,7 +281,7 @@ async fn provider_entries(
     Ok(entries)
 }
 
-async fn write_provider_file(
+pub(crate) async fn write_provider_file(
     provider: &HashTreeProviderFs<FsBlobStore>,
     path: &str,
     bytes: &[u8],
@@ -305,7 +305,10 @@ async fn write_provider_file(
     Ok(())
 }
 
-async fn create_provider_dir(provider: &HashTreeProviderFs<FsBlobStore>, path: &str) -> Result<()> {
+pub(crate) async fn create_provider_dir(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<()> {
     let (parent, name) = split_provider_path(path)?;
     ensure_provider_dirs(provider, &parent).await?;
     match provider.item(&path.to_string()).await {
@@ -341,7 +344,7 @@ async fn ensure_provider_dirs(
     Ok(())
 }
 
-async fn delete_provider_path(
+pub(crate) async fn delete_provider_path(
     provider: &HashTreeProviderFs<FsBlobStore>,
     path: &str,
 ) -> Result<()> {
@@ -367,7 +370,7 @@ async fn delete_provider_path(
     Ok(())
 }
 
-async fn rename_provider_path(
+pub(crate) async fn rename_provider_path(
     provider: &HashTreeProviderFs<FsBlobStore>,
     old_path: &str,
     new_path: &str,
@@ -400,7 +403,7 @@ async fn print_provider_mutation(
     Ok(())
 }
 
-fn normalize_provider_path(path: &str) -> Result<String> {
+pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
     let trimmed = path.trim_matches('/');
     let parts = trimmed
         .split('/')

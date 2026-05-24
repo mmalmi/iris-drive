@@ -17,6 +17,7 @@ public sealed class IrisDriveStatusData
     public int AuthorizedDeviceCount { get; init; }
     public int PublishedDeviceRoots { get; init; }
     public string? ConfigDirectory { get; init; }
+    public string? CurrentRootCid { get; init; }
     public string? SnapshotUrl { get; init; }
     public int FileCount { get; init; }
     public int TopLevelEntries { get; init; }
@@ -62,6 +63,7 @@ public sealed class IrisDriveStatusData
             PublishedDeviceRoots =
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
             ConfigDirectory = String(root, "config_dir"),
+            CurrentRootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,

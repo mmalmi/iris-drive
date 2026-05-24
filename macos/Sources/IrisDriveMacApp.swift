@@ -54,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var openControlPanelWindow: (() -> Void)?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
+    private var lastExternalFileProviderSignalKey: String?
+    private var lastExternalFileProviderSignalAt = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -1272,6 +1274,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 error: json["fips_block_sync_error"] as? String
             )
             self.updateLinkMenuState()
+            self.signalFileProviderDomainForExternalStatusIfNeeded(
+                key: Self.externalFileProviderSignalKey(json)
+            )
             NSLog("Iris Drive control panel updated from external daemon status")
         }
     }
@@ -1334,6 +1339,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSLog("Iris Drive FileProvider signal working set failed: \(error)")
             }
         }
+    }
+
+    private func signalFileProviderDomainForExternalStatusIfNeeded(key: String) {
+        guard fileProviderIntegrationEnabled else { return }
+        let now = Date()
+        let changed = key != lastExternalFileProviderSignalKey
+        guard changed || now.timeIntervalSince(lastExternalFileProviderSignalAt) >= 10 else {
+            return
+        }
+        lastExternalFileProviderSignalKey = key
+        lastExternalFileProviderSignalAt = now
+        signalFileProviderDomain()
+    }
+
+    private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {
+        var parts = [json["event"] as? String ?? ""]
+        if let lastBlockSync = json["last_block_sync"] as? [String: Any] {
+            parts.append(lastBlockSync["root_cid"] as? String ?? "")
+            parts.append("\(Self.int64Value(lastBlockSync["updated_at"]) ?? 0)")
+        }
+        if let blockSyncByRoot = json["block_sync_by_root"] as? [String: Any] {
+            parts.append(blockSyncByRoot.keys.sorted().joined(separator: ","))
+        }
+        return parts.joined(separator: "|")
     }
 
     private func schedulePeerStatusRefresh() {
