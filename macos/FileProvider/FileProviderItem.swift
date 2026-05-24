@@ -256,24 +256,40 @@ enum FileProviderStorage {
     }
 
     static func storedSnapshotIdentifiers() -> Set<String> {
+        guard let snapshot = storedSnapshot() else {
+            return []
+        }
+        return Set(snapshot.identifiers)
+    }
+
+    static func storedSnapshotAnchor() -> NSFileProviderSyncAnchor? {
+        guard let snapshot = storedSnapshot() else {
+            return nil
+        }
+        return syncAnchor(for: snapshot.anchor)
+    }
+
+    static func bootstrapAnchor() -> NSFileProviderSyncAnchor {
+        syncAnchor(for: "bootstrap")
+    }
+
+    private static func storedSnapshot() -> ProviderSnapshot? {
         let url = snapshotURL()
         guard let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(ProviderSnapshot.self, from: data)
         else {
-            return []
+            return nil
         }
-        return Set(snapshot.identifiers)
+        guard snapshot.anchor != "unavailable" else {
+            return nil
+        }
+        return snapshot
     }
 
     static func hasStoredSnapshot() -> Bool {
         let url = snapshotURL()
         guard let data = try? Data(contentsOf: url) else { return false }
         return (try? JSONDecoder().decode(ProviderSnapshot.self, from: data)) != nil
-    }
-
-    static func recordCurrentSnapshot() {
-        let (items, anchor) = allItemsAndAnchor()
-        recordSnapshot(items: items, anchor: anchor)
     }
 
     static func recordSnapshot(
@@ -285,8 +301,13 @@ enum FileProviderStorage {
                 at: baseDirectory,
                 withIntermediateDirectories: true
             )
+            let anchorString = String(data: anchor.rawValue, encoding: .utf8) ?? "unavailable"
+            guard anchorString != "unavailable" || !items.isEmpty else {
+                try? FileManager.default.removeItem(at: snapshotURL())
+                return
+            }
             let snapshot = ProviderSnapshot(
-                anchor: String(data: anchor.rawValue, encoding: .utf8) ?? "unavailable",
+                anchor: anchorString,
                 identifiers: items
                     .map(\.itemIdentifier.rawValue)
                     .sorted()
@@ -365,10 +386,6 @@ enum FileProviderStorage {
         NSLog("Iris Drive FileProvider fetch contents path=\(path)")
         _ = try runIDrive(arguments: ["provider", "read", path, output.path])
         return output
-    }
-
-    static func currentAnchor() -> NSFileProviderSyncAnchor {
-        syncAnchor(for: providerList().anchor)
     }
 
     private static func item(for entry: ProviderEntry, anchor: String?) -> FileProviderItem {

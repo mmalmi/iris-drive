@@ -1514,14 +1514,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard fileProviderIntegrationEnabled else { return }
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else { return }
-        manager.signalEnumerator(for: .workingSet) { error in
-            if let error {
-                NSLog("Iris Drive FileProvider signal working set failed: \(error)")
-                DispatchQueue.main.async {
-                    self.repairFileProviderDomainAfterSignalFailure(error)
+        let identifiers: [(NSFileProviderItemIdentifier, String)] = [
+            (.workingSet, "working set"),
+            (.rootContainer, "root"),
+        ]
+        for (identifier, label) in identifiers {
+            manager.signalEnumerator(for: identifier) { error in
+                if let error {
+                    NSLog("Iris Drive FileProvider signal \(label) failed: \(error)")
+                    DispatchQueue.main.async {
+                        self.repairFileProviderDomainAfterSignalFailure(error)
+                    }
+                } else {
+                    NSLog("Iris Drive FileProvider signal \(label) ok")
                 }
-            } else {
-                NSLog("Iris Drive FileProvider signal working set ok")
             }
         }
     }
@@ -1597,9 +1603,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastExternalFileProviderSignalKey = key
         lastExternalFileProviderSignalAt = now
         signalFileProviderDomain()
-        if changed {
-            scheduleFileProviderReimport(reason: "status changed", key: key)
-        }
     }
 
     private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {

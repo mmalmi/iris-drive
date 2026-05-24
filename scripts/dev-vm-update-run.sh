@@ -1145,6 +1145,7 @@ sign_macos_app() {
   local sign_identity="${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}"
   local app_entitlements="$iris_repo/macos/IrisDriveMac.entitlements"
   local appex_entitlements="$iris_repo/macos/FileProvider/FileProvider.entitlements"
+  local helper_entitlements="$iris_repo/macos/idrive-helper.entitlements"
   local xcode_app_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveMac.build/Iris Drive.app.xcent"
   local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
@@ -1207,7 +1208,9 @@ EOF
     codesign_base+=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
   fi
 
-  "${codesign_base[@]}" "$app/Contents/MacOS/idrive" >/dev/null
+  "${codesign_base[@]}" \
+    --entitlements "$helper_entitlements" \
+    "$app/Contents/MacOS/idrive" >/dev/null
   if [[ -n "$appex_entitlements" ]]; then
     "${codesign_base[@]}" \
       --entitlements "$appex_entitlements" \

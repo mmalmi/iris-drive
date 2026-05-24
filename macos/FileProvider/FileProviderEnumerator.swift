@@ -19,7 +19,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             "Iris Drive FileProvider enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
         )
         observer.didEnumerate(items)
-        FileProviderStorage.recordCurrentSnapshot()
         observer.finishEnumerating(upTo: nil)
     }
 
@@ -32,10 +31,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let (items, currentAnchor) = FileProviderStorage.allItemsAndAnchor()
         let currentIdentifiers = Set(items.map(\.itemIdentifier.rawValue))
         let deletedIdentifiers = previousIdentifiers.subtracting(currentIdentifiers)
-        if !items.isEmpty
-            || !hasSnapshot
+        let shouldPublishChanges = !hasSnapshot
             || syncAnchor.rawValue != currentAnchor.rawValue
-            || !deletedIdentifiers.isEmpty {
+            || !deletedIdentifiers.isEmpty
+        if shouldPublishChanges {
             let deleted = deletedIdentifiers.map { NSFileProviderItemIdentifier($0) }
             if !deleted.isEmpty {
                 observer.didDeleteItems(withIdentifiers: deleted)
@@ -43,17 +42,17 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             NSLog(
                 "Iris Drive FileProvider enumerate changes update=\(items.count) delete=\(deleted.count) bootstrap=\(!hasSnapshot)"
             )
-            observer.didUpdate(items)
+            if !items.isEmpty {
+                observer.didUpdate(items)
+            }
+        } else {
+            NSLog("Iris Drive FileProvider enumerate changes noop")
         }
         FileProviderStorage.recordSnapshot(items: items, anchor: currentAnchor)
         observer.finishEnumeratingChanges(upTo: currentAnchor, moreComing: false)
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        guard FileProviderStorage.hasStoredSnapshot() else {
-            completionHandler(nil)
-            return
-        }
-        completionHandler(FileProviderStorage.currentAnchor())
+        completionHandler(FileProviderStorage.storedSnapshotAnchor() ?? FileProviderStorage.bootstrapAnchor())
     }
 }

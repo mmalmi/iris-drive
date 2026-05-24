@@ -89,6 +89,10 @@ xcode_app_entitlements() {
   fi
 }
 
+idrive_helper_entitlements() {
+  printf '%s\n' "$ROOT/macos/idrive-helper.entitlements"
+}
+
 require_env_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -288,9 +292,9 @@ sign_helper() {
   local identity="${3:-}"
 
   if [[ "$mode" == "development" ]]; then
-    codesign --force --sign "$identity" --entitlements "$(xcode_app_entitlements)" "$helper" >&2
+    codesign --force --sign "$identity" --entitlements "$(idrive_helper_entitlements)" "$helper" >&2
   else
-    codesign --force --sign - "$helper" >&2
+    codesign --force --sign - --entitlements "$(idrive_helper_entitlements)" "$helper" >&2
   fi
 }
 
