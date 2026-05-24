@@ -469,6 +469,8 @@ run_macos() {
   local config_dir="$app_base/Config"
   local app_stdout="/tmp/iris-drive-macos-app.out"
   local app_stderr="/tmp/iris-drive-macos-app.err"
+  local daemon_log="/tmp/iris-drive-macos-daemon.log"
+  local daemon_pid=""
   local overlay_ip=""
   local external_addr=""
 
@@ -509,19 +511,19 @@ run_macos() {
   fi
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
-  rm -f "$app_stdout" "$app_stderr"
+  rm -f "$app_stdout" "$app_stderr" "$daemon_log"
   sleep 1
   open \
     --stdout "$app_stdout" \
     --stderr "$app_stderr" \
+    --env "IRIS_DRIVE_EXTERNAL_DAEMON=true" \
     --env "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
     --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
     --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
     "$app"
   for _ in {1..30}; do
-    if pgrep -x "Iris Drive" >/dev/null 2>&1 \
-      && pgrep -f "Contents/MacOS/idrive .* daemon" >/dev/null 2>&1; then
+    if pgrep -x "Iris Drive" >/dev/null 2>&1; then
       break
     fi
     sleep 0.5
@@ -531,11 +533,40 @@ run_macos() {
     tail -n 80 "$app_stderr" >&2 2>/dev/null || true
     exit 4
   fi
-  if ! pgrep -f "Contents/MacOS/idrive .* daemon" >/dev/null 2>&1; then
-    log "macOS app did not start the iris-drive daemon"
-    tail -n 120 "$app_stderr" >&2 2>/dev/null || true
+
+  log "starting macOS idrive daemon outside LaunchServices"
+  nohup env \
+    "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
+    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
+    "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
+    "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    "$idrive" --config-dir "$config_dir" daemon \
+      --watch-interval 2 \
+      --watch-debounce-ms 100 \
+      > "$daemon_log" 2>&1 < /dev/null &
+  daemon_pid="$!"
+  for _ in {1..40}; do
+    if ! process_running "$daemon_pid"; then
+      log "macOS idrive daemon exited during startup"
+      tail -n 120 "$daemon_log" >&2 2>/dev/null || true
+      exit 4
+    fi
+    if "$idrive" --config-dir "$config_dir" status 2>/dev/null \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") and f.get("fresh") else 1)' \
+      >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
+  if ! "$idrive" --config-dir "$config_dir" status 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") and f.get("fresh") else 1)' \
+    >/dev/null 2>&1; then
+    log "macOS idrive daemon did not report fresh FIPS status"
+    tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
+  "$idrive" --config-dir "$config_dir" materialize "$app_base/Drive" >/tmp/iris-drive-macos-materialize.log 2>&1 \
+    || log "warning: macOS materialize failed; see /tmp/iris-drive-macos-materialize.log"
   if [[ ! -d "$app_base/Drive" ]]; then
     log "macOS FileProvider drive directory was not created at $app_base/Drive"
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true

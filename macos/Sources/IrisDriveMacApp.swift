@@ -263,6 +263,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         userRequestedSyncStop = true
         daemonRestartWorkItem?.cancel()
         daemonRestartWorkItem = nil
+        if externalDaemonMode {
+            setDaemonRunning(true)
+            updateStatus("Sync managed externally")
+            return
+        }
         guard let daemon else {
             setDaemonRunning(false)
             return
@@ -604,8 +609,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
-            scheduleDriveMaterialize(paths: paths, reason: "startup")
             startDaemon(idrive, paths: paths)
+            if !externalDaemonMode {
+                scheduleDriveMaterialize(paths: paths, reason: "startup")
+            }
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             updateStatus("Sync failed")
@@ -730,6 +737,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         daemonRestartWorkItem?.cancel()
         daemonRestartWorkItem = nil
 
+        if externalDaemonMode {
+            NSLog("Iris Drive external daemon mode enabled; app will not spawn bundled idrive")
+            setDaemonRunning(true)
+            updateStatus("Sync running")
+            refreshStatus()
+            return
+        }
+
         let process = Process()
         configure(
             process,
@@ -756,10 +771,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
-        guard !userRequestedSyncStop else { return }
+        guard !userRequestedSyncStop, !externalDaemonMode else { return }
         daemonRestartWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            guard let self, self.daemon == nil, !self.userRequestedSyncStop else { return }
+            guard let self,
+                  self.daemon == nil,
+                  !self.userRequestedSyncStop,
+                  !self.externalDaemonMode
+            else { return }
             self.updateStatus("Restarting sync")
             self.startDaemon(self.idriveExecutableURL(), paths: paths)
         }
@@ -908,6 +927,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true),
             workingDirectory: baseDirectory.appendingPathComponent("Drive", isDirectory: true)
         )
+    }
+
+    private var externalDaemonMode: Bool {
+        environmentFlag("IRIS_DRIVE_EXTERNAL_DAEMON")
+    }
+
+    private func environmentFlag(_ name: String) -> Bool {
+        guard let value = ProcessInfo.processInfo.environment[name]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        else {
+            return false
+        }
+        return ["1", "true", "yes", "on"].contains(value)
     }
 
     private func appGroupContainerFallbackDirectory() -> URL {
@@ -1136,6 +1169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func refreshStatus() {
         guard let paths = runtimePathsForMenu else { return }
+        if externalDaemonMode {
+            refreshExternalDaemonStatus(paths: paths)
+            return
+        }
         let idrive = idriveExecutableURL()
         DispatchQueue.global(qos: .utility).async {
             do {
@@ -1144,6 +1181,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 NSLog("Iris Drive status refresh failed: \(error)")
             }
+        }
+    }
+
+    private func refreshExternalDaemonStatus(paths: IrisDriveRuntimePaths) {
+        DispatchQueue.global(qos: .utility).async {
+            let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
+            do {
+                let data = try Data(contentsOf: statusURL)
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else {
+                    return
+                }
+                self.applyExternalDaemonStatusPayload(json)
+            } catch {
+                NSLog("Iris Drive external daemon status refresh failed: \(error)")
+            }
+        }
+    }
+
+    private func applyExternalDaemonStatusPayload(_ json: [String: Any]) {
+        DispatchQueue.main.async {
+            let status = IrisDriveStatus.shared
+            status.initialized = true
+            status.configDirectory = self.runtimePathsForMenu?.configDirectory.path
+            if let event = json["event"] as? String {
+                status.lastEvent = event
+            }
+            if let relays = json["relays"] as? [String] {
+                status.relays = relays
+            }
+            if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
+                status.relayStatuses = Self.mergeRelayStatuses(
+                    relays: status.relays,
+                    statuses: relayStatuses.map(IrisDriveRelayStatus.init)
+                )
+            }
+
+            let running = json["running"] as? Bool ?? false
+            let fresh = json["fresh"] as? Bool ?? false
+            let fips = json["fips_block_sync"] as? [String: Any]
+            let connectedPeers = fips?["connected_peers"] as? [String] ?? []
+            let authorizedPeers = fips?["authorized_peers"] as? [String] ?? []
+            let connectedSet = Set(connectedPeers)
+            let authorizedConnected = authorizedPeers.filter { connectedSet.contains($0) }.count
+            status.fips = IrisDriveFipsStatus(
+                enabled: fips != nil,
+                running: running,
+                fresh: fresh,
+                endpointNpub: fips?["endpoint_npub"] as? String,
+                discoveryScope: fips?["discovery_scope"] as? String,
+                rosterPeerCount: authorizedPeers.count,
+                rosterConnectedPeerCount: authorizedConnected,
+                connectedPeerCount: connectedPeers.count,
+                otherPeerCount: max(0, connectedPeers.count - authorizedConnected),
+                error: json["fips_block_sync_error"] as? String
+            )
+            self.updateLinkMenuState()
+            NSLog("Iris Drive control panel updated from external daemon status")
         }
     }
 
@@ -1158,6 +1253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func scheduleDriveMaterialize(paths: IrisDriveRuntimePaths, reason: String) {
+        if externalDaemonMode {
+            NSLog("Iris Drive external daemon mode skipped app materialize for \(reason)")
+            return
+        }
         driveMaterializeWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
