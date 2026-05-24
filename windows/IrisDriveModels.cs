@@ -18,6 +18,7 @@ public sealed class IrisDriveStatusData
     public int PublishedDeviceRoots { get; init; }
     public string? ConfigDirectory { get; init; }
     public string? CurrentRootCid { get; init; }
+    public string ProviderRefreshKey { get; init; } = "";
     public string? SnapshotUrl { get; init; }
     public int FileCount { get; init; }
     public int TopLevelEntries { get; init; }
@@ -64,6 +65,7 @@ public sealed class IrisDriveStatusData
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
             ConfigDirectory = String(root, "config_dir"),
             CurrentRootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
+            ProviderRefreshKey = BuildProviderRefreshKey(root),
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,
@@ -143,6 +145,36 @@ public sealed class IrisDriveStatusData
         }
 
         return rows;
+    }
+
+    private static string BuildProviderRefreshKey(JsonElement root)
+    {
+        var parts = new List<string>();
+        if (Object(root, "hashtree") is { } hashtree)
+        {
+            var current = String(hashtree, "current_root_cid");
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                parts.Add($"current:{current}");
+            }
+        }
+
+        if (root.TryGetProperty("peers", out var peers) && peers.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var peer in peers.EnumerateArray())
+            {
+                var label = String(peer, "label") ??
+                    String(peer, "device_npub") ??
+                    String(peer, "device_pubkey") ??
+                    "peer";
+                var rootCid = String(peer, "root_cid") ?? "no-root";
+                var syncState = String(peer, "sync_state") ?? "";
+                parts.Add($"{label}:{rootCid}:{syncState}");
+            }
+        }
+
+        parts.Sort(StringComparer.Ordinal);
+        return string.Join("|", parts);
     }
 
     private static IReadOnlyList<PeerRow> PeerRows(JsonElement root, bool canManageDevices)

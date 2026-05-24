@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     private Process? daemon;
     private IrisDriveStatusData? currentStatus;
     private bool preparingDriveFolder;
-    private string? preparedDriveRootCid;
+    private string? preparedDriveRefreshKey;
     private bool refreshing;
     private bool quitRequested;
     private Forms.NotifyIcon? trayIcon;
@@ -522,7 +522,7 @@ public partial class MainWindow : Window
             try
             {
                 var driveFolder = await service.PrepareDriveFolderAsync();
-                preparedDriveRootCid = currentStatus?.CurrentRootCid;
+                preparedDriveRefreshKey = currentStatus?.ProviderRefreshKey;
                 if (driveFolder.NativeSyncRootReady)
                 {
                     service.OpenPath(driveFolder.Path);
@@ -550,12 +550,12 @@ public partial class MainWindow : Window
 
     private void ScheduleDriveFolderRefresh(IrisDriveStatusData status)
     {
-        if (!status.Initialized || string.IsNullOrWhiteSpace(status.CurrentRootCid))
+        if (!status.Initialized || string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
         {
             return;
         }
 
-        if (preparingDriveFolder || preparedDriveRootCid == status.CurrentRootCid)
+        if (preparingDriveFolder || preparedDriveRefreshKey == status.ProviderRefreshKey)
         {
             return;
         }
@@ -568,7 +568,7 @@ public partial class MainWindow : Window
                 await service.PrepareDriveFolderAsync();
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    preparedDriveRootCid = status.CurrentRootCid;
+                    preparedDriveRefreshKey = status.ProviderRefreshKey;
                 });
             }
             catch
