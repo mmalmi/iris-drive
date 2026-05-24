@@ -169,7 +169,18 @@ public sealed class IrisDriveStatusData
                     "peer";
                 var rootCid = String(peer, "root_cid") ?? "no-root";
                 var syncState = String(peer, "sync_state") ?? "";
-                parts.Add($"{label}:{rootCid}:{syncState}");
+                var rootAvailable = Bool(peer, "root_available");
+                parts.Add($"{label}:{rootCid}:{syncState}:{rootAvailable}");
+                if (Object(peer, "last_block_sync") is { } blockSync)
+                {
+                    var blockRoot = String(blockSync, "root_cid") ?? rootCid;
+                    var transport = String(blockSync, "transport") ?? "";
+                    var fetched = Int(blockSync, "fetched");
+                    var alreadyLocal = Int(blockSync, "already_local");
+                    var totalHashes = Int(blockSync, "total_hashes");
+                    parts.Add(
+                        $"{label}:blocks:{blockRoot}:{transport}:{fetched}:{alreadyLocal}:{totalHashes}");
+                }
             }
         }
 

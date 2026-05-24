@@ -22,12 +22,14 @@ namespace IrisDrive.WindowsShell;
 
 public partial class MainWindow : Window
 {
+    private static readonly TimeSpan DriveFolderReconciliationInterval = TimeSpan.FromSeconds(2);
     private readonly IrisDriveService service = new();
     private readonly DispatcherTimer refreshTimer;
     private Process? daemon;
     private IrisDriveStatusData? currentStatus;
     private bool preparingDriveFolder;
     private string? preparedDriveRefreshKey;
+    private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
     private bool quitRequested;
     private Forms.NotifyIcon? trayIcon;
@@ -522,7 +524,10 @@ public partial class MainWindow : Window
             try
             {
                 var driveFolder = await service.PrepareDriveFolderAsync();
-                preparedDriveRefreshKey = currentStatus?.ProviderRefreshKey;
+                preparedDriveRefreshKey = DriveFolderFullyPrepared(driveFolder)
+                    ? currentStatus?.ProviderRefreshKey
+                    : null;
+                lastDriveFolderReconciliationAt = DateTimeOffset.UtcNow;
                 if (driveFolder.NativeSyncRootReady)
                 {
                     service.OpenPath(driveFolder.Path);
@@ -555,7 +560,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (preparingDriveFolder || preparedDriveRefreshKey == status.ProviderRefreshKey)
+        var reconciliationDue =
+            DateTimeOffset.UtcNow - lastDriveFolderReconciliationAt >= DriveFolderReconciliationInterval;
+        WindowsCloudFiles.DebugLog(
+            $"schedule prepared={preparedDriveRefreshKey == status.ProviderRefreshKey} " +
+            $"due={reconciliationDue} preparing={preparingDriveFolder}");
+        if (preparingDriveFolder ||
+            (preparedDriveRefreshKey == status.ProviderRefreshKey && !reconciliationDue))
         {
             return;
         }
@@ -565,10 +576,13 @@ public partial class MainWindow : Window
         {
             try
             {
-                await service.PrepareDriveFolderAsync();
+                var driveFolder = await service.PrepareDriveFolderAsync();
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    preparedDriveRefreshKey = status.ProviderRefreshKey;
+                    preparedDriveRefreshKey = DriveFolderFullyPrepared(driveFolder)
+                        ? status.ProviderRefreshKey
+                        : null;
+                    lastDriveFolderReconciliationAt = DateTimeOffset.UtcNow;
                 });
             }
             catch
@@ -580,6 +594,9 @@ public partial class MainWindow : Window
             }
         });
     }
+
+    private static bool DriveFolderFullyPrepared(DriveFolderPreparation driveFolder) =>
+        driveFolder.NativeSyncRootReady && driveFolder.SkippedLocalItemCount == 0;
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)
     {

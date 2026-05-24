@@ -89,6 +89,15 @@ xcode_app_entitlements() {
   fi
 }
 
+xcode_appex_entitlements() {
+  local entitlements="$DERIVED_DATA/Build/Intermediates.noindex/IrisDriveMac.build/$CONFIGURATION/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
+  if [[ -f "$entitlements" ]]; then
+    printf '%s\n' "$entitlements"
+  else
+    printf '%s\n' "$ROOT/macos/FileProvider/FileProvider.entitlements"
+  fi
+}
+
 idrive_helper_entitlements() {
   printf '%s\n' "$ROOT/macos/idrive-helper.entitlements"
 }
@@ -298,6 +307,18 @@ sign_helper() {
   fi
 }
 
+sign_fileprovider_extension() {
+  local appex="$1"
+  local mode="$2"
+  local identity="${3:-}"
+
+  if [[ "$mode" == "development" ]]; then
+    codesign --force --sign "$identity" --entitlements "$(xcode_appex_entitlements)" "$appex" >&2
+  else
+    codesign --force --sign - --entitlements "$(xcode_appex_entitlements)" "$appex" >&2
+  fi
+}
+
 finalize_app_signature() {
   local app_path="$1"
   local mode="$2"
@@ -350,8 +371,12 @@ build_app() {
   fi
 
   cp "$target_dir/debug/idrive" "$app_path/Contents/MacOS/idrive"
+  cp "$target_dir/debug/idrive" "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive"
   chmod +x "$app_path/Contents/MacOS/idrive"
+  chmod +x "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive"
   sign_helper "$app_path/Contents/MacOS/idrive" "$mode" "$signing_identity"
+  sign_helper "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive" "$mode" "$signing_identity"
+  sign_fileprovider_extension "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex" "$mode" "$signing_identity"
   finalize_app_signature "$app_path" "$mode" "$signing_identity"
 
   touch "$app_path"

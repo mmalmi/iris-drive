@@ -60,6 +60,30 @@ public static partial class WindowsCloudFiles
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct CfOperationParametersAckDelete
+    {
+        public uint ParamSize;
+        private readonly uint padding;
+        public CfOperationAckDelete AckDelete;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CfCallbackParametersRename
+    {
+        public uint ParamSize;
+        private readonly uint padding;
+        public CfCallbackRename Rename;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CfOperationParametersAckRename
+    {
+        public uint ParamSize;
+        private readonly uint padding;
+        public CfOperationAckRename AckRename;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct CfOperationTransferData
     {
         public int Flags;
@@ -67,6 +91,27 @@ public static partial class WindowsCloudFiles
         public IntPtr Buffer;
         public long Offset;
         public long Length;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CfOperationAckDelete
+    {
+        public int Flags;
+        public int CompletionStatus;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CfCallbackRename
+    {
+        public int Flags;
+        public IntPtr TargetPath;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CfOperationAckRename
+    {
+        public int Flags;
+        public int CompletionStatus;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -170,6 +215,16 @@ public static partial class WindowsCloudFiles
         public static extern int CfExecute(
             ref CfOperationInfo operationInfo,
             ref CfOperationParametersTransferData operationParameters);
+
+        [DllImport("cldapi.dll", ExactSpelling = true)]
+        public static extern int CfExecute(
+            ref CfOperationInfo operationInfo,
+            ref CfOperationParametersAckDelete operationParameters);
+
+        [DllImport("cldapi.dll", ExactSpelling = true)]
+        public static extern int CfExecute(
+            ref CfOperationInfo operationInfo,
+            ref CfOperationParametersAckRename operationParameters);
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         public static extern void SHChangeNotify(

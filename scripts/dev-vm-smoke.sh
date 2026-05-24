@@ -73,7 +73,25 @@ macos_idrive_json() {
   local args=("$@")
   ssh "$MACOS_REMOTE" 'bash -se' "${args[@]}" <<'REMOTE_SH'
 set -Eeuo pipefail
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+config_dir="$(macos_config_dir)"
 "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" "$@"
 REMOTE_SH
 }
@@ -90,13 +108,8 @@ REMOTE_SH
 
 macos_provider_has() {
   local path="$1"
-  ssh "$MACOS_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
-set -Eeuo pipefail
-path="$1"
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
-"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider list \
-  | python3 -c 'import json, sys; needle = sys.argv[1]; data = json.load(sys.stdin); raise SystemExit(0 if any(e.get("path") == needle for e in data.get("entries", [])) else 1)' "$path"
-REMOTE_SH
+  macos_idrive_json provider list \
+    | python3 -c 'import json, sys; needle = sys.argv[1]; data = json.load(sys.stdin); raise SystemExit(0 if any(e.get("path") == needle for e in data.get("entries", [])) else 1)' "$path"
 }
 
 macos_visible_drive_has() {
@@ -104,8 +117,28 @@ macos_visible_drive_has() {
   ssh "$MACOS_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
+enumerate_parent_chain() {
+  local root="$1"
+  local relative="$2"
+  local parent
+  local current
+  local part
+
+  parent="$(dirname "$relative")"
+  current="$root"
+  /bin/ls -la "$current" >/dev/null 2>&1 || true
+  [[ "$parent" != "." ]] || return 0
+  IFS='/' read -r -a parts <<< "$parent"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" ]] || continue
+    current="$current/$part"
+    /bin/ls -la "$current" >/dev/null 2>&1 || true
+  done
+}
+
 while IFS= read -r root; do
   [[ -n "$root" ]] || continue
+  enumerate_parent_chain "$root" "$path"
   if [[ -e "$root/$path" ]]; then
     exit 0
   fi
@@ -243,7 +276,7 @@ check_fips_online() {
   local macos_status
   local windows_status
   ubuntu_status="$(ssh "$UBUNTU_REMOTE" '"$HOME/src/iris-drive/target/debug/idrive" status')"
-  macos_status="$(ssh "$MACOS_REMOTE" 'config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"; "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" status')"
+  macos_status="$(macos_idrive_json status)"
   windows_status="$(win_idrive_json status)"
   STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
 import json
@@ -273,7 +306,7 @@ PY
 check_provider_noise() {
   log "checking provider views for ignored trash paths"
   assert_no_ignored_provider_paths ubuntu "$(ssh "$UBUNTU_REMOTE" '"$HOME/src/iris-drive/target/debug/idrive" provider list')"
-  assert_no_ignored_provider_paths macos "$(ssh "$MACOS_REMOTE" 'config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"; "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider list')"
+  assert_no_ignored_provider_paths macos "$(macos_idrive_json provider list)"
   assert_no_ignored_provider_paths windows "$(win_idrive_json provider list)"
 }
 
@@ -339,7 +372,25 @@ write_macos_provider_file() {
 set -Eeuo pipefail
 path="$1"
 content="$2"
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+config_dir="$(macos_config_dir)"
 tmp="$(mktemp -t iris-drive-macos-provider-write)"
 trap 'rm -f "$tmp"' EXIT
 printf '%s\n' "$content" > "$tmp"

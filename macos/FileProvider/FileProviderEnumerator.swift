@@ -15,8 +15,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         startingAt page: NSFileProviderPage
     ) {
         let items = FileProviderStorage.children(of: containerIdentifier)
-        NSLog(
-            "Iris Drive FileProvider enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
+        FileProviderStorage.debugLog(
+            "enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
         )
         observer.didEnumerate(items)
         observer.finishEnumerating(upTo: nil)
@@ -39,20 +39,24 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             if !deleted.isEmpty {
                 observer.didDeleteItems(withIdentifiers: deleted)
             }
-            NSLog(
-                "Iris Drive FileProvider enumerate changes update=\(items.count) delete=\(deleted.count) bootstrap=\(!hasSnapshot)"
+            FileProviderStorage.debugLog(
+                "enumerate changes update=\(items.count) delete=\(deleted.count) bootstrap=\(!hasSnapshot) anchor=\(String(data: currentAnchor.rawValue, encoding: .utf8) ?? "unreadable")"
             )
             if !items.isEmpty {
                 observer.didUpdate(items)
             }
         } else {
-            NSLog("Iris Drive FileProvider enumerate changes noop")
+            FileProviderStorage.debugLog("enumerate changes noop")
         }
         FileProviderStorage.recordSnapshot(items: items, anchor: currentAnchor)
         observer.finishEnumeratingChanges(upTo: currentAnchor, moreComing: false)
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(FileProviderStorage.storedSnapshotAnchor() ?? FileProviderStorage.bootstrapAnchor())
+        let anchor = FileProviderStorage.storedSnapshotAnchor() ?? FileProviderStorage.bootstrapAnchor()
+        FileProviderStorage.debugLog(
+            "current sync anchor \(String(data: anchor.rawValue, encoding: .utf8) ?? "unreadable")"
+        )
+        completionHandler(anchor)
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import FileProvider
+import Security
 import UniformTypeIdentifiers
 
 final class FileProviderItem: NSObject, NSFileProviderItem {
@@ -80,11 +81,24 @@ extension FileProviderItem {
             versionIdentifier: "root:\(anchor ?? "initial")"
         )
     }
+
+    static func trash(anchor: String? = nil) -> FileProviderItem {
+        FileProviderItem(
+            itemIdentifier: .trashContainer,
+            parentItemIdentifier: .rootContainer,
+            filename: ".Trash",
+            contentType: .folder,
+            versionIdentifier: "trash:\(anchor ?? "initial")"
+        )
+    }
 }
 
 enum FileProviderStorage {
     private static let runtimeFileName = "fileprovider-runtime.json"
     private static let snapshotFileName = "fileprovider-snapshot.json"
+    private static let debugLogFileName = "fileprovider-extension.log"
+    private static let appGroupName = "to.iris.drive"
+    private static let legacyAppGroupIdentifier = "group.to.iris.drive"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
     private static var configuredRuntime: Runtime?
@@ -119,6 +133,47 @@ enum FileProviderStorage {
     static func configure(domain: NSFileProviderDomain) {
         if #available(macOS 15.0, *) {
             configuredRuntime = Runtime(userInfo: domain.userInfo)
+            debugLog(
+                "configure domain=\(domain.identifier.rawValue) runtime=\(configuredRuntime != nil)"
+            )
+        } else {
+            debugLog("configure domain=\(domain.identifier.rawValue) runtime=userInfo-unavailable")
+        }
+    }
+
+    static func debugLog(_ message: String) {
+        let clean = message.replacingOccurrences(of: "\n", with: "\\n")
+        NSLog("Iris Drive FileProvider \(clean)")
+
+        let formatter = ISO8601DateFormatter()
+        let line = "\(formatter.string(from: Date())) \(clean)\n"
+        guard let data = line.data(using: .utf8) else { return }
+
+        let urls = [
+            fallbackApplicationSupportDirectory()
+                .appendingPathComponent(debugLogFileName, isDirectory: false),
+        ]
+        for url in urls {
+            appendDebugLog(data, to: url)
+        }
+    }
+
+    private static func appendDebugLog(_ data: Data, to url: URL) {
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } else {
+                try data.write(to: url)
+            }
+        } catch {
+            NSLog("Iris Drive FileProvider debug log write failed at \(url.path): \(error)")
         }
     }
 
@@ -150,8 +205,10 @@ enum FileProviderStorage {
     }
 
     static var runtime: Runtime? {
-        if let configuredRuntime {
+        if let configuredRuntime, runtimeIsUsable(configuredRuntime) {
             return configuredRuntime
+        } else if configuredRuntime != nil {
+            debugLog("configured runtime inaccessible; falling back to runtime file")
         }
         for directory in runtimeDirectories {
             let url = directory.appendingPathComponent(runtimeFileName)
@@ -163,6 +220,15 @@ enum FileProviderStorage {
             }
         }
         return nil
+    }
+
+    private static func runtimeIsUsable(_ runtime: Runtime) -> Bool {
+        guard let configDirectory = runtime.configDirectory,
+              !configDirectory.isEmpty
+        else {
+            return true
+        }
+        return FileManager.default.isReadableFile(atPath: configDirectory)
     }
 
     private static var runtimeDirectory: URL? {
@@ -184,22 +250,39 @@ enum FileProviderStorage {
     }
 
     static var idriveExecutable: String? {
-        if let configured = runtime?.idriveExecutable, !configured.isEmpty {
-            return configured
-        }
-        let contents = Bundle.main.bundleURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let bundled = contents
+        let extensionBundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("MacOS", isDirectory: true)
             .appendingPathComponent("idrive")
-        guard FileManager.default.isExecutableFile(atPath: bundled.path) else { return nil }
-        return bundled.path
+        if FileManager.default.isExecutableFile(atPath: extensionBundled.path) {
+            return extensionBundled.path
+        }
+
+        if let configured = runtime?.idriveExecutable, !configured.isEmpty {
+            if FileManager.default.isExecutableFile(atPath: configured) {
+                return configured
+            }
+            debugLog("configured idrive helper unavailable at \(configured)")
+        }
+
+        let containingAppBundled = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("idrive")
+        guard FileManager.default.isExecutableFile(atPath: containingAppBundled.path) else {
+            debugLog("bundled idrive helper unavailable")
+            return nil
+        }
+        return containingAppBundled.path
     }
 
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
         if identifier == .rootContainer || identifier == .workingSet {
             return .root(anchor: providerList().anchor)
+        }
+        if identifier == .trashContainer {
+            return .trash(anchor: providerList().anchor)
         }
         let list = providerList()
         guard let path = path(for: identifier),
@@ -235,12 +318,18 @@ enum FileProviderStorage {
     }
 
     static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
+        if containerIdentifier == .trashContainer {
+            debugLog("children parent=trash count=0")
+            return []
+        }
         guard let parent = path(for: containerIdentifier) else { return [] }
         let list = providerList()
-        return list.entries
+        let items = list.entries
             .filter { parentPath(for: $0.path) == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             .map { item(for: $0, anchor: list.anchor) }
+        debugLog("children parent=\(parent.isEmpty ? "/" : parent) count=\(items.count)")
+        return items
     }
 
     static func allItems() -> [FileProviderItem] {
@@ -314,8 +403,9 @@ enum FileProviderStorage {
             )
             let data = try JSONEncoder().encode(snapshot)
             try data.write(to: snapshotURL())
+            debugLog("record snapshot anchor=\(anchorString) identifiers=\(snapshot.identifiers.count)")
         } catch {
-            NSLog("Iris Drive FileProvider snapshot write failed: \(error)")
+            debugLog("snapshot write failed: \(error)")
         }
     }
 
@@ -408,9 +498,11 @@ enum FileProviderStorage {
     private static func providerList() -> ProviderList {
         do {
             let data = try runIDrive(arguments: ["provider", "list"])
-            return try JSONDecoder().decode(ProviderList.self, from: data)
+            let list = try JSONDecoder().decode(ProviderList.self, from: data)
+            debugLog("provider list ok anchor=\(list.anchor ?? "nil") entries=\(list.entries.count)")
+            return list
         } catch {
-            NSLog("Iris Drive FileProvider provider list failed: \(error)")
+            debugLog("provider list failed: \(error)")
             return ProviderList(anchor: nil, entries: [])
         }
     }
@@ -428,6 +520,9 @@ enum FileProviderStorage {
             throw providerError("bundled idrive helper unavailable")
         }
 
+        debugLog(
+            "run idrive executable=\(executable) config=\(configDirectory.path) args=\(arguments.joined(separator: " "))"
+        )
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["--config-dir", configDirectory.path] + arguments
@@ -446,8 +541,12 @@ enum FileProviderStorage {
         let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
         if process.terminationStatus != 0 {
             let message = String(data: errorOutput, encoding: .utf8) ?? "idrive provider failed"
+            debugLog(
+                "idrive failed status=\(process.terminationStatus) stderr=\(message.trimmingCharacters(in: .whitespacesAndNewlines))"
+            )
             throw providerError(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        debugLog("idrive ok bytes=\(output.count)")
         return output
     }
 
@@ -498,11 +597,50 @@ enum FileProviderStorage {
     }
 
     private static func fallbackApplicationSupportDirectory() -> URL {
+        if let shared = appGroupContainerURL() {
+            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
+        }
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return base.appendingPathComponent("Iris Drive", isDirectory: true)
+    }
+
+    private static func appGroupContainerURL() -> URL? {
+        for identifier in appGroupIdentifiers() {
+            if let url = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: identifier
+            ) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func appGroupIdentifiers() -> [String] {
+        var identifiers = [String]()
+        if let teamIdentifier = currentProcessTeamIdentifier() {
+            identifiers.append("\(teamIdentifier).\(appGroupName)")
+        }
+        identifiers.append(legacyAppGroupIdentifier)
+
+        var seen = Set<String>()
+        return identifiers.filter { seen.insert($0).inserted }
+    }
+
+    private static func currentProcessTeamIdentifier() -> String? {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(
+                task,
+                "com.apple.developer.team-identifier" as CFString,
+                nil
+              ) as? String
+        else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func providerError(_ message: String) -> NSError {

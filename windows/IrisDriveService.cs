@@ -120,8 +120,28 @@ public sealed class IrisDriveService
     public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
     {
         var entries = await ProviderEntriesAsync();
+        WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
         var previousState = WindowsCloudFiles.LoadLocalState(DefaultConfigDirectory);
-        var preparation = WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
+        if (await PublishRecentLocalFileUpsertsAsync(entries, previousState))
+        {
+            entries = await ProviderEntriesAsync();
+            WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
+        }
+
+        var preparation = WindowsCloudFiles.EnsureSyncRoot(
+            entries,
+            ReadProviderFile,
+            QueueProviderDelete,
+            QueueProviderRename);
+        WindowsCloudFiles.DebugLog(
+            $"prepare entries={entries.Count} native={preparation.NativeSyncRootReady} " +
+            $"placeholders={preparation.PlaceholderCount} skipped={preparation.SkippedLocalItemCount} " +
+            $"warning={preparation.Warning ?? ""}");
+        if (!preparation.NativeSyncRootReady)
+        {
+            return preparation;
+        }
+
         WindowsCloudFiles.RemoveStaleSyncedLocalItems(entries, previousState);
         WindowsCloudFiles.NotifyShellEntriesChanged(entries, previousState);
         WindowsCloudFiles.WriteLocalState(DefaultConfigDirectory, entries);
@@ -252,6 +272,36 @@ public sealed class IrisDriveService
         }
     }
 
+    private async Task<bool> PublishRecentLocalFileUpsertsAsync(
+        IReadOnlyList<WindowsCloudFileEntry> entries,
+        IReadOnlyList<WindowsCloudLocalStateEntry> previousState)
+    {
+        var upserts = WindowsCloudFiles.RecentLocalFileUpserts(entries, previousState);
+        if (upserts.Count == 0)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var upsert in upserts)
+        {
+            try
+            {
+                WindowsCloudFiles.DebugLog($"provider write start from local scan path={upsert.Path}");
+                await RunAsync("provider", "write", upsert.Path, upsert.FullPath);
+                WindowsCloudFiles.DebugLog($"provider write published from local scan path={upsert.Path}");
+                changed = true;
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider write local scan failed path={upsert.Path} error={error.Message}");
+            }
+        }
+
+        return changed;
+    }
+
     private byte[] ReadProviderFile(string path)
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "iris-drive");
@@ -273,6 +323,50 @@ public sealed class IrisDriveService
                 // Best-effort cleanup for provider callback scratch files.
             }
         }
+    }
+
+    private void QueueProviderDelete(string path)
+    {
+        WindowsCloudFiles.MarkProviderDeletePending(path);
+        WindowsCloudFiles.DebugLog($"provider delete queued from Cloud Files notify path={path}");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={path}");
+                await RunAsync("provider", "delete", path);
+                WindowsCloudFiles.DebugLog($"provider delete published from Cloud Files notify path={path}");
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(path);
+                WindowsCloudFiles.DebugLog($"provider delete notify failed path={path} error={error.Message}");
+            }
+        });
+    }
+
+    private void QueueProviderRename(string oldPath, string newPath)
+    {
+        WindowsCloudFiles.MarkProviderRenamePending(oldPath, newPath);
+        WindowsCloudFiles.DebugLog(
+            $"provider rename queued from Cloud Files notify old={oldPath} new={newPath}");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename start from Cloud Files notify old={oldPath} new={newPath}");
+                await RunAsync("provider", "rename", oldPath, newPath);
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename published from Cloud Files notify old={oldPath} new={newPath}");
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(oldPath, newPath);
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename notify failed old={oldPath} new={newPath} error={error.Message}");
+            }
+        });
     }
 
     private async Task<string> RunForOutputAsync(params string[] arguments)

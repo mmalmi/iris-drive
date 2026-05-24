@@ -161,10 +161,40 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let mut config = self.clone();
+        if path.exists()
+            && let Ok(existing) = Self::load_or_default(path)
+        {
+            config.preserve_newer_device_roots(&existing);
+        }
         let raw =
-            toml::to_string_pretty(self).map_err(|e| ConfigError::Serialize(e.to_string()))?;
+            toml::to_string_pretty(&config).map_err(|e| ConfigError::Serialize(e.to_string()))?;
         fs::write(path, raw)?;
         Ok(())
+    }
+
+    fn preserve_newer_device_roots(&mut self, existing: &Self) {
+        for drive in &mut self.drives {
+            let Some(existing_drive) = existing.drive(&drive.drive_id) else {
+                continue;
+            };
+            for (device, existing_root) in &existing_drive.device_roots {
+                let keep_existing = drive
+                    .device_roots
+                    .get(device)
+                    .is_none_or(|incoming| existing_root.is_newer_than(incoming));
+                if keep_existing {
+                    drive
+                        .device_roots
+                        .insert(device.clone(), existing_root.clone());
+                }
+            }
+            if let Some(account) = self.account.as_ref()
+                && let Some(root) = drive.device_roots.get(&account.device_pubkey)
+            {
+                drive.last_root_cid = Some(root.root_cid.clone());
+            }
+        }
     }
 }
 
@@ -319,6 +349,14 @@ impl DeviceRootRef {
             materialized_only: meta.materialized_only,
         }
     }
+
+    #[must_use]
+    pub fn is_newer_than(&self, other: &Self) -> bool {
+        if self.device_seq > 0 || other.device_seq > 0 {
+            return self.device_seq > other.device_seq;
+        }
+        self.published_at > other.published_at
+    }
 }
 
 impl Drive {
@@ -426,6 +464,121 @@ dck_generation = 1
         let loaded = AppConfig::load_or_default(&path).unwrap();
         assert_eq!(loaded.drives.len(), 2);
         assert_eq!(loaded.drives, cfg.drives);
+    }
+
+    #[test]
+    fn save_preserves_newer_device_root_already_on_disk() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut newer = AppConfig {
+            account: Some(AccountState {
+                owner_pubkey: "owner".into(),
+                device_pubkey: "device-a".into(),
+                has_owner_signing_authority: false,
+                authorization_state: crate::account::DeviceAuthorizationState::Authorized,
+                device_label: None,
+                app_keys: None,
+            }),
+            ..AppConfig::default()
+        };
+        let mut newer_drive = Drive::primary("owner");
+        newer_drive.device_roots.insert(
+            "device-a".into(),
+            DeviceRootRef {
+                root_cid: "newer".into(),
+                published_at: 20,
+                dck_generation: 1,
+                device_seq: 7,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                materialized_only: false,
+            },
+        );
+        newer_drive.last_root_cid = Some("newer".into());
+        newer.upsert_drive(newer_drive);
+        newer.save(&path).unwrap();
+
+        let mut stale = newer.clone();
+        let drive = stale
+            .drives
+            .iter_mut()
+            .find(|d| d.drive_id == "main")
+            .unwrap();
+        drive.device_roots.insert(
+            "device-a".into(),
+            DeviceRootRef {
+                root_cid: "stale".into(),
+                published_at: 30,
+                dck_generation: 1,
+                device_seq: 6,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                materialized_only: false,
+            },
+        );
+        drive.last_root_cid = Some("stale".into());
+        stale.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let drive = loaded.drive("main").unwrap();
+        let root = drive.device_roots.get("device-a").unwrap();
+        assert_eq!(root.root_cid, "newer");
+        assert_eq!(root.device_seq, 7);
+        assert_eq!(drive.last_root_cid.as_deref(), Some("newer"));
+    }
+
+    #[test]
+    fn save_accepts_newer_device_root_over_disk() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut older = AppConfig::default();
+        let mut older_drive = Drive::primary("owner");
+        older_drive.device_roots.insert(
+            "device-a".into(),
+            DeviceRootRef {
+                root_cid: "older".into(),
+                published_at: 10,
+                dck_generation: 1,
+                device_seq: 1,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                materialized_only: false,
+            },
+        );
+        older.upsert_drive(older_drive);
+        older.save(&path).unwrap();
+
+        let mut newer = older.clone();
+        let drive = newer
+            .drives
+            .iter_mut()
+            .find(|d| d.drive_id == "main")
+            .unwrap();
+        drive.device_roots.insert(
+            "device-a".into(),
+            DeviceRootRef {
+                root_cid: "newer".into(),
+                published_at: 11,
+                dck_generation: 1,
+                device_seq: 2,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                materialized_only: false,
+            },
+        );
+        newer.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let root = loaded
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get("device-a")
+            .unwrap();
+        assert_eq!(root.root_cid, "newer");
+        assert_eq!(root.device_seq, 2);
     }
 
     #[test]

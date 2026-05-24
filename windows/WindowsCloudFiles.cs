@@ -115,6 +115,8 @@ public sealed record WindowsCloudLocalStateEntry(string Path, string Kind, long 
         path.Replace('\\', '/').Trim('/');
 }
 
+public sealed record WindowsCloudLocalUpsert(string Path, string FullPath);
+
 public static partial class WindowsCloudFiles
 {
     private const string ProviderName = "Iris Drive";
@@ -125,6 +127,8 @@ public static partial class WindowsCloudFiles
     private const ushort CfHydrationPolicyFull = 2;
     private const ushort CfPopulationPolicyAlwaysFull = 3;
     private const int CfCallbackTypeFetchData = 0;
+    private const int CfCallbackTypeNotifyDelete = 9;
+    private const int CfCallbackTypeNotifyRename = 11;
     private const int CfCallbackTypeNone = -1;
     private const int CfConnectFlagRequireFullFilePath = 0x00000004;
     private const int CfCreateFlagStopOnError = 0x00000001;
@@ -132,7 +136,11 @@ public static partial class WindowsCloudFiles
     private const int CfPlaceholderCreateFlagMarkInSync = 0x00000002;
     private const int CfPlaceholderCreateFlagSupersede = 0x00000004;
     private const int CfOperationTypeTransferData = 0;
+    private const int CfOperationTypeAckDelete = 6;
+    private const int CfOperationTypeAckRename = 7;
     private const int CfOperationTransferDataFlagNone = 0;
+    private const int CfOperationAckDeleteFlagNone = 0;
+    private const int CfOperationAckRenameFlagNone = 0;
     private const int StatusSuccess = 0;
     private const int StatusUnsuccessful = unchecked((int)0xC0000001);
     private const uint FileAttributeDirectory = 0x00000010;
@@ -145,15 +153,47 @@ public static partial class WindowsCloudFiles
     private const uint ShcneUpdateItem = 0x00002000;
     private const uint ShcnfPathW = 0x0005;
     private const uint ShcnfFlushNowait = 0x2000;
+    private const int PendingProviderMutationTtlSeconds = 120;
+    private const int RecentLocalUpsertSeconds = 300;
     private const string LocalStateFileName = "windows-cloud-local-state.json";
     private static readonly Guid ProviderId = new("2b58fb5d-b823-4d84-bd52-fcf9bd297fd4");
     private static readonly object ConnectionLock = new();
+    private static readonly object PendingProviderMutationLock = new();
+    private static readonly Dictionary<string, DateTimeOffset> PendingProviderDeletes =
+        new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, DateTimeOffset> PendingProviderPreserves =
+        new(StringComparer.Ordinal);
     private static CloudFilesConnection? activeConnection;
 
     public static string SyncRootPath =>
         System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Iris Drive");
+
+    public static void DebugLog(string message)
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("IRIS_DRIVE_WINDOWS_CLOUD_DEBUG"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            var configDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "iris-drive");
+            Directory.CreateDirectory(configDirectory);
+            File.AppendAllText(
+                Path.Combine(configDirectory, "windows-cloud-files.log"),
+                $"{DateTimeOffset.Now:O} pid={Environment.ProcessId} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
+    }
 
     public static bool SyncRootEntryExists(string path)
     {
@@ -213,6 +253,133 @@ public static partial class WindowsCloudFiles
         {
             // This is a safety cache for remote-delete cleanup; sync still works without it.
         }
+    }
+
+    public static void MarkProviderDeletePending(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
+        {
+            return;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            PendingProviderDeletes[normalized] = DateTimeOffset.UtcNow;
+        }
+
+        DebugLog($"provider delete pending path={normalized}");
+    }
+
+    public static void MarkProviderRenamePending(string oldPath, string newPath)
+    {
+        var normalizedOldPath = NormalizeVirtualPath(oldPath);
+        var normalizedNewPath = NormalizeVirtualPath(newPath);
+        if (string.IsNullOrEmpty(normalizedOldPath) ||
+            string.IsNullOrEmpty(normalizedNewPath) ||
+            PathHasIgnoredComponent(normalizedOldPath) ||
+            PathHasIgnoredComponent(normalizedNewPath))
+        {
+            return;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            PendingProviderDeletes[normalizedOldPath] = DateTimeOffset.UtcNow;
+            PendingProviderPreserves[normalizedNewPath] = DateTimeOffset.UtcNow;
+        }
+
+        DebugLog($"provider rename pending old={normalizedOldPath} new={normalizedNewPath}");
+    }
+
+    public static void ClearProviderMutationPending(params string[] paths)
+    {
+        lock (PendingProviderMutationLock)
+        {
+            foreach (var path in paths.Select(NormalizeVirtualPath))
+            {
+                PendingProviderDeletes.Remove(path);
+                PendingProviderPreserves.Remove(path);
+            }
+        }
+    }
+
+    public static void ReconcilePendingProviderMutations(
+        IReadOnlyCollection<WindowsCloudFileEntry> entries)
+    {
+        var entryPaths = new HashSet<string>(
+            PlaceholderEntries(entries).Select(entry => entry.Path),
+            StringComparer.Ordinal);
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+
+            foreach (var path in PendingProviderDeletes.Keys.ToArray())
+            {
+                if (!entryPaths.Contains(path))
+                {
+                    PendingProviderDeletes.Remove(path);
+                }
+            }
+
+            foreach (var path in PendingProviderPreserves.Keys.ToArray())
+            {
+                if (entryPaths.Contains(path))
+                {
+                    PendingProviderPreserves.Remove(path);
+                }
+            }
+        }
+    }
+
+    public static IReadOnlyList<WindowsCloudLocalUpsert> RecentLocalFileUpserts(
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddSeconds(-RecentLocalUpsertSeconds);
+        var providerEntries = PlaceholderEntries(entries)
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var previousByPath = previousState
+            .GroupBy(entry => NormalizeVirtualPath(entry.Path), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var upserts = new List<WindowsCloudLocalUpsert>();
+        if (!Directory.Exists(SyncRootPath))
+        {
+            return upserts;
+        }
+
+        IEnumerable<string> topLevelEntries;
+        try
+        {
+            topLevelEntries = Directory.EnumerateFileSystemEntries(SyncRootPath).ToArray();
+        }
+        catch
+        {
+            return upserts;
+        }
+
+        foreach (var topLevel in topLevelEntries)
+        {
+            if (!RecentEnough(topLevel, cutoff))
+            {
+                continue;
+            }
+
+            CollectRecentLocalFileUpserts(
+                topLevel,
+                providerEntries,
+                previousByPath,
+                upserts);
+        }
+
+        return upserts
+            .GroupBy(upsert => upsert.Path, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .OrderBy(upsert => upsert.Path, StringComparer.Ordinal)
+            .ToArray();
     }
 
     public static void RemoveStaleSyncedLocalItems(
@@ -339,7 +506,9 @@ public static partial class WindowsCloudFiles
 
     public static DriveFolderPreparation EnsureSyncRoot(
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
-        Func<string, byte[]> readFile)
+        Func<string, byte[]> readFile,
+        Action<string>? deletePath = null,
+        Action<string, string>? renamePath = null)
     {
         var path = SyncRootPath;
         Directory.CreateDirectory(path);
@@ -353,7 +522,7 @@ public static partial class WindowsCloudFiles
             lock (ConnectionLock)
             {
                 activeConnection?.Dispose();
-                activeConnection = CloudFilesConnection.Connect(path, readFile);
+                activeConnection = CloudFilesConnection.Connect(path, readFile, deletePath, renamePath);
             }
 
             var warning = population.SkippedLocalItemCount == 0
@@ -457,42 +626,85 @@ public static partial class WindowsCloudFiles
     {
         var placeholderCount = 0;
         var skippedLocalItems = 0;
+        var failedPlaceholderCount = 0;
+        var placeholderEntries = PlaceholderEntries(entries).ToArray();
+        var pendingDeletes = PendingProviderDeletePaths();
+        var pendingPreserves = PendingProviderPreservePaths();
         var expectedPaths = new HashSet<string>(
-            PlaceholderEntries(entries).Select(entry => entry.Path),
+            placeholderEntries.Select(entry => entry.Path)
+                .Concat(pendingDeletes)
+                .Concat(pendingPreserves),
             StringComparer.Ordinal);
 
         RemoveIgnoredLocalItems(syncRootPath);
         RemoveStalePlaceholders(syncRootPath, expectedPaths);
 
-        foreach (var entry in PlaceholderEntries(entries))
+        foreach (var entry in placeholderEntries)
         {
+            if (pendingDeletes.Contains(entry.Path))
+            {
+                DebugLogPath(entry.Path, "skip pending provider mutation");
+                continue;
+            }
+
             var parentPath = ParentPath(entry.Path);
             var parentFullPath = string.IsNullOrEmpty(parentPath)
                 ? syncRootPath
                 : Path.Combine(syncRootPath, FromVirtualPath(parentPath));
+            DebugLogPath(entry.Path, $"consider parent={parentFullPath} parent_exists={Directory.Exists(parentFullPath)}");
             if (!Directory.Exists(parentFullPath))
             {
                 skippedLocalItems++;
+                DebugLogPath(entry.Path, "skip parent missing");
                 continue;
             }
 
             var itemFullPath = Path.Combine(parentFullPath, FileName(entry.Path));
             if (ExistingPlaceholder(itemFullPath))
             {
+                DebugLogPath(entry.Path, $"skip existing placeholder {itemFullPath}");
                 continue;
             }
 
             if (ExistingLocalItem(itemFullPath))
             {
                 skippedLocalItems++;
+                DebugLogPath(entry.Path, $"skip existing local item {itemFullPath}");
                 continue;
             }
 
-            CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
-            placeholderCount++;
+            try
+            {
+                CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
+                DebugLogPath(entry.Path, $"created exists={File.Exists(itemFullPath) || Directory.Exists(itemFullPath)} attrs={SafeAttributes(itemFullPath)}");
+                placeholderCount++;
+            }
+            catch (COMException error)
+            {
+                failedPlaceholderCount++;
+                DebugLog($"skip unsupported placeholder path={entry.Path} hresult={FormatHResult(error.HResult)} message={error.Message}");
+            }
+            catch (ArgumentException error)
+            {
+                failedPlaceholderCount++;
+                DebugLog($"skip invalid placeholder path={entry.Path} message={error.Message}");
+            }
+            catch (NotSupportedException error)
+            {
+                failedPlaceholderCount++;
+                DebugLog($"skip unsupported placeholder path={entry.Path} message={error.Message}");
+            }
+            catch (PathTooLongException error)
+            {
+                failedPlaceholderCount++;
+                DebugLog($"skip too-long placeholder path={entry.Path} message={error.Message}");
+            }
         }
 
-        return new PlaceholderPopulationReport(placeholderCount, skippedLocalItems);
+        return new PlaceholderPopulationReport(
+            placeholderCount,
+            skippedLocalItems,
+            failedPlaceholderCount);
     }
 
     private static void NotifyShellDirectoryChanged(string path)
@@ -513,6 +725,152 @@ public static partial class WindowsCloudFiles
         catch
         {
             // Explorer can keep an open sync-root view; missing this nudge is non-fatal.
+        }
+    }
+
+    private static HashSet<string> PendingProviderDeletePaths()
+    {
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            return new HashSet<string>(PendingProviderDeletes.Keys, StringComparer.Ordinal);
+        }
+    }
+
+    private static HashSet<string> PendingProviderPreservePaths()
+    {
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            return new HashSet<string>(PendingProviderPreserves.Keys, StringComparer.Ordinal);
+        }
+    }
+
+    private static void CollectRecentLocalFileUpserts(
+        string startPath,
+        IReadOnlyDictionary<string, WindowsCloudFileEntry> providerEntries,
+        IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath,
+        ICollection<WindowsCloudLocalUpsert> upserts)
+    {
+        var stack = new Stack<string>();
+        stack.Push(startPath);
+
+        while (stack.Count > 0)
+        {
+            var fullPath = stack.Pop();
+            var relative = NormalizeVirtualPath(Path.GetRelativePath(SyncRootPath, fullPath));
+            if (string.IsNullOrEmpty(relative) || PathHasIgnoredComponent(relative))
+            {
+                continue;
+            }
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(fullPath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var isDirectory = (attributes & FileAttributes.Directory) != 0;
+            var isReparsePoint = (attributes & FileAttributes.ReparsePoint) != 0;
+            if (isReparsePoint && !isDirectory)
+            {
+                continue;
+            }
+
+            if (isDirectory)
+            {
+                try
+                {
+                    foreach (var child in Directory.EnumerateFileSystemEntries(fullPath))
+                    {
+                        stack.Push(child);
+                    }
+                }
+                catch
+                {
+                }
+
+                continue;
+            }
+
+            if (LocalFileAlreadyRepresented(relative, fullPath, providerEntries, previousByPath))
+            {
+                continue;
+            }
+
+            upserts.Add(new WindowsCloudLocalUpsert(relative, fullPath));
+        }
+    }
+
+    private static bool LocalFileAlreadyRepresented(
+        string path,
+        string fullPath,
+        IReadOnlyDictionary<string, WindowsCloudFileEntry> providerEntries,
+        IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath)
+    {
+        if (!providerEntries.TryGetValue(path, out var providerEntry) || providerEntry.IsDirectory)
+        {
+            return false;
+        }
+
+        LocalFileSnapshot? snapshot;
+        try
+        {
+            snapshot = SnapshotLocalFile(fullPath);
+        }
+        catch
+        {
+            return true;
+        }
+
+        if (snapshot is null)
+        {
+            return true;
+        }
+
+        if (providerEntry.Size != snapshot.Value.Size)
+        {
+            return false;
+        }
+
+        return previousByPath.TryGetValue(path, out var previous) &&
+            previous.Size == snapshot.Value.Size &&
+            string.Equals(previous.Sha256, snapshot.Value.Sha256, StringComparison.Ordinal);
+    }
+
+    private static bool RecentEnough(string fullPath, DateTimeOffset cutoff)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(fullPath) >= cutoff.UtcDateTime;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void PrunePendingProviderMutations(DateTimeOffset now)
+    {
+        var minCreatedAt = now.AddSeconds(-PendingProviderMutationTtlSeconds);
+        foreach (var path in PendingProviderDeletes
+            .Where(entry => entry.Value < minCreatedAt)
+            .Select(entry => entry.Key)
+            .ToArray())
+        {
+            PendingProviderDeletes.Remove(path);
+        }
+
+        foreach (var path in PendingProviderPreserves
+            .Where(entry => entry.Value < minCreatedAt)
+            .Select(entry => entry.Key)
+            .ToArray())
+        {
+            PendingProviderPreserves.Remove(path);
         }
     }
 
@@ -739,6 +1097,31 @@ public static partial class WindowsCloudFiles
         return (attributes & FileAttributes.ReparsePoint) != 0;
     }
 
+    private static void DebugLogPath(string path, string message)
+    {
+        if (path.Contains("codex-lab-smoke", StringComparison.Ordinal))
+        {
+            DebugLog($"{path}: {message}");
+        }
+    }
+
+    private static string SafeAttributes(string fullPath)
+    {
+        try
+        {
+            if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+            {
+                return "missing";
+            }
+
+            return File.GetAttributes(fullPath).ToString();
+        }
+        catch (Exception error)
+        {
+            return $"error:{error.Message}";
+        }
+    }
+
     private static void RegisterSyncRoot(string path)
     {
         var identityBytes = Encoding.UTF8.GetBytes("iris-drive:main");
@@ -856,7 +1239,8 @@ public static partial class WindowsCloudFiles
 
     private readonly record struct PlaceholderPopulationReport(
         int PlaceholderCount,
-        int SkippedLocalItemCount);
+        int SkippedLocalItemCount,
+        int FailedPlaceholderCount);
 
     private readonly record struct LocalFileSnapshot(long Size, string Sha256);
 
@@ -864,22 +1248,38 @@ public static partial class WindowsCloudFiles
     {
         private readonly string syncRootPath;
         private readonly Func<string, byte[]> readFile;
+        private readonly Action<string>? deletePath;
+        private readonly Action<string, string>? renamePath;
         private readonly CfCallback fetchDataCallback;
+        private readonly CfCallback deleteCallback;
+        private readonly CfCallback renameCallback;
         private readonly IntPtr callbackTable;
         private long connectionKey;
         private bool disposed;
 
-        private CloudFilesConnection(string syncRootPath, Func<string, byte[]> readFile)
+        private CloudFilesConnection(
+            string syncRootPath,
+            Func<string, byte[]> readFile,
+            Action<string>? deletePath,
+            Action<string, string>? renamePath)
         {
             this.syncRootPath = syncRootPath;
             this.readFile = readFile;
+            this.deletePath = deletePath;
+            this.renamePath = renamePath;
             fetchDataCallback = OnFetchData;
-            callbackTable = AllocateCallbackTable(fetchDataCallback);
+            deleteCallback = OnNotifyDelete;
+            renameCallback = OnNotifyRename;
+            callbackTable = AllocateCallbackTable(fetchDataCallback, deleteCallback, renameCallback);
         }
 
-        public static CloudFilesConnection Connect(string syncRootPath, Func<string, byte[]> readFile)
+        public static CloudFilesConnection Connect(
+            string syncRootPath,
+            Func<string, byte[]> readFile,
+            Action<string>? deletePath,
+            Action<string, string>? renamePath)
         {
-            var connection = new CloudFilesConnection(syncRootPath, readFile);
+            var connection = new CloudFilesConnection(syncRootPath, readFile, deletePath, renamePath);
             var hresult = NativeMethods.CfConnectSyncRoot(
                 syncRootPath,
                 connection.callbackTable,
@@ -914,7 +1314,10 @@ public static partial class WindowsCloudFiles
             Marshal.FreeHGlobal(callbackTable);
         }
 
-        private static IntPtr AllocateCallbackTable(CfCallback fetchData)
+        private static IntPtr AllocateCallbackTable(
+            CfCallback fetchData,
+            CfCallback delete,
+            CfCallback rename)
         {
             var registrations = new[]
             {
@@ -922,6 +1325,16 @@ public static partial class WindowsCloudFiles
                 {
                     Type = CfCallbackTypeFetchData,
                     Callback = Marshal.GetFunctionPointerForDelegate(fetchData),
+                },
+                new CfCallbackRegistration
+                {
+                    Type = CfCallbackTypeNotifyDelete,
+                    Callback = Marshal.GetFunctionPointerForDelegate(delete),
+                },
+                new CfCallbackRegistration
+                {
+                    Type = CfCallbackTypeNotifyRename,
+                    Callback = Marshal.GetFunctionPointerForDelegate(rename),
                 },
                 new CfCallbackRegistration
                 {
@@ -958,6 +1371,48 @@ public static partial class WindowsCloudFiles
             }
         }
 
+        private void OnNotifyDelete(IntPtr callbackInfo, IntPtr callbackParameters)
+        {
+            var info = Marshal.PtrToStructure<CfCallbackInfo>(callbackInfo);
+            try
+            {
+                var path = FileIdentityToPath(info);
+                DebugLog($"cloud delete notify path={path}");
+                deletePath?.Invoke(path);
+                AckDelete(info, StatusSuccess);
+            }
+            catch (Exception error)
+            {
+                DebugLog($"cloud delete notify failed: {error.Message}");
+                AckDelete(info, StatusUnsuccessful);
+            }
+        }
+
+        private void OnNotifyRename(IntPtr callbackInfo, IntPtr callbackParameters)
+        {
+            var info = Marshal.PtrToStructure<CfCallbackInfo>(callbackInfo);
+            try
+            {
+                var oldPath = FileIdentityToPath(info);
+                var parameters = Marshal.PtrToStructure<CfCallbackParametersRename>(callbackParameters);
+                var targetPath = Marshal.PtrToStringUni(parameters.Rename.TargetPath);
+                if (string.IsNullOrWhiteSpace(targetPath))
+                {
+                    throw new InvalidOperationException("Cloud Files rename callback did not include a target path.");
+                }
+
+                var newPath = NormalizedPathToRelative(targetPath);
+                DebugLog($"cloud rename notify old={oldPath} new={newPath}");
+                renamePath?.Invoke(oldPath, newPath);
+                AckRename(info, StatusSuccess);
+            }
+            catch (Exception error)
+            {
+                DebugLog($"cloud rename notify failed: {error.Message}");
+                AckRename(info, StatusUnsuccessful);
+            }
+        }
+
         private string FileIdentityToPath(CfCallbackInfo info)
         {
             if (info.FileIdentity != IntPtr.Zero && info.FileIdentityLength > 0)
@@ -973,6 +1428,11 @@ public static partial class WindowsCloudFiles
                 throw new InvalidOperationException("Cloud Files callback did not include a path.");
             }
 
+            return NormalizedPathToRelative(normalizedPath);
+        }
+
+        private string NormalizedPathToRelative(string normalizedPath)
+        {
             return Path
                 .GetRelativePath(syncRootPath, normalizedPath)
                 .Replace('\\', '/')
@@ -1025,6 +1485,66 @@ public static partial class WindowsCloudFiles
                 {
                     handle.Free();
                 }
+            }
+        }
+
+        private static void AckDelete(CfCallbackInfo info, int status)
+        {
+            var operationInfo = new CfOperationInfo
+            {
+                StructSize = (uint)Marshal.SizeOf<CfOperationInfo>(),
+                Type = CfOperationTypeAckDelete,
+                ConnectionKey = info.ConnectionKey,
+                TransferKey = info.TransferKey,
+                CorrelationVector = info.CorrelationVector,
+                SyncStatus = IntPtr.Zero,
+                RequestKey = info.RequestKey,
+            };
+
+            var parameters = new CfOperationParametersAckDelete
+            {
+                ParamSize = (uint)Marshal.SizeOf<CfOperationParametersAckDelete>(),
+                AckDelete = new CfOperationAckDelete
+                {
+                    Flags = CfOperationAckDeleteFlagNone,
+                    CompletionStatus = status,
+                },
+            };
+
+            var hresult = NativeMethods.CfExecute(ref operationInfo, ref parameters);
+            if (hresult < 0)
+            {
+                DebugLog($"Iris Drive Cloud Files delete ack failed: {FormatHResult(hresult)}");
+            }
+        }
+
+        private static void AckRename(CfCallbackInfo info, int status)
+        {
+            var operationInfo = new CfOperationInfo
+            {
+                StructSize = (uint)Marshal.SizeOf<CfOperationInfo>(),
+                Type = CfOperationTypeAckRename,
+                ConnectionKey = info.ConnectionKey,
+                TransferKey = info.TransferKey,
+                CorrelationVector = info.CorrelationVector,
+                SyncStatus = IntPtr.Zero,
+                RequestKey = info.RequestKey,
+            };
+
+            var parameters = new CfOperationParametersAckRename
+            {
+                ParamSize = (uint)Marshal.SizeOf<CfOperationParametersAckRename>(),
+                AckRename = new CfOperationAckRename
+                {
+                    Flags = CfOperationAckRenameFlagNone,
+                    CompletionStatus = status,
+                },
+            };
+
+            var hresult = NativeMethods.CfExecute(ref operationInfo, ref parameters);
+            if (hresult < 0)
+            {
+                DebugLog($"Iris Drive Cloud Files rename ack failed: {FormatHResult(hresult)}");
             }
         }
     }

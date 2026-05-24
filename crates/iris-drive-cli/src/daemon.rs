@@ -417,7 +417,7 @@ pub(crate) fn cmd_daemon(
                             &client,
                             config_dir,
                             root,
-                            vec![WindowsCloudRootChange::Rescan],
+                            vec![WindowsCloudRootChange::Rescan { full: false }],
                             &mut direct_roots,
                             fips_blocks.as_deref(),
                         )
@@ -534,7 +534,7 @@ enum WindowsCloudRootChange {
     Upsert(String),
     Delete(String),
     Rename { old_path: String, new_path: String },
-    Rescan,
+    Rescan { full: bool },
 }
 
 #[derive(Debug)]
@@ -577,7 +577,9 @@ fn start_windows_cloud_root_watch() -> Result<(
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .with_context(|| format!("watching Windows Cloud Files root {}", root.display()))?;
-    let _ = tx.send(WindowsCloudRootChange::Rescan);
+    let _ = tx.send(WindowsCloudRootChange::Rescan {
+        full: windows_cloud_full_rescan_enabled(),
+    });
 
     Ok((
         Some(root.clone()),
@@ -696,7 +698,7 @@ async fn import_windows_cloud_root_changes_and_publish(
                     changed_paths.insert(new_path);
                 }
             }
-            WindowsCloudRootChange::Rescan => {
+            WindowsCloudRootChange::Rescan { full } => {
                 for path in
                     windows_cloud_missing_cached_provider_paths(sync_root, &placeholder_paths)?
                 {
@@ -704,7 +706,12 @@ async fn import_windows_cloud_root_changes_and_publish(
                         changed_paths.insert(path);
                     }
                 }
-                for path in windows_cloud_local_materialized_paths(sync_root)? {
+                let local_paths = if full {
+                    windows_cloud_local_materialized_paths(sync_root)?
+                } else {
+                    windows_cloud_recent_local_materialized_paths(sync_root)?
+                };
+                for path in local_paths {
                     if apply_windows_cloud_upsert(&provider, sync_root, &path, &placeholder_paths)
                         .await?
                     {
@@ -824,11 +831,12 @@ async fn apply_windows_cloud_upsert(
                     .with_context(|| format!("reading metadata for {}", full_path.display()));
             }
         };
-        if windows_cloud_metadata_is_reparse_point(&metadata) {
+        let is_reparse_point = windows_cloud_metadata_is_reparse_point(&metadata);
+        if is_reparse_point && !metadata.is_dir() {
             continue;
         }
         if metadata.is_dir() {
-            if !provider_dir_exists(provider, &path).await? {
+            if !is_reparse_point && !provider_dir_exists(provider, &path).await? {
                 create_provider_dir(provider, &path).await?;
                 changed = true;
             }
@@ -846,7 +854,9 @@ async fn apply_windows_cloud_upsert(
                             .with_context(|| format!("reading metadata for {}", child.display()));
                     }
                 };
-                if windows_cloud_metadata_is_reparse_point(&child_metadata) {
+                if windows_cloud_metadata_is_reparse_point(&child_metadata)
+                    && !child_metadata.is_dir()
+                {
                     continue;
                 }
                 if let Some(relative) = windows_cloud_relative_path(sync_root, &child) {
@@ -929,6 +939,31 @@ async fn prune_ignored_provider_paths(
 }
 
 fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
+    windows_cloud_local_materialized_paths_since(root, None)
+}
+
+const WINDOWS_CLOUD_RECENT_RESCAN_SECS: u64 = 300;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_cloud_full_rescan_enabled() -> bool {
+    std::env::var("IRIS_DRIVE_WINDOWS_CLOUD_FULL_RESCAN")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
+fn windows_cloud_recent_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(
+            WINDOWS_CLOUD_RECENT_RESCAN_SECS,
+        ))
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    windows_cloud_local_materialized_paths_since(root, Some(cutoff))
+}
+
+fn windows_cloud_local_materialized_paths_since(
+    root: &Path,
+    modified_since: Option<std::time::SystemTime>,
+) -> Result<Vec<String>> {
     let mut paths = Vec::new();
     if !root.is_dir() {
         return Ok(paths);
@@ -944,7 +979,15 @@ fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
                     .with_context(|| format!("reading metadata for {}", path.display()));
             }
         };
-        if windows_cloud_metadata_is_reparse_point(&metadata) {
+        if windows_cloud_metadata_is_reparse_point(&metadata) && !metadata.is_dir() {
+            continue;
+        }
+        if let Some(cutoff) = modified_since
+            && metadata
+                .modified()
+                .map(|modified| modified < cutoff)
+                .unwrap_or(false)
+        {
             continue;
         }
         let Some(relative) = windows_cloud_relative_path(root, &path) else {
@@ -1938,6 +1981,31 @@ mod tests {
                 "gone/child.txt".to_string(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_rescan_upserts_nested_local_file() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(sync_root.path().join("codex-lab").join("run")).unwrap();
+        std::fs::write(
+            sync_root
+                .path()
+                .join("codex-lab")
+                .join("run")
+                .join("live.txt"),
+            b"live",
+        )
+        .unwrap();
+
+        for path in windows_cloud_local_materialized_paths(sync_root.path()).unwrap() {
+            apply_windows_cloud_upsert(&provider, sync_root.path(), &path, &BTreeSet::new())
+                .await
+                .unwrap();
+        }
+
+        let item = provider.item(&"codex-lab/run/live.txt".to_string()).await;
+        assert!(item.is_ok());
     }
 
     #[test]

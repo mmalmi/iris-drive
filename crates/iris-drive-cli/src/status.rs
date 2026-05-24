@@ -311,12 +311,23 @@ pub(crate) struct FileStats {
     total_bytes: u64,
 }
 
-pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
-    if !path.exists() {
-        return Ok(FileStats::default());
+fn retry_interrupted_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    loop {
+        match op() {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
     }
+}
 
-    let metadata = std::fs::metadata(path)?;
+pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
+    let metadata = match retry_interrupted_io(|| std::fs::metadata(path)) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileStats::default());
+        }
+        Err(error) => return Err(error.into()),
+    };
     if metadata.is_file() {
         return Ok(FileStats {
             file_count: 1,
@@ -330,10 +341,17 @@ pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
     let mut stats = FileStats::default();
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
+        let mut entries = retry_interrupted_io(|| std::fs::read_dir(&dir))?;
+        loop {
+            let Some(entry) = retry_interrupted_io(|| match entries.next() {
+                Some(entry) => entry.map(Some),
+                None => Ok(None),
+            })?
+            else {
+                break;
+            };
             let path = entry.path();
-            let metadata = entry.metadata()?;
+            let metadata = retry_interrupted_io(|| entry.metadata())?;
             if metadata.is_dir() {
                 stack.push(path);
             } else if metadata.is_file() {
@@ -758,5 +776,39 @@ pub(crate) fn device_sync_state(
         (true, Some(true)) => "synced",
         (true, Some(false)) => "blocks pending",
         (true, None) => "metadata only",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn retry_interrupted_io_retries_until_success() {
+        let mut attempts = 0;
+
+        let value = retry_interrupted_io(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(Error::from(ErrorKind::Interrupted))
+            } else {
+                Ok(42)
+            }
+        })
+        .unwrap();
+
+        assert_eq!(value, 42);
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn retry_interrupted_io_returns_non_interrupted_errors() {
+        let error = retry_interrupted_io(|| -> std::io::Result<()> {
+            Err(Error::from(ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
     }
 }

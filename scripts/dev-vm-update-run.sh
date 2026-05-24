@@ -88,6 +88,11 @@ Environment:
                                       Password file for the signing keychain.
                                       Defaults to
                                       ~/.config/iris-drive/dev-build-keychain.pass.
+  IRIS_DRIVE_DEV_VM_MACOS_RESET_FILEPROVIDER=0
+                                      Skip FileProvider domain reset on macOS
+                                      app start. The default reset is done via
+                                      NSFileProviderManager, not by deleting
+                                      CloudStorage files.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
   IRIS_DRIVE_FIPS_ROOT                Local fips checkout.
 
@@ -651,6 +656,16 @@ sync_repo() {
   prepare_worktree "$repo" "$name"
   log "fetching $name from $bare"
   git -C "$repo" fetch "$bare" "$SYNC_BRANCH"
+  local fetched
+  local current
+  local current_branch
+  fetched="$(git -C "$repo" rev-parse FETCH_HEAD)"
+  current="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+  current_branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ "$FORCE" != "1" && "$current" == "$fetched" && "$current_branch" == "$TARGET_BRANCH" ]]; then
+    log "$name already at $TARGET_BRANCH@${fetched:0:12}; leaving worktree untouched"
+    return 0
+  fi
   if [[ "$FORCE" == "1" ]]; then
     git -C "$repo" checkout --force -B "$TARGET_BRANCH" FETCH_HEAD
     git -C "$repo" reset --hard FETCH_HEAD
@@ -808,6 +823,97 @@ stop_idrive_daemon() {
   fi
 }
 
+idrive_status_json_retry() {
+  local idrive="$1"
+  local config_dir="$2"
+  local attempts="${3:-8}"
+  local delay="${4:-0.5}"
+  local attempt
+  local err
+  local output=""
+
+  err="$(mktemp -t iris-drive-status.XXXXXX 2>/dev/null || printf '/tmp/iris-drive-status.%s' "$$")"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    : > "$err"
+    if output="$("$idrive" --config-dir "$config_dir" status 2>"$err")" \
+      && STATUS_JSON="$output" python3 - <<'PY' >/dev/null 2>&1
+import json
+import os
+
+json.loads(os.environ["STATUS_JSON"])
+PY
+    then
+      rm -f "$err"
+      printf '%s\n' "$output"
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  if [[ -s "$err" ]]; then
+    cat "$err" >&2
+  fi
+  rm -f "$err"
+  return 1
+}
+
+idrive_status_fips_running() {
+  local status_json="$1"
+  STATUS_JSON="$status_json" python3 - <<'PY'
+import json
+import os
+import sys
+
+data = json.loads(os.environ["STATUS_JSON"])
+fips = (data.get("network") or {}).get("fips") or {}
+sys.exit(0 if fips.get("enabled") and fips.get("running") else 1)
+PY
+}
+
+print_idrive_status_summary() {
+  local status_json="$1"
+  STATUS_JSON="$status_json" python3 - <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["STATUS_JSON"])
+fips = (data.get("network") or {}).get("fips") or {}
+print("connected_peers=", fips.get("connected_peers"))
+print(
+    "peers=",
+    [
+        (peer.get("label"), peer.get("fips_online"), peer.get("sync_state"))
+        for peer in data.get("peers", [])
+    ],
+)
+PY
+}
+
+idrive_provider_list_retry() {
+  local idrive="$1"
+  local config_dir="$2"
+  local output_file="$3"
+  local attempts="${4:-8}"
+  local delay="${5:-0.5}"
+  local attempt
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if "$idrive" --config-dir "$config_dir" provider list >"$output_file" 2>&1 \
+      && python3 - "$output_file" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    json.load(fh)
+PY
+    then
+      return 0
+    fi
+    sleep "$delay"
+  done
+  return 1
+}
+
 run_linux() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
@@ -836,13 +942,14 @@ run_linux() {
       > /tmp/iris-drive-daemon.log 2>&1 < /dev/null &
   local daemon_pid="$!"
   local daemon_ready=0
+  local status_json=""
   for _ in {1..50}; do
     if ! process_running "$daemon_pid"; then
       tail -120 /tmp/iris-drive-daemon.log >&2 || true
       die "idrive daemon exited during startup"
     fi
-    if "$idrive" --config-dir "$config_dir" status 2>/dev/null \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; raise SystemExit(0 if f.get("enabled") and f.get("running") else 1)' 2>/dev/null; then
+    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
+      && idrive_status_fips_running "$status_json" >/dev/null; then
       daemon_ready=1
       break
     fi
@@ -852,16 +959,20 @@ run_linux() {
     tail -120 /tmp/iris-drive-daemon.log >&2 || true
     die "idrive daemon did not report running FIPS"
   fi
-  "$idrive" --config-dir "$config_dir" status \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
+  if [[ -z "$status_json" ]]; then
+    status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 8 0.5)"
+  fi
+  print_idrive_status_summary "$status_json"
 }
 
 write_macos_fileprovider_runtime() {
   local app_base="$1"
   local config_dir="$2"
   local idrive_path="$3"
+  local app_group="$4"
   local runtime_dirs=(
     "$app_base"
+    "$HOME/Library/Group Containers/$app_group/Iris Drive"
     "$HOME/Library/Application Support/Iris Drive"
   )
 
@@ -887,6 +998,36 @@ for directory in directories:
         json.dump(payload, handle, separators=(",", ":"))
         handle.write("\n")
 PY
+}
+
+macos_app_group_identifier() {
+  local explicit="${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}"
+  local team="${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s\n' "$explicit"
+    return 0
+  fi
+  team="${team%.}"
+  if [[ -n "$team" ]]; then
+    printf '%s.to.iris.drive\n' "$team"
+    return 0
+  fi
+  printf '%s\n' "group.to.iris.drive"
+}
+
+copy_macos_dev_tree_best_effort() {
+  local source="$1"
+  local destination="$2"
+
+  [[ -d "$source" ]] || return 0
+  mkdir -p "$destination"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --ignore-errors "$source"/ "$destination"/ >/dev/null 2>&1 \
+      || log "warning: some files could not be migrated from $source"
+  else
+    ditto "$source" "$destination" >/dev/null 2>&1 \
+      || log "warning: some files could not be migrated from $source"
+  fi
 }
 
 macos_fileprovider_required() {
@@ -1007,8 +1148,12 @@ run_macos() {
   local built_app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
   local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$HOME/Applications/Iris Drive.app}"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
+  local app_group
+  app_group="$(macos_app_group_identifier)"
+  local group_app_base="$HOME/Library/Group Containers/$app_group/Iris Drive Dev"
+  local legacy_group_app_base="$HOME/Library/Group Containers/group.to.iris.drive/Iris Drive Dev"
   local sandbox_app_base="$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev"
-  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$sandbox_app_base}"
+  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$group_app_base}"
   local old_dev_app_base="$HOME/Library/Application Support/Iris Drive Dev"
   local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
@@ -1038,7 +1183,9 @@ run_macos() {
   fi
   install_macos_dev_app "$built_app" "$app"
   cp "$idrive" "$app/Contents/MacOS/idrive"
+  cp "$idrive" "$appex/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
+  chmod +x "$appex/Contents/MacOS/idrive"
   sign_macos_app "$iris_repo" "$app" "$appex"
   check_macos_fileprovider_signing "$app" "$appex"
   register_macos_app_bundle "$app" "$built_app"
@@ -1047,17 +1194,19 @@ run_macos() {
 
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
+  pkill -f IrisDriveFileProvider >/dev/null 2>&1 || true
+  pkill -x fileproviderd >/dev/null 2>&1 || true
   pkill -x idrive >/dev/null 2>&1 || true
   mkdir -p "$config_dir"
   if [[ ! -f "$config_dir/key" ]]; then
-    for migration_source in "$old_dev_app_base" "$legacy_app_base"; do
+    for migration_source in "$legacy_group_app_base" "$sandbox_app_base" "$old_dev_app_base" "$legacy_app_base"; do
       [[ "$migration_source" != "$app_base" ]] || continue
       [[ -f "$migration_source/Config/key" ]] || continue
       log "migrating macOS dev app data from $migration_source"
       mkdir -p "$app_base"
-      ditto "$migration_source/Config" "$config_dir"
+      copy_macos_dev_tree_best_effort "$migration_source/Config" "$config_dir"
       if [[ -d "$migration_source/Hashtree" ]]; then
-        ditto "$migration_source/Hashtree" "$app_base/Hashtree"
+        copy_macos_dev_tree_best_effort "$migration_source/Hashtree" "$app_base/Hashtree"
       fi
       break
     done
@@ -1065,24 +1214,34 @@ run_macos() {
   write_macos_fileprovider_runtime \
     "$app_base" \
     "$config_dir" \
-    "$app/Contents/MacOS/idrive"
+    "$app/Contents/MacOS/idrive" \
+    "$app_group"
   pregrant_macos_dev_app_tcc
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
   rm -f "$app_stdout" "$app_stderr" "$daemon_log"
+  local reset_fileprovider_domain="true"
+  case "${IRIS_DRIVE_DEV_VM_MACOS_RESET_FILEPROVIDER:-1}" in
+    0|false|FALSE|no|NO|off|OFF) reset_fileprovider_domain="false" ;;
+  esac
   sleep 1
+  local open_args=(
+    --stdout "$app_stdout"
+    --stderr "$app_stderr"
+    --env "IRIS_DRIVE_EXTERNAL_DAEMON=true"
+    --env "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT"
+    --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+    --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false"
+    --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true"
+    --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS"
+    --env "IRIS_DRIVE_APP_BASE_DIR=$app_base"
+    --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true"
+  )
+  if [[ "$reset_fileprovider_domain" == "true" ]]; then
+    open_args+=(--env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true")
+  fi
   open \
-    --stdout "$app_stdout" \
-    --stderr "$app_stderr" \
-    --env "IRIS_DRIVE_EXTERNAL_DAEMON=true" \
-    --env "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
-    --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
-    --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
-    --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
-    --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
-    --env "IRIS_DRIVE_APP_BASE_DIR=$app_base" \
-    --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true" \
-    --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
+    "${open_args[@]}" \
     "$app"
   for _ in {1..30}; do
     if pgrep -x "Iris Drive" >/dev/null 2>&1; then
@@ -1108,34 +1267,34 @@ run_macos() {
       --watch-debounce-ms 100 \
       > "$daemon_log" 2>&1 < /dev/null &
   daemon_pid="$!"
+  local status_json=""
   for _ in {1..40}; do
     if ! process_running "$daemon_pid"; then
       log "macOS idrive daemon exited during startup"
       tail -n 120 "$daemon_log" >&2 2>/dev/null || true
       exit 4
     fi
-    if "$idrive" --config-dir "$config_dir" status 2>/dev/null \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") else 1)' \
-      >/dev/null 2>&1; then
+    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
+      && idrive_status_fips_running "$status_json" >/dev/null; then
       break
     fi
     sleep 0.5
   done
-  if ! "$idrive" --config-dir "$config_dir" status 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; sys.exit(0 if f.get("enabled") and f.get("running") else 1)' \
-    >/dev/null 2>&1; then
+  if [[ -z "$status_json" ]]; then
+    status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 8 0.5)" || true
+  fi
+  if [[ -z "$status_json" ]] || ! idrive_status_fips_running "$status_json" >/dev/null; then
     log "macOS idrive daemon did not report running FIPS status"
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
-  if ! "$idrive" --config-dir "$config_dir" provider list >/tmp/iris-drive-macos-provider-list.json 2>&1; then
+  if ! idrive_provider_list_retry "$idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 8 0.5; then
     log "macOS virtual provider list failed"
     cat /tmp/iris-drive-macos-provider-list.json >&2 2>/dev/null || true
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true
     exit 4
   fi
-  "$idrive" --config-dir "$config_dir" status \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
+  print_idrive_status_summary "$status_json"
 }
 
 sign_macos_app() {
@@ -1211,6 +1370,11 @@ EOF
   "${codesign_base[@]}" \
     --entitlements "$helper_entitlements" \
     "$app/Contents/MacOS/idrive" >/dev/null
+  if [[ -f "$appex/Contents/MacOS/idrive" ]]; then
+    "${codesign_base[@]}" \
+      --entitlements "$helper_entitlements" \
+      "$appex/Contents/MacOS/idrive" >/dev/null
+  fi
   if [[ -n "$appex_entitlements" ]]; then
     "${codesign_base[@]}" \
       --entitlements "$appex_entitlements" \
@@ -1455,6 +1619,18 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch 
   Write-Log "fetching $Name from $Bare"
   git -C $Repo fetch $Bare $Branch
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $Name" }
+  $Fetched = (git -C $Repo rev-parse FETCH_HEAD).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed for $Name" }
+  $Current = (git -C $Repo rev-parse HEAD 2>$null)
+  if ($LASTEXITCODE -ne 0) { $Current = "" }
+  $Current = ($Current -as [string]).Trim()
+  $CurrentBranch = (git -C $Repo symbolic-ref --quiet --short HEAD 2>$null)
+  if ($LASTEXITCODE -ne 0) { $CurrentBranch = "" }
+  $CurrentBranch = ($CurrentBranch -as [string]).Trim()
+  if (($Force -ne "1") -and ($Current -eq $Fetched) -and ($CurrentBranch -eq $CheckoutBranch)) {
+    Write-Log "$Name already at $CheckoutBranch@$($Fetched.Substring(0, [Math]::Min(12, $Fetched.Length))); leaving worktree untouched"
+    return
+  }
   if ($Force -eq "1") {
     git -C $Repo checkout --force -B $CheckoutBranch FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed for $Name" }
@@ -1579,6 +1755,7 @@ $env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR = ""
 $env:IRIS_DRIVE_FIPS_UDP_PUBLIC = "false"
 $env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC = "true"
 $env:IRIS_DRIVE_FIPS_STATIC_PEERS = $StaticPeers
+$env:IRIS_DRIVE_WINDOWS_CLOUD_DEBUG = "1"
 
 $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
 $Exe = Join-Path $PublishDir "IrisDrive.exe"
@@ -1603,6 +1780,7 @@ set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=
 set IRIS_DRIVE_FIPS_UDP_PUBLIC=false
 set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
 set IRIS_DRIVE_FIPS_STATIC_PEERS=$StaticPeers
+set IRIS_DRIVE_WINDOWS_CLOUD_DEBUG=1
 cd /d "$PublishDir"
 start "" "$Exe"
 "@ | Set-Content -Encoding ASCII $LaunchScript
@@ -1650,7 +1828,17 @@ remote_status_json() {
       ssh "$host" 'bash -se' <<'REMOTE_SH'
 set -Eeuo pipefail
 idrive="$HOME/src/iris-drive/target/debug/idrive"
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
+app_group="${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}"
+if [[ -z "$app_group" ]]; then
+  app="$HOME/Applications/Iris Drive.app"
+  app_group="$(codesign -d --entitlements :- "$app" 2>/dev/null \
+    | plutil -extract com.apple.security.application-groups.0 raw -o - - 2>/dev/null \
+    || true)"
+fi
+if [[ -z "$app_group" ]]; then
+  app_group="group.to.iris.drive"
+fi
+config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/$app_group/Iris Drive Dev}/Config"
 "$idrive" --config-dir "$config_dir" status
 REMOTE_SH
       ;;

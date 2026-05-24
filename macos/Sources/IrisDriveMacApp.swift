@@ -9,6 +9,8 @@ private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
+private let irisDriveAppGroupName = "to.iris.drive"
+private let irisDriveLegacyAppGroupIdentifier = "group.to.iris.drive"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
@@ -1133,7 +1135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var fileProviderReimportEnabled: Bool {
-        !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER_REIMPORT")
+        environmentFlag("IRIS_DRIVE_ENABLE_FILEPROVIDER_REIMPORT")
     }
 
     private var fileProviderIntegrationEnabled: Bool {
@@ -1155,6 +1157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func fileProviderApplicationSupportFallbackDirectory() -> URL {
+        if let shared = irisDriveAppGroupContainerURL() {
+            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
+        }
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -1603,6 +1608,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastExternalFileProviderSignalKey = key
         lastExternalFileProviderSignalAt = now
         signalFileProviderDomain()
+        if changed {
+            scheduleFileProviderReimport(reason: "external status changed", key: key)
+        }
     }
 
     private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {
@@ -1611,10 +1619,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         parts.append(json["root_key"] as? String ?? "")
         if let lastBlockSync = json["last_block_sync"] as? [String: Any] {
             parts.append(lastBlockSync["root_cid"] as? String ?? "")
-            parts.append("\(Self.int64Value(lastBlockSync["updated_at"]) ?? 0)")
+            parts.append(lastBlockSync["transport"] as? String ?? "")
+            parts.append("\(Self.intValue(lastBlockSync["fetched"]) ?? 0)")
+            parts.append("\(Self.intValue(lastBlockSync["already_local"]) ?? 0)")
+            parts.append("\(Self.intValue(lastBlockSync["total_hashes"]) ?? 0)")
         }
         if let blockSyncByRoot = json["block_sync_by_root"] as? [String: Any] {
-            parts.append(blockSyncByRoot.keys.sorted().joined(separator: ","))
+            for root in blockSyncByRoot.keys.sorted() {
+                parts.append(root)
+                guard let sync = blockSyncByRoot[root] as? [String: Any] else { continue }
+                parts.append(sync["transport"] as? String ?? "")
+                parts.append("\(Self.intValue(sync["fetched"]) ?? 0)")
+                parts.append("\(Self.intValue(sync["already_local"]) ?? 0)")
+                parts.append("\(Self.intValue(sync["total_hashes"]) ?? 0)")
+            }
         }
         return parts.joined(separator: "|")
     }
@@ -1641,8 +1659,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     peer["device_npub"] as? String ?? peer["device_pubkey"] as? String ?? "",
                     peer["root_cid"] as? String ?? "",
                     peer["sync_state"] as? String ?? "",
+                    "\(peer["root_available"] as? Bool ?? false)",
                     "\(peer["fips_online"] as? Bool ?? false)",
                 ].joined(separator: ":"))
+                if let lastBlockSync = peer["last_block_sync"] as? [String: Any] {
+                    parts.append([
+                        peer["device_npub"] as? String ?? peer["device_pubkey"] as? String ?? "",
+                        "blocks",
+                        lastBlockSync["root_cid"] as? String ?? "",
+                        lastBlockSync["transport"] as? String ?? "",
+                        "\(Self.intValue(lastBlockSync["fetched"]) ?? 0)",
+                        "\(Self.intValue(lastBlockSync["already_local"]) ?? 0)",
+                        "\(Self.intValue(lastBlockSync["total_hashes"]) ?? 0)",
+                    ].joined(separator: ":"))
+                }
             }
         }
         return parts.sorted().joined(separator: "|")
@@ -1810,6 +1840,13 @@ private func irisDriveDebugLog(_ message: String) {
 
 private func irisDriveDebugLogDirectories() -> [URL] {
     var directories = [URL]()
+    if let shared = irisDriveAppGroupContainerURL() {
+        directories.append(
+            shared
+                .appendingPathComponent("Iris Drive", isDirectory: true)
+                .appendingPathComponent("Logs", isDirectory: true)
+        )
+    }
     if let support = FileManager.default.urls(
         for: .applicationSupportDirectory,
         in: .userDomainMask
@@ -1826,6 +1863,28 @@ private func irisDriveDebugLogDirectories() -> [URL] {
             .appendingPathComponent("Logs", isDirectory: true)
     )
     return directories
+}
+
+private func irisDriveAppGroupContainerURL() -> URL? {
+    for identifier in irisDriveAppGroupIdentifiers() {
+        if let url = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: identifier
+        ) {
+            return url
+        }
+    }
+    return nil
+}
+
+private func irisDriveAppGroupIdentifiers() -> [String] {
+    var identifiers = [String]()
+    if let teamIdentifier = currentProcessTeamIdentifier() {
+        identifiers.append("\(teamIdentifier).\(irisDriveAppGroupName)")
+    }
+    identifiers.append(irisDriveLegacyAppGroupIdentifier)
+
+    var seen = Set<String>()
+    return identifiers.filter { seen.insert($0).inserted }
 }
 
 private func ensureFileProviderDomainRegistered(

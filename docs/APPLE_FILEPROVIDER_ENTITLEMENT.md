@@ -16,7 +16,7 @@ References:
 
 - App bundle ID: `to.iris.drive.macos`
 - File Provider extension bundle ID: `to.iris.drive.macos.FileProvider`
-- App group: `group.to.iris.drive`
+- macOS app group: `<TeamIdentifierPrefix>to.iris.drive`
 
 ## Request draft
 
