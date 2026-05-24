@@ -823,12 +823,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func startStatusRefreshTimer(interval: TimeInterval) {
-        statusRefreshTimer?.invalidate()
-        statusRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
-            [weak self] _ in
-            self?.refreshStatus()
+        DispatchQueue.main.async {
+            self.statusRefreshTimer?.invalidate()
+            let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+                self?.refreshStatus()
+            }
+            timer.tolerance = min(interval / 2, 1.0)
+            self.statusRefreshTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
         }
-        statusRefreshTimer?.tolerance = min(interval / 2, 1.0)
     }
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
