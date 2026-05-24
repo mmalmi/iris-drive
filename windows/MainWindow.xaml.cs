@@ -34,7 +34,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
-        WindowsIcon.RefreshShortcutIcons();
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
@@ -45,6 +44,7 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         InstallTraySafely();
+        _ = Task.Run(WindowsIcon.RefreshShortcutIcons);
         refreshTimer.Start();
         await RefreshAsync();
     }
