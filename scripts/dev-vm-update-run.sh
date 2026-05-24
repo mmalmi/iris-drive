@@ -1212,6 +1212,128 @@ REMOTE_PS
   esac
 }
 
+remote_transport_diagnostics() {
+  local kind="$1"
+  local host="$2"
+
+  case "$kind" in
+    macos|linux)
+      ssh "$host" 'bash -se' <<'REMOTE_SH'
+set +e
+
+check_https() {
+  local label="$1"
+  local family="$2"
+  if ! command -v curl >/dev/null 2>&1; then
+    printf '%s=unknown(no curl)\n' "$label"
+    return
+  fi
+  if curl "$family" -I --max-time 8 https://example.com >/dev/null 2>&1; then
+    printf '%s=ok\n' "$label"
+  else
+    printf '%s=fail\n' "$label"
+  fi
+}
+
+check_tcp() {
+  local label="$1"
+  local host="$2"
+  local port="$3"
+  if ! command -v nc >/dev/null 2>&1; then
+    printf '%s=unknown(no nc)\n' "$label"
+    return
+  fi
+  if nc -vz -G 5 "$host" "$port" >/dev/null 2>&1 \
+    || nc -vz -w 5 "$host" "$port" >/dev/null 2>&1; then
+    printf '%s=ok\n' "$label"
+  else
+    printf '%s=fail\n' "$label"
+  fi
+}
+
+check_https ipv4_https -4
+check_https ipv6_https -6
+check_tcp fips_bootstrap_tcp_54_183_70_180_443 54.183.70.180 443
+REMOTE_SH
+      ;;
+    windows)
+      ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS'
+$ProgressPreference = "SilentlyContinue"
+function Check-Https {
+  try {
+    Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 -Uri "https://example.com" | Out-Null
+    "https=ok"
+  } catch {
+    "https=fail"
+  }
+}
+function Check-Tcp {
+  param([string]$Label, [string]$HostName, [int]$Port)
+  $client = New-Object System.Net.Sockets.TcpClient
+  try {
+    $result = $client.BeginConnect($HostName, $Port, $null, $null)
+    if ($result.AsyncWaitHandle.WaitOne(5000)) {
+      $client.EndConnect($result)
+      "$Label=ok"
+    } else {
+      "$Label=fail"
+    }
+  } catch {
+    "$Label=fail"
+  } finally {
+    $client.Close()
+  }
+}
+Check-Https
+Check-Tcp "fips_bootstrap_tcp_54_183_70_180_443" "54.183.70.180" 443
+REMOTE_PS
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_connectivity_diagnostics() {
+  local i
+  local status=""
+
+  for i in "${!LABELS[@]}"; do
+    printf '[dev-vms] %s diagnostics:\n' "${LABELS[$i]}" >&2
+    if status="$(remote_status_json "${KINDS[$i]}" "${HOSTS[$i]}" 2>/dev/null)"; then
+      STATUS_JSON="$status" python3 <<'PY' | sed 's/^/[dev-vms]   /' >&2
+import json
+import os
+
+data = json.loads(os.environ["STATUS_JSON"])
+network = data.get("network") or {}
+fips = network.get("fips") or {}
+relays = network.get("relay_statuses") or []
+peers = data.get("peers") or []
+
+relay_summary = ", ".join(
+    f"{relay.get('url')}:{relay.get('status')}" for relay in relays
+)
+peer_summary = ", ".join(
+    f"{peer.get('label')}:{peer.get('fips_online')}:{peer.get('sync_state')}"
+    for peer in peers
+)
+
+print(f"nostr_discovery_app={fips.get('nostr_discovery_app')}")
+print(f"connected_peers={fips.get('connected_peers') or []}")
+print(f"mesh_peers={fips.get('mesh_peers') or []}")
+print(f"relay_statuses={relay_summary}")
+print(f"peers={peer_summary}")
+PY
+    else
+      printf '[dev-vms]   status=unavailable\n' >&2
+    fi
+
+    remote_transport_diagnostics "${KINDS[$i]}" "${HOSTS[$i]}" \
+      | sed 's/^/[dev-vms]   /' >&2 || true
+  done
+}
+
 status_missing_peers() {
   local status="$1"
   shift
@@ -1296,6 +1418,7 @@ check_dev_vm_connectivity() {
     if (( now - start >= timeout )); then
       printf '[dev-vms] FIPS connectivity check failed after %ss:\n' "$timeout" >&2
       printf '[dev-vms]   %s\n' "${failures[@]}" >&2
+      print_connectivity_diagnostics
       return 5
     fi
 
