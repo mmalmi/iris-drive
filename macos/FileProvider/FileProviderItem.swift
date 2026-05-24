@@ -1,6 +1,5 @@
 import Foundation
 import FileProvider
-import Security
 import UniformTypeIdentifiers
 
 final class FileProviderItem: NSObject, NSFileProviderItem {
@@ -77,19 +76,41 @@ extension FileProviderItem {
 }
 
 enum FileProviderStorage {
-    private static let canonicalAppGroupIdentifier = "group.to.iris.drive"
-    private static let teamAppGroupName = "to.iris.drive"
     private static let runtimeFileName = "fileprovider-runtime.json"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
+    private static var configuredRuntime: Runtime?
 
     struct Runtime: Decodable {
         let configDirectory: String?
         let idriveExecutable: String?
 
+        init(configDirectory: String?, idriveExecutable: String?) {
+            self.configDirectory = configDirectory
+            self.idriveExecutable = idriveExecutable
+        }
+
+        init?(userInfo: [AnyHashable: Any]?) {
+            let configDirectory = userInfo?["config_dir"] as? String
+            let idriveExecutable = userInfo?["idrive_executable"] as? String
+            guard configDirectory != nil || idriveExecutable != nil else {
+                return nil
+            }
+            self.init(
+                configDirectory: configDirectory,
+                idriveExecutable: idriveExecutable
+            )
+        }
+
         enum CodingKeys: String, CodingKey {
             case configDirectory = "config_dir"
             case idriveExecutable = "idrive_executable"
+        }
+    }
+
+    static func configure(domain: NSFileProviderDomain) {
+        if #available(macOS 15.0, *) {
+            configuredRuntime = Runtime(userInfo: domain.userInfo)
         }
     }
 
@@ -116,6 +137,9 @@ enum FileProviderStorage {
     }
 
     static var runtime: Runtime? {
+        if let configuredRuntime {
+            return configuredRuntime
+        }
         for directory in runtimeDirectories {
             let url = directory.appendingPathComponent(runtimeFileName)
             guard let data = try? Data(contentsOf: url) else { continue }
@@ -138,9 +162,6 @@ enum FileProviderStorage {
 
     private static var runtimeDirectories: [URL] {
         var directories = [URL]()
-        if let appGroup = currentProcessAppGroupContainerURL() {
-            directories.append(appGroup)
-        }
         directories.append(fallbackApplicationSupportDirectory())
 
         var seen = Set<String>()
@@ -391,50 +412,4 @@ enum FileProviderStorage {
         )
     }
 
-    private static func currentProcessAppGroupContainerURL() -> URL? {
-        guard let group = currentProcessAppGroupIdentifier() else { return nil }
-        return FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: group
-        )
-    }
-
-    private static func currentProcessAppGroupIdentifier() -> String? {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let value = SecTaskCopyValueForEntitlement(
-                  task,
-                  "com.apple.security.application-groups" as CFString,
-                  nil
-              ),
-              let groups = value as? [String]
-        else {
-            return nil
-        }
-
-        if groups.contains(canonicalAppGroupIdentifier) {
-            return canonicalAppGroupIdentifier
-        }
-
-        if let team = currentProcessTeamIdentifier(task: task) {
-            let teamGroup = "\(team).\(teamAppGroupName)"
-            if groups.contains(teamGroup) {
-                return teamGroup
-            }
-        }
-
-        return groups.first { group in
-            group.hasSuffix(".\(teamAppGroupName)")
-        }
-    }
-
-    private static func currentProcessTeamIdentifier(task: SecTask) -> String? {
-        guard let value = SecTaskCopyValueForEntitlement(
-            task,
-            "com.apple.developer.team-identifier" as CFString,
-            nil
-        ) as? String else {
-            return nil
-        }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 }

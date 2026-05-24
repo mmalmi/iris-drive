@@ -6,8 +6,6 @@ import SwiftUI
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
-private let irisDriveCanonicalAppGroupIdentifier = "group.to.iris.drive"
-private let irisDriveTeamAppGroupName = "to.iris.drive"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
@@ -50,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var startSyncMenuItem: NSMenuItem?
     private var stopSyncMenuItem: NSMenuItem?
     private var runtimePathsForMenu: IrisDriveRuntimePaths?
+    private var fileProviderRegistrationInFlight = false
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
     private var openControlPanelWindow: (() -> Void)?
@@ -74,11 +73,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "testing=\(currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode")) " +
             "team=\(currentProcessEntitlementValue("com.apple.developer.team-identifier") ?? "nil")"
         )
+        ensureFileProviderDomain()
+    }
+
+    func ensureFileProviderDomain() {
         if fileProviderIntegrationEnabled {
+            guard !fileProviderRegistrationInFlight else {
+                return
+            }
+            fileProviderRegistrationInFlight = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                ensureFileProviderDomainRegistered { state in
+                guard let self else { return }
+                let runtime = self.currentFileProviderRuntimeConfig()
+                ensureFileProviderDomainRegistered(runtime: runtime) { state in
                     DispatchQueue.main.async {
-                        self?.fileProviderDomainState = state
+                        self.fileProviderRegistrationInFlight = false
+                        self.fileProviderDomainState = state
                     }
                 }
             }
@@ -687,7 +697,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let paths = runtimePathsForMenu ?? runtimePaths()
         prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
-        ensureFileProviderDomainRegistered { [weak self] state in
+        let runtime = FileProviderRuntimeConfig(
+            configDirectory: paths.configDirectory.path,
+            idriveExecutable: idriveExecutableURL()?.path
+        )
+        ensureFileProviderDomainRegistered(runtime: runtime) { [weak self] state in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.fileProviderDomainState = state
@@ -930,14 +944,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            !override.isEmpty {
             baseDirectory = URL(fileURLWithPath: override, isDirectory: true)
         } else {
-            let appGroupDirectory = fileProviderIntegrationEnabled
-                ? currentProcessAppGroupContainerURL()
-                : nil
-            baseDirectory = appGroupDirectory ?? fileProviderApplicationSupportFallbackDirectory()
+            baseDirectory = fileProviderApplicationSupportFallbackDirectory()
         }
 
         return IrisDriveRuntimePaths(
             configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true)
+        )
+    }
+
+    private func currentFileProviderRuntimeConfig() -> FileProviderRuntimeConfig {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        return FileProviderRuntimeConfig(
+            configDirectory: paths.configDirectory.path,
+            idriveExecutable: idriveExecutableURL()?.path
         )
     }
 
@@ -1288,9 +1307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func fileProviderRuntimeDirectories(paths: IrisDriveRuntimePaths) -> [URL] {
         var directories = [URL]()
         directories.append(paths.configDirectory.deletingLastPathComponent())
-        if fileProviderIntegrationEnabled, let appGroup = currentProcessAppGroupContainerURL() {
-            directories.append(appGroup)
-        }
         if ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] == nil {
             directories.append(fileProviderApplicationSupportFallbackDirectory())
         }
@@ -1434,6 +1450,14 @@ private struct FileProviderRuntimeConfig: Encodable {
     let configDirectory: String
     let idriveExecutable: String?
 
+    var domainUserInfo: [String: String] {
+        var userInfo = ["config_dir": configDirectory]
+        if let idriveExecutable, !idriveExecutable.isEmpty {
+            userInfo["idrive_executable"] = idriveExecutable
+        }
+        return userInfo
+    }
+
     enum CodingKeys: String, CodingKey {
         case configDirectory = "config_dir"
         case idriveExecutable = "idrive_executable"
@@ -1448,45 +1472,74 @@ private enum FileProviderDomainState {
 
 private func irisDriveDebugLog(_ message: String) {
     NSLog("%@", message)
-    #if DEBUG
     if let data = (message + "\n").data(using: .utf8) {
-        FileHandle.standardError.write(data)
-        let url = URL(fileURLWithPath: "/tmp/iris-drive-macos-app-debug.log")
-        if FileManager.default.fileExists(atPath: url.path),
-           let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: url)
+        for directory in irisDriveDebugLogDirectories() {
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+                let url = directory.appendingPathComponent("macos-app-debug.log")
+                if FileManager.default.fileExists(atPath: url.path),
+                   let handle = try? FileHandle(forWritingTo: url) {
+                    defer { try? handle.close() }
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                } else {
+                    try data.write(to: url)
+                }
+                break
+            } catch {
+                continue
+            }
         }
     }
-    #endif
+}
+
+private func irisDriveDebugLogDirectories() -> [URL] {
+    var directories = [URL]()
+    if let support = FileManager.default.urls(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask
+    ).first {
+        directories.append(
+            support
+                .appendingPathComponent("Iris Drive", isDirectory: true)
+                .appendingPathComponent("Logs", isDirectory: true)
+        )
+    }
+    directories.append(
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("Iris Drive", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+    )
+    return directories
 }
 
 private func ensureFileProviderDomainRegistered(
     attempt: Int = 1,
+    runtime: FileProviderRuntimeConfig,
     _ completion: @escaping (FileProviderDomainState) -> Void
 ) {
-    fileProviderDomainExists { exists in
-        if exists {
-            irisDriveDebugLog("Iris Drive FileProvider domain already registered")
-            completion(.registered)
-            return
-        }
-
-        addFileProviderDomain(attempt: attempt, completion)
-    }
+    addFileProviderDomain(attempt: attempt, runtime: runtime, completion)
 }
 
 private func addFileProviderDomain(
     attempt: Int,
+    runtime: FileProviderRuntimeConfig,
     _ completion: @escaping (FileProviderDomainState) -> Void
 ) {
+    irisDriveDebugLog(
+        "Iris Drive FileProvider registration attempt \(attempt) " +
+        "config=\(runtime.configDirectory) idrive=\(runtime.idriveExecutable ?? "nil")"
+    )
     let domain = NSFileProviderDomain(
         identifier: irisDriveDomainIdentifier,
         displayName: irisDriveDisplayName
     )
+    if #available(macOS 15.0, *) {
+        domain.userInfo = runtime.domainUserInfo
+    }
     #if DEBUG
     if currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode") {
         domain.testingModes = [.alwaysEnabled]
@@ -1510,7 +1563,11 @@ private func addFileProviderDomain(
                         "Iris Drive FileProvider registration attempt \(attempt) failed; retrying in \(delay)s: \(error)"
                     )
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
-                        ensureFileProviderDomainRegistered(attempt: attempt + 1, completion)
+                        ensureFileProviderDomainRegistered(
+                            attempt: attempt + 1,
+                            runtime: runtime,
+                            completion
+                        )
                     }
                     return
                 }
@@ -1562,34 +1619,4 @@ private func currentProcessTeamIdentifier() -> String? {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
-}
-
-private func currentProcessAppGroupIdentifier() -> String? {
-    guard let groups = currentProcessEntitlementValue("com.apple.security.application-groups")
-            as? [String]
-    else {
-        return nil
-    }
-
-    if groups.contains(irisDriveCanonicalAppGroupIdentifier) {
-        return irisDriveCanonicalAppGroupIdentifier
-    }
-
-    if let team = currentProcessTeamIdentifier() {
-        let teamGroup = "\(team).\(irisDriveTeamAppGroupName)"
-        if groups.contains(teamGroup) {
-            return teamGroup
-        }
-    }
-
-    return groups.first { group in
-        group.hasSuffix(".\(irisDriveTeamAppGroupName)")
-    }
-}
-
-private func currentProcessAppGroupContainerURL() -> URL? {
-    guard let group = currentProcessAppGroupIdentifier() else { return nil }
-    return FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: group
-    )
 }

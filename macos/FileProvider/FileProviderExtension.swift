@@ -6,6 +6,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
+        FileProviderStorage.configure(domain: domain)
     }
 
     func invalidate() {}

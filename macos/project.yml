@@ -18,10 +18,6 @@ targets:
   IrisDriveMac:
     type: application
     platform: macOS
-    attributes:
-      SystemCapabilities:
-        com.apple.ApplicationGroups.iOS:
-          enabled: 1
     sources:
       - path: Sources
       - path: Resources
@@ -30,6 +26,7 @@ targets:
         PRODUCT_NAME: Iris Drive
         PRODUCT_MODULE_NAME: IrisDriveMac
         CODE_SIGN_ENTITLEMENTS: IrisDriveMac.entitlements
+        ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Drive
       configs:
@@ -41,10 +38,6 @@ targets:
   IrisDriveFileProvider:
     type: app-extension
     platform: macOS
-    attributes:
-      SystemCapabilities:
-        com.apple.ApplicationGroups.iOS:
-          enabled: 1
     sources:
       - path: FileProvider
     settings:
@@ -53,6 +46,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.macos.FileProvider
         PRODUCT_MODULE_NAME: IrisDriveFileProvider
         CODE_SIGN_ENTITLEMENTS: FileProvider/FileProvider.entitlements
+        ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: FileProvider/Info.plist
         SKIP_INSTALL: YES
       configs:

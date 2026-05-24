@@ -76,10 +76,6 @@ development_team() {
   printf '%s' "${IRIS_DRIVE_DEVELOPMENT_TEAM:-}"
 }
 
-macos_app_group_identifier() {
-  printf 'group.to.iris.drive\n'
-}
-
 xcode_app_entitlements() {
   local entitlements="$DERIVED_DATA/Build/Intermediates.noindex/IrisDriveMac.build/$CONFIGURATION/IrisDriveMac.build/Iris Drive.app.xcent"
   if [[ -f "$entitlements" ]]; then
@@ -179,7 +175,6 @@ build_xcode_app() {
       exit 2
     fi
     args+=(DEVELOPMENT_TEAM="$team")
-    args+=(REGISTER_APP_GROUPS=YES)
     if [[ "${IRIS_DRIVE_ALLOW_PROVISIONING_UPDATES:-1}" != "0" ]]; then
       args+=("${auth_args[@]}" -allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     fi

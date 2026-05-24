@@ -761,18 +761,10 @@ write_macos_fileprovider_runtime() {
   local app_base="$1"
   local config_dir="$2"
   local idrive_path="$3"
-  local app_group
-  app_group="$(macos_app_group_identifier)"
   local runtime_dirs=(
     "$app_base"
     "$HOME/Library/Application Support/Iris Drive"
   )
-
-  case "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}}" in
-    1|true|TRUE|yes|YES|on|ON)
-      runtime_dirs+=("$HOME/Library/Group Containers/$app_group")
-      ;;
-  esac
 
   python3 - "$config_dir" "$idrive_path" "${runtime_dirs[@]}" <<'PY'
 import json
@@ -803,10 +795,6 @@ macos_fileprovider_required() {
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-macos_app_group_identifier() {
-  printf 'group.to.iris.drive\n'
 }
 
 unlock_macos_build_keychain() {
@@ -898,7 +886,6 @@ xcodebuild_macos_app() {
       CODE_SIGN_STYLE=Automatic
       CODE_SIGNING_ALLOWED=YES
       "CODE_SIGN_IDENTITY=Apple Development"
-      REGISTER_APP_GROUPS=YES
     )
     if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}" ]]; then
       args+=("DEVELOPMENT_TEAM=$IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM")
@@ -1060,8 +1047,6 @@ sign_macos_app() {
   local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
   local appex_dev_entitlements=""
-  local app_group
-  app_group="$(macos_app_group_identifier)"
 
   if macos_fileprovider_required; then
     [[ -f "$xcode_app_entitlements" ]] && app_entitlements="$xcode_app_entitlements"
@@ -1089,10 +1074,6 @@ sign_macos_app() {
 <dict>
   <key>com.apple.security.app-sandbox</key>
   <true/>
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>$app_group</string>
-  </array>
   <key>com.apple.security.network.client</key>
   <true/>
   <key>com.apple.security.network.server</key>
@@ -1107,10 +1088,6 @@ EOF
 <dict>
   <key>com.apple.security.app-sandbox</key>
   <true/>
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>$app_group</string>
-  </array>
   <key>com.apple.security.network.client</key>
   <true/>
 </dict>
@@ -1118,7 +1095,7 @@ EOF
 EOF
     app_entitlements="$app_dev_entitlements"
     appex_entitlements="$appex_dev_entitlements"
-    log "codesigning macOS app ad-hoc with app-group dev entitlements"
+    log "codesigning macOS app ad-hoc with dev entitlements"
   else
     log "codesigning macOS app with identity: $sign_identity"
   fi

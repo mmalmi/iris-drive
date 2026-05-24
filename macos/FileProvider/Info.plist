@@ -22,8 +22,6 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>NSExtension</key>
   <dict>
-    <key>NSExtensionFileProviderDocumentGroup</key>
-    <string>group.to.iris.drive</string>
     <key>NSExtensionFileProviderSupportsEnumeration</key>
     <true/>
     <key>NSExtensionFileProviderAppliesChangesAtomically</key>

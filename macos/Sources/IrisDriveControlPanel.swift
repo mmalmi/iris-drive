@@ -69,10 +69,15 @@ struct IrisDriveControlPanel: View {
     ]
 
     var body: some View {
-        if !status.initialized {
-            setup
-        } else {
-            controlPanel
+        Group {
+            if !status.initialized {
+                setup
+            } else {
+                controlPanel
+            }
+        }
+        .onAppear {
+            controller.ensureFileProviderDomain()
         }
     }
 
