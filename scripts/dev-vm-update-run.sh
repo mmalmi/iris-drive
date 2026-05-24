@@ -1323,9 +1323,43 @@ REMOTE_PS
   esac
 }
 
+print_host_macos_vm_nat_diagnostics() {
+  local has_macos=0
+  local i
+
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  for i in "${!LABELS[@]}"; do
+    if [[ "${KINDS[$i]}" == "macos" ]]; then
+      has_macos=1
+      break
+    fi
+  done
+  [[ "$has_macos" == "1" ]] || return 0
+  if ! ifconfig bridge100 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local bridge_ipv4
+  local forwarding
+  local default_iface
+  bridge_ipv4="$(ifconfig bridge100 2>/dev/null | awk '/inet / { print $2; exit }')"
+  forwarding="$(sysctl -n net.inet.ip.forwarding 2>/dev/null || true)"
+  default_iface="$(route -n get default 2>/dev/null | awk '/interface:/ { print $2; exit }')"
+
+  printf '[dev-vms] host macOS VM NAT diagnostics:\n' >&2
+  printf '[dev-vms]   bridge100_ipv4=%s\n' "${bridge_ipv4:-unknown}" >&2
+  printf '[dev-vms]   host_default_iface=%s\n' "${default_iface:-unknown}" >&2
+  printf '[dev-vms]   net.inet.ip.forwarding=%s\n' "${forwarding:-unknown}" >&2
+  if [[ "$forwarding" != "1" ]]; then
+    printf '[dev-vms]   warning=host IPv4 forwarding is disabled; macOS VM IPv4-only FIPS bootstrap peers will be unreachable\n' >&2
+  fi
+}
+
 print_connectivity_diagnostics() {
   local i
   local status=""
+
+  print_host_macos_vm_nat_diagnostics
 
   for i in "${!LABELS[@]}"; do
     printf '[dev-vms] %s diagnostics:\n' "${LABELS[$i]}" >&2
@@ -1338,10 +1372,14 @@ data = json.loads(os.environ["STATUS_JSON"])
 network = data.get("network") or {}
 fips = network.get("fips") or {}
 relays = network.get("relay_statuses") or []
+fips_relays = fips.get("relay_statuses") or []
 peers = data.get("peers") or []
 
 relay_summary = ", ".join(
     f"{relay.get('url')}:{relay.get('status')}" for relay in relays
+)
+fips_relay_summary = ", ".join(
+    f"{relay.get('url')}:{relay.get('status')}" for relay in fips_relays
 )
 peer_summary = ", ".join(
     f"{peer.get('label')}:{peer.get('fips_online')}:{peer.get('sync_state')}"
@@ -1352,6 +1390,7 @@ print(f"nostr_discovery_app={fips.get('nostr_discovery_app')}")
 print(f"connected_peers={fips.get('connected_peers') or []}")
 print(f"mesh_peers={fips.get('mesh_peers') or []}")
 print(f"relay_statuses={relay_summary}")
+print(f"fips_relay_statuses={fips_relay_summary}")
 print(f"peers={peer_summary}")
 PY
     else

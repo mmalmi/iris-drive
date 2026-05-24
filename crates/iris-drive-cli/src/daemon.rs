@@ -409,6 +409,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "mesh_peers": sync.mesh_peer_ids().await,
         "authorized_peers": sync.authorized_peer_ids().await,
         "connected_peers": sync.connected_peer_ids().await,
+        "relay_statuses": sync.fips_relay_statuses().await,
     }))
 }
 
@@ -744,7 +745,8 @@ pub(crate) async fn pull_blocks_for_root(
     let mut errors = Vec::new();
     if let Some(sync) = fips_blocks {
         let connected_peers = sync.connected_peer_ids().await;
-        if connected_peers.is_empty() {
+        let mesh_peers = sync.mesh_peer_ids().await;
+        if connected_peers.is_empty() && mesh_peers.is_empty() {
             println!(
                 "{}",
                 json!({

@@ -362,6 +362,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
                 "mesh_peers": ["npub1remote"],
                 "authorized_peers": ["npub1remote"],
                 "connected_peers": ["npub1remote", "npub1outside"],
+                "relay_statuses": [{"url": "wss://relay.example", "status": "connected"}],
             },
         }))
         .unwrap(),
@@ -387,6 +388,10 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["roster_connected_peer_count"], 1);
     assert_eq!(fips["other_peer_count"], 1);
     assert_eq!(fips["connected_peer_count"], 2);
+    assert_eq!(
+        fips["relay_statuses"],
+        serde_json::json!([{"url": "wss://relay.example", "status": "connected"}])
+    );
 }
 
 #[test]

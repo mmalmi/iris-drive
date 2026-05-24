@@ -702,6 +702,10 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "authorized_peers": authorized_peers,
         "connected_peers": connected_peers,
         "mesh_peers": mesh_peers,
+        "relay_statuses": fips_status
+            .and_then(|status| status.get("relay_statuses"))
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         "error": error,
     })
 }

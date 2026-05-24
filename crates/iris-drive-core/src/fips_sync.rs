@@ -15,7 +15,7 @@ use hashtree_core::{
 };
 use hashtree_fips_transport::{
     FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
-    HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
+    FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -191,6 +191,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
         self.transport.connected_peer_ids().await
+    }
+
+    pub async fn fips_relay_statuses(&self) -> Vec<FipsRelayStatus> {
+        self.transport.relay_statuses().await
     }
 
     #[must_use]
