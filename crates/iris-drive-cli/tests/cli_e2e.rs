@@ -352,6 +352,13 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
             "fips_block_sync": {
                 "endpoint_npub": "npub1local",
                 "discovery_scope": "iris-drive-v1:owner",
+                "udp_enabled": true,
+                "udp_bind_addr": "0.0.0.0:2121",
+                "udp_public": true,
+                "udp_external_addr": "10.44.94.98:2121",
+                "webrtc_enabled": true,
+                "mesh_peer_count": 1,
+                "mesh_peers": ["npub1remote"],
                 "authorized_peers": ["npub1remote"],
                 "connected_peers": ["npub1remote", "npub1outside"],
             },
@@ -367,10 +374,67 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["fresh"], true);
     assert_eq!(fips["endpoint_npub"], "npub1local");
     assert_eq!(fips["discovery_scope"], "iris-drive-v1:owner");
+    assert_eq!(fips["udp_enabled"], true);
+    assert_eq!(fips["udp_bind_addr"], "0.0.0.0:2121");
+    assert_eq!(fips["udp_public"], true);
+    assert_eq!(fips["udp_external_addr"], "10.44.94.98:2121");
+    assert_eq!(fips["webrtc_enabled"], true);
+    assert_eq!(fips["mesh_peer_count"], 1);
+    assert_eq!(fips["mesh_peers"], serde_json::json!(["npub1remote"]));
     assert_eq!(fips["roster_peer_count"], 1);
     assert_eq!(fips["roster_connected_peer_count"], 1);
     assert_eq!(fips["other_peer_count"], 1);
     assert_eq!(fips["connected_peer_count"], 2);
+}
+
+#[test]
+fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_npub, "--label", "ubuntu-dev"],
+    );
+    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        owner_dir.path().join("daemon.lock"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        owner_dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": now,
+            "fips_block_sync": {
+                "endpoint_npub": "npub1local",
+                "authorized_peers": [linked_device_npub.clone()],
+                "connected_peers": [],
+                "mesh_peers": [linked_device_npub.clone()],
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = run_json(owner_dir.path(), &["status"]);
+    let linked_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["device_npub"] == linked_device_npub)
+        .expect("linked device peer");
+    assert_eq!(linked_peer["fips_online"], true);
+    assert_eq!(linked_peer["fips_direct_online"], false);
+    assert_eq!(linked_peer["fips_mesh_online"], true);
+    assert_eq!(linked_peer["fips_online_via"], "mesh");
 }
 
 #[test]

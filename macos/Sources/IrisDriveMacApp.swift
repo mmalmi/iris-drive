@@ -50,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
     private var openControlPanelWindow: (() -> Void)?
+    private var peerStatusRefreshWorkItem: DispatchWorkItem?
+    private var lastPeerStatusRefreshAt = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -998,6 +1000,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
 
+            if json["fips_block_sync"] != nil {
+                self.schedulePeerStatusRefresh()
+            }
+
             if let rootCID = json["root_cid"] as? String {
                 status.rootCID = rootCID
             }
@@ -1056,6 +1062,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSLog("Iris Drive status refresh failed: \(error)")
             }
         }
+    }
+
+    private func schedulePeerStatusRefresh() {
+        guard peerStatusRefreshWorkItem == nil else { return }
+        let elapsed = Date().timeIntervalSince(lastPeerStatusRefreshAt)
+        let delay = max(0, 5 - elapsed)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.peerStatusRefreshWorkItem = nil
+            self.lastPeerStatusRefreshAt = Date()
+            self.refreshStatus()
+        }
+        peerStatusRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func setDaemonRunning(_ running: Bool) {

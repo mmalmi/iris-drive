@@ -55,6 +55,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     mesh_pubsub: FipsMeshPubsub<L>,
     endpoint_npub: String,
     discovery_scope: String,
+    transport_settings: FipsTransportSettings,
 }
 
 pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
@@ -72,20 +73,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .to_bech32()
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
-        let endpoint = Box::pin(bind_fips_endpoint(FipsEndpointOptions {
+        let transport_settings = FipsTransportSettings::from_env();
+        let endpoint = Box::pin(bind_fips_endpoint(fips_endpoint_options(
             identity_nsec,
-            discovery_scope: discovery_scope.clone(),
-            relays: config.relays.clone(),
-            enable_udp: true,
-            enable_webrtc: true,
-            udp_bind_addr: None,
-            udp_public: false,
-            udp_external_addr: None,
-            webrtc_auto_connect: true,
-            webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
-            open_discovery_max_pending: 0,
-            packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
-        }))
+            discovery_scope.clone(),
+            config.relays.clone(),
+            &transport_settings,
+        )))
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
@@ -113,6 +107,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             mesh_pubsub,
             endpoint_npub: endpoint.local_peer_id,
             discovery_scope,
+            transport_settings,
         })
     }
 
@@ -124,6 +119,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     #[must_use]
     pub fn discovery_scope(&self) -> &str {
         &self.discovery_scope
+    }
+
+    #[must_use]
+    pub fn transport_settings(&self) -> &FipsTransportSettings {
+        &self.transport_settings
     }
 
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
@@ -195,8 +195,91 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.mesh_pubsub.peer_count().await
     }
 
+    pub async fn mesh_peer_ids(&self) -> Vec<String> {
+        self.mesh_pubsub.peer_ids().await
+    }
+
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
         download_tree_with_transport(self.local_store.clone(), root, self.transport.clone()).await
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FipsTransportSettings {
+    pub enable_udp: bool,
+    pub enable_webrtc: bool,
+    pub udp_bind_addr: Option<String>,
+    pub udp_public: bool,
+    pub udp_external_addr: Option<String>,
+}
+
+impl Default for FipsTransportSettings {
+    fn default() -> Self {
+        Self {
+            enable_udp: true,
+            enable_webrtc: true,
+            udp_bind_addr: None,
+            udp_public: false,
+            udp_external_addr: None,
+        }
+    }
+}
+
+impl FipsTransportSettings {
+    #[must_use]
+    pub fn from_env() -> Self {
+        let udp_bind_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR");
+        let udp_external_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR");
+        let udp_public =
+            bool_env("IRIS_DRIVE_FIPS_UDP_PUBLIC").unwrap_or_else(|| udp_external_addr.is_some());
+        Self {
+            enable_udp: bool_env("IRIS_DRIVE_FIPS_ENABLE_UDP").unwrap_or(true),
+            enable_webrtc: bool_env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC").unwrap_or(true),
+            udp_bind_addr,
+            udp_public,
+            udp_external_addr,
+        }
+    }
+}
+
+fn fips_endpoint_options(
+    identity_nsec: String,
+    discovery_scope: String,
+    relays: Vec<String>,
+    settings: &FipsTransportSettings,
+) -> FipsEndpointOptions {
+    FipsEndpointOptions {
+        identity_nsec,
+        discovery_scope,
+        relays,
+        enable_udp: settings.enable_udp,
+        enable_webrtc: settings.enable_webrtc,
+        udp_bind_addr: settings.udp_bind_addr.clone(),
+        udp_public: settings.udp_public,
+        udp_external_addr: settings.udp_external_addr.clone(),
+        webrtc_auto_connect: true,
+        webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
+        open_discovery_max_pending: 0,
+        packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
+    }
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn bool_env(name: &str) -> Option<bool> {
+    parse_bool_env_value(std::env::var(name).ok()?.trim())
+}
+
+fn parse_bool_env_value(value: &str) -> Option<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -480,5 +563,62 @@ mod tests {
             discovery_scope(&config),
             format!("{IRIS_DRIVE_FIPS_SCOPE_PREFIX}:{}", "aa".repeat(32))
         );
+    }
+
+    #[test]
+    fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
+        let settings = FipsTransportSettings {
+            enable_udp: true,
+            enable_webrtc: true,
+            udp_bind_addr: Some("0.0.0.0:2121".to_string()),
+            udp_public: true,
+            udp_external_addr: Some("10.44.94.98:2121".to_string()),
+        };
+
+        let options = fips_endpoint_options(
+            "nsec1example".to_string(),
+            "iris-drive-v1:test".to_string(),
+            vec!["wss://relay.example".to_string()],
+            &settings,
+        );
+
+        assert!(options.enable_udp);
+        assert!(options.enable_webrtc);
+        assert_eq!(options.udp_bind_addr.as_deref(), Some("0.0.0.0:2121"));
+        assert!(options.udp_public);
+        assert_eq!(
+            options.udp_external_addr.as_deref(),
+            Some("10.44.94.98:2121")
+        );
+        assert!(options.webrtc_auto_connect);
+    }
+
+    #[test]
+    fn endpoint_options_keep_native_udp_private_by_default() {
+        let settings = FipsTransportSettings::default();
+
+        let options = fips_endpoint_options(
+            "nsec1example".to_string(),
+            "iris-drive-v1:test".to_string(),
+            Vec::new(),
+            &settings,
+        );
+
+        assert!(options.enable_udp);
+        assert!(options.enable_webrtc);
+        assert!(!options.udp_public);
+        assert!(options.udp_bind_addr.is_none());
+        assert!(options.udp_external_addr.is_none());
+    }
+
+    #[test]
+    fn bool_env_parser_accepts_common_spellings() {
+        for value in ["1", "true", "TRUE", "yes", "on"] {
+            assert_eq!(parse_bool_env_value(value), Some(true));
+        }
+        for value in ["0", "false", "FALSE", "no", "off"] {
+            assert_eq!(parse_bool_env_value(value), Some(false));
+        }
+        assert_eq!(parse_bool_env_value("maybe"), None);
     }
 }

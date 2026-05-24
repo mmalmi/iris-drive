@@ -560,6 +560,8 @@ pub(crate) fn peer_statuses(
         .filter(|value| value.is_object());
     let connected_fips =
         string_set_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
+    let mesh_fips =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
     let authorized_fips =
         string_set_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
     let block_sync_by_root = daemon_status
@@ -578,10 +580,21 @@ pub(crate) fn peer_statuses(
                 .map(|root| root_file_count(config_dir, root).is_some());
             let device_npub = account_npub(&device.pubkey);
             let is_current_device = device.pubkey == account.device_pubkey;
+            let fips_direct_online = connected_fips.contains(&device_npub);
+            let fips_mesh_online = mesh_fips.contains(&device_npub);
             let fips_online = if is_current_device {
                 daemon_running && fips_status.is_some()
             } else {
-                connected_fips.contains(&device_npub)
+                fips_direct_online || fips_mesh_online
+            };
+            let fips_online_via = if is_current_device && fips_online {
+                Some("local")
+            } else if fips_direct_online {
+                Some("direct")
+            } else if fips_mesh_online {
+                Some("mesh")
+            } else {
+                None
             };
             let sync_state = device_sync_state(is_current_device, root.is_some(), root_available);
             let last_block_sync = root_cid
@@ -596,6 +609,9 @@ pub(crate) fn peer_statuses(
                 "added_at": device.added_at,
                 "fips_authorized": authorized_fips.contains(&device_npub),
                 "fips_online": fips_online,
+                "fips_direct_online": fips_direct_online,
+                "fips_mesh_online": fips_mesh_online,
+                "fips_online_via": fips_online_via,
                 "has_root": root.is_some(),
                 "root_cid": root_cid,
                 "root_private": root_private,
@@ -629,6 +645,8 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
     }
     let connected_peers =
         string_vec_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
+    let mesh_peers =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
     let authorized_set = authorized_peers.iter().cloned().collect::<BTreeSet<_>>();
     let connected_set = connected_peers.iter().cloned().collect::<BTreeSet<_>>();
     let roster_connected_peer_count = connected_set.intersection(&authorized_set).count();
@@ -670,7 +688,7 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "mesh_peer_count": fips_status
             .and_then(|status| status.get("mesh_peer_count"))
             .and_then(Value::as_u64)
-            .unwrap_or(0),
+            .unwrap_or(mesh_peers.len() as u64),
         "roster_peer_count": authorized_peers.len(),
         "roster_connected_peer_count": roster_connected_peer_count,
         "authorized_peer_count": authorized_peers.len(),
@@ -678,6 +696,7 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "other_peer_count": other_peer_count,
         "authorized_peers": authorized_peers,
         "connected_peers": connected_peers,
+        "mesh_peers": mesh_peers,
         "error": error,
     })
 }

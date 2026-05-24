@@ -395,9 +395,17 @@ pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serd
 
 pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Option<Value> {
     let sync = sync?;
+    let transport = sync.transport_settings();
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
+        "udp_enabled": transport.enable_udp,
+        "udp_bind_addr": transport.udp_bind_addr.as_deref(),
+        "udp_public": transport.udp_public,
+        "udp_external_addr": transport.udp_external_addr.as_deref(),
+        "webrtc_enabled": transport.enable_webrtc,
+        "mesh_peer_count": sync.mesh_peer_count().await,
+        "mesh_peers": sync.mesh_peer_ids().await,
         "authorized_peers": sync.authorized_peer_ids().await,
         "connected_peers": sync.connected_peer_ids().await,
     }))
