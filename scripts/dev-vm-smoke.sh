@@ -42,6 +42,15 @@ if (-not (Test-Path \$Idrive)) {
 REMOTE_PS
 }
 
+macos_idrive_json() {
+  local args=("$@")
+  ssh "$MACOS_REMOTE" 'bash -se' "${args[@]}" <<'REMOTE_SH'
+set -Eeuo pipefail
+config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" "$@"
+REMOTE_SH
+}
+
 ubuntu_provider_has() {
   local path="$1"
   ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
@@ -268,9 +277,31 @@ rm -rf "$HOME/Iris Drive/$path"
 REMOTE_SH
 }
 
+write_macos_provider_file() {
+  local path="$1"
+  local content="$2"
+  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$content" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+content="$2"
+config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Containers/to.iris.drive.macos/Data/Library/Application Support/Iris Drive Dev}/Config"
+tmp="$(mktemp -t iris-drive-macos-provider-write)"
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' "$content" > "$tmp"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
+REMOTE_SH
+}
+
+delete_macos_provider_path() {
+  local path="$1"
+  macos_idrive_json provider delete "$path" >/dev/null
+}
+
 run_sync_smoke() {
   local windows_file="$SMOKE_DIR/from-windows.txt"
   local ubuntu_file="$SMOKE_DIR/from-ubuntu-placeholder.txt"
+  local macos_file="$SMOKE_DIR/from-macos-provider.txt"
+  local macos_delete_file="$SMOKE_DIR/delete-from-macos-provider.txt"
 
   log "checking Windows-origin create then Ubuntu-origin delete"
   write_windows_file "$windows_file" "from windows $RUN_ID"
@@ -288,6 +319,24 @@ run_sync_smoke() {
   wait_for "Windows placeholder delete removes Ubuntu file" 75 wait_ubuntu_missing "$ubuntu_file"
   wait_for "Windows placeholder delete removes Windows provider file" 75 windows_provider_missing "$ubuntu_file"
   wait_for "Windows placeholder delete removes macOS provider file" 75 macos_provider_missing "$ubuntu_file"
+
+  log "checking macOS-origin provider create then Windows-origin delete"
+  write_macos_provider_file "$macos_file" "from macos $RUN_ID"
+  wait_for "macOS provider file reaches Ubuntu" 60 wait_ubuntu_file_has "$macos_file"
+  wait_for "macOS provider file reaches Windows disk" 60 wait_windows_disk_has "$macos_file"
+  wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" 60 wait_windows_disk_reparse "$macos_file"
+  delete_windows_path "$macos_file"
+  wait_for "Windows delete removes macOS provider file" 75 macos_provider_missing "$macos_file"
+  wait_for "Windows delete removes Ubuntu copy of macOS file" 75 wait_ubuntu_missing "$macos_file"
+
+  log "checking Ubuntu-origin create then macOS-origin provider delete"
+  write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
+  wait_for "Ubuntu file reaches macOS provider" 60 macos_provider_has "$macos_delete_file"
+  wait_for "Ubuntu file reaches Windows disk before macOS delete" 60 wait_windows_disk_has "$macos_delete_file"
+  delete_macos_provider_path "$macos_delete_file"
+  wait_for "macOS provider delete removes Ubuntu file" 75 wait_ubuntu_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Windows disk file" 75 wait_windows_disk_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Windows provider file" 75 windows_provider_missing "$macos_delete_file"
 
   delete_ubuntu_path "$SMOKE_DIR" || true
 }

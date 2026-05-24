@@ -229,23 +229,47 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 let bytes = std::fs::read(&source)
                     .with_context(|| format!("reading {}", source.display()))?;
                 write_provider_file(&provider, &path, &bytes).await?;
-                print_provider_mutation(&mut daemon, &provider, &path).await?;
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    Some(visible.root_cid.clone()),
+                )
+                .await?;
             }
             ProviderCmd::Mkdir { path } => {
                 let path = normalize_provider_path(&path)?;
                 create_provider_dir(&provider, &path).await?;
-                print_provider_mutation(&mut daemon, &provider, &path).await?;
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    Some(visible.root_cid.clone()),
+                )
+                .await?;
             }
             ProviderCmd::Delete { path } => {
                 let path = normalize_provider_path(&path)?;
                 delete_provider_path(&provider, &path).await?;
-                print_provider_mutation(&mut daemon, &provider, &path).await?;
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    Some(visible.root_cid.clone()),
+                )
+                .await?;
             }
             ProviderCmd::Rename { old_path, new_path } => {
                 let old_path = normalize_provider_path(&old_path)?;
                 let new_path = normalize_provider_path(&new_path)?;
                 rename_provider_path(&provider, &old_path, &new_path).await?;
-                print_provider_mutation(&mut daemon, &provider, &new_path).await?;
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &new_path,
+                    Some(visible.root_cid.clone()),
+                )
+                .await?;
             }
         }
 
@@ -388,9 +412,12 @@ async fn print_provider_mutation(
     daemon: &mut Daemon,
     provider: &HashTreeProviderFs<FsBlobStore>,
     changed_path: &str,
+    tombstone_base_root: Option<Cid>,
 ) -> Result<()> {
     let root = provider.current_root().await;
-    let report = daemon.import_visible_root(root).await?;
+    let report = daemon
+        .import_visible_root_with_tombstone_base(root, tombstone_base_root)
+        .await?;
     println!(
         "{}",
         json!({
@@ -427,6 +454,113 @@ fn split_provider_path(path: &str) -> Result<(String, String)> {
     let name = parts.next().unwrap_or_default().to_string();
     let parent = parts.next().unwrap_or_default().to_string();
     Ok((parent, name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iris_drive_core::root_meta::DriveRootMeta;
+
+    fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveRootMeta) {
+        let account = Account::create(config_dir, Some("local".into())).unwrap();
+        let remote = iris_drive_core::identity::Identity::generate(config_dir.join("remote.key"))
+            .pubkey_hex();
+        let mut config = AppConfig {
+            account: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
+        let state = config.account.as_mut().unwrap();
+        state
+            .app_keys
+            .as_mut()
+            .unwrap()
+            .devices
+            .push(iris_drive_core::app_keys::DeviceEntry {
+                pubkey: remote.clone(),
+                added_at: 100,
+                label: Some("remote".into()),
+            });
+        state.app_keys.as_mut().unwrap().normalize();
+        config.save(config_path_in(config_dir)).unwrap();
+
+        let remote_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.into(),
+            device_id: remote.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 100,
+        };
+        (account, remote, remote_meta)
+    }
+
+    #[test]
+    fn provider_delete_tombstones_foreign_visible_files() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let remote_root = runtime.block_on(async {
+            let daemon = Daemon::open(config_dir.path()).unwrap();
+            let remote_dir = tempfile::tempdir().unwrap();
+            std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+            iris_drive_core::indexer::index_dir_with_history_and_meta(
+                daemon.tree(),
+                remote_dir.path(),
+                None,
+                remote_meta.created_at,
+                Some(&remote_meta),
+            )
+            .await
+            .unwrap()
+        });
+
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+        let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            remote.clone(),
+            DeviceRootRef::from_meta(
+                remote_root.to_string(),
+                remote_meta.created_at,
+                &remote_meta,
+            ),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Delete {
+                path: "foreign.txt".into(),
+            },
+        )
+        .unwrap();
+
+        runtime.block_on(async {
+            let daemon = Daemon::open(config_dir.path()).unwrap();
+            let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                .await
+                .unwrap();
+            assert!(
+                merged
+                    .view
+                    .files
+                    .iter()
+                    .all(|entry| entry.path != "foreign.txt")
+            );
+            assert_eq!(
+                merged.view.suppressed_by_tombstone,
+                vec!["foreign.txt".to_string()]
+            );
+        });
+    }
 }
 
 pub(crate) async fn walk_device_tree(
