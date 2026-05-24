@@ -59,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
+    private var fileProviderRepairInFlight = false
+    private var lastFileProviderRepairAt = Date.distantPast
+    private var startupFileProviderDomainResetDone = false
     private var statusRefreshTimer: Timer?
     private var externalStatusFileSource: DispatchSourceFileSystemObject?
     private var externalStatusDirectorySource: DispatchSourceFileSystemObject?
@@ -96,11 +99,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 guard let self else { return }
                 let runtime = self.currentFileProviderRuntimeConfig()
-                ensureFileProviderDomainRegistered(runtime: runtime) { state in
+                let resetDomain =
+                    self.resetFileProviderDomainOnStart && !self.startupFileProviderDomainResetDone
+                self.startupFileProviderDomainResetDone = true
+                let completion: (FileProviderDomainState) -> Void = { state in
                     DispatchQueue.main.async {
                         self.fileProviderRegistrationInFlight = false
                         self.fileProviderDomainState = state
                     }
+                }
+                if resetDomain {
+                    resetFileProviderDomain(
+                        reason: "startup reset requested",
+                        runtime: runtime,
+                        completion
+                    )
+                } else {
+                    ensureFileProviderDomainRegistered(runtime: runtime, completion)
                 }
             }
         } else {
@@ -1103,6 +1118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environmentFlag("IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL")
     }
 
+    private var resetFileProviderDomainOnStart: Bool {
+        environmentFlag("IRIS_DRIVE_FILEPROVIDER_RESET_ON_START")
+    }
+
     private var fileProviderIntegrationEnabled: Bool {
         guard !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER") else {
             return false
@@ -1479,23 +1498,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func signalFileProviderDomain() {
         guard fileProviderIntegrationEnabled else { return }
-        let domain = NSFileProviderDomain(
-            identifier: irisDriveDomainIdentifier,
-            displayName: irisDriveDisplayName
-        )
+        let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else { return }
-        manager.signalEnumerator(for: .rootContainer) { error in
-            if let error {
-                NSLog("Iris Drive FileProvider signal root failed: \(error)")
-            } else {
-                NSLog("Iris Drive FileProvider signal root ok")
-            }
-        }
         manager.signalEnumerator(for: .workingSet) { error in
             if let error {
                 NSLog("Iris Drive FileProvider signal working set failed: \(error)")
+                DispatchQueue.main.async {
+                    self.repairFileProviderDomainAfterSignalFailure(error)
+                }
             } else {
                 NSLog("Iris Drive FileProvider signal working set ok")
+            }
+        }
+    }
+
+    private func repairFileProviderDomainAfterSignalFailure(_ error: Error) {
+        guard shouldRepairFileProviderDomain(after: error) else { return }
+        guard !fileProviderRepairInFlight else { return }
+
+        let now = Date()
+        guard now.timeIntervalSince(lastFileProviderRepairAt) >= 30 else {
+            return
+        }
+
+        fileProviderRepairInFlight = true
+        lastFileProviderRepairAt = now
+        let runtime = currentFileProviderRuntimeConfig()
+        resetFileProviderDomain(
+            reason: "signal failure: \((error as NSError).domain) \((error as NSError).code)",
+            runtime: runtime
+        ) { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.fileProviderRepairInFlight = false
+                self.fileProviderDomainState = state
+                if state == .registered {
+                    self.signalFileProviderDomain()
+                }
             }
         }
     }
@@ -1743,6 +1782,41 @@ private func ensureFileProviderDomainRegistered(
     addFileProviderDomain(attempt: attempt, runtime: runtime, completion)
 }
 
+private func irisDriveFileProviderDomain(
+    runtime: FileProviderRuntimeConfig? = nil
+) -> NSFileProviderDomain {
+    let domain = NSFileProviderDomain(
+        identifier: irisDriveDomainIdentifier,
+        displayName: irisDriveDisplayName
+    )
+    if let runtime, #available(macOS 15.0, *) {
+        domain.userInfo = runtime.domainUserInfo
+    }
+    #if DEBUG
+    if currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode") {
+        domain.testingModes = [.alwaysEnabled]
+    }
+    #endif
+    return domain
+}
+
+private func resetFileProviderDomain(
+    reason: String,
+    runtime: FileProviderRuntimeConfig,
+    _ completion: @escaping (FileProviderDomainState) -> Void
+) {
+    let domain = irisDriveFileProviderDomain(runtime: runtime)
+    irisDriveDebugLog("Iris Drive FileProvider domain reset: \(reason)")
+    NSFileProviderManager.remove(domain) { error in
+        if let error {
+            irisDriveDebugLog("Iris Drive FileProvider domain remove during reset failed: \(error)")
+        } else {
+            irisDriveDebugLog("Iris Drive FileProvider domain removed during reset")
+        }
+        ensureFileProviderDomainRegistered(runtime: runtime, completion)
+    }
+}
+
 private func addFileProviderDomain(
     attempt: Int,
     runtime: FileProviderRuntimeConfig,
@@ -1752,18 +1826,7 @@ private func addFileProviderDomain(
         "Iris Drive FileProvider registration attempt \(attempt) " +
         "config=\(runtime.configDirectory) idrive=\(runtime.idriveExecutable ?? "nil")"
     )
-    let domain = NSFileProviderDomain(
-        identifier: irisDriveDomainIdentifier,
-        displayName: irisDriveDisplayName
-    )
-    if #available(macOS 15.0, *) {
-        domain.userInfo = runtime.domainUserInfo
-    }
-    #if DEBUG
-    if currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode") {
-        domain.testingModes = [.alwaysEnabled]
-    }
-    #endif
+    let domain = irisDriveFileProviderDomain(runtime: runtime)
 
     NSFileProviderManager.add(domain) { error in
         if let error {
@@ -1808,6 +1871,17 @@ private func fileProviderDomainExists(_ completion: @escaping (Bool) -> Void) {
         }
         completion(domains.contains { $0.identifier == irisDriveDomainIdentifier })
     }
+}
+
+private func shouldRepairFileProviderDomain(after error: Error) -> Bool {
+    let nsError = error as NSError
+    if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
+        return true
+    }
+    if nsError.domain == NSFileProviderErrorDomain && [-2001, -2014].contains(nsError.code) {
+        return true
+    }
+    return false
 }
 
 private func currentProcessEntitlementValue(_ name: String) -> Any? {

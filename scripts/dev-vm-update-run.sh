@@ -1055,6 +1055,7 @@ run_macos() {
     --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     --env "IRIS_DRIVE_APP_BASE_DIR=$app_base" \
     --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true" \
+    --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
     "$app"
   for _ in {1..30}; do
     if pgrep -x "Iris Drive" >/dev/null 2>&1; then
@@ -1214,6 +1215,7 @@ register_macos_app_bundle() {
   local built_app="$2"
   local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   local candidate
+  local stale_root
 
   [[ -x "$lsregister" ]] || return 0
   "$lsregister" -u "$built_app" >/dev/null 2>&1 || true
@@ -1234,6 +1236,16 @@ register_macos_app_bundle() {
           rm -rf "$candidate"
         done
   fi
+  for stale_root in /private/tmp/iris-drive-sign-tests /tmp/iris-drive-sign-tests; do
+    [[ -d "$stale_root" ]] || continue
+    find "$stale_root" \
+      -name "*.app" \
+      -type d -prune -print 2>/dev/null \
+      | while IFS= read -r candidate; do
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+        done
+    rm -rf "$stale_root"
+  done
   "$lsregister" -f -R -trusted "$app" >/dev/null 2>&1 || true
 }
 

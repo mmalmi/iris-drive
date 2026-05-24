@@ -344,7 +344,7 @@ macos_app_log_line_count() {
 macos_log_has_fileprovider_signal_after() {
   local before="$1"
   ssh "$MACOS_REMOTE" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true" \
-    | grep -F "Iris Drive FileProvider signal root ok" >/dev/null
+    | grep -F "Iris Drive FileProvider signal working set ok" >/dev/null
 }
 
 ubuntu_start_directory_monitor() {

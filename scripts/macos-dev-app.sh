@@ -169,6 +169,7 @@ register_app_bundle() {
   local built_app_path="$2"
   local lsregister
   local candidate
+  local stale_root
 
   lsregister="$(launch_services_tool)"
   [[ -x "$lsregister" ]] || return 0
@@ -191,6 +192,16 @@ register_app_bundle() {
           rm -rf "$candidate"
         done
   fi
+  for stale_root in /private/tmp/iris-drive-sign-tests /tmp/iris-drive-sign-tests; do
+    [[ -d "$stale_root" ]] || continue
+    find "$stale_root" \
+      -name "*.app" \
+      -type d -prune -print 2>/dev/null \
+      | while IFS= read -r candidate; do
+          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
+        done
+    rm -rf "$stale_root"
+  done
   "$lsregister" -f -R -trusted "$app_path" >/dev/null 2>&1 || true
 }
 
@@ -360,10 +371,15 @@ run_app() {
   terminate_running_app
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
-    open --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" "$app_path"
+    open \
+      --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" \
+      --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
+      "$app_path"
     echo "macOS app data: $app_base_dir"
   else
-    open "$app_path"
+    open \
+      --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
+      "$app_path"
   fi
   echo "macOS app launched: $app_path"
 }
