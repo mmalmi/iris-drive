@@ -120,8 +120,9 @@ public sealed class IrisDriveService
     public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
     {
         var entries = await ProviderEntriesAsync();
+        var preparation = WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
         WriteProviderPathCache(entries);
-        return WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
+        return preparation;
     }
 
     public bool DaemonLockIsRunning(IrisDriveStatusData status)
@@ -232,6 +233,7 @@ public sealed class IrisDriveService
             var paths = entries
                 .Select(entry => entry.Path)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Where(WindowsCloudFiles.SyncRootEntryExists)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToArray();

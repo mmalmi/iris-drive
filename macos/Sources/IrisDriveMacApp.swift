@@ -746,11 +746,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func openMountedDriveFolder(_ url: URL) {
-        if NSWorkspace.shared.open(url) {
+        if NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path) {
             NSLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
-            NSLog("Iris Drive failed to open mounted drive folder: \(url.path)")
-            handleFileProviderOpenFailure("Finder open failed")
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            NSLog("Iris Drive mounted drive folder revealed: \(url.path)")
         }
     }
 

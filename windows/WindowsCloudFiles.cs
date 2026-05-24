@@ -92,6 +92,18 @@ public static partial class WindowsCloudFiles
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Iris Drive");
 
+    public static bool SyncRootEntryExists(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrWhiteSpace(normalized) || PathHasIgnoredComponent(normalized))
+        {
+            return false;
+        }
+
+        var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(normalized));
+        return File.Exists(fullPath) || Directory.Exists(fullPath);
+    }
+
     public static DriveFolderPreparation EnsureSyncRoot(
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         Func<string, byte[]> readFile)

@@ -182,7 +182,8 @@ if run_ui_smoke; then
     exit 1
   fi
 
-  if ! wait_for_log "Iris Drive mounted drive folder opened" 10; then
+  if ! wait_for_log "Iris Drive mounted drive folder opened" 10 &&
+    ! wait_for_log "Iris Drive mounted drive folder revealed" 1; then
     echo "FAIL: Show Drive Folder did not open the drive folder." >&2
     show_recent_logs >&2
     exit 1

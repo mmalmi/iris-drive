@@ -672,6 +672,13 @@ async fn import_windows_cloud_root_changes_and_publish(
                 }
             }
             WindowsCloudRootChange::Rescan => {
+                for path in
+                    windows_cloud_missing_cached_provider_paths(sync_root, &placeholder_paths)?
+                {
+                    if apply_windows_cloud_delete(&provider, &path).await? {
+                        changed_paths.insert(path);
+                    }
+                }
                 for path in windows_cloud_local_materialized_paths(sync_root)? {
                     if apply_windows_cloud_upsert(&provider, sync_root, &path, &placeholder_paths)
                         .await?
@@ -912,6 +919,33 @@ fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
         paths.push(relative);
     }
     paths.sort();
+    Ok(paths)
+}
+
+fn windows_cloud_missing_cached_provider_paths(
+    root: &Path,
+    cached_paths: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for path in cached_paths {
+        let full_path = windows_cloud_full_path(root, path);
+        match std::fs::symlink_metadata(&full_path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                paths.push(path.clone());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("reading metadata for {}", full_path.display()));
+            }
+        }
+    }
+    paths.sort_by(|a, b| {
+        a.split('/')
+            .count()
+            .cmp(&b.split('/').count())
+            .then_with(|| a.cmp(b))
+    });
     Ok(paths)
 }
 
@@ -1585,6 +1619,32 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn windows_cloud_rescan_detects_deleted_cached_placeholder_paths() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(sync_root.path().join("present")).unwrap();
+        std::fs::write(sync_root.path().join("present").join("file.txt"), b"keep").unwrap();
+        let cached = BTreeSet::from([
+            "gone".to_string(),
+            "gone/child.txt".to_string(),
+            "gone.txt".to_string(),
+            "present".to_string(),
+            "present/file.txt".to_string(),
+        ]);
+
+        let missing =
+            windows_cloud_missing_cached_provider_paths(sync_root.path(), &cached).unwrap();
+
+        assert_eq!(
+            missing,
+            vec![
+                "gone".to_string(),
+                "gone.txt".to_string(),
+                "gone/child.txt".to_string(),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn windows_cloud_upsert_prunes_ignored_local_tree_from_provider() {
         let (_blocks, provider) = fresh_test_provider().await;
@@ -1614,8 +1674,8 @@ mod tests {
                 ".Trash-1000",
                 &BTreeSet::new(),
             )
-                .await
-                .unwrap()
+            .await
+            .unwrap()
         );
         let trash = ".Trash-1000".to_string();
         let keep = "keep.txt".to_string();
@@ -1668,8 +1728,8 @@ mod tests {
                 "remote.txt",
                 &BTreeSet::new(),
             )
-                .await
-                .unwrap()
+            .await
+            .unwrap()
         );
         assert_eq!(provider.current_root().await, before);
     }
@@ -1684,12 +1744,7 @@ mod tests {
         std::fs::create_dir(sync_root.path().join("existing")).unwrap();
 
         assert!(
-            !apply_windows_cloud_upsert(
-                &provider,
-                sync_root.path(),
-                "existing",
-                &BTreeSet::new(),
-            )
+            !apply_windows_cloud_upsert(&provider, sync_root.path(), "existing", &BTreeSet::new(),)
                 .await
                 .unwrap()
         );

@@ -21,6 +21,8 @@ info:
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
     @echo "  just lab"
+    @echo "  just lab-smoke"
+    @echo "  just lab-test"
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
@@ -96,6 +98,13 @@ dev-vms *args:
 
 lab *args:
     ./scripts/dev-lab.sh {{args}}
+
+lab-smoke:
+    ./scripts/dev-vm-smoke.sh
+
+lab-test *args:
+    just lab {{args}}
+    just lab-smoke
 
 release:
     cargo build --workspace --release
