@@ -265,7 +265,7 @@ run_posix_target() {
     printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
-    printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-8388608}")"
+    printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
 
@@ -495,6 +495,7 @@ run_macos() {
 
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
+  pkill -x idrive >/dev/null 2>&1 || true
   mkdir -p "$config_dir"
   if [[ ! -f "$config_dir/key" && -f "$legacy_app_base/Config/key" ]]; then
     log "migrating macOS dev app data into FileProvider app group"
