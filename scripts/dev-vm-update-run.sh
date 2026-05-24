@@ -5,9 +5,13 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HASHTREE_ROOT="${IRIS_DRIVE_HASHTREE_ROOT:-$(cd "$ROOT/../hashtree/rust" && pwd)}"
 HASHTREE_ROOT="$(git -C "$HASHTREE_ROOT" rev-parse --show-toplevel)"
+FIPS_ROOT="${IRIS_DRIVE_FIPS_ROOT:-$(cd "$ROOT/../fips" && pwd)}"
+FIPS_ROOT="$(git -C "$FIPS_ROOT" rev-parse --show-toplevel)"
 SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SYNC_BRANCH:-codex/dev-vm-sync}"
+FIPS_SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_FIPS_SYNC_BRANCH:-$SYNC_BRANCH}"
 TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_TARGET_BRANCH:-$(git -C "$ROOT" branch --show-current || true)}"
 TARGET_BRANCH="${TARGET_BRANCH:-master}"
+FIPS_TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_FIPS_TARGET_BRANCH:-$FIPS_SYNC_BRANCH}"
 FORCE=0
 FAIL_ON_DIRTY=0
 SKIP_PUSH=0
@@ -21,17 +25,18 @@ Usage:
   scripts/dev-vm-update-run.sh [--force|--fail-on-dirty] [--only macos|ubuntu|windows] [--skip-push] [--no-run]
   scripts/dev-vm-update-run.sh --list-targets
 
-Syncs the current committed iris-drive and hashtree revisions to the configured
-VM git remotes, updates the VM worktrees, builds, then restarts the dev app or
-daemon with native FIPS UDP over the nvpn overlay while keeping WebRTC enabled.
+Syncs the current committed iris-drive, hashtree, and fips revisions to the
+configured VM git remotes, updates the VM worktrees, builds, then restarts the
+dev app or daemon with native FIPS UDP over the nvpn overlay while keeping
+WebRTC enabled.
 
 Remote worktrees with local changes are auto-stashed before checkout. Use
 --fail-on-dirty to stop instead, or --force to discard tracked VM changes.
 
 Defaults are derived from local git remotes:
-  macos    iris-drive remote macos-utm, hashtree remote macos-utm
-  ubuntu   iris-drive remote ubuntu-dev, hashtree remote ubuntu-dev
-  windows  iris-drive remote win11-dev, hashtree remote win11-dev
+  macos    iris-drive, hashtree, and fips remote macos-utm
+  ubuntu   iris-drive, hashtree, and fips remote ubuntu-dev
+  windows  iris-drive, hashtree, and fips remote win11-dev
 
 Environment:
   IRIS_DRIVE_DEV_VM_MACOS_REMOTE      Git remote name for the macOS VM.
@@ -39,7 +44,13 @@ Environment:
   IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE    Git remote name for the Windows VM.
   IRIS_DRIVE_DEV_VM_FIPS_PORT         UDP port advertised over nvpn (default: 22121).
   IRIS_DRIVE_DEV_VM_SYNC_BRANCH       Temporary branch pushed to VM bare repos.
+  IRIS_DRIVE_DEV_VM_FIPS_SYNC_BRANCH  Temporary branch pushed for fips
+                                      (default: same as SYNC_BRANCH).
   IRIS_DRIVE_DEV_VM_TARGET_BRANCH     Branch name checked out in VM worktrees.
+  IRIS_DRIVE_DEV_VM_FIPS_TARGET_BRANCH
+                                      Branch checked out in VM fips worktrees
+                                      (default: FIPS sync branch, to avoid
+                                      clobbering local fips feature branches).
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
   IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM build caches below this free space.
   IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK=1
@@ -51,10 +62,12 @@ Environment:
                                       macOS codesign identity; defaults to first
                                       Apple Development identity, else ad-hoc.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
+  IRIS_DRIVE_FIPS_ROOT                Local fips checkout.
 
 Remote worktree paths are expected to be:
   ~/src/iris-drive
   ~/src/hashtree
+  ~/src/fips
 
 The script never git-cleans untracked files.
 USAGE
@@ -163,8 +176,10 @@ declare -a KINDS=()
 declare -a HOSTS=()
 declare -a IRIS_REMOTES=()
 declare -a HASHTREE_REMOTES=()
+declare -a FIPS_REMOTES=()
 declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
+declare -a FIPS_BARES=()
 STATIC_PEERS=""
 
 add_target_from_remotes() {
@@ -172,22 +187,27 @@ add_target_from_remotes() {
   local kind="$2"
   local iris_remote="$3"
   local hashtree_remote="$4"
+  local fips_remote="$5"
   local iris_parts
   local hashtree_parts
+  local fips_parts
   local host
   local hashtree_host
+  local fips_host
   local iris_bare
   local hashtree_bare
+  local fips_bare
 
   contains_label "$label" || return 0
 
   iris_parts="$(remote_url_parts "$ROOT" "$iris_remote" || true)"
   hashtree_parts="$(remote_url_parts "$HASHTREE_ROOT" "$hashtree_remote" || true)"
-  if [[ -z "$iris_parts" || -z "$hashtree_parts" ]]; then
+  fips_parts="$(remote_url_parts "$FIPS_ROOT" "$fips_remote" || true)"
+  if [[ -z "$iris_parts" || -z "$hashtree_parts" || -z "$fips_parts" ]]; then
     if [[ ${#ONLY_LABELS[@]} -gt 0 ]]; then
       die "missing git remotes for requested target $label"
     fi
-    log "skipping $label; missing git remote $iris_remote or hashtree remote $hashtree_remote"
+    log "skipping $label; missing git remote $iris_remote, hashtree remote $hashtree_remote, or fips remote $fips_remote"
     return 0
   fi
 
@@ -195,8 +215,13 @@ add_target_from_remotes() {
   iris_bare="${iris_parts#*$'\t'}"
   hashtree_host="${hashtree_parts%%$'\t'*}"
   hashtree_bare="${hashtree_parts#*$'\t'}"
+  fips_host="${fips_parts%%$'\t'*}"
+  fips_bare="${fips_parts#*$'\t'}"
   if [[ "$host" != "$hashtree_host" ]]; then
     die "$label iris-drive remote host ($host) differs from hashtree host ($hashtree_host)"
+  fi
+  if [[ "$host" != "$fips_host" ]]; then
+    die "$label iris-drive remote host ($host) differs from fips host ($fips_host)"
   fi
 
   LABELS+=("$label")
@@ -204,28 +229,34 @@ add_target_from_remotes() {
   HOSTS+=("$host")
   IRIS_REMOTES+=("$iris_remote")
   HASHTREE_REMOTES+=("$hashtree_remote")
+  FIPS_REMOTES+=("$fips_remote")
   IRIS_BARES+=("$iris_bare")
   HASHTREE_BARES+=("$hashtree_bare")
+  FIPS_BARES+=("$fips_bare")
 }
 
 warn_or_fail_local_dirty "$ROOT" "iris-drive"
 warn_or_fail_local_dirty "$HASHTREE_ROOT" "hashtree"
+warn_or_fail_local_dirty "$FIPS_ROOT" "fips"
 
 add_target_from_remotes \
   macos \
   macos \
   "${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}" \
-  "${IRIS_DRIVE_DEV_VM_MACOS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}}"
+  "${IRIS_DRIVE_DEV_VM_MACOS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}}" \
+  "${IRIS_DRIVE_DEV_VM_MACOS_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}}"
 add_target_from_remotes \
   ubuntu \
   linux \
   "${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}" \
-  "${IRIS_DRIVE_DEV_VM_UBUNTU_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}}"
+  "${IRIS_DRIVE_DEV_VM_UBUNTU_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}}" \
+  "${IRIS_DRIVE_DEV_VM_UBUNTU_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}}"
 add_target_from_remotes \
   windows \
   windows \
   "${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}" \
-  "${IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}}"
+  "${IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}}" \
+  "${IRIS_DRIVE_DEV_VM_WINDOWS_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}}"
 
 if [[ ${#LABELS[@]} -eq 0 ]]; then
   usage >&2
@@ -234,12 +265,13 @@ fi
 
 if [[ "$LIST_TARGETS" == "1" ]]; then
   for i in "${!LABELS[@]}"; do
-    printf '%s\t%s\t%s\tiris=%s\thashtree=%s\n' \
+    printf '%s\t%s\t%s\tiris=%s\thashtree=%s\tfips=%s\n' \
       "${LABELS[$i]}" \
       "${KINDS[$i]}" \
       "${HOSTS[$i]}" \
       "${IRIS_BARES[$i]}" \
-      "${HASHTREE_BARES[$i]}"
+      "${HASHTREE_BARES[$i]}" \
+      "${FIPS_BARES[$i]}"
   done
   exit 0
 fi
@@ -335,6 +367,8 @@ if [[ "$SKIP_PUSH" != "1" ]]; then
     git -C "$ROOT" push "${IRIS_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
     log "pushing hashtree HEAD to ${LABELS[$i]} (${HASHTREE_REMOTES[$i]}:$SYNC_BRANCH)"
     git -C "$HASHTREE_ROOT" push "${HASHTREE_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
+    log "pushing fips HEAD to ${LABELS[$i]} (${FIPS_REMOTES[$i]}:$FIPS_SYNC_BRANCH)"
+    git -C "$FIPS_ROOT" push "${FIPS_REMOTES[$i]}" "+HEAD:refs/heads/$FIPS_SYNC_BRANCH"
   done
 fi
 
@@ -344,14 +378,18 @@ run_posix_target() {
   local host="$3"
   local iris_bare="$4"
   local hashtree_bare="$5"
+  local fips_bare="$6"
 
   {
     printf 'LABEL=%s\n' "$(sh_quote "$label")"
     printf 'KIND=%s\n' "$(sh_quote "$kind")"
     printf 'IRIS_BARE=%s\n' "$(sh_quote "$iris_bare")"
     printf 'HASHTREE_BARE=%s\n' "$(sh_quote "$hashtree_bare")"
+    printf 'FIPS_BARE=%s\n' "$(sh_quote "$fips_bare")"
     printf 'SYNC_BRANCH=%s\n' "$(sh_quote "$SYNC_BRANCH")"
+    printf 'FIPS_SYNC_BRANCH=%s\n' "$(sh_quote "$FIPS_SYNC_BRANCH")"
     printf 'TARGET_BRANCH=%s\n' "$(sh_quote "$TARGET_BRANCH")"
+    printf 'FIPS_TARGET_BRANCH=%s\n' "$(sh_quote "$FIPS_TARGET_BRANCH")"
     printf 'FORCE=%s\n' "$(sh_quote "$FORCE")"
     printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
@@ -795,6 +833,7 @@ register_fileprovider_plugin() {
 
 ensure_build_space "$HOME/src/iris-drive" "repository sync"
 sync_repo "$HOME/src/hashtree" hashtree "$HASHTREE_BARE"
+SYNC_BRANCH="$FIPS_SYNC_BRANCH" TARGET_BRANCH="$FIPS_TARGET_BRANCH" sync_repo "$HOME/src/fips" fips "$FIPS_BARE"
 sync_repo "$HOME/src/iris-drive" iris-drive "$IRIS_BARE"
 case "$KIND" in
   macos) run_macos ;;
@@ -810,13 +849,17 @@ run_windows_target() {
   local host="$2"
   local iris_bare="$3"
   local hashtree_bare="$4"
+  local fips_bare="$5"
 
   {
     printf '$Label = %s\n' "$(ps_quote "$label")"
     printf '$IrisBare = %s\n' "$(ps_quote "$iris_bare")"
     printf '$HashtreeBare = %s\n' "$(ps_quote "$hashtree_bare")"
+    printf '$FipsBare = %s\n' "$(ps_quote "$fips_bare")"
     printf '$SyncBranch = %s\n' "$(ps_quote "$SYNC_BRANCH")"
+    printf '$FipsSyncBranch = %s\n' "$(ps_quote "$FIPS_SYNC_BRANCH")"
     printf '$TargetBranch = %s\n' "$(ps_quote "$TARGET_BRANCH")"
+    printf '$FipsTargetBranch = %s\n' "$(ps_quote "$FIPS_TARGET_BRANCH")"
     printf '$Force = %s\n' "$(ps_quote "$FORCE")"
     printf '$FailOnDirty = %s\n' "$(ps_quote "$FAIL_ON_DIRTY")"
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
@@ -859,22 +902,22 @@ function Prepare-Worktree([string]$Repo, [string]$Name) {
   if ($LASTEXITCODE -ne 0) { throw "git stash failed for $Name" }
 }
 
-function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare) {
+function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch = $SyncBranch, [string]$CheckoutBranch = $TargetBranch) {
   $Bare = Expand-RemotePath $Bare
   if (-not (Test-Path (Join-Path $Repo ".git"))) {
     throw "missing checkout: $Repo"
   }
   Prepare-Worktree $Repo $Name
   Write-Log "fetching $Name from $Bare"
-  git -C $Repo fetch $Bare $SyncBranch
+  git -C $Repo fetch $Bare $Branch
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $Name" }
   if ($Force -eq "1") {
-    git -C $Repo checkout --force -B $TargetBranch FETCH_HEAD
+    git -C $Repo checkout --force -B $CheckoutBranch FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed for $Name" }
     git -C $Repo reset --hard FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git reset failed for $Name" }
   } else {
-    git -C $Repo checkout -B $TargetBranch FETCH_HEAD
+    git -C $Repo checkout -B $CheckoutBranch FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed for $Name" }
   }
 }
@@ -896,7 +939,9 @@ function Detect-OverlayIp {
 
 $IrisRepo = Join-Path $HOME "src\iris-drive"
 $HashtreeRepo = Join-Path $HOME "src\hashtree"
+$FipsRepo = Join-Path $HOME "src\fips"
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
+Sync-Repo $FipsRepo "fips" $FipsBare $FipsSyncBranch $FipsTargetBranch
 Sync-Repo $IrisRepo "iris-drive" $IrisBare
 
 Set-Location $IrisRepo
@@ -1106,10 +1151,10 @@ for i in "${!LABELS[@]}"; do
   log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}"
+      run_windows_target "${LABELS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"
