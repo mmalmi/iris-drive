@@ -65,9 +65,19 @@ Environment:
   IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=1
                                       Fail macOS runs unless the app is signed
                                       with FileProvider-capable entitlements.
+  IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM
+                                      Apple Developer team id used for macOS
+                                      FileProvider signing.
   IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY
-                                      macOS codesign identity; defaults to first
-                                      Apple Development identity, else ad-hoc.
+                                      macOS codesign identity name or SHA-1 hash;
+                                      defaults to first Apple Development
+                                      identity, else ad-hoc.
+  IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN    Optional macOS signing keychain to unlock
+                                      and pass to codesign/xcodebuild.
+  IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE
+                                      Password file for the signing keychain.
+                                      Defaults to
+                                      ~/.config/iris-drive/dev-build-keychain.pass.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
   IRIS_DRIVE_FIPS_ROOT                Local fips checkout.
 
@@ -550,8 +560,17 @@ run_posix_target() {
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf 'STATIC_PEERS=%s\n' "$(sh_quote "$static_peers")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
+    printf 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}")"
+    printf 'IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE:-}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
+
+MACOS_CODESIGN_KEYCHAIN=""
+MACOS_XCODE_SIGNED_IDENTITY=""
 
 log() {
   printf '[%s] %s\n' "$LABEL" "$*" >&2
@@ -777,6 +796,118 @@ for directory in directories:
 PY
 }
 
+macos_fileprovider_required() {
+  case "${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+unlock_macos_build_keychain() {
+  local keychain="${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN:-}"
+  local pass_file="${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE:-}"
+
+  if [[ -z "$keychain" ]]; then
+    keychain="$HOME/Library/Keychains/iris-drive-build.keychain-db"
+    [[ -f "$keychain" ]] || return 0
+  else
+    keychain="$(expand_path "$keychain")"
+  fi
+
+  if [[ -z "$pass_file" ]]; then
+    pass_file="$HOME/.config/iris-drive/dev-build-keychain.pass"
+  else
+    pass_file="$(expand_path "$pass_file")"
+  fi
+
+  [[ -f "$keychain" && -f "$pass_file" ]] || return 0
+  log "unlocking macOS signing keychain"
+  security unlock-keychain -p "$(cat "$pass_file")" "$keychain" >/dev/null
+  MACOS_CODESIGN_KEYCHAIN="$keychain"
+}
+
+ensure_macos_codesign_chain() {
+  [[ -n "$MACOS_CODESIGN_KEYCHAIN" ]] || return 0
+
+  local certs
+  local keychain
+  certs="$(mktemp -t iris-drive-apple-certs.XXXXXX)"
+  for keychain in \
+    "$HOME/Library/Keychains/login.keychain-db" \
+    /Library/Keychains/System.keychain \
+    /System/Library/Keychains/SystemRootCertificates.keychain
+  do
+    security find-certificate -a -p -c "Apple Worldwide Developer Relations" "$keychain" 2>/dev/null || true
+    security find-certificate -a -p -c "Apple Root CA" "$keychain" 2>/dev/null || true
+  done > "$certs"
+  if [[ -s "$certs" ]]; then
+    security import "$certs" -k "$MACOS_CODESIGN_KEYCHAIN" -A >/dev/null 2>&1 || true
+  fi
+  rm -f "$certs"
+}
+
+with_macos_keychain_only() {
+  local keychain="$1"
+  shift
+  local current_file
+  local status
+  local restored=()
+  local line
+
+  current_file="$(mktemp -t iris-drive-keychains.XXXXXX)"
+  security list-keychains -d user > "$current_file"
+  security list-keychains -d user -s "$keychain"
+
+  set +e
+  "$@"
+  status=$?
+  set -e
+
+  while IFS= read -r line; do
+    line="${line//\"/}"
+    line="$(printf '%s' "$line" | xargs)"
+    [[ -n "$line" ]] && restored+=("$line")
+  done < "$current_file"
+  if [[ ${#restored[@]} -gt 0 ]]; then
+    security list-keychains -d user -s "${restored[@]}" >/dev/null
+  fi
+  rm -f "$current_file"
+  return "$status"
+}
+
+xcodebuild_macos_app() {
+  local iris_repo="$1"
+  local args=(
+    xcodebuild
+    -project macos/IrisDriveMac.xcodeproj
+    -scheme IrisDriveMac
+    -configuration Debug
+    -derivedDataPath macos/.build/DerivedData
+  )
+
+  if macos_fileprovider_required; then
+    args+=(
+      -allowProvisioningUpdates
+      -allowProvisioningDeviceRegistration
+      CODE_SIGN_STYLE=Automatic
+      CODE_SIGNING_ALLOWED=YES
+      "CODE_SIGN_IDENTITY=Apple Development"
+    )
+    if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}" ]]; then
+      args+=("DEVELOPMENT_TEAM=$IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM")
+    fi
+    if [[ -n "$MACOS_CODESIGN_KEYCHAIN" ]]; then
+      args+=("OTHER_CODE_SIGN_FLAGS=--keychain $MACOS_CODESIGN_KEYCHAIN")
+      (cd "$iris_repo" && with_macos_keychain_only "$MACOS_CODESIGN_KEYCHAIN" "${args[@]}" build)
+    else
+      (cd "$iris_repo" && "${args[@]}" build)
+    fi
+  else
+    args+=(CODE_SIGNING_ALLOWED=NO)
+    (cd "$iris_repo" && "${args[@]}" build)
+  fi
+}
+
 run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
@@ -796,14 +927,23 @@ run_macos() {
   log "building idrive helper"
   (cd "$iris_repo" && cargo build -p idrive)
   ensure_build_space "$iris_repo" "macOS app build"
+  unlock_macos_build_keychain
+  ensure_macos_codesign_chain
   log "building macOS app"
-  (cd "$iris_repo" && xcodebuild \
-    -project macos/IrisDriveMac.xcodeproj \
-    -scheme IrisDriveMac \
-    -configuration Debug \
-    -derivedDataPath macos/.build/DerivedData \
-    CODE_SIGNING_ALLOWED=NO \
-    build)
+  xcodebuild_macos_app "$iris_repo"
+  if macos_fileprovider_required; then
+    MACOS_XCODE_SIGNED_IDENTITY="$(codesign -dv --verbose=4 "$app" 2>&1 \
+      | sed -n 's/^Authority=\(Apple Development.*\)$/\1/p' \
+      | head -n 1 || true)"
+    if [[ -n "$MACOS_XCODE_SIGNED_IDENTITY" && -n "$MACOS_CODESIGN_KEYCHAIN" ]]; then
+      MACOS_XCODE_SIGNED_IDENTITY="$(security find-certificate \
+        -Z \
+        -c "$MACOS_XCODE_SIGNED_IDENTITY" \
+        "$MACOS_CODESIGN_KEYCHAIN" 2>/dev/null \
+        | sed -n 's/^SHA-1 hash: //p' \
+        | head -n 1 || true)"
+    fi
+  fi
   cp "$idrive" "$app/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
   sign_macos_app "$iris_repo" "$app" "$appex"
@@ -909,8 +1049,19 @@ sign_macos_app() {
   local sign_identity="${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}"
   local app_entitlements="$iris_repo/macos/IrisDriveMac.entitlements"
   local appex_entitlements="$iris_repo/macos/FileProvider/FileProvider.entitlements"
+  local xcode_app_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveMac.build/Iris Drive.app.xcent"
+  local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
   local appex_dev_entitlements=""
+
+  if macos_fileprovider_required; then
+    [[ -f "$xcode_app_entitlements" ]] && app_entitlements="$xcode_app_entitlements"
+    [[ -f "$xcode_appex_entitlements" ]] && appex_entitlements="$xcode_appex_entitlements"
+  fi
+
+  if [[ -z "$sign_identity" && -n "$MACOS_XCODE_SIGNED_IDENTITY" ]]; then
+    sign_identity="$MACOS_XCODE_SIGNED_IDENTITY"
+  fi
 
   if [[ -z "$sign_identity" ]]; then
     sign_identity="$(security find-identity -v -p codesigning 2>/dev/null \
@@ -963,20 +1114,25 @@ EOF
     log "codesigning macOS app with identity: $sign_identity"
   fi
 
-  codesign --force --sign "$sign_identity" "$app/Contents/MacOS/idrive" >/dev/null
+  local codesign_base=(codesign --force --sign "$sign_identity")
+  if [[ -n "$MACOS_CODESIGN_KEYCHAIN" && "$sign_identity" != "-" ]]; then
+    codesign_base+=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
+  fi
+
+  "${codesign_base[@]}" "$app/Contents/MacOS/idrive" >/dev/null
   if [[ -n "$appex_entitlements" ]]; then
-    codesign --force --sign "$sign_identity" \
+    "${codesign_base[@]}" \
       --entitlements "$appex_entitlements" \
       "$appex" >/dev/null
   else
-    codesign --force --sign "$sign_identity" "$appex" >/dev/null
+    "${codesign_base[@]}" "$appex" >/dev/null
   fi
   if [[ -n "$app_entitlements" ]]; then
-    codesign --force --sign "$sign_identity" \
+    "${codesign_base[@]}" \
       --entitlements "$app_entitlements" \
       "$app" >/dev/null
   else
-    codesign --force --sign "$sign_identity" "$app" >/dev/null
+    "${codesign_base[@]}" "$app" >/dev/null
   fi
   rm -f "$app_dev_entitlements" "$appex_dev_entitlements"
   codesign --verify --deep --strict --verbose=2 "$app" >/dev/null

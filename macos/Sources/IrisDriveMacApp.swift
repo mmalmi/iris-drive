@@ -68,8 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
         }
+        irisDriveDebugLog(
+            "Iris Drive FileProvider integration enabled=\(fileProviderIntegrationEnabled) " +
+            "testing=\(currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode")) " +
+            "team=\(currentProcessEntitlementValue("com.apple.developer.team-identifier") ?? "nil")"
+        )
         if fileProviderIntegrationEnabled {
-            DispatchQueue.global(qos: .utility).async { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 ensureFileProviderDomainRegistered { state in
                     DispatchQueue.main.async {
                         self?.fileProviderDomainState = state
@@ -77,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         } else {
-            NSLog("Iris Drive FileProvider disabled for this signing mode")
+            irisDriveDebugLog("Iris Drive FileProvider disabled for this signing mode")
             fileProviderDomainState = .unavailable
         }
     }
@@ -1440,13 +1445,31 @@ private enum FileProviderDomainState {
     case unavailable
 }
 
+private func irisDriveDebugLog(_ message: String) {
+    NSLog("%@", message)
+    #if DEBUG
+    if let data = (message + "\n").data(using: .utf8) {
+        FileHandle.standardError.write(data)
+        let url = URL(fileURLWithPath: "/tmp/iris-drive-macos-app-debug.log")
+        if FileManager.default.fileExists(atPath: url.path),
+           let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+    #endif
+}
+
 private func ensureFileProviderDomainRegistered(
     attempt: Int = 1,
     _ completion: @escaping (FileProviderDomainState) -> Void
 ) {
     fileProviderDomainExists { exists in
         if exists {
-            NSLog("Iris Drive FileProvider domain already registered")
+            irisDriveDebugLog("Iris Drive FileProvider domain already registered")
             completion(.registered)
             return
         }
@@ -1473,14 +1496,16 @@ private func addFileProviderDomain(
         if let error {
             fileProviderDomainExists { exists in
                 if exists {
-                    NSLog("Iris Drive FileProvider domain registered after add error: \(error)")
+                    irisDriveDebugLog(
+                        "Iris Drive FileProvider domain registered after add error: \(error)"
+                    )
                     completion(.registered)
                     return
                 }
 
                 if attempt < 5 {
                     let delay = Double(attempt)
-                    NSLog(
+                    irisDriveDebugLog(
                         "Iris Drive FileProvider registration attempt \(attempt) failed; retrying in \(delay)s: \(error)"
                     )
                     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
@@ -1489,11 +1514,11 @@ private func addFileProviderDomain(
                     return
                 }
 
-                NSLog("Iris Drive FileProvider registration failed: \(error)")
+                irisDriveDebugLog("Iris Drive FileProvider registration failed: \(error)")
                 completion(.unavailable)
             }
         } else {
-            NSLog("Iris Drive FileProvider domain registered")
+            irisDriveDebugLog("Iris Drive FileProvider domain registered")
             completion(.registered)
         }
     }
@@ -1502,7 +1527,7 @@ private func addFileProviderDomain(
 private func fileProviderDomainExists(_ completion: @escaping (Bool) -> Void) {
     NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
         if let error {
-            NSLog("Iris Drive FileProvider domain query failed: \(error)")
+            irisDriveDebugLog("Iris Drive FileProvider domain query failed: \(error)")
         }
         completion(domains.contains { $0.identifier == irisDriveDomainIdentifier })
     }
