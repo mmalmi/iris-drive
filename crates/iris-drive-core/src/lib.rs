@@ -55,7 +55,10 @@ pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use hashtree_fips_transport::FipsAppMessage;
 pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
-pub use indexer::{IndexError, index_dir, layer_conflict_records, read_conflict_records};
+pub use indexer::{
+    IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
+    path_has_ignored_component, read_conflict_records, should_ignore_name,
+};
 pub use materialize::{
     MaterializeError, MaterializeReport, PrimaryMergedRoot, PrimaryMergedView,
     materialize_primary_drive, primary_merged_root, primary_merged_view,

@@ -24,6 +24,7 @@ use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex, to_
 use serde::{Deserialize, Serialize};
 
 use crate::config::DeviceRootRef;
+use crate::indexer::{path_has_ignored_component, should_ignore_name};
 
 /// Reserved top-level subdirectory inside any hashtree directory for
 /// htree-format metadata. Everything iris-drive (and future htree
@@ -218,6 +219,9 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
             continue;
         }
         for f in &snap.files {
+            if path_has_ignored_component(&f.path) {
+                continue;
+            }
             let candidate = MergedEntry {
                 path: f.path.clone(),
                 source_path: None,
@@ -246,6 +250,9 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 .or_insert(candidate);
         }
         for t in &snap.tombstones {
+            if path_has_ignored_component(&t.path) {
+                continue;
+            }
             let candidate = TombstoneCandidate {
                 tombstoned_at: t.tombstoned_at,
                 device_pubkey: snap.device_pubkey.to_string(),
@@ -608,6 +615,9 @@ fn walk_dir_recursive<'a, S: Store>(
                 // tombstone walker can pick up entries under
                 // `.hashtree/tombstones/`, but skip the `prev` link.
                 walk_meta_dir(tree, &child_cid, META_DIR, files, tombstones).await?;
+                continue;
+            }
+            if should_ignore_name(&entry.name) {
                 continue;
             }
             if entry.link_type == LinkType::Dir {

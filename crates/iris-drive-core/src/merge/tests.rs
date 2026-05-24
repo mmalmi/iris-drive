@@ -103,6 +103,29 @@ fn single_device_files_pass_through() {
 }
 
 #[test]
+fn ignored_paths_are_not_merged_from_legacy_roots() {
+    let r = dev_root(100);
+    let view = merge_drives(
+        &["dev-a"],
+        &[snap(
+            "dev-a",
+            &r,
+            vec![
+                file("keep.txt", 1, 5),
+                file(".Trash-1000/files/removed.txt", 2, 7),
+                file("$RECYCLE.BIN/S-1-5-21/removed.txt", 3, 7),
+                file("notes/.DS_Store", 4, 9),
+            ],
+            vec![tomb(".Trash-1000/files/removed.txt", 99)],
+        )],
+    );
+
+    assert_eq!(view.files.len(), 1);
+    assert_eq!(view.files[0].path, "keep.txt");
+    assert!(view.suppressed_by_tombstone.is_empty());
+}
+
+#[test]
 fn unauthorized_device_is_ignored() {
     let r_ok = dev_root(100);
     let r_evil = dev_root(999);

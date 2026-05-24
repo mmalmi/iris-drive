@@ -99,6 +99,62 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
 }
 
 #[tokio::test]
+async fn primary_merged_root_hides_ignored_legacy_directories() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let source = tempdir().unwrap();
+    std::fs::write(source.path().join("keep.txt"), b"keep").unwrap();
+    std::fs::create_dir_all(source.path().join(".Trash-1000").join("files")).unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: account.state.device_pubkey.clone(),
+        device_seq: 1,
+        dck_generation: 1,
+        materialized_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 1,
+    };
+    let source_root = index_dir_with_history_and_meta(&tree, source.path(), None, 1, Some(&meta))
+        .await
+        .unwrap();
+    let trash_dir = tree.put_directory(Vec::new()).await.unwrap();
+    let source_root = tree
+        .set_entry(
+            &source_root,
+            &[],
+            ".Trash-1000",
+            &trash_dir,
+            0,
+            LinkType::Dir,
+        )
+        .await
+        .unwrap();
+
+    let mut config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
+    );
+    config.upsert_drive(drive);
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    let top = tree.list_directory(&merged.root_cid).await.unwrap();
+    let top_names = top
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(top_names, vec!["keep.txt"]);
+}
+
+#[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
     let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();

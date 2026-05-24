@@ -638,6 +638,9 @@ async fn import_windows_cloud_root_changes_and_publish(
     let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
     let before = provider.current_root().await;
     let mut changed_paths = BTreeSet::new();
+    for path in prune_ignored_provider_paths(&provider).await? {
+        changed_paths.insert(path);
+    }
 
     for change in changes {
         match change {
@@ -693,6 +696,16 @@ async fn apply_windows_cloud_rename(
 ) -> Result<bool> {
     let old_path = normalize_provider_path(old_path)?;
     let new_path = normalize_provider_path(new_path)?;
+    if iris_drive_core::path_has_ignored_component(&new_path) {
+        let deleted_old = apply_windows_cloud_delete(provider, &old_path).await?;
+        let deleted_new = apply_windows_cloud_delete(provider, &new_path).await?;
+        return Ok(deleted_old || deleted_new);
+    }
+    if iris_drive_core::path_has_ignored_component(&old_path) {
+        let deleted_old = apply_windows_cloud_delete(provider, &old_path).await?;
+        let upserted_new = apply_windows_cloud_upsert(provider, sync_root, &new_path).await?;
+        return Ok(deleted_old || upserted_new);
+    }
     let new_full_path = windows_cloud_full_path(sync_root, &new_path);
     if windows_cloud_path_is_reparse_point(&new_full_path) {
         match provider.item(&old_path).await {
@@ -735,6 +748,9 @@ async fn apply_windows_cloud_upsert(
         Ok(path) => path,
         Err(_) => return Ok(false),
     };
+    if iris_drive_core::path_has_ignored_component(&path) {
+        return apply_windows_cloud_delete(provider, &path).await;
+    }
     let mut changed = false;
     let mut stack = vec![path];
     while let Some(path) = stack.pop() {
@@ -789,6 +805,31 @@ async fn apply_windows_cloud_upsert(
         }
     }
     Ok(changed)
+}
+
+async fn prune_ignored_provider_paths(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+) -> Result<Vec<String>> {
+    let mut pruned = Vec::new();
+    let mut stack = vec![String::new()];
+    while let Some(parent) = stack.pop() {
+        let mut children = provider.read_dir(&parent).await?;
+        children.sort_by(|a, b| a.id.cmp(&b.id));
+        for child in children {
+            let path = child.id;
+            if iris_drive_core::path_has_ignored_component(&path) {
+                if apply_windows_cloud_delete(provider, &path).await? {
+                    pruned.push(path);
+                }
+                continue;
+            }
+            let item = provider.item(&path).await?;
+            if item.kind == ItemKind::Directory {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(pruned)
 }
 
 fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
@@ -1448,6 +1489,14 @@ pub(crate) fn files_root_apply_label(
 mod tests {
     use super::*;
 
+    async fn fresh_test_provider() -> (tempfile::TempDir, HashTreeProviderFs<FsBlobStore>) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsBlobStore::new(dir.path()).unwrap();
+        let tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(store)).public()));
+        let provider = HashTreeProviderFs::fresh(tree).await.unwrap();
+        (dir, provider)
+    }
+
     #[test]
     fn windows_cloud_file_read_skip_only_ignores_transient_placeholder_errors() {
         assert!(windows_cloud_file_read_should_skip(&std::io::Error::new(
@@ -1461,5 +1510,65 @@ mod tests {
             std::io::ErrorKind::NotFound,
             "real missing file"
         )));
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_upsert_prunes_ignored_local_tree_from_provider() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, ".Trash-1000/files/removed.txt", b"trash")
+            .await
+            .unwrap();
+        write_provider_file(&provider, "keep.txt", b"keep")
+            .await
+            .unwrap();
+
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(sync_root.path().join(".Trash-1000").join("files")).unwrap();
+        std::fs::write(
+            sync_root
+                .path()
+                .join(".Trash-1000")
+                .join("files")
+                .join("removed.txt"),
+            b"trash",
+        )
+        .unwrap();
+
+        assert!(
+            apply_windows_cloud_upsert(&provider, sync_root.path(), ".Trash-1000")
+                .await
+                .unwrap()
+        );
+        let trash = ".Trash-1000".to_string();
+        let keep = "keep.txt".to_string();
+        assert!(provider.item(&trash).await.is_err());
+        assert!(provider.item(&keep).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_provider_prune_removes_ignored_merged_paths() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "noise/.DS_Store", b"finder")
+            .await
+            .unwrap();
+        write_provider_file(&provider, "$RECYCLE.BIN/S-1-5-21/removed.txt", b"recycle")
+            .await
+            .unwrap();
+        write_provider_file(&provider, "keep.txt", b"keep")
+            .await
+            .unwrap();
+
+        let pruned = prune_ignored_provider_paths(&provider).await.unwrap();
+
+        assert_eq!(
+            pruned,
+            vec!["$RECYCLE.BIN".to_string(), "noise/.DS_Store".to_string()]
+        );
+        let recycle = "$RECYCLE.BIN".to_string();
+        let noise = "noise".to_string();
+        let keep = "keep.txt".to_string();
+        assert!(provider.item(&recycle).await.is_err());
+        assert!(provider.item(&noise).await.is_ok());
+        assert!(provider.item(&keep).await.is_ok());
     }
 }

@@ -374,6 +374,53 @@ async fn visible_root_history_emits_tombstone_without_plain_directory() {
 }
 
 #[tokio::test]
+async fn visible_root_history_filters_ignored_entries_before_diffing() {
+    let first_dir = tempdir().unwrap();
+    std::fs::write(first_dir.path().join("removed.txt"), b"bye").unwrap();
+    std::fs::write(first_dir.path().join("kept.txt"), b"still here").unwrap();
+    let tree = new_tree();
+    let first = index_dir(&tree, first_dir.path()).await.unwrap();
+
+    let kept_cid = tree.put(b"still here").await.unwrap().0;
+    let trash_cid = tree.put(b"bye").await.unwrap().0;
+    let trash_file = DirEntry::from_cid("removed.txt".to_string(), &trash_cid)
+        .with_size(3)
+        .with_meta(file_entry_meta(&hashtree_core::sha256(b"bye")));
+    let trash_files_cid = tree.put_directory(vec![trash_file]).await.unwrap();
+    let mut trash_files_entry = DirEntry::from_cid("files".to_string(), &trash_files_cid);
+    trash_files_entry.link_type = LinkType::Dir;
+    let trash_dir_cid = tree.put_directory(vec![trash_files_entry]).await.unwrap();
+    let mut trash_entry = DirEntry::from_cid(".Trash-1000".to_string(), &trash_dir_cid);
+    trash_entry.link_type = LinkType::Dir;
+    let kept_entry = DirEntry::from_cid("kept.txt".to_string(), &kept_cid)
+        .with_size(10)
+        .with_meta(file_entry_meta(&hashtree_core::sha256(b"still here")));
+    let visible_root = tree
+        .put_directory(vec![trash_entry, kept_entry])
+        .await
+        .unwrap();
+
+    let second = layer_history_and_meta_on_root(&tree, visible_root, Some(&first), 5678, None)
+        .await
+        .unwrap();
+
+    let top = tree.list_directory(&second).await.unwrap();
+    assert!(top.iter().all(|entry| entry.name != ".Trash-1000"));
+    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+        .await
+        .unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["kept.txt"]
+    );
+    assert_eq!(tombstones.len(), 1);
+    assert_eq!(tombstones[0].path, "removed.txt");
+}
+
+#[tokio::test]
 async fn tombstone_carries_forward_when_file_stays_absent() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("gone.txt"), b"x").unwrap();

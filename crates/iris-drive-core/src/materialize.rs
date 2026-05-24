@@ -19,7 +19,7 @@ use crate::PRIMARY_DRIVE_ID;
 use crate::account::AccountState;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::conflict::conflict_filename;
-use crate::indexer::{IndexError, read_root_meta};
+use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
 use crate::merge::{
     DeviceFileEntry, DeviceSnapshot, MergedConflictFile, MergedConflictKind, MergedEntry,
     MergedView, merge_drives, walk_device_tree,
@@ -684,6 +684,9 @@ fn collect_user_directory_paths<'a, S: Store>(
         let entries = tree.list_directory(dir_cid).await?;
         for entry in entries {
             if prefix.is_empty() && entry.name == crate::merge::META_DIR {
+                continue;
+            }
+            if should_ignore_name(&entry.name) {
                 continue;
             }
             if entry.link_type != LinkType::Dir {

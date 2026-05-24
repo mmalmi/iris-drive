@@ -152,6 +152,7 @@ public static partial class WindowsCloudFiles
             PlaceholderEntries(entries).Select(entry => entry.Path),
             StringComparer.Ordinal);
 
+        RemoveIgnoredLocalItems(syncRootPath);
         RemoveStalePlaceholders(syncRootPath, expectedPaths);
 
         foreach (var entry in PlaceholderEntries(entries))
@@ -241,6 +242,74 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    private static void RemoveIgnoredLocalItems(string syncRootPath)
+    {
+        if (!Directory.Exists(syncRootPath))
+        {
+            return;
+        }
+
+        List<string> entries;
+        try
+        {
+            entries = Directory
+                .EnumerateFileSystemEntries(syncRootPath, "*", SearchOption.AllDirectories)
+                .ToList();
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var fullPath in entries
+            .OrderByDescending(path => path.Count(ch => ch == Path.DirectorySeparatorChar)))
+        {
+            var relative = NormalizeVirtualPath(Path.GetRelativePath(syncRootPath, fullPath));
+            if (string.IsNullOrEmpty(relative) || !PathHasIgnoredComponent(relative))
+            {
+                continue;
+            }
+
+            try
+            {
+                ClearReadOnlyAttribute(fullPath);
+                if (Directory.Exists(fullPath))
+                {
+                    Directory.Delete(fullPath, recursive: true);
+                }
+                else if (File.Exists(fullPath))
+                {
+                    File.Delete(fullPath);
+                }
+            }
+            catch
+            {
+                // Explorer or Cloud Files may have a transient handle; the next refresh retries.
+            }
+        }
+    }
+
+    private static void ClearReadOnlyAttribute(string fullPath)
+    {
+        try
+        {
+            if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+            {
+                return;
+            }
+
+            var attributes = File.GetAttributes(fullPath);
+            if ((attributes & FileAttributes.ReadOnly) != 0)
+            {
+                File.SetAttributes(fullPath, attributes & ~FileAttributes.ReadOnly);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only.
+        }
+    }
+
     private static IEnumerable<WindowsCloudFileEntry> PlaceholderEntries(
         IEnumerable<WindowsCloudFileEntry> entries)
     {
@@ -248,7 +317,7 @@ public static partial class WindowsCloudFiles
         foreach (var entry in entries)
         {
             var path = NormalizeVirtualPath(entry.Path);
-            if (string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(path) || PathHasIgnoredComponent(path))
             {
                 continue;
             }
@@ -423,6 +492,34 @@ public static partial class WindowsCloudFiles
 
     private static string NormalizeVirtualPath(string path) =>
         path.Replace('\\', '/').Trim('/');
+
+    private static bool PathHasIgnoredComponent(string path)
+    {
+        foreach (var component in NormalizeVirtualPath(path).Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (IsIgnoredName(component))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsIgnoredName(string name) =>
+        string.Equals(name, ".DS_Store", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, ".hashtree", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, ".Trash", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "Thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "desktop.ini", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("._", StringComparison.Ordinal) ||
+        name.StartsWith(".Trash-", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith('~') ||
+        (name.StartsWith('#') && name.EndsWith('#')) ||
+        string.Equals(Path.GetExtension(name), ".sbak", StringComparison.OrdinalIgnoreCase);
 
     private static string ParentPath(string path)
     {

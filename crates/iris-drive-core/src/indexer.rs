@@ -45,15 +45,23 @@ pub enum IndexError {
     ConflictRecord(String),
 }
 
-pub(crate) fn should_ignore_name(name: &str) -> bool {
-    IGNORED_NAMES.contains(&name)
+pub fn should_ignore_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    IGNORED_NAMES
+        .iter()
+        .any(|ignored| name.eq_ignore_ascii_case(ignored))
         || name.starts_with("._")
-        || name.starts_with(".Trash-")
+        || lower.starts_with(".trash-")
         || name.ends_with('~')
         || (name.starts_with('#') && name.ends_with('#'))
         || Path::new(name)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("sbak"))
+}
+
+#[must_use]
+pub fn path_has_ignored_component(path: &str) -> bool {
+    path.split('/').any(should_ignore_name)
 }
 
 /// Index a directory recursively, returning the root htree CID.
@@ -120,6 +128,7 @@ pub async fn layer_history_and_meta_on_root<S: Store>(
     now_unix_seconds: i64,
     root_meta: Option<&DriveRootMeta>,
 ) -> Result<Cid, IndexError> {
+    root = filter_ignored_entries_from_root(tree, &root).await?;
     if let Some(prev) = previous_root {
         let (current_files, _) = walk_device_tree(tree, &root)
             .await
@@ -133,6 +142,61 @@ pub async fn layer_history_and_meta_on_root<S: Store>(
         root = layer_root_meta(tree, root, meta).await?;
     }
     Ok(root)
+}
+
+pub async fn filter_ignored_entries_from_root<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<Cid, IndexError> {
+    let (filtered, _) = filter_ignored_entries_from_dir(tree, root).await?;
+    Ok(filtered)
+}
+
+fn filter_ignored_entries_from_dir<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir: &'a Cid,
+) -> futures::future::BoxFuture<'a, Result<(Cid, bool), IndexError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir).await?;
+        let mut changed = false;
+        let mut filtered = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            if should_ignore_name(&entry.name) {
+                changed = true;
+                continue;
+            }
+
+            let mut entry = DirEntry {
+                name: entry.name,
+                hash: entry.hash,
+                size: entry.size,
+                key: entry.key,
+                link_type: entry.link_type,
+                meta: entry.meta,
+            };
+            if entry.link_type == LinkType::Dir {
+                let child = Cid {
+                    hash: entry.hash,
+                    key: entry.key,
+                };
+                let (filtered_child, child_changed) =
+                    filter_ignored_entries_from_dir(tree, &child).await?;
+                if child_changed {
+                    entry.hash = filtered_child.hash;
+                    entry.key = filtered_child.key;
+                    changed = true;
+                }
+            }
+            filtered.push(entry);
+        }
+
+        if changed {
+            Ok((tree.put_directory(filtered).await?, true))
+        } else {
+            Ok((dir.clone(), false))
+        }
+    })
 }
 
 async fn attach_history_for_current_paths<S: Store>(
