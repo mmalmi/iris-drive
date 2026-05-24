@@ -726,38 +726,13 @@ ensure_build_space() {
   fi
 }
 
-repo_head() {
-  git -C "$1" rev-parse HEAD 2>/dev/null || printf 'unknown'
-}
-
-idrive_build_stamp() {
+build_idrive() {
   local iris_repo="$1"
-  printf 'iris=%s\n' "$(repo_head "$iris_repo")"
-  printf 'hashtree=%s\n' "$(repo_head "$HOME/src/hashtree")"
-  printf 'fips=%s\n' "$(repo_head "$HOME/src/fips")"
-  rustc -Vv 2>/dev/null | sed 's/^/rustc:/'
-  cargo -V 2>/dev/null | sed 's/^/cargo:/'
-}
-
-build_idrive_if_needed() {
-  local iris_repo="$1"
-  local idrive="$2"
-  local phase="$3"
-  local stamp_file="$iris_repo/target/.iris-drive-idrive-build.stamp"
-  local expected
-
-  expected="$(idrive_build_stamp "$iris_repo")"
-  if [[ -x "$idrive" && -f "$stamp_file" ]] \
-    && cmp -s <(printf '%s\n' "$expected") "$stamp_file"; then
-    log "idrive helper already built for deployed revisions"
-    return 0
-  fi
+  local phase="$2"
 
   ensure_build_space "$iris_repo" "$phase"
   log "building idrive helper"
   (cd "$iris_repo" && cargo build -p idrive)
-  mkdir -p "$(dirname "$stamp_file")"
-  printf '%s\n' "$expected" > "$stamp_file"
 }
 
 detect_overlay_ip() {
@@ -839,7 +814,7 @@ run_linux() {
   local config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
   local mountpoint="${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-$HOME/Iris Drive}"
 
-  build_idrive_if_needed "$iris_repo" "$idrive" "Linux build"
+  build_idrive "$iris_repo" "Linux build"
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
@@ -1042,7 +1017,7 @@ run_macos() {
   local daemon_log="/tmp/iris-drive-macos-daemon.log"
   local daemon_pid=""
 
-  build_idrive_if_needed "$iris_repo" "$idrive" "idrive helper build"
+  build_idrive "$iris_repo" "idrive helper build"
   ensure_build_space "$iris_repo" "macOS app build"
   unlock_macos_build_keychain
   ensure_macos_codesign_chain
@@ -1488,50 +1463,10 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch 
   }
 }
 
-function Get-RepoHead([string]$Repo) {
-  try {
-    $Head = git -C $Repo rev-parse HEAD
-    if ($LASTEXITCODE -eq 0 -and $Head) {
-      return ($Head -join "").Trim()
-    }
-  } catch {}
-  return "unknown"
-}
-
-function Get-IdriveBuildStamp([string]$IrisRepo) {
-  $HashtreeRepo = Join-Path $HOME "src\hashtree"
-  $FipsRepo = Join-Path $HOME "src\fips"
-  $Lines = @(
-    "iris=$(Get-RepoHead $IrisRepo)",
-    "hashtree=$(Get-RepoHead $HashtreeRepo)",
-    "fips=$(Get-RepoHead $FipsRepo)"
-  )
-  try {
-    $Lines += @(& rustc -Vv 2>$null | ForEach-Object { "rustc:$_" })
-  } catch {}
-  try {
-    $Lines += @(& cargo -V 2>$null | ForEach-Object { "cargo:$_" })
-  } catch {}
-  return ($Lines -join "`n")
-}
-
-function Build-IdriveIfNeeded([string]$IrisRepo) {
-  $Idrive = Join-Path $IrisRepo "target\debug\idrive.exe"
-  $StampFile = Join-Path $IrisRepo "target\.iris-drive-idrive-build.stamp"
-  $Expected = Get-IdriveBuildStamp $IrisRepo
-  if ((Test-Path $Idrive) -and (Test-Path $StampFile)) {
-    $Existing = (Get-Content -Raw $StampFile).TrimEnd()
-    if ($Existing -eq $Expected) {
-      Write-Log "idrive helper already built for deployed revisions"
-      return
-    }
-  }
-
+function Build-Idrive([string]$IrisRepo) {
   Write-Log "building idrive helper"
   cargo build -p idrive --locked
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StampFile) | Out-Null
-  Set-Content -Encoding UTF8 -NoNewline -Path $StampFile -Value $Expected
 }
 
 function Detect-OverlayIp {
@@ -1624,14 +1559,14 @@ Sync-Repo $IrisRepo "iris-drive" $IrisBare
 Set-Location $IrisRepo
 if ($NoRun -eq "1") {
   Write-Log "building Windows dev app"
-  Build-IdriveIfNeeded $IrisRepo
+  Build-Idrive $IrisRepo
   dotnet build .\windows\IrisDrive.Windows.csproj -c Debug -r win-x64 --self-contained true -p:WindowsPackageType=None
   if ($LASTEXITCODE -ne 0) { throw "windows build failed" }
   exit 0
 }
 
 Write-Log "publishing Windows dev app"
-Build-IdriveIfNeeded $IrisRepo
+Build-Idrive $IrisRepo
 $PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\windows-publish.ps1", "-Configuration", "Debug", "-StopRunningApp", "-SkipCliBuild")
 powershell @PublishArgs
 if ($LASTEXITCODE -ne 0) { throw "windows publish failed" }
