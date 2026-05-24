@@ -380,16 +380,41 @@ detect_overlay_ip() {
   printf '%s\n' "$ip"
 }
 
+process_running() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+terminate_pid() {
+  local pid="$1"
+  local i
+  process_running "$pid" || return 0
+  kill "$pid" >/dev/null 2>&1 || true
+  for i in {1..15}; do
+    process_running "$pid" || return 0
+    sleep 0.1
+  done
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+}
+
 stop_idrive_daemon() {
   local config_dir="$1"
   local status_file="$config_dir/daemon-status.json"
-  local pid=""
+  local lock_file="$config_dir/daemon.lock"
+  local status_pid=""
+  local lock_pid=""
 
   if [[ -f "$status_file" ]]; then
-    pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid", ""))' "$status_file" 2>/dev/null || true)"
+    status_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid", ""))' "$status_file" 2>/dev/null || true)"
   fi
-  if [[ -n "$pid" ]]; then
-    kill "$pid" >/dev/null 2>&1 || true
+  if [[ -f "$lock_file" ]]; then
+    lock_pid="$(tr -d '[:space:]' < "$lock_file" 2>/dev/null || true)"
+  fi
+
+  terminate_pid "$status_pid"
+  if [[ "$lock_pid" != "$status_pid" ]]; then
+    terminate_pid "$lock_pid"
   fi
 }
 

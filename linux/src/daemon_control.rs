@@ -68,17 +68,18 @@ pub(crate) fn daemon_is_running(model: &AppRef) -> bool {
 }
 
 pub(crate) fn daemon_lock_is_running(status: &Value) -> bool {
+    daemon_lock_pid(status).is_some_and(process_is_running)
+}
+
+pub(crate) fn daemon_lock_pid(status: &Value) -> Option<u32> {
     let Some(config_dir) = status.get("config_dir").and_then(Value::as_str) else {
-        return false;
+        return None;
     };
     let Ok(contents) = std::fs::read_to_string(PathBuf::from(config_dir).join("daemon.lock"))
     else {
-        return false;
+        return None;
     };
-    let Ok(pid) = contents.trim().parse::<u32>() else {
-        return false;
-    };
-    process_is_running(pid)
+    contents.trim().parse::<u32>().ok()
 }
 
 pub(crate) fn process_is_running(pid: u32) -> bool {
@@ -89,6 +90,51 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+pub(crate) fn terminate_process(pid: u32) -> bool {
+    if pid == std::process::id() || !process_is_running(pid) {
+        return false;
+    }
+
+    let _ = Command::new("/bin/kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+    for _ in 0..15 {
+        if !process_is_running(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = Command::new("/bin/kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .status();
+    !process_is_running(pid)
+}
+
+pub(crate) fn terminate_child(child: &mut Child) -> bool {
+    if child.try_wait().ok().flatten().is_some() {
+        return false;
+    }
+
+    let pid = child.id();
+    let _ = Command::new("/bin/kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+    for _ in 0..15 {
+        if child.try_wait().ok().flatten().is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    true
 }
 
 pub(crate) struct AppInstanceLock {
@@ -181,12 +227,26 @@ pub(crate) fn write_close_to_tray_on_close(enabled: bool) {
 }
 
 pub(crate) fn stop_daemon(model: &AppRef) {
-    let Some(mut child) = model.daemon.borrow_mut().take() else {
-        return;
-    };
-    let _ = child.kill();
-    let _ = child.wait();
-    model.ui.notice.set_text("Sync stopped");
+    let status = run_idrive_json(["status"]).ok();
+    let lock_pid = status.as_ref().and_then(daemon_lock_pid);
+    let mut stopped = false;
+    let mut child_pid = None;
+
+    if let Some(mut child) = model.daemon.borrow_mut().take() {
+        let pid = child.id();
+        child_pid = Some(pid);
+        stopped |= terminate_child(&mut child);
+    }
+
+    if let Some(pid) = lock_pid
+        && Some(pid) != child_pid
+    {
+        stopped |= terminate_process(pid);
+    }
+
+    if stopped {
+        model.ui.notice.set_text("Sync stopped");
+    }
     refresh(model);
 }
 
