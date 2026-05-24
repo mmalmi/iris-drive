@@ -9,6 +9,7 @@ SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SYNC_BRANCH:-codex/dev-vm-sync}"
 TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_TARGET_BRANCH:-$(git -C "$ROOT" branch --show-current || true)}"
 TARGET_BRANCH="${TARGET_BRANCH:-master}"
 FORCE=0
+FAIL_ON_DIRTY=0
 SKIP_PUSH=0
 NO_RUN=0
 LIST_TARGETS=0
@@ -17,12 +18,15 @@ ONLY_LABELS=()
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/dev-vm-update-run.sh [--force] [--only macos|ubuntu|windows] [--skip-push] [--no-run]
+  scripts/dev-vm-update-run.sh [--force|--fail-on-dirty] [--only macos|ubuntu|windows] [--skip-push] [--no-run]
   scripts/dev-vm-update-run.sh --list-targets
 
 Syncs the current committed iris-drive and hashtree revisions to the configured
 VM git remotes, updates the VM worktrees, builds, then restarts the dev app or
 daemon with native FIPS UDP over the nvpn overlay while keeping WebRTC enabled.
+
+Remote worktrees with local changes are auto-stashed before checkout. Use
+--fail-on-dirty to stop instead, or --force to discard tracked VM changes.
 
 Defaults are derived from local git remotes:
   macos    iris-drive remote macos-utm, hashtree remote macos-utm
@@ -37,14 +41,14 @@ Environment:
   IRIS_DRIVE_DEV_VM_SYNC_BRANCH       Temporary branch pushed to VM bare repos.
   IRIS_DRIVE_DEV_VM_TARGET_BRANCH     Branch name checked out in VM worktrees.
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
+  IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM build caches below this free space.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
 
 Remote worktree paths are expected to be:
   ~/src/iris-drive
   ~/src/hashtree
 
-Use --force when VM worktrees have local scratch edits that should be replaced
-by the pushed revision. The script never git-cleans untracked files.
+The script never git-cleans untracked files.
 USAGE
 }
 
@@ -83,6 +87,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --force)
       FORCE=1
+      shift
+      ;;
+    --fail-on-dirty)
+      FAIL_ON_DIRTY=1
       shift
       ;;
     --skip-push)
@@ -251,8 +259,10 @@ run_posix_target() {
     printf 'SYNC_BRANCH=%s\n' "$(sh_quote "$SYNC_BRANCH")"
     printf 'TARGET_BRANCH=%s\n' "$(sh_quote "$TARGET_BRANCH")"
     printf 'FORCE=%s\n' "$(sh_quote "$FORCE")"
+    printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
+    printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-8388608}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
 
@@ -263,21 +273,29 @@ log() {
 expand_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
-    "~/"*) printf '%s/%s\n' "$HOME" "${1#~/}" ;;
+    "~/"*) printf '%s/%s\n' "$HOME" "${1:2}" ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
 
-require_clean_or_force() {
+prepare_worktree() {
   local repo="$1"
   local name="$2"
   local dirty
   dirty="$(git -C "$repo" status --short)"
-  if [[ -n "$dirty" && "$FORCE" != "1" ]]; then
+  if [[ -z "$dirty" ]]; then
+    return 0
+  fi
+  if [[ "$FORCE" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$FAIL_ON_DIRTY" == "1" ]]; then
     printf '[%s] %s has local changes:\n%s\n' "$LABEL" "$name" "$dirty" >&2
-    printf '[%s] rerun with --force to replace tracked VM changes\n' "$LABEL" >&2
+    printf '[%s] rerun without --fail-on-dirty to stash, or with --force to discard tracked VM changes\n' "$LABEL" >&2
     exit 3
   fi
+  log "stashing local $name changes before deploy"
+  git -C "$repo" stash push --include-untracked -m "iris-drive dev-vm autosave $(date -u +%Y%m%dT%H%M%SZ)"
 }
 
 sync_repo() {
@@ -287,7 +305,7 @@ sync_repo() {
 
   bare="$(expand_path "$bare")"
   [[ -d "$repo/.git" ]] || { log "missing checkout: $repo"; exit 1; }
-  require_clean_or_force "$repo" "$name"
+  prepare_worktree "$repo" "$name"
   log "fetching $name from $bare"
   git -C "$repo" fetch "$bare" "$SYNC_BRANCH"
   if [[ "$FORCE" == "1" ]]; then
@@ -295,6 +313,56 @@ sync_repo() {
     git -C "$repo" reset --hard FETCH_HEAD
   else
     git -C "$repo" checkout -B "$TARGET_BRANCH" FETCH_HEAD
+  fi
+}
+
+free_kb() {
+  df -Pk "$1" | awk 'NR == 2 { print $4 }'
+}
+
+prune_rust_target_caches() {
+  local target_dir="$1"
+  [[ -d "$target_dir" ]] || return 0
+  rm -rf \
+    "$target_dir/debug/incremental" \
+    "$target_dir/debug/build" \
+    "$target_dir/debug/deps"
+  for debug_dir in "$target_dir"/*/debug; do
+    [[ -d "$debug_dir" ]] || continue
+    rm -rf \
+      "$debug_dir/incremental" \
+      "$debug_dir/build" \
+      "$debug_dir/deps"
+  done
+}
+
+ensure_build_space() {
+  local repo="$1"
+  local phase="$2"
+  local available=""
+  local companion_target="$HOME/src/nostr-vpn/target"
+
+  available="$(free_kb "$repo" 2>/dev/null || true)"
+  [[ -n "$available" ]] || return 0
+  if (( available >= MIN_FREE_KB )); then
+    return 0
+  fi
+
+  log "low disk before $phase ($((available / 1024)) MiB free); pruning generated build caches"
+  prune_rust_target_caches "$repo/target"
+  rm -rf \
+    "$repo/macos/.build/DerivedData/Build/Intermediates.noindex" \
+    "$repo/macos/.build/DerivedData/Index.noindex"
+
+  available="$(free_kb "$repo" 2>/dev/null || true)"
+  if [[ -n "$available" && "$available" -lt "$MIN_FREE_KB" && -d "$companion_target" ]]; then
+    log "still below disk target; pruning generated nostr-vpn Rust caches"
+    prune_rust_target_caches "$companion_target"
+  fi
+
+  available="$(free_kb "$repo" 2>/dev/null || true)"
+  if [[ -n "$available" && "$available" -lt "$MIN_FREE_KB" ]]; then
+    log "warning: only $((available / 1024)) MiB free after pruning; build may still fail"
   fi
 }
 
@@ -333,6 +401,7 @@ run_linux() {
   local overlay_ip=""
   local external_addr=""
 
+  ensure_build_space "$iris_repo" "Linux build"
   log "building idrive"
   (cd "$iris_repo" && cargo build -p idrive)
   [[ "$NO_RUN" == "1" ]] && return 0
@@ -371,8 +440,10 @@ run_macos() {
   local overlay_ip=""
   local external_addr=""
 
+  ensure_build_space "$iris_repo" "idrive helper build"
   log "building idrive helper"
   (cd "$iris_repo" && cargo build -p idrive)
+  ensure_build_space "$iris_repo" "macOS app build"
   log "building macOS app"
   (cd "$iris_repo" && xcodebuild \
     -project macos/IrisDriveMac.xcodeproj \
@@ -433,6 +504,7 @@ run_windows_target() {
     printf '$SyncBranch = %s\n' "$(ps_quote "$SYNC_BRANCH")"
     printf '$TargetBranch = %s\n' "$(ps_quote "$TARGET_BRANCH")"
     printf '$Force = %s\n' "$(ps_quote "$FORCE")"
+    printf '$FailOnDirty = %s\n' "$(ps_quote "$FAIL_ON_DIRTY")"
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
     printf '$FipsPort = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     cat <<'REMOTE_PS'
@@ -452,14 +524,24 @@ function Expand-RemotePath([string]$Path) {
   return $Path
 }
 
-function Require-CleanOrForce([string]$Repo, [string]$Name) {
+function Prepare-Worktree([string]$Repo, [string]$Name) {
   $Dirty = git -C $Repo status --short
-  if ($Dirty -and $Force -ne "1") {
+  if (-not $Dirty) {
+    return
+  }
+  if ($Force -eq "1") {
+    return
+  }
+  if ($FailOnDirty -eq "1") {
     [Console]::Error.WriteLine("[$Label] $Name has local changes:")
     [Console]::Error.WriteLine(($Dirty -join [Environment]::NewLine))
-    [Console]::Error.WriteLine("[$Label] rerun with --force to replace tracked VM changes")
+    [Console]::Error.WriteLine("[$Label] rerun without --fail-on-dirty to stash, or with --force to discard tracked VM changes")
     exit 3
   }
+  Write-Log "stashing local $Name changes before deploy"
+  $Stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+  git -C $Repo stash push --include-untracked -m "iris-drive dev-vm autosave $Stamp"
+  if ($LASTEXITCODE -ne 0) { throw "git stash failed for $Name" }
 }
 
 function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare) {
@@ -467,7 +549,7 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare) {
   if (-not (Test-Path (Join-Path $Repo ".git"))) {
     throw "missing checkout: $Repo"
   }
-  Require-CleanOrForce $Repo $Name
+  Prepare-Worktree $Repo $Name
   Write-Log "fetching $Name from $Bare"
   git -C $Repo fetch $Bare $SyncBranch
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $Name" }
@@ -502,14 +584,20 @@ $HashtreeRepo = Join-Path $HOME "src\hashtree"
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
 Sync-Repo $IrisRepo "iris-drive" $IrisBare
 
-Write-Log "publishing Windows dev app"
 Set-Location $IrisRepo
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Debug -StopRunningApp
-if ($LASTEXITCODE -ne 0) { throw "windows publish failed" }
-
 if ($NoRun -eq "1") {
+  Write-Log "building Windows dev app"
+  cargo build -p idrive --locked
+  if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+  dotnet build .\windows\IrisDrive.Windows.csproj -c Debug -r win-x64 --self-contained true -p:WindowsPackageType=None
+  if ($LASTEXITCODE -ne 0) { throw "windows build failed" }
   exit 0
 }
+
+Write-Log "publishing Windows dev app"
+$PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\windows-publish.ps1", "-Configuration", "Debug", "-StopRunningApp")
+powershell @PublishArgs
+if ($LASTEXITCODE -ne 0) { throw "windows publish failed" }
 
 $OverlayIp = Detect-OverlayIp
 $ExternalAddr = ""
