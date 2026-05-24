@@ -399,6 +399,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
+        "nostr_discovery_app": sync.nostr_discovery_app(),
         "udp_enabled": transport.enable_udp,
         "udp_bind_addr": transport.udp_bind_addr.as_deref(),
         "udp_public": transport.udp_public,

@@ -352,6 +352,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
             "fips_block_sync": {
                 "endpoint_npub": "npub1local",
                 "discovery_scope": "iris-drive-v1:owner",
+                "nostr_discovery_app": "fips-overlay-v1",
                 "udp_enabled": true,
                 "udp_bind_addr": "0.0.0.0:2121",
                 "udp_public": true,
@@ -374,6 +375,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["fresh"], true);
     assert_eq!(fips["endpoint_npub"], "npub1local");
     assert_eq!(fips["discovery_scope"], "iris-drive-v1:owner");
+    assert_eq!(fips["nostr_discovery_app"], "fips-overlay-v1");
     assert_eq!(fips["udp_enabled"], true);
     assert_eq!(fips["udp_bind_addr"], "0.0.0.0:2121");
     assert_eq!(fips["udp_public"], true);

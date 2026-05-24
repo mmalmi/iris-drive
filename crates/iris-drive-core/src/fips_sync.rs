@@ -33,6 +33,7 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 64;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+pub const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
 /// defaults so native Iris instances can join the same fallback overlay when
@@ -159,6 +160,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     #[must_use]
     pub fn discovery_scope(&self) -> &str {
         &self.discovery_scope
+    }
+
+    #[must_use]
+    pub fn nostr_discovery_app(&self) -> &'static str {
+        FIPS_NOSTR_DISCOVERY_APP
     }
 
     #[must_use]

@@ -656,6 +656,10 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         .filter(|value| !value.is_null())
         .cloned()
         .unwrap_or(Value::Null);
+    let nostr_discovery_app = fips_status
+        .and_then(|status| status.get("nostr_discovery_app"))
+        .and_then(Value::as_str)
+        .or_else(|| fips_status.map(|_| iris_drive_core::fips_sync::FIPS_NOSTR_DISCOVERY_APP));
 
     json!({
         "enabled": fips_status.is_some(),
@@ -667,6 +671,7 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "discovery_scope": fips_status
             .and_then(|status| status.get("discovery_scope"))
             .and_then(Value::as_str),
+        "nostr_discovery_app": nostr_discovery_app,
         "udp_enabled": fips_status
             .and_then(|status| status.get("udp_enabled"))
             .and_then(Value::as_bool)

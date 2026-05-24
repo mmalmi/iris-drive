@@ -43,6 +43,10 @@ Environment:
   IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE     Git remote name for the Ubuntu VM.
   IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE    Git remote name for the Windows VM.
   IRIS_DRIVE_DEV_VM_FIPS_PORT         UDP port advertised over nvpn (default: 22121).
+  IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS
+                                      auto/1/0 for direct nvpn static FIPS
+                                      hints. auto only injects peer hints that
+                                      are reachable from that VM (default: auto).
   IRIS_DRIVE_DEV_VM_SYNC_BRANCH       Temporary branch pushed to VM bare repos.
   IRIS_DRIVE_DEV_VM_FIPS_SYNC_BRANCH  Temporary branch pushed for fips
                                       (default: same as SYNC_BRANCH).
@@ -257,7 +261,8 @@ declare -a FIPS_REMOTES=()
 declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
 declare -a FIPS_BARES=()
-STATIC_PEERS=""
+declare -a OVERLAY_IPS=()
+declare -a STATIC_PEERS_BY_INDEX=()
 
 add_target_from_remotes() {
   local label="$1"
@@ -410,12 +415,60 @@ target_peer_hint_key() {
   printf '%s\n' "$host"
 }
 
+can_target_reach_overlay_ip() {
+  local kind="$1"
+  local host="$2"
+  local ip="$3"
+
+  if [[ "$kind" == "windows" ]]; then
+    ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<REMOTE_PS >/dev/null 2>&1
+\$ErrorActionPreference = "SilentlyContinue"
+\$Ip = "$ip"
+if (Test-Connection -ComputerName \$Ip -Count 1 -Quiet) {
+  exit 0
+}
+exit 1
+REMOTE_PS
+    return $?
+  fi
+
+  local wait_arg="1"
+  if [[ "$kind" == "macos" ]]; then
+    wait_arg="1000"
+  fi
+  ssh "$host" 'bash -se' <<REMOTE_SH >/dev/null 2>&1
+ping -c 1 -W "$wait_arg" "$ip" >/dev/null 2>&1
+REMOTE_SH
+}
+
 build_static_peer_hints() {
   local fips_port="${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}"
+  local mode="${IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS:-auto}"
   local pieces=()
   local ip=""
   local key=""
   local i
+  local j
+
+  mode="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+  case "$mode" in
+    ""|auto)
+      mode="auto"
+      ;;
+    1|true|yes|on|force|forced)
+      mode="force"
+      ;;
+    0|false|no|off|disabled)
+      for i in "${!LABELS[@]}"; do
+        STATIC_PEERS_BY_INDEX[$i]=""
+      done
+      log "not using nvpn static FIPS peer hints; disabled by IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS=$mode"
+      return 0
+      ;;
+    *)
+      die "unknown IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS value: $mode"
+      ;;
+  esac
 
   for i in "${!LABELS[@]}"; do
     ip="$(detect_remote_overlay_ip "${KINDS[$i]}" "${HOSTS[$i]}" || true)"
@@ -423,17 +476,32 @@ build_static_peer_hints() {
       log "warning: could not detect nvpn IP for ${LABELS[$i]} on ${HOSTS[$i]}; native FIPS may need WebRTC or relay fallback"
       continue
     fi
-    key="$(target_peer_hint_key "${HOSTS[$i]}")"
-    pieces+=("$key=$ip:$fips_port")
+    OVERLAY_IPS[$i]="$ip"
   done
 
-  if [[ ${#pieces[@]} -gt 0 ]]; then
-    local IFS=,
-    STATIC_PEERS="${pieces[*]}"
-    log "using static FIPS peer hints over nvpn: $STATIC_PEERS"
-  else
-    STATIC_PEERS=""
-  fi
+  for i in "${!LABELS[@]}"; do
+    pieces=()
+    for j in "${!LABELS[@]}"; do
+      [[ "$i" == "$j" ]] && continue
+      ip="${OVERLAY_IPS[$j]:-}"
+      [[ -n "$ip" ]] || continue
+      if [[ "$mode" == "auto" ]] && ! can_target_reach_overlay_ip "${KINDS[$i]}" "${HOSTS[$i]}" "$ip"; then
+        log "not using nvpn static FIPS hint ${LABELS[$i]} -> ${LABELS[$j]} ($ip); overlay address is not reachable from ${LABELS[$i]}"
+        continue
+      fi
+      key="$(target_peer_hint_key "${HOSTS[$j]}")"
+      pieces+=("$key=$ip:$fips_port")
+    done
+
+    if [[ ${#pieces[@]} -gt 0 ]]; then
+      local IFS=,
+      STATIC_PEERS_BY_INDEX[$i]="${pieces[*]}"
+      log "using static FIPS peer hints for ${LABELS[$i]} over nvpn: ${STATIC_PEERS_BY_INDEX[$i]}"
+    else
+      STATIC_PEERS_BY_INDEX[$i]=""
+      log "not using nvpn static FIPS peer hints for ${LABELS[$i]}; no reachable overlay peers"
+    fi
+  done
 }
 
 build_static_peer_hints
@@ -461,6 +529,7 @@ run_posix_target() {
   local iris_bare="$4"
   local hashtree_bare="$5"
   local fips_bare="$6"
+  local static_peers="$7"
 
   {
     printf 'LABEL=%s\n' "$(sh_quote "$label")"
@@ -476,7 +545,7 @@ run_posix_target() {
     printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
-    printf 'STATIC_PEERS=%s\n' "$(sh_quote "$STATIC_PEERS")"
+    printf 'STATIC_PEERS=%s\n' "$(sh_quote "$static_peers")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
@@ -933,6 +1002,7 @@ run_windows_target() {
   local iris_bare="$3"
   local hashtree_bare="$4"
   local fips_bare="$5"
+  local static_peers="$6"
 
   {
     printf '$Label = %s\n' "$(ps_quote "$label")"
@@ -947,7 +1017,7 @@ run_windows_target() {
     printf '$FailOnDirty = %s\n' "$(ps_quote "$FAIL_ON_DIRTY")"
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
     printf '$FipsPort = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
-    printf '$StaticPeers = %s\n' "$(ps_quote "$STATIC_PEERS")"
+    printf '$StaticPeers = %s\n' "$(ps_quote "$static_peers")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -1237,10 +1307,10 @@ for i in "${!LABELS[@]}"; do
   log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}"
+      run_windows_target "${LABELS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"
