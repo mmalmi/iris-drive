@@ -7,7 +7,7 @@ shared `idrive` CLI:
 - device key copy and owner-side approval
 - sync start/stop/restart
 - drive folder and snapshot link actions
-- devices, network, hashtree, and settings pages
+- devices, network, and settings pages
 - Windows tray icon with show/open/start/stop/restart/quit actions
 - self-contained `win-x64` publish output for shortcuts/installers
 

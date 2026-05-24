@@ -16,10 +16,7 @@ public sealed class IrisDriveStatusData
     public int RosterSize { get; init; }
     public int AuthorizedDeviceCount { get; init; }
     public int PublishedDeviceRoots { get; init; }
-    public string? WorkingDirectory { get; init; }
     public string? ConfigDirectory { get; init; }
-    public string? BlocksDirectory { get; init; }
-    public string? RootCid { get; init; }
     public string? SnapshotUrl { get; init; }
     public int FileCount { get; init; }
     public int TopLevelEntries { get; init; }
@@ -64,10 +61,7 @@ public sealed class IrisDriveStatusData
                 network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
             PublishedDeviceRoots =
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
-            WorkingDirectory = mountPath,
             ConfigDirectory = String(root, "config_dir"),
-            BlocksDirectory = hashtree.HasValue ? String(hashtree.Value, "blocks_dir") : null,
-            RootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,

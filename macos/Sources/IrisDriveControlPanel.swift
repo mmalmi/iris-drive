@@ -6,7 +6,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case peers
     case backups
     case network
-    case hashtree
     case settings
 
     var id: Self { self }
@@ -21,8 +20,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "Backups"
         case .network:
             return "Network"
-        case .hashtree:
-            return "Hashtree"
         case .settings:
             return "Settings"
         }
@@ -38,8 +35,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "lock.shield.fill"
         case .network:
             return "network"
-        case .hashtree:
-            return "shippingbox.fill"
         case .settings:
             return "gearshape.fill"
         }
@@ -273,8 +268,6 @@ struct IrisDriveControlPanel: View {
             backups
         case .network:
             network
-        case .hashtree:
-            hashtree
         case .settings:
             settings
         }
@@ -504,18 +497,6 @@ struct IrisDriveControlPanel: View {
                 .buttonStyle(.borderless)
             }
             .padding(.vertical, 2)
-        }
-    }
-
-    private var hashtree: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionTitle("Hashtree")
-            PathRow(title: "Config", value: status.configDirectory)
-            PathRow(title: "Blocks", value: status.blocksDirectory)
-            PathRow(title: "Drive", value: status.workingDirectory)
-            if let root = status.rootCID {
-                PathRow(title: "Root", value: root)
-            }
         }
     }
 
@@ -881,24 +862,6 @@ private struct NetworkMetric: View {
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-        }
-    }
-}
-
-private struct PathRow: View {
-    let title: String
-    let value: String?
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 62, alignment: .leading)
-            Text(value ?? "None")
-                .font(.system(.callout, design: .monospaced))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
         }
     }
 }

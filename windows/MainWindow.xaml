@@ -152,12 +152,6 @@
               <TextBlock Text="Network" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavHashtreeButton" Tag="Hashtree" Style="{StaticResource NavButton}" Click="Nav_Click">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE7B8;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
-              <TextBlock Text="Hashtree" />
-            </StackPanel>
-          </Button>
           <Button x:Name="NavSettingsButton" Tag="Settings" Style="{StaticResource NavButton}" Click="Nav_Click">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE713;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
@@ -356,32 +350,6 @@
                 </Button>
                 <TextBox x:Name="RelayBox" Tag="wss://relay.example" MinHeight="34" />
               </DockPanel>
-            </StackPanel>
-
-            <StackPanel x:Name="HashtreePage" Visibility="Collapsed">
-              <TextBlock Text="Hashtree" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
-              <Border Style="{StaticResource PanelBorder}">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="70" />
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                  </Grid.RowDefinitions>
-                  <TextBlock Text="Config" Style="{StaticResource FieldName}" />
-                  <TextBlock x:Name="ConfigPathValue" Grid.Column="1" Style="{StaticResource ValueText}" />
-                  <TextBlock Grid.Row="1" Text="Blocks" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
-                  <TextBlock x:Name="BlocksPathValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" />
-                  <TextBlock Grid.Row="2" Text="Drive" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
-                  <TextBlock x:Name="DrivePathValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" />
-                  <TextBlock Grid.Row="3" Text="Root" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
-                  <TextBlock x:Name="RootPathValue" Grid.Row="3" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" />
-                </Grid>
-              </Border>
             </StackPanel>
 
             <StackPanel x:Name="SettingsPage" Visibility="Collapsed">

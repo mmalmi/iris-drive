@@ -55,25 +55,6 @@ pub(crate) fn refresh(model: &AppRef) {
                 .ui
                 .sidebar_online
                 .set_text(&sidebar_online_value(&json));
-            model
-                .ui
-                .config_path
-                .set_text(find_string(&json, &["config_dir"]).unwrap_or("-"));
-            model.ui.blocks_path.set_text(
-                find_string(
-                    json.get("hashtree").unwrap_or(&Value::Null),
-                    &["blocks_dir"],
-                )
-                .unwrap_or("-"),
-            );
-            model.ui.drive_path.set_text(&drive_mount_text(&json));
-            model.ui.root_path.set_text(
-                find_string(
-                    json.get("hashtree").unwrap_or(&Value::Null),
-                    &["current_root_cid"],
-                )
-                .unwrap_or("-"),
-            );
             let has_snapshot = snapshot_link(&json).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);

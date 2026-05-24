@@ -240,22 +240,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
     relay_controls.append(&reset_relays_button);
     network_page.append(&relay_controls);
 
-    let hashtree_page = page_box();
-    hashtree_page.append(&section_title("Hashtree"));
-    let paths = gtk::Grid::new();
-    paths.add_css_class("iris-summary");
-    paths.set_column_spacing(12);
-    paths.set_row_spacing(10);
-    let config_path = value_label();
-    let blocks_path = value_label();
-    let drive_path = value_label();
-    let root_path = value_label();
-    add_field(&paths, 0, 0, "Config", &config_path);
-    add_field(&paths, 1, 0, "Blocks", &blocks_path);
-    add_field(&paths, 2, 0, "Drive", &drive_path);
-    add_field(&paths, 3, 0, "Root", &root_path);
-    hashtree_page.append(&paths);
-
     let settings_page = page_box();
     settings_page.append(&section_title("Settings"));
     let tray_on_close = gtk::CheckButton::with_label("Tray on close");
@@ -268,7 +252,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
     stack.add_titled(&peers_page, Some("devices"), "Devices");
     stack.add_titled(&backups_page, Some("backups"), "Backups");
     stack.add_titled(&network_page, Some("network"), "Network");
-    stack.add_titled(&hashtree_page, Some("hashtree"), "Hashtree");
     stack.add_titled(&settings_page, Some("settings"), "Settings");
 
     let nav_items = [
@@ -276,7 +259,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
         ("devices", "system-users-symbolic", "Devices"),
         ("backups", "security-high-symbolic", "Backups"),
         ("network", "network-workgroup-symbolic", "Network"),
-        ("hashtree", "network-server-symbolic", "Hashtree"),
         ("settings", "preferences-system-symbolic", "Settings"),
     ];
     let mut nav_buttons = Vec::new();
@@ -356,10 +338,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
             fips,
             relays,
             blossom,
-            config_path,
-            blocks_path,
-            drive_path,
-            root_path,
             tray_on_close,
             relay_entry,
             backup_entry,

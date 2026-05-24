@@ -122,10 +122,6 @@ public partial class MainWindow : Window
         OwnerValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
-        ConfigPathValue.Text = "-";
-        BlocksPathValue.Text = "-";
-        DrivePathValue.Text = "Not ready";
-        RootPathValue.Text = "-";
     }
 
     private void RenderAwaitingApproval(
@@ -165,11 +161,6 @@ public partial class MainWindow : Window
         ApprovePanel.Visibility =
             status.HasOwnerSigningAuthority ? Visibility.Visible : Visibility.Collapsed;
 
-        ConfigPathValue.Text = status.ConfigDirectory ?? "-";
-        BlocksPathValue.Text = status.BlocksDirectory ?? "-";
-        DrivePathValue.Text = status.WorkingDirectory ?? "Not ready";
-        RootPathValue.Text = status.RootCid ?? "-";
-
         RenderDrives(status);
         RenderPeers(status);
         RenderBackups(status);
@@ -190,10 +181,6 @@ public partial class MainWindow : Window
         OwnerValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
-        ConfigPathValue.Text = "-";
-        BlocksPathValue.Text = "-";
-        DrivePathValue.Text = "Not ready";
-        RootPathValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
         OpenSnapshotButton.IsEnabled = false;
         StartButton.IsEnabled = true;
@@ -809,7 +796,6 @@ public partial class MainWindow : Window
         DevicesPage.Visibility = page == "Devices" ? Visibility.Visible : Visibility.Collapsed;
         BackupsPage.Visibility = page == "Backups" ? Visibility.Visible : Visibility.Collapsed;
         NetworkPage.Visibility = page == "Network" ? Visibility.Visible : Visibility.Collapsed;
-        HashtreePage.Visibility = page == "Hashtree" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "Settings" ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var button in new[]
@@ -818,7 +804,6 @@ public partial class MainWindow : Window
             NavDevicesButton,
             NavBackupsButton,
             NavNetworkButton,
-            NavHashtreeButton,
             NavSettingsButton,
         })
         {
