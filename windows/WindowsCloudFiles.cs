@@ -80,6 +80,9 @@ public static partial class WindowsCloudFiles
     private const int StatusUnsuccessful = unchecked((int)0xC0000001);
     private const uint FileAttributeDirectory = 0x00000010;
     private const uint FileAttributeNormal = 0x00000080;
+    private const uint ShcneUpdateDir = 0x00001000;
+    private const uint ShcnfPathW = 0x0005;
+    private const uint ShcnfFlushNowait = 0x2000;
     private static readonly Guid ProviderId = new("2b58fb5d-b823-4d84-bd52-fcf9bd297fd4");
     private static readonly object ConnectionLock = new();
     private static CloudFilesConnection? activeConnection;
@@ -100,6 +103,7 @@ public static partial class WindowsCloudFiles
         {
             RegisterSyncRoot(path);
             var population = PopulatePlaceholders(path, entries);
+            NotifyShellDirectoryChanged(path);
 
             lock (ConnectionLock)
             {
@@ -179,6 +183,22 @@ public static partial class WindowsCloudFiles
         }
 
         return new PlaceholderPopulationReport(placeholderCount, skippedLocalItems);
+    }
+
+    private static void NotifyShellDirectoryChanged(string path)
+    {
+        try
+        {
+            NativeMethods.SHChangeNotify(
+                ShcneUpdateDir,
+                ShcnfPathW | ShcnfFlushNowait,
+                path,
+                null);
+        }
+        catch
+        {
+            // Explorer can keep an open sync-root view; missing this nudge is non-fatal.
+        }
     }
 
     private static void RemoveStalePlaceholders(string syncRootPath, HashSet<string> expectedPaths)

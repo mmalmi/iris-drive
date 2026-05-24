@@ -170,5 +170,12 @@ public static partial class WindowsCloudFiles
         public static extern int CfExecute(
             ref CfOperationInfo operationInfo,
             ref CfOperationParametersTransferData operationParameters);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern void SHChangeNotify(
+            uint wEventId,
+            uint uFlags,
+            [MarshalAs(UnmanagedType.LPWStr)] string? dwItem1,
+            [MarshalAs(UnmanagedType.LPWStr)] string? dwItem2);
     }
 }
