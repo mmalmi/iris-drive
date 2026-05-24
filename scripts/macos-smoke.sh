@@ -14,6 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PROCESS_NAME="Iris Drive"
 APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"
+SMOKE_APP_DATA="$ROOT/macos/.build/SmokeAppData"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 APP_PATH=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
@@ -57,6 +58,7 @@ on run argv
 end run
 APPLESCRIPT
   fi
+  rm -rf "$SMOKE_APP_DATA"
   rm -rf "$SMOKE_DIR"
 }
 trap cleanup EXIT
@@ -95,7 +97,7 @@ wait_for_daemon() {
   local seconds="$1"
 
   for _ in $(seq 1 "$((seconds * 10))"); do
-    if pgrep -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1; then
+    if pgrep -f "$APP_PATH/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
@@ -122,7 +124,7 @@ tell application "System Events"
   tell process "Iris Drive"
     click menu bar item 1 of menu bar 2
     delay 0.2
-    click menu item "Show Drive Folder" of menu 1 of menu bar item 1 of menu bar 2
+    click menu item "Open Drive Folder" of menu 1 of menu bar item 1 of menu bar 2
   end tell
 end tell
 APPLESCRIPT
@@ -135,13 +137,22 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
 fi
 
 terminate_app_process
+rm -rf "$SMOKE_APP_DATA"
+mkdir -p "$SMOKE_APP_DATA/Config"
+"$APP_PATH/Contents/MacOS/idrive" \
+  --config-dir "$SMOKE_APP_DATA/Config" \
+  init --force --label "macOS smoke" >/dev/null
 
-open \
-  -j \
-  --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_DIR/AppData" \
-  --stdout "$APP_STDOUT" \
-  --stderr "$APP_STDERR" \
-  "$APP_PATH"
+open_args=(
+  -j
+  --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA"
+  --stdout "$APP_STDOUT"
+  --stderr "$APP_STDERR"
+)
+if run_ui_smoke; then
+  open_args+=(--env "IRIS_DRIVE_ALLOW_MATERIALIZED_FALLBACK=1")
+fi
+open "${open_args[@]}" "$APP_PATH"
 
 if ! wait_for_process "$APP_PROCESS_NAME" 10; then
   echo "FAIL: Iris Drive did not launch." >&2
@@ -174,7 +185,8 @@ if run_ui_smoke; then
     exit 1
   fi
 
-  if ! wait_for_log "Iris Drive drive folder opened" 10; then
+  if ! wait_for_log "Iris Drive mounted drive folder opened" 10 \
+    && ! wait_for_log "Iris Drive materialized drive folder opened" 1; then
     echo "FAIL: Show Drive Folder did not open the drive folder." >&2
     show_recent_logs >&2
     exit 1

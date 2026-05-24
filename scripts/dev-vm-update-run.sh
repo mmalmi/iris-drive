@@ -62,6 +62,9 @@ Environment:
   IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
                                       Seconds to wait for all selected peers to
                                       report fips_online=true (default: 60).
+  IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=1
+                                      Fail macOS runs unless the app is signed
+                                      with FileProvider-capable entitlements.
   IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY
                                       macOS codesign identity; defaults to first
                                       Apple Development identity, else ad-hoc.
@@ -797,6 +800,7 @@ run_macos() {
   cp "$idrive" "$app/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
   sign_macos_app "$iris_repo" "$app" "$appex"
+  check_macos_fileprovider_signing "$app" "$appex"
   register_fileprovider_plugin "$appex"
   [[ "$NO_RUN" == "1" ]] && return 0
 
@@ -981,6 +985,28 @@ register_fileprovider_plugin() {
       done
   pluginkit -a "$appex" >/dev/null 2>&1 || true
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
+}
+
+check_macos_fileprovider_signing() {
+  local app="$1"
+  local appex="$2"
+  local require="${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}"
+
+  if codesign -d --entitlements :- "$app" 2>/dev/null \
+      | grep -q 'com.apple.developer.fileprovider.testing-mode' \
+    && codesign -d --entitlements :- "$appex" 2>/dev/null \
+      | grep -q 'com.apple.developer.fileprovider.testing-mode'; then
+    log "macOS app signed with FileProvider testing entitlement"
+    return 0
+  fi
+
+  case "$require" in
+    1|true|TRUE|yes|YES|on|ON)
+      die "macOS FileProvider requires Apple Development signing; no FileProvider-capable entitlements are present"
+      ;;
+  esac
+
+  log "warning: macOS app is not FileProvider-capable in this signing mode; install an Apple Development identity or set IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY to test the real drive domain"
 }
 
 ensure_build_space "$HOME/src/iris-drive" "repository sync"

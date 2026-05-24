@@ -40,8 +40,13 @@ without requiring a local provisioning profile.
 
 The app-launched daemon uses the shared app-group container for its config and
 hashtree blocks and exposes the drive through the virtual provider/gateway
-surface. The user-visible drive folder should come from the File Provider
-domain, not from a separate `~/Iris Drive` directory.
+surface. The user-visible drive folder comes from the File Provider domain, not
+from a separate `~/Iris Drive` directory. Unsigned/ad-hoc dev runs cannot mount
+the real File Provider domain; set `IRIS_DRIVE_ALLOW_MATERIALIZED_FALLBACK=1`
+only when explicitly testing the legacy materialized-folder fallback. When the
+app-group container is unavailable, dev builds use their own Application Support
+runtime path instead of hand-building a `~/Library/Group Containers` path, which
+would trigger macOS privacy prompts for other apps' data.
 
 ## Smoke test
 

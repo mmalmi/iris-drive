@@ -1,5 +1,6 @@
 import Foundation
 import FileProvider
+import Security
 import UniformTypeIdentifiers
 
 final class FileProviderItem: NSObject, NSFileProviderItem {
@@ -133,12 +134,9 @@ enum FileProviderStorage {
 
     private static var runtimeDirectories: [URL] {
         var directories = [URL]()
-        if let appGroup = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) {
+        if let appGroup = currentProcessAppGroupContainerURL() {
             directories.append(appGroup)
         }
-        directories.append(fallbackGroupContainerDirectory())
         directories.append(fallbackApplicationSupportDirectory())
 
         var seen = Set<String>()
@@ -387,10 +385,20 @@ enum FileProviderStorage {
         return base.appendingPathComponent("Iris Drive", isDirectory: true)
     }
 
-    private static func fallbackGroupContainerDirectory() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Group Containers", isDirectory: true)
-            .appendingPathComponent(appGroupIdentifier, isDirectory: true)
+    private static func currentProcessAppGroupContainerURL() -> URL? {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(
+                  task,
+                  "com.apple.security.application-groups" as CFString,
+                  nil
+              ),
+              let groups = value as? [String],
+              groups.contains(appGroupIdentifier)
+        else {
+            return nil
+        }
+        return FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        )
     }
 }
