@@ -77,7 +77,8 @@ extension FileProviderItem {
 }
 
 enum FileProviderStorage {
-    private static let appGroupIdentifier = "group.to.iris.drive"
+    private static let canonicalAppGroupIdentifier = "group.to.iris.drive"
+    private static let teamAppGroupName = "to.iris.drive"
     private static let runtimeFileName = "fileprovider-runtime.json"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
@@ -391,19 +392,49 @@ enum FileProviderStorage {
     }
 
     private static func currentProcessAppGroupContainerURL() -> URL? {
+        guard let group = currentProcessAppGroupIdentifier() else { return nil }
+        return FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: group
+        )
+    }
+
+    private static func currentProcessAppGroupIdentifier() -> String? {
         guard let task = SecTaskCreateFromSelf(nil),
               let value = SecTaskCopyValueForEntitlement(
                   task,
                   "com.apple.security.application-groups" as CFString,
                   nil
               ),
-              let groups = value as? [String],
-              groups.contains(appGroupIdentifier)
+              let groups = value as? [String]
         else {
             return nil
         }
-        return FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        )
+
+        if groups.contains(canonicalAppGroupIdentifier) {
+            return canonicalAppGroupIdentifier
+        }
+
+        if let team = currentProcessTeamIdentifier(task: task) {
+            let teamGroup = "\(team).\(teamAppGroupName)"
+            if groups.contains(teamGroup) {
+                return teamGroup
+            }
+        }
+
+        return groups.first { group in
+            group.hasSuffix(".\(teamAppGroupName)")
+        }
+    }
+
+    private static func currentProcessTeamIdentifier(task: SecTask) -> String? {
+        guard let value = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.developer.team-identifier" as CFString,
+            nil
+        ) as? String else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

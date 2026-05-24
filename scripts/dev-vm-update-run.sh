@@ -761,6 +761,8 @@ write_macos_fileprovider_runtime() {
   local app_base="$1"
   local config_dir="$2"
   local idrive_path="$3"
+  local app_group
+  app_group="$(macos_app_group_identifier)"
   local runtime_dirs=(
     "$app_base"
     "$HOME/Library/Application Support/Iris Drive"
@@ -768,7 +770,7 @@ write_macos_fileprovider_runtime() {
 
   case "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}}" in
     1|true|TRUE|yes|YES|on|ON)
-      runtime_dirs+=("$HOME/Library/Group Containers/group.to.iris.drive")
+      runtime_dirs+=("$HOME/Library/Group Containers/$app_group")
       ;;
   esac
 
@@ -801,6 +803,10 @@ macos_fileprovider_required() {
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+macos_app_group_identifier() {
+  printf 'group.to.iris.drive\n'
 }
 
 unlock_macos_build_keychain() {
@@ -892,6 +898,7 @@ xcodebuild_macos_app() {
       CODE_SIGN_STYLE=Automatic
       CODE_SIGNING_ALLOWED=YES
       "CODE_SIGN_IDENTITY=Apple Development"
+      REGISTER_APP_GROUPS=YES
     )
     if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}" ]]; then
       args+=("DEVELOPMENT_TEAM=$IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM")
@@ -1053,6 +1060,8 @@ sign_macos_app() {
   local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
   local appex_dev_entitlements=""
+  local app_group
+  app_group="$(macos_app_group_identifier)"
 
   if macos_fileprovider_required; then
     [[ -f "$xcode_app_entitlements" ]] && app_entitlements="$xcode_app_entitlements"
@@ -1073,7 +1082,7 @@ sign_macos_app() {
     sign_identity="-"
     app_dev_entitlements="$(mktemp -t iris-drive-dev-app-entitlements.XXXXXX.plist)"
     appex_dev_entitlements="$(mktemp -t iris-drive-dev-appex-entitlements.XXXXXX.plist)"
-    cat > "$app_dev_entitlements" <<'EOF'
+    cat > "$app_dev_entitlements" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1082,7 +1091,7 @@ sign_macos_app() {
   <true/>
   <key>com.apple.security.application-groups</key>
   <array>
-    <string>group.to.iris.drive</string>
+    <string>$app_group</string>
   </array>
   <key>com.apple.security.network.client</key>
   <true/>
@@ -1091,7 +1100,7 @@ sign_macos_app() {
 </dict>
 </plist>
 EOF
-    cat > "$appex_dev_entitlements" <<'EOF'
+    cat > "$appex_dev_entitlements" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1100,7 +1109,7 @@ EOF
   <true/>
   <key>com.apple.security.application-groups</key>
   <array>
-    <string>group.to.iris.drive</string>
+    <string>$app_group</string>
   </array>
   <key>com.apple.security.network.client</key>
   <true/>

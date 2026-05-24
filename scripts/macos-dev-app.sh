@@ -76,6 +76,19 @@ development_team() {
   printf '%s' "${IRIS_DRIVE_DEVELOPMENT_TEAM:-}"
 }
 
+macos_app_group_identifier() {
+  printf 'group.to.iris.drive\n'
+}
+
+xcode_app_entitlements() {
+  local entitlements="$DERIVED_DATA/Build/Intermediates.noindex/IrisDriveMac.build/$CONFIGURATION/IrisDriveMac.build/Iris Drive.app.xcent"
+  if [[ -f "$entitlements" ]]; then
+    printf '%s\n' "$entitlements"
+  else
+    printf '%s\n' "$ROOT/macos/IrisDriveMac.entitlements"
+  fi
+}
+
 require_env_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -166,8 +179,9 @@ build_xcode_app() {
       exit 2
     fi
     args+=(DEVELOPMENT_TEAM="$team")
+    args+=(REGISTER_APP_GROUPS=YES)
     if [[ "${IRIS_DRIVE_ALLOW_PROVISIONING_UPDATES:-1}" != "0" ]]; then
-      args+=("${auth_args[@]}" -allowProvisioningUpdates)
+      args+=("${auth_args[@]}" -allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     fi
   else
     args+=(CODE_SIGNING_ALLOWED=NO)
@@ -197,7 +211,7 @@ sign_helper() {
   local identity="${3:-}"
 
   if [[ "$mode" == "development" ]]; then
-    codesign --force --sign "$identity" --entitlements "$ROOT/macos/IrisDriveMac.entitlements" "$helper" >&2
+    codesign --force --sign "$identity" --entitlements "$(xcode_app_entitlements)" "$helper" >&2
   else
     codesign --force --sign - "$helper" >&2
   fi
@@ -209,7 +223,7 @@ finalize_app_signature() {
   local identity="${3:-}"
 
   if [[ "$mode" == "development" ]]; then
-    codesign --force --sign "$identity" --entitlements "$ROOT/macos/IrisDriveMac.entitlements" "$app_path" >&2
+    codesign --force --sign "$identity" --entitlements "$(xcode_app_entitlements)" "$app_path" >&2
     codesign --verify --strict --deep "$app_path" >&2
   fi
 }

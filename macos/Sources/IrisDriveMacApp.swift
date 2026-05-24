@@ -6,7 +6,8 @@ import SwiftUI
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
-private let irisDriveAppGroupIdentifier = "group.to.iris.drive"
+private let irisDriveCanonicalAppGroupIdentifier = "group.to.iris.drive"
+private let irisDriveTeamAppGroupName = "to.iris.drive"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
@@ -1550,22 +1551,45 @@ private func currentProcessHasEntitlement(_ name: String) -> Bool {
 }
 
 private func currentProcessHasTeamIdentifier() -> Bool {
+    currentProcessTeamIdentifier() != nil
+}
+
+private func currentProcessTeamIdentifier() -> String? {
     guard let value = currentProcessEntitlementValue("com.apple.developer.team-identifier")
             as? String
     else {
-        return false
+        return nil
     }
-    return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
 
-private func currentProcessAppGroupContainerURL() -> URL? {
+private func currentProcessAppGroupIdentifier() -> String? {
     guard let groups = currentProcessEntitlementValue("com.apple.security.application-groups")
-            as? [String],
-          groups.contains(irisDriveAppGroupIdentifier)
+            as? [String]
     else {
         return nil
     }
+
+    if groups.contains(irisDriveCanonicalAppGroupIdentifier) {
+        return irisDriveCanonicalAppGroupIdentifier
+    }
+
+    if let team = currentProcessTeamIdentifier() {
+        let teamGroup = "\(team).\(irisDriveTeamAppGroupName)"
+        if groups.contains(teamGroup) {
+            return teamGroup
+        }
+    }
+
+    return groups.first { group in
+        group.hasSuffix(".\(irisDriveTeamAppGroupName)")
+    }
+}
+
+private func currentProcessAppGroupContainerURL() -> URL? {
+    guard let group = currentProcessAppGroupIdentifier() else { return nil }
     return FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: irisDriveAppGroupIdentifier
+        forSecurityApplicationGroupIdentifier: group
     )
 }

@@ -18,6 +18,10 @@ targets:
   IrisDriveMac:
     type: application
     platform: macOS
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.iOS:
+          enabled: 1
     sources:
       - path: Sources
       - path: Resources
@@ -37,6 +41,10 @@ targets:
   IrisDriveFileProvider:
     type: app-extension
     platform: macOS
+    attributes:
+      SystemCapabilities:
+        com.apple.ApplicationGroups.iOS:
+          enabled: 1
     sources:
       - path: FileProvider
     settings:

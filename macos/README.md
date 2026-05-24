@@ -87,7 +87,8 @@ Release entitlements:
 
 Those intentionally omit `com.apple.developer.fileprovider.testing-mode`; Apple
 requires that testing-only entitlement to be removed before TestFlight or Mac
-App Store submission.
+App Store submission. Development builds pass `REGISTER_APP_GROUPS=YES` so
+Xcode-managed profiles include the app group entitlement.
 
 Bundle IDs:
 
