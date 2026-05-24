@@ -160,6 +160,7 @@ declare -a IRIS_REMOTES=()
 declare -a HASHTREE_REMOTES=()
 declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
+STATIC_PEERS=""
 
 add_target_from_remotes() {
   local label="$1"
@@ -238,6 +239,82 @@ if [[ "$LIST_TARGETS" == "1" ]]; then
   exit 0
 fi
 
+detect_remote_overlay_ip() {
+  local kind="$1"
+  local host="$2"
+  local ip=""
+  if [[ "$kind" == "windows" ]]; then
+    ip="$(ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS' 2>/dev/null || true
+$ErrorActionPreference = "SilentlyContinue"
+$Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
+if (-not $Nvpn) {
+  $Candidate = Join-Path $HOME "src\nostr-vpn\target\debug\nvpn.exe"
+  if (Test-Path $Candidate) { $Nvpn = $Candidate }
+}
+if ($Nvpn) {
+  try {
+    $Status = & $Nvpn status --json | ConvertFrom-Json
+    (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
+  } catch {}
+}
+REMOTE_PS
+)"
+  else
+    ip="$(ssh "$host" 'bash -se' <<'REMOTE_SH' 2>/dev/null || true
+set -Eeuo pipefail
+nvpn=""
+if command -v nvpn >/dev/null 2>&1; then
+  nvpn="$(command -v nvpn)"
+elif [[ -x "$HOME/src/nostr-vpn/target/debug/nvpn" ]]; then
+  nvpn="$HOME/src/nostr-vpn/target/debug/nvpn"
+fi
+[[ -n "$nvpn" ]] || exit 0
+"$nvpn" status --json \
+  | python3 -c 'import json,sys; print((json.load(sys.stdin).get("tunnel_ip") or "").split("/")[0])' 2>/dev/null || true
+REMOTE_SH
+)"
+  fi
+  ip="${ip//$'\r'/}"
+  ip="$(printf '%s\n' "$ip" | awk 'NF { print $1; exit }')"
+  [[ -n "$ip" ]] || return 1
+  printf '%s\n' "$ip"
+}
+
+target_peer_hint_key() {
+  local host="$1"
+  host="${host#*@}"
+  host="${host%.nvpn}"
+  printf '%s\n' "$host"
+}
+
+build_static_peer_hints() {
+  local fips_port="${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}"
+  local pieces=()
+  local ip=""
+  local key=""
+  local i
+
+  for i in "${!LABELS[@]}"; do
+    ip="$(detect_remote_overlay_ip "${KINDS[$i]}" "${HOSTS[$i]}" || true)"
+    if [[ -z "$ip" ]]; then
+      log "warning: could not detect nvpn IP for ${LABELS[$i]} on ${HOSTS[$i]}; native FIPS may need WebRTC or relay fallback"
+      continue
+    fi
+    key="$(target_peer_hint_key "${HOSTS[$i]}")"
+    pieces+=("$key=$ip:$fips_port")
+  done
+
+  if [[ ${#pieces[@]} -gt 0 ]]; then
+    local IFS=,
+    STATIC_PEERS="${pieces[*]}"
+    log "using static FIPS peer hints over nvpn: $STATIC_PEERS"
+  else
+    STATIC_PEERS=""
+  fi
+}
+
+build_static_peer_hints
+
 if [[ "$SKIP_PUSH" != "1" ]]; then
   for i in "${!LABELS[@]}"; do
     log "pushing iris-drive HEAD to ${LABELS[$i]} (${IRIS_REMOTES[$i]}:$SYNC_BRANCH)"
@@ -265,6 +342,7 @@ run_posix_target() {
     printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
+    printf 'STATIC_PEERS=%s\n' "$(sh_quote "$STATIC_PEERS")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
@@ -426,18 +504,11 @@ run_linux() {
   local idrive="$iris_repo/target/debug/idrive"
   local config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
   local mountpoint="${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-$HOME/Iris Drive}"
-  local overlay_ip=""
-  local external_addr=""
 
   ensure_build_space "$iris_repo" "Linux build"
   log "building idrive"
   (cd "$iris_repo" && cargo build -p idrive)
   [[ "$NO_RUN" == "1" ]] && return 0
-
-  overlay_ip="$(detect_overlay_ip || true)"
-  if [[ -n "$overlay_ip" ]]; then
-    external_addr="$overlay_ip:$FIPS_PORT"
-  fi
 
   log "restarting idrive daemon"
   mkdir -p "$config_dir" "$mountpoint"
@@ -445,9 +516,10 @@ run_linux() {
   rm -f "$config_dir/daemon.lock"
   nohup env \
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
-    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
-    "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
+    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
+    "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
       --watch-interval 2 \
       --watch-debounce-ms 100 \
@@ -471,8 +543,6 @@ run_macos() {
   local app_stderr="/tmp/iris-drive-macos-app.err"
   local daemon_log="/tmp/iris-drive-macos-daemon.log"
   local daemon_pid=""
-  local overlay_ip=""
-  local external_addr=""
 
   ensure_build_space "$iris_repo" "idrive helper build"
   log "building idrive helper"
@@ -491,11 +561,6 @@ run_macos() {
   sign_macos_app "$iris_repo" "$app" "$appex"
   register_fileprovider_plugin "$appex"
   [[ "$NO_RUN" == "1" ]] && return 0
-
-  overlay_ip="$(detect_overlay_ip || true)"
-  if [[ -n "$overlay_ip" ]]; then
-    external_addr="$overlay_ip:$FIPS_PORT"
-  fi
 
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
@@ -518,9 +583,10 @@ run_macos() {
     --stderr "$app_stderr" \
     --env "IRIS_DRIVE_EXTERNAL_DAEMON=true" \
     --env "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
-    --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
-    --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
+    --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
+    --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$app"
   for _ in {1..30}; do
     if pgrep -x "Iris Drive" >/dev/null 2>&1; then
@@ -537,9 +603,10 @@ run_macos() {
   log "starting macOS idrive daemon outside LaunchServices"
   nohup env \
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
-    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
-    "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
+    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
+    "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
       --watch-interval 2 \
       --watch-debounce-ms 100 \
@@ -700,6 +767,7 @@ run_windows_target() {
     printf '$FailOnDirty = %s\n' "$(ps_quote "$FAIL_ON_DIRTY")"
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
     printf '$FipsPort = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
+    printf '$StaticPeers = %s\n' "$(ps_quote "$STATIC_PEERS")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -792,16 +860,11 @@ $PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts
 powershell @PublishArgs
 if ($LASTEXITCODE -ne 0) { throw "windows publish failed" }
 
-$OverlayIp = Detect-OverlayIp
-$ExternalAddr = ""
-if ($OverlayIp) {
-  $ExternalAddr = "${OverlayIp}:$FipsPort"
-}
-
 $env:IRIS_DRIVE_FIPS_UDP_BIND_ADDR = "0.0.0.0:$FipsPort"
-$env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR = $ExternalAddr
-$env:IRIS_DRIVE_FIPS_UDP_PUBLIC = "true"
+$env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR = ""
+$env:IRIS_DRIVE_FIPS_UDP_PUBLIC = "false"
 $env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC = "true"
+$env:IRIS_DRIVE_FIPS_STATIC_PEERS = $StaticPeers
 
 $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
 $Exe = Join-Path $PublishDir "IrisDrive.exe"
@@ -813,9 +876,10 @@ $LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
 @"
 @echo off
 set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FipsPort
-set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$ExternalAddr
-set IRIS_DRIVE_FIPS_UDP_PUBLIC=true
+set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=
+set IRIS_DRIVE_FIPS_UDP_PUBLIC=false
 set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
+set IRIS_DRIVE_FIPS_STATIC_PEERS=$StaticPeers
 cd /d "$PublishDir"
 start "" "$Exe"
 "@ | Set-Content -Encoding ASCII $LaunchScript

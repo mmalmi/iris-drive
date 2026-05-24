@@ -14,7 +14,7 @@ use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use hashtree_fips_transport::{
-    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
+    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
     HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
@@ -90,7 +90,9 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS),
         );
         let receiver_task = transport.start();
-        transport.set_peers(authorized_device_npubs(config)).await;
+        transport
+            .set_peer_configs(authorized_device_fips_peers(config, &transport_settings))
+            .await;
         let mesh_pubsub = transport
             .start_mesh_pubsub(
                 local_store.clone(),
@@ -128,7 +130,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
         self.transport
-            .set_peers(authorized_device_npubs(config))
+            .set_peer_configs(authorized_device_fips_peers(
+                config,
+                &self.transport_settings,
+            ))
             .await;
     }
 
@@ -211,6 +216,7 @@ pub struct FipsTransportSettings {
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
+    pub static_peer_hints: Vec<(String, Vec<String>)>,
 }
 
 impl Default for FipsTransportSettings {
@@ -221,6 +227,7 @@ impl Default for FipsTransportSettings {
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
+            static_peer_hints: Vec::new(),
         }
     }
 }
@@ -238,6 +245,9 @@ impl FipsTransportSettings {
             udp_bind_addr,
             udp_public,
             udp_external_addr,
+            static_peer_hints: parse_static_peer_hints(
+                &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
+            ),
         }
     }
 }
@@ -322,7 +332,10 @@ pub fn discovery_scope(config: &AppConfig) -> String {
     )
 }
 
-fn authorized_device_npubs(config: &AppConfig) -> Vec<String> {
+fn authorized_device_fips_peers(
+    config: &AppConfig,
+    settings: &FipsTransportSettings,
+) -> Vec<FipsPeerConfig> {
     let Some(account) = config.account.as_ref() else {
         return Vec::new();
     };
@@ -338,6 +351,72 @@ fn authorized_device_npubs(config: &AppConfig) -> Vec<String> {
             PublicKey::from_hex(&device.pubkey)
                 .ok()
                 .and_then(|pubkey| pubkey.to_bech32().ok())
+                .map(|npub| FipsPeerConfig {
+                    udp_addresses: static_peer_addresses_for_device(
+                        &settings.static_peer_hints,
+                        device,
+                        &npub,
+                    ),
+                    npub,
+                })
+        })
+        .collect()
+}
+
+fn static_peer_addresses_for_device(
+    hints: &[(String, Vec<String>)],
+    device: &crate::app_keys::DeviceEntry,
+    npub: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (key, addresses) in hints {
+        if !static_peer_key_matches_device(key, device, npub) {
+            continue;
+        }
+        for address in addresses {
+            let address = address.trim().to_string();
+            if !address.is_empty() && seen.insert(address.clone()) {
+                out.push(address);
+            }
+        }
+    }
+    out
+}
+
+fn static_peer_key_matches_device(
+    key: &str,
+    device: &crate::app_keys::DeviceEntry,
+    npub: &str,
+) -> bool {
+    let key = key.trim();
+    if key.is_empty() {
+        return false;
+    }
+    key.eq_ignore_ascii_case(npub)
+        || key.eq_ignore_ascii_case(&device.pubkey)
+        || device
+            .label
+            .as_deref()
+            .is_some_and(|label| key.eq_ignore_ascii_case(label.trim()))
+}
+
+fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {
+    value
+        .split([',', ';'])
+        .filter_map(|entry| {
+            let (key, addresses) = entry.split_once('=')?;
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            let addresses = addresses
+                .split('|')
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            (!addresses.is_empty()).then(|| (key.to_string(), addresses))
         })
         .collect()
 }
@@ -573,6 +652,7 @@ mod tests {
             udp_bind_addr: Some("0.0.0.0:2121".to_string()),
             udp_public: true,
             udp_external_addr: Some("10.44.94.98:2121".to_string()),
+            static_peer_hints: Vec::new(),
         };
 
         let options = fips_endpoint_options(
@@ -591,6 +671,60 @@ mod tests {
             Some("10.44.94.98:2121")
         );
         assert!(options.webrtc_auto_connect);
+    }
+
+    #[test]
+    fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
+        let first_keys = nostr_sdk::Keys::generate();
+        let second_keys = nostr_sdk::Keys::generate();
+        let first_pubkey = first_keys.public_key().to_hex();
+        let second_pubkey = second_keys.public_key().to_hex();
+        let first_npub = first_keys.public_key().to_bech32().unwrap();
+        let settings = FipsTransportSettings {
+            static_peer_hints: parse_static_peer_hints(&format!(
+                "ubuntu-dev=10.44.214.2:22121,{first_npub}=10.44.34.102:22121"
+            )),
+            ..Default::default()
+        };
+        let config = AppConfig {
+            account: Some(crate::AccountState {
+                owner_pubkey: "aa".repeat(32),
+                device_pubkey: "dd".repeat(32),
+                has_owner_signing_authority: false,
+                authorization_state: crate::DeviceAuthorizationState::Authorized,
+                device_label: None,
+                app_keys: Some(crate::app_keys::AppKeysSnapshot {
+                    owner_pubkey: "aa".repeat(32),
+                    created_at: 1,
+                    devices: vec![
+                        crate::app_keys::DeviceEntry {
+                            pubkey: first_pubkey,
+                            added_at: 1,
+                            label: Some("macos-utm".into()),
+                        },
+                        crate::app_keys::DeviceEntry {
+                            pubkey: second_pubkey,
+                            added_at: 1,
+                            label: Some("ubuntu-dev".into()),
+                        },
+                    ],
+                    dck_generation: 0,
+                    wrapped_dck: Default::default(),
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let peers = authorized_device_fips_peers(&config, &settings);
+
+        assert_eq!(peers.len(), 2);
+        assert!(peers.iter().any(|peer| peer.npub == first_npub
+            && peer.udp_addresses == vec!["10.44.34.102:22121".to_string()]));
+        assert!(
+            peers
+                .iter()
+                .any(|peer| peer.udp_addresses == vec!["10.44.214.2:22121".to_string()])
+        );
     }
 
     #[test]
