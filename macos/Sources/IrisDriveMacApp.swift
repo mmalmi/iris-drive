@@ -1,5 +1,6 @@
 import AppKit
 import FileProvider
+import Security
 import SwiftUI
 
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
@@ -1287,7 +1288,9 @@ private func registerFileProviderDomain(_ completion: @escaping (FileProviderDom
         displayName: irisDriveDisplayName
     )
     #if DEBUG
-    domain.testingModes = [.alwaysEnabled]
+    if currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode") {
+        domain.testingModes = [.alwaysEnabled]
+    }
     #endif
 
     NSFileProviderManager.add(domain) { error in
@@ -1299,4 +1302,13 @@ private func registerFileProviderDomain(_ completion: @escaping (FileProviderDom
             completion(.registered)
         }
     }
+}
+
+private func currentProcessHasEntitlement(_ name: String) -> Bool {
+    guard let task = SecTaskCreateFromSelf(nil),
+          let value = SecTaskCopyValueForEntitlement(task, name as CFString, nil)
+    else {
+        return false
+    }
+    return (value as? Bool) == true
 }

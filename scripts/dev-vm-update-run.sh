@@ -42,6 +42,9 @@ Environment:
   IRIS_DRIVE_DEV_VM_TARGET_BRANCH     Branch name checked out in VM worktrees.
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
   IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM build caches below this free space.
+  IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY
+                                      macOS codesign identity; defaults to first
+                                      Apple Development identity, else ad-hoc.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
 
 Remote worktree paths are expected to be:
@@ -460,6 +463,7 @@ run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
   local app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
+  local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
   local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}"
   local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
@@ -480,13 +484,8 @@ run_macos() {
     build)
   cp "$idrive" "$app/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
-  codesign --force --sign - "$app/Contents/MacOS/idrive" >/dev/null 2>&1 || true
-  codesign --force --sign - \
-    --entitlements "$iris_repo/macos/FileProvider/FileProvider.entitlements" \
-    "$app/Contents/PlugIns/IrisDriveFileProvider.appex" >/dev/null 2>&1 || true
-  codesign --force --sign - \
-    --entitlements "$iris_repo/macos/IrisDriveMac.entitlements" \
-    "$app" >/dev/null 2>&1 || true
+  sign_macos_app "$iris_repo" "$app" "$appex"
+  register_fileprovider_plugin "$appex"
   [[ "$NO_RUN" == "1" ]] && return 0
 
   overlay_ip="$(detect_overlay_ip || true)"
@@ -518,6 +517,74 @@ run_macos() {
   sleep 8
   "$idrive" --config-dir "$config_dir" status \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
+}
+
+sign_macos_app() {
+  local iris_repo="$1"
+  local app="$2"
+  local appex="$3"
+  local sign_identity="${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}"
+  local app_entitlements="$iris_repo/macos/IrisDriveMac.entitlements"
+  local appex_entitlements="$iris_repo/macos/FileProvider/FileProvider.entitlements"
+  local dev_entitlements=""
+
+  if [[ -z "$sign_identity" ]]; then
+    sign_identity="$(security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development[^"]*\)".*/\1/p' \
+      | head -n 1 || true)"
+  fi
+
+  if [[ -z "$sign_identity" ]]; then
+    sign_identity="-"
+    dev_entitlements="$(mktemp -t iris-drive-dev-entitlements.XXXXXX.plist)"
+    cat > "$dev_entitlements" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.to.iris.drive</string>
+  </array>
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>
+EOF
+    app_entitlements="$dev_entitlements"
+    appex_entitlements="$dev_entitlements"
+    log "codesigning macOS app ad-hoc with launch-safe FileProvider app-group entitlements"
+  else
+    log "codesigning macOS app with identity: $sign_identity"
+  fi
+
+  codesign --force --sign "$sign_identity" "$app/Contents/MacOS/idrive" >/dev/null
+  codesign --force --sign "$sign_identity" \
+    --entitlements "$appex_entitlements" \
+    "$appex" >/dev/null
+  codesign --force --sign "$sign_identity" \
+    --entitlements "$app_entitlements" \
+    "$app" >/dev/null
+  rm -f "$dev_entitlements"
+  codesign --verify --deep --strict --verbose=2 "$app" >/dev/null
+}
+
+register_fileprovider_plugin() {
+  local appex="$1"
+  local plugin_id="to.iris.drive.macos.FileProvider"
+  command -v pluginkit >/dev/null 2>&1 || return 0
+
+  pluginkit -m -i "$plugin_id" -ADv 2>/dev/null \
+    | awk -F '\t' 'NF >= 4 { print $4 }' \
+    | while IFS= read -r plugin; do
+        if [[ -n "$plugin" && "$plugin" != "$appex" ]]; then
+          pluginkit -r "$plugin" >/dev/null 2>&1 || true
+        fi
+      done
+  pluginkit -a "$appex" >/dev/null 2>&1 || true
+  pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }
 
 ensure_build_space "$HOME/src/iris-drive" "repository sync"
