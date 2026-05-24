@@ -402,7 +402,7 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
     let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
     let linked = run_json(
         linked_dir.path(),
-        &["link", &owner_npub, "--label", "ubuntu-dev"],
+        &["link", &owner_npub, "--label", "linux-peer"],
     );
     let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
     run_json(owner_dir.path(), &["approve", &linked_device_npub]);

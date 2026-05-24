@@ -3,9 +3,13 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MACOS_REMOTE="${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}"
-UBUNTU_REMOTE="${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}"
-WINDOWS_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}"
+ENV_FILE="${IRIS_DRIVE_DEV_LAB_ENV:-$HOME/.config/iris-drive/dev-lab.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 RUN_ID="${IRIS_DRIVE_DEV_VM_SMOKE_ID:-$(date -u +%Y%m%d-%H%M%S)}"
 SMOKE_DIR="codex-lab-smoke/$RUN_ID"
 
@@ -16,6 +20,29 @@ log() {
 die() {
   printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+remote_or_die() {
+  local env_var="$1"
+  local generic_name="$2"
+  local value="${!env_var:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if git -C "$ROOT" remote get-url "$generic_name" >/dev/null 2>&1; then
+    printf '%s\n' "$generic_name"
+    return 0
+  fi
+  die "set $env_var in $ENV_FILE or add a local git remote named $generic_name"
+}
+
+MACOS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_MACOS_REMOTE macos)"
+UBUNTU_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE ubuntu)"
+WINDOWS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE windows)"
+
+ps_single_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
 win_ps() {
@@ -256,6 +283,19 @@ Remove-Item -LiteralPath \$Path -Force -Recurse
 REMOTE_PS
 }
 
+rename_windows_path() {
+  local old_path="$1"
+  local new_path="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$OldPath = Join-Path \$HOME ("Iris Drive\\$old_path")
+\$NewPath = Join-Path \$HOME ("Iris Drive\\$new_path")
+\$Parent = Split-Path -Parent \$NewPath
+New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
+Move-Item -LiteralPath \$OldPath -Destination \$NewPath -Force
+REMOTE_PS
+}
+
 write_ubuntu_file() {
   local path="$1"
   local content="$2"
@@ -297,11 +337,64 @@ delete_macos_provider_path() {
   macos_idrive_json provider delete "$path" >/dev/null
 }
 
+macos_app_log_line_count() {
+  ssh "$MACOS_REMOTE" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0'
+}
+
+macos_log_has_fileprovider_signal_after() {
+  local before="$1"
+  ssh "$MACOS_REMOTE" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true" \
+    | grep -F "Iris Drive FileProvider signal root ok" >/dev/null
+}
+
+ubuntu_start_directory_monitor() {
+  local dir="$1"
+  local token="$2"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$dir" "$token" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+token="$2"
+target="$HOME/Iris Drive/$dir"
+mkdir -p "$target"
+log="/tmp/iris-drive-gio-monitor-$token.log"
+pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
+rm -f "$log" "$pidfile"
+(timeout 90 gio monitor "$target" >"$log" 2>&1 & echo $! >"$pidfile")
+REMOTE_SH
+}
+
+ubuntu_monitor_saw() {
+  local token="$1"
+  local needle="$2"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" "$needle" <<'REMOTE_SH'
+set -Eeuo pipefail
+token="$1"
+needle="$2"
+grep -F "$needle" "/tmp/iris-drive-gio-monitor-$token.log" >/dev/null
+REMOTE_SH
+}
+
+ubuntu_stop_directory_monitor() {
+  local token="$1"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" <<'REMOTE_SH' || true
+set -Eeuo pipefail
+token="$1"
+pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
+if [[ -f "$pidfile" ]]; then
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+fi
+REMOTE_SH
+}
+
 run_sync_smoke() {
   local windows_file="$SMOKE_DIR/from-windows.txt"
   local ubuntu_file="$SMOKE_DIR/from-ubuntu-placeholder.txt"
   local macos_file="$SMOKE_DIR/from-macos-provider.txt"
   local macos_delete_file="$SMOKE_DIR/delete-from-macos-provider.txt"
+  local windows_rename_src="$SMOKE_DIR/windows-rename-src.txt"
+  local windows_rename_dst="$SMOKE_DIR/windows-rename-dst.txt"
+  local live_file="$SMOKE_DIR/live-from-windows.txt"
+  local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
 
   log "checking Windows-origin create then Ubuntu-origin delete"
   write_windows_file "$windows_file" "from windows $RUN_ID"
@@ -337,6 +430,28 @@ run_sync_smoke() {
   wait_for "macOS provider delete removes Ubuntu file" 75 wait_ubuntu_missing "$macos_delete_file"
   wait_for "macOS provider delete removes Windows disk file" 75 wait_windows_disk_missing "$macos_delete_file"
   wait_for "macOS provider delete removes Windows provider file" 75 windows_provider_missing "$macos_delete_file"
+
+  log "checking Windows-origin rename/create updates other live providers"
+  write_windows_file "$windows_rename_src" "rename from windows $RUN_ID"
+  wait_for "Windows rename source reaches Ubuntu" 60 wait_ubuntu_file_has "$windows_rename_src"
+  wait_for "Windows rename source reaches macOS provider" 60 macos_provider_has "$windows_rename_src"
+  local macos_log_before
+  macos_log_before="$(macos_app_log_line_count)"
+  rename_windows_path "$windows_rename_src" "$windows_rename_dst"
+  wait_for "Windows rename destination reaches Ubuntu" 75 wait_ubuntu_file_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from Ubuntu" 75 wait_ubuntu_missing "$windows_rename_src"
+  wait_for "Windows rename destination reaches macOS provider" 75 macos_provider_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from macOS provider" 75 macos_provider_missing "$windows_rename_src"
+  wait_for "macOS FileProvider was signaled after Windows rename" 30 \
+    macos_log_has_fileprovider_signal_after "$macos_log_before"
+
+  log "checking Linux directory monitor sees a remote Windows create"
+  ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
+  write_windows_file "$live_file" "live from windows $RUN_ID"
+  wait_for "Ubuntu directory monitor sees Windows create" 45 \
+    ubuntu_monitor_saw "$monitor_token" "$(basename "$live_file")"
+  ubuntu_stop_directory_monitor "$monitor_token"
+  wait_for "Windows live create reaches macOS provider" 75 macos_provider_has "$live_file"
 
   delete_ubuntu_path "$SMOKE_DIR" || true
 }

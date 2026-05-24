@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
+    private var statusRefreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -105,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         updateStatus("Stopping sync")
         stopSync()
+        statusRefreshTimer?.invalidate()
+        statusRefreshTimer = nil
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }
@@ -303,6 +306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         userRequestedSyncStop = true
         daemonRestartWorkItem?.cancel()
         daemonRestartWorkItem = nil
+        statusRefreshTimer?.invalidate()
+        statusRefreshTimer = nil
         if externalDaemonMode {
             setDaemonRunning(true)
             updateStatus("Sync managed externally")
@@ -786,6 +791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive external daemon mode enabled; app will not spawn bundled idrive")
             setDaemonRunning(true)
             updateStatus("Sync running")
+            startStatusRefreshTimer(interval: 1.0)
             refreshStatus()
             return
         }
@@ -806,6 +812,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setDaemonRunning(true)
             updateStatus("Sync running")
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
+            startStatusRefreshTimer(interval: 5.0)
             refreshStatus()
         } catch {
             NSLog("Iris Drive daemon failed to start: \(error)")
@@ -813,6 +820,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setDaemonRunning(false)
             scheduleDaemonRestart(paths: paths)
         }
+    }
+
+    private func startStatusRefreshTimer(interval: TimeInterval) {
+        statusRefreshTimer?.invalidate()
+        statusRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
+            [weak self] _ in
+            self?.refreshStatus()
+        }
+        statusRefreshTimer?.tolerance = min(interval / 2, 1.0)
     }
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
@@ -1093,6 +1109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             self.updateLinkMenuState()
+            self.signalFileProviderDomainForExternalStatusIfNeeded(
+                key: Self.fileProviderSignalKey(json)
+            )
             NSLog("Iris Drive control panel updated")
         }
     }
@@ -1229,8 +1248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let idrive = idriveExecutableURL()
         DispatchQueue.global(qos: .utility).async {
             do {
-                let data = try self.runIDrive(idrive, arguments: ["status"], paths: paths)
-                self.applyStatusData(data)
+                self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
             } catch {
                 NSLog("Iris Drive status refresh failed: \(error)")
             }
@@ -1241,14 +1259,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.global(qos: .utility).async {
             let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
             do {
-                let data = try Data(contentsOf: statusURL)
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else {
-                    return
-                }
-                self.applyExternalDaemonStatusPayload(json)
+                self.applyStatusData(try self.runIDrive(self.idriveExecutableURL(), arguments: ["status"], paths: paths))
             } catch {
-                NSLog("Iris Drive external daemon status refresh failed: \(error)")
+                do {
+                    let data = try Data(contentsOf: statusURL)
+                    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else {
+                        return
+                    }
+                    self.applyExternalDaemonStatusPayload(json)
+                } catch {
+                    NSLog("Iris Drive external daemon status refresh failed: \(error)")
+                }
             }
         }
     }
@@ -1349,11 +1371,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         manager.signalEnumerator(for: .rootContainer) { error in
             if let error {
                 NSLog("Iris Drive FileProvider signal root failed: \(error)")
+            } else {
+                NSLog("Iris Drive FileProvider signal root ok")
             }
         }
         manager.signalEnumerator(for: .workingSet) { error in
             if let error {
                 NSLog("Iris Drive FileProvider signal working set failed: \(error)")
+            } else {
+                NSLog("Iris Drive FileProvider signal working set ok")
             }
         }
     }
@@ -1380,6 +1406,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             parts.append(blockSyncByRoot.keys.sorted().joined(separator: ","))
         }
         return parts.joined(separator: "|")
+    }
+
+    private static func fileProviderSignalKey(_ json: [String: Any]) -> String {
+        var parts = [externalFileProviderSignalKey(json)]
+        if let hashtree = json["hashtree"] as? [String: Any] {
+            parts.append(hashtree["current_root_cid"] as? String ?? "")
+            parts.append("\(Self.intValue(hashtree["file_count"]) ?? 0)")
+            parts.append("\(Self.intValue(hashtree["top_level_entries"]) ?? 0)")
+        }
+        if let drives = json["drives"] as? [[String: Any]] {
+            for drive in drives {
+                parts.append([
+                    drive["drive_id"] as? String ?? "",
+                    drive["last_root_cid"] as? String ?? "",
+                    "\(Self.intValue(drive["device_root_count"]) ?? 0)",
+                ].joined(separator: ":"))
+            }
+        }
+        if let peers = json["peers"] as? [[String: Any]] {
+            for peer in peers {
+                parts.append([
+                    peer["device_npub"] as? String ?? peer["device_pubkey"] as? String ?? "",
+                    peer["root_cid"] as? String ?? "",
+                    peer["sync_state"] as? String ?? "",
+                    "\(peer["fips_online"] as? Bool ?? false)",
+                ].joined(separator: ":"))
+            }
+        }
+        return parts.sorted().joined(separator: "|")
     }
 
     private func schedulePeerStatusRefresh() {

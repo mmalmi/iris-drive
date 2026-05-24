@@ -18,7 +18,7 @@ remote_host_for_git_remote() {
 }
 
 detect_macos_team_id() {
-  local remote="${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}"
+  local remote="${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos}"
   local host
   local identities
   local team

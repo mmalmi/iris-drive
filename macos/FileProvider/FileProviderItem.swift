@@ -84,6 +84,7 @@ extension FileProviderItem {
 
 enum FileProviderStorage {
     private static let runtimeFileName = "fileprovider-runtime.json"
+    private static let snapshotFileName = "fileprovider-snapshot.json"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
     private static var configuredRuntime: Runtime?
@@ -130,6 +131,11 @@ enum FileProviderStorage {
         let path: String
         let kind: String
         let size: UInt64
+    }
+
+    private struct ProviderSnapshot: Codable {
+        let anchor: String
+        let identifiers: [String]
     }
 
     static var baseDirectory: URL {
@@ -238,8 +244,52 @@ enum FileProviderStorage {
     }
 
     static func allItems() -> [FileProviderItem] {
+        allItemsAndAnchor().items
+    }
+
+    static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
         let list = providerList()
-        return list.entries.map { item(for: $0, anchor: list.anchor) }
+        return (
+            list.entries.map { item(for: $0, anchor: list.anchor) },
+            syncAnchor(for: list.anchor)
+        )
+    }
+
+    static func storedSnapshotIdentifiers() -> Set<String> {
+        let url = snapshotURL()
+        guard let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(ProviderSnapshot.self, from: data)
+        else {
+            return []
+        }
+        return Set(snapshot.identifiers)
+    }
+
+    static func recordCurrentSnapshot() {
+        let (items, anchor) = allItemsAndAnchor()
+        recordSnapshot(items: items, anchor: anchor)
+    }
+
+    static func recordSnapshot(
+        items: [FileProviderItem],
+        anchor: NSFileProviderSyncAnchor
+    ) {
+        do {
+            try FileManager.default.createDirectory(
+                at: baseDirectory,
+                withIntermediateDirectories: true
+            )
+            let snapshot = ProviderSnapshot(
+                anchor: String(data: anchor.rawValue, encoding: .utf8) ?? "unavailable",
+                identifiers: items
+                    .map(\.itemIdentifier.rawValue)
+                    .sorted()
+            )
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: snapshotURL())
+        } catch {
+            NSLog("Iris Drive FileProvider snapshot write failed: \(error)")
+        }
     }
 
     static func createItem(
@@ -312,8 +362,7 @@ enum FileProviderStorage {
     }
 
     static func currentAnchor() -> NSFileProviderSyncAnchor {
-        let anchor = providerList().anchor ?? "unavailable"
-        return NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
+        syncAnchor(for: providerList().anchor)
     }
 
     private static func item(for entry: ProviderEntry, anchor: String?) -> FileProviderItem {
@@ -341,6 +390,14 @@ enum FileProviderStorage {
             NSLog("Iris Drive FileProvider provider list failed: \(error)")
             return ProviderList(anchor: nil, entries: [])
         }
+    }
+
+    private static func syncAnchor(for anchor: String?) -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(rawValue: Data((anchor ?? "unavailable").utf8))
+    }
+
+    private static func snapshotURL() -> URL {
+        baseDirectory.appendingPathComponent(snapshotFileName, isDirectory: false)
     }
 
     private static func runIDrive(arguments: [String]) throws -> Data {

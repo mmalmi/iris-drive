@@ -3,6 +3,13 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${IRIS_DRIVE_DEV_LAB_ENV:-$HOME/.config/iris-drive/dev-lab.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 HASHTREE_ROOT="${IRIS_DRIVE_HASHTREE_ROOT:-$(cd "$ROOT/../hashtree/rust" && pwd)}"
 HASHTREE_ROOT="$(git -C "$HASHTREE_ROOT" rev-parse --show-toplevel)"
 FIPS_ROOT="${IRIS_DRIVE_FIPS_ROOT:-$(cd "$ROOT/../fips" && pwd)}"
@@ -33,10 +40,9 @@ WebRTC enabled.
 Remote worktrees with local changes are auto-stashed before checkout. Use
 --fail-on-dirty to stop instead, or --force to discard tracked VM changes.
 
-Defaults are derived from local git remotes:
-  macos    iris-drive, hashtree, and fips remote macos-utm
-  ubuntu   iris-drive, hashtree, and fips remote ubuntu-dev
-  windows  iris-drive, hashtree, and fips remote win11-dev
+VM git remotes are read from environment, from
+~/.config/iris-drive/dev-lab.env, or from generic local remotes named
+macos, ubuntu, and windows. Keep machine-specific SSH names in local config.
 
 Environment:
   IRIS_DRIVE_DEV_VM_MACOS_REMOTE      Git remote name for the macOS VM.
@@ -334,24 +340,49 @@ warn_or_fail_local_dirty "$ROOT" "iris-drive"
 warn_or_fail_local_dirty "$HASHTREE_ROOT" "hashtree"
 warn_or_fail_local_dirty "$FIPS_ROOT" "fips"
 
+configured_remote_name() {
+  local env_var="$1"
+  local generic_name="$2"
+  local value="${!env_var:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ -n "$generic_name" ]] && git -C "$ROOT" remote get-url "$generic_name" >/dev/null 2>&1; then
+    printf '%s\n' "$generic_name"
+    return 0
+  fi
+  printf '\n'
+}
+
+MACOS_IRIS_REMOTE="$(configured_remote_name IRIS_DRIVE_DEV_VM_MACOS_REMOTE macos)"
+UBUNTU_IRIS_REMOTE="$(configured_remote_name IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE ubuntu)"
+WINDOWS_IRIS_REMOTE="$(configured_remote_name IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE windows)"
+MACOS_HASHTREE_REMOTE="${IRIS_DRIVE_DEV_VM_MACOS_HASHTREE_REMOTE:-$MACOS_IRIS_REMOTE}"
+UBUNTU_HASHTREE_REMOTE="${IRIS_DRIVE_DEV_VM_UBUNTU_HASHTREE_REMOTE:-$UBUNTU_IRIS_REMOTE}"
+WINDOWS_HASHTREE_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE:-$WINDOWS_IRIS_REMOTE}"
+MACOS_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_MACOS_FIPS_REMOTE:-$MACOS_IRIS_REMOTE}"
+UBUNTU_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_UBUNTU_FIPS_REMOTE:-$UBUNTU_IRIS_REMOTE}"
+WINDOWS_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_FIPS_REMOTE:-$WINDOWS_IRIS_REMOTE}"
+
 add_target_from_remotes \
   macos \
   macos \
-  "${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}" \
-  "${IRIS_DRIVE_DEV_VM_MACOS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}}" \
-  "${IRIS_DRIVE_DEV_VM_MACOS_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos-utm}}"
+  "$MACOS_IRIS_REMOTE" \
+  "$MACOS_HASHTREE_REMOTE" \
+  "$MACOS_FIPS_REMOTE"
 add_target_from_remotes \
   ubuntu \
   linux \
-  "${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}" \
-  "${IRIS_DRIVE_DEV_VM_UBUNTU_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}}" \
-  "${IRIS_DRIVE_DEV_VM_UBUNTU_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE:-ubuntu-dev}}"
+  "$UBUNTU_IRIS_REMOTE" \
+  "$UBUNTU_HASHTREE_REMOTE" \
+  "$UBUNTU_FIPS_REMOTE"
 add_target_from_remotes \
   windows \
   windows \
-  "${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}" \
-  "${IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE:-${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}}" \
-  "${IRIS_DRIVE_DEV_VM_WINDOWS_FIPS_REMOTE:-${IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE:-win11-dev}}"
+  "$WINDOWS_IRIS_REMOTE" \
+  "$WINDOWS_HASHTREE_REMOTE" \
+  "$WINDOWS_FIPS_REMOTE"
 
 if [[ ${#LABELS[@]} -eq 0 ]]; then
   usage >&2

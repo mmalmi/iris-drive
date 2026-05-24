@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
-        refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
         SelectPage("Drive");
         RenderLoading();

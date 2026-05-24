@@ -813,7 +813,7 @@ mod tests {
         let first_npub = first_keys.public_key().to_bech32().unwrap();
         let settings = FipsTransportSettings {
             static_peer_hints: parse_static_peer_hints(&format!(
-                "ubuntu-dev=10.44.214.2:22121,{first_npub}=10.44.34.102:22121"
+                "linux-peer=10.44.214.2:22121,{first_npub}=10.44.34.102:22121"
             )),
             ..Default::default()
         };
@@ -831,12 +831,12 @@ mod tests {
                         crate::app_keys::DeviceEntry {
                             pubkey: first_pubkey,
                             added_at: 1,
-                            label: Some("macos-utm".into()),
+                            label: Some("macos-peer".into()),
                         },
                         crate::app_keys::DeviceEntry {
                             pubkey: second_pubkey,
                             added_at: 1,
-                            label: Some("ubuntu-dev".into()),
+                            label: Some("linux-peer".into()),
                         },
                     ],
                     dck_generation: 0,

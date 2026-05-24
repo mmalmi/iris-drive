@@ -137,7 +137,12 @@ public static partial class WindowsCloudFiles
     private const int StatusUnsuccessful = unchecked((int)0xC0000001);
     private const uint FileAttributeDirectory = 0x00000010;
     private const uint FileAttributeNormal = 0x00000080;
+    private const uint ShcneCreate = 0x00000002;
+    private const uint ShcneDelete = 0x00000004;
+    private const uint ShcneMkdir = 0x00000008;
+    private const uint ShcneRmdir = 0x00000010;
     private const uint ShcneUpdateDir = 0x00001000;
+    private const uint ShcneUpdateItem = 0x00002000;
     private const uint ShcnfPathW = 0x0005;
     private const uint ShcnfFlushNowait = 0x2000;
     private const string LocalStateFileName = "windows-cloud-local-state.json";
@@ -277,6 +282,58 @@ public static partial class WindowsCloudFiles
         if (removedAny)
         {
             NotifyShellDirectoryChanged(SyncRootPath);
+        }
+    }
+
+    public static void NotifyShellEntriesChanged(
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
+    {
+        var currentByPath = PlaceholderEntries(entries)
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var previousByPath = previousState
+            .Where(entry => !PathHasIgnoredComponent(entry.Path))
+            .GroupBy(entry => NormalizeVirtualPath(entry.Path), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var parentDirectories = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var path in currentByPath.Keys.Union(previousByPath.Keys, StringComparer.Ordinal))
+        {
+            var current = currentByPath.GetValueOrDefault(path);
+            var previous = previousByPath.GetValueOrDefault(path);
+            var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(path));
+
+            if (previous is null && current is not null)
+            {
+                NotifyShellPathChanged(current.IsDirectory ? ShcneMkdir : ShcneCreate, fullPath);
+                parentDirectories.Add(ParentPath(path));
+                continue;
+            }
+
+            if (previous is not null && current is null)
+            {
+                NotifyShellPathChanged(previous.IsDirectory ? ShcneRmdir : ShcneDelete, fullPath);
+                parentDirectories.Add(ParentPath(path));
+                continue;
+            }
+
+            if (previous is not null &&
+                current is not null &&
+                (!string.Equals(previous.Kind, current.Kind, StringComparison.OrdinalIgnoreCase) ||
+                 previous.Size != current.Size))
+            {
+                NotifyShellPathChanged(ShcneUpdateItem, fullPath);
+                parentDirectories.Add(ParentPath(path));
+            }
+        }
+
+        parentDirectories.Add("");
+        foreach (var directory in parentDirectories)
+        {
+            var fullPath = string.IsNullOrEmpty(directory)
+                ? SyncRootPath
+                : Path.Combine(SyncRootPath, FromVirtualPath(directory));
+            NotifyShellDirectoryChanged(fullPath);
         }
     }
 
@@ -440,10 +497,15 @@ public static partial class WindowsCloudFiles
 
     private static void NotifyShellDirectoryChanged(string path)
     {
+        NotifyShellPathChanged(ShcneUpdateDir, path);
+    }
+
+    private static void NotifyShellPathChanged(uint eventId, string path)
+    {
         try
         {
             NativeMethods.SHChangeNotify(
-                ShcneUpdateDir,
+                eventId,
                 ShcnfPathW | ShcnfFlushNowait,
                 path,
                 null);

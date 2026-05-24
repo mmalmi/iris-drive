@@ -23,6 +23,7 @@ info:
     @echo "  just lab"
     @echo "  just lab-smoke"
     @echo "  just lab-test"
+    @echo "  just e2e"
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
@@ -105,6 +106,10 @@ lab-smoke:
 lab-test *args:
     just lab {{args}}
     just lab-smoke
+
+e2e *args:
+    cargo test --workspace
+    just lab-test {{args}}
 
 release:
     cargo build --workspace --release

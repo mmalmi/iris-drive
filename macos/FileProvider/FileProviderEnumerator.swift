@@ -19,6 +19,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             "Iris Drive FileProvider enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
         )
         observer.didEnumerate(items)
+        FileProviderStorage.recordCurrentSnapshot()
         observer.finishEnumerating(upTo: nil)
     }
 
@@ -26,12 +27,21 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from syncAnchor: NSFileProviderSyncAnchor
     ) {
-        let currentAnchor = FileProviderStorage.currentAnchor()
-        if syncAnchor.rawValue != currentAnchor.rawValue {
-            let items = FileProviderStorage.allItems()
-            NSLog("Iris Drive FileProvider enumerate changes count=\(items.count)")
+        let previousIdentifiers = FileProviderStorage.storedSnapshotIdentifiers()
+        let (items, currentAnchor) = FileProviderStorage.allItemsAndAnchor()
+        let currentIdentifiers = Set(items.map(\.itemIdentifier.rawValue))
+        let deletedIdentifiers = previousIdentifiers.subtracting(currentIdentifiers)
+        if syncAnchor.rawValue != currentAnchor.rawValue || !deletedIdentifiers.isEmpty {
+            let deleted = deletedIdentifiers.map { NSFileProviderItemIdentifier($0) }
+            if !deleted.isEmpty {
+                observer.didDeleteItems(withIdentifiers: deleted)
+            }
+            NSLog(
+                "Iris Drive FileProvider enumerate changes update=\(items.count) delete=\(deleted.count)"
+            )
             observer.didUpdate(items)
         }
+        FileProviderStorage.recordSnapshot(items: items, anchor: currentAnchor)
         observer.finishEnumeratingChanges(upTo: currentAnchor, moreComing: false)
     }
 
