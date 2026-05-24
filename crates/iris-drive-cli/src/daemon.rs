@@ -399,6 +399,32 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = provider_root_timer.tick() => {
+                    if let Some(root) = windows_cloud_root.as_ref() {
+                        match import_windows_cloud_root_changes_and_publish(
+                            &client,
+                            config_dir,
+                            root,
+                            vec![WindowsCloudRootChange::Rescan],
+                            &mut direct_roots,
+                            fips_blocks.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => println!(
+                                "{}",
+                                json!({
+                                    "event": "windows_cloud_root_published",
+                                    "root_cid": root_cid,
+                                    "paths": paths,
+                                })
+                            ),
+                            Ok(WindowsCloudImportOutcome::Unchanged) => {}
+                            Err(error) => println!(
+                                "{}",
+                                json!({"event": "windows_cloud_root_publish_error", "error": format!("{error:#}")})
+                            ),
+                        }
+                    }
                     match publish_provider_root_if_changed(
                         &client,
                         config_dir,
@@ -751,8 +777,13 @@ async fn apply_windows_cloud_upsert(
             children.sort_by(|a, b| b.cmp(a));
             stack.extend(children);
         } else if metadata.is_file() {
-            let bytes = std::fs::read(&full_path)
-                .with_context(|| format!("reading {}", full_path.display()))?;
+            let bytes = match std::fs::read(&full_path) {
+                Ok(bytes) => bytes,
+                Err(error) if windows_cloud_file_read_should_skip(&error) => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("reading {}", full_path.display()));
+                }
+            };
             write_provider_file(provider, &path, &bytes).await?;
             changed = true;
         }
@@ -822,6 +853,22 @@ fn windows_cloud_path_is_reparse_point(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|metadata| windows_cloud_metadata_is_reparse_point(&metadata))
         .unwrap_or(false)
+}
+
+fn windows_cloud_file_read_should_skip(error: &std::io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+
+    // Cloud Files placeholders can report cloud-specific read errors even when
+    // the regular reparse-point bit is not enough to identify them.
+    matches!(
+        error.raw_os_error(),
+        Some(395 | 396 | 397 | 398 | 400 | 402)
+    )
 }
 
 #[cfg(windows)]
@@ -1394,5 +1441,25 @@ pub(crate) fn files_root_apply_label(
         iris_drive_core::relay_sync::FilesRootApply::UnknownDrive => "unknown_drive",
         iris_drive_core::relay_sync::FilesRootApply::StaleTimestamp => "stale_timestamp",
         iris_drive_core::relay_sync::FilesRootApply::Applied => "applied",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_cloud_file_read_skip_only_ignores_transient_placeholder_errors() {
+        assert!(windows_cloud_file_read_should_skip(&std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "hydrating placeholder"
+        )));
+        assert!(windows_cloud_file_read_should_skip(
+            &std::io::Error::from_raw_os_error(395)
+        ));
+        assert!(!windows_cloud_file_read_should_skip(&std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "real missing file"
+        )));
     }
 }
