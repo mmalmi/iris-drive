@@ -749,6 +749,78 @@ fn list_after_import_shows_merged_view() {
     assert_eq!(files[1]["size"], 10);
 }
 
+#[test]
+fn provider_commands_operate_on_virtual_root() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::create_dir(work.path().join("docs")).unwrap();
+    std::fs::write(work.path().join("docs").join("note.txt"), b"hello virtual").unwrap();
+
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    let listed = run_json(cfg.path(), &["provider", "list"]);
+    let entries = listed["entries"].as_array().unwrap();
+    let paths: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"docs"));
+    assert!(paths.contains(&"docs/note.txt"));
+    assert_eq!(listed["file_count"], 1);
+
+    let scratch = tempdir().unwrap();
+    let original = scratch.path().join("note.txt");
+    idrive(cfg.path())
+        .args(["provider", "read", "docs/note.txt"])
+        .arg(&original)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&original).unwrap(), b"hello virtual");
+
+    let source = scratch.path().join("new.txt");
+    std::fs::write(&source, b"from provider").unwrap();
+    idrive(cfg.path())
+        .args(["provider", "write", "docs/new.txt"])
+        .arg(&source)
+        .assert()
+        .success();
+
+    let created = scratch.path().join("new-out.txt");
+    idrive(cfg.path())
+        .args(["provider", "read", "docs/new.txt"])
+        .arg(&created)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&created).unwrap(), b"from provider");
+
+    idrive(cfg.path())
+        .args(["provider", "rename", "docs/new.txt", "docs/renamed.txt"])
+        .assert()
+        .success();
+    let renamed = scratch.path().join("renamed.txt");
+    idrive(cfg.path())
+        .args(["provider", "read", "docs/renamed.txt"])
+        .arg(&renamed)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&renamed).unwrap(), b"from provider");
+
+    idrive(cfg.path())
+        .args(["provider", "delete", "docs/renamed.txt"])
+        .assert()
+        .success();
+    idrive(cfg.path())
+        .args(["provider", "read", "docs/renamed.txt"])
+        .arg(scratch.path().join("missing.txt"))
+        .assert()
+        .failure();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn linked_devices_sync_each_others_files_through_cli() {
     let relay = LocalNostrRelay::spawn().await;

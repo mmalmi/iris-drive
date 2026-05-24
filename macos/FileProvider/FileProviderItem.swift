@@ -31,7 +31,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     }
 
     var itemVersion: NSFileProviderItemVersion {
-        let version = Data("iris-drive-bootstrap-v1".utf8)
+        let version = Data("iris-drive-provider-v1".utf8)
         return NSFileProviderItemVersion(contentVersion: version, metadataVersion: version)
     }
 
@@ -80,28 +80,31 @@ enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
     private static let runtimeFileName = "fileprovider-runtime.json"
     private static let pathPrefix = "path:"
+    private static let tempDirectoryName = "FileProviderTmp"
 
     struct Runtime: Decodable {
         let configDirectory: String?
-        let driveDirectory: String?
         let idriveExecutable: String?
 
         enum CodingKeys: String, CodingKey {
             case configDirectory = "config_dir"
-            case driveDirectory = "drive_dir"
             case idriveExecutable = "idrive_executable"
         }
     }
 
-    static var baseDirectory: URL {
-        runtimeDirectory ?? runtimeDirectories[0]
+    private struct ProviderList: Decodable {
+        let anchor: String?
+        let entries: [ProviderEntry]
     }
 
-    static var driveRoot: URL {
-        if let configured = runtime?.driveDirectory, !configured.isEmpty {
-            return URL(fileURLWithPath: configured, isDirectory: true)
-        }
-        return baseDirectory.appendingPathComponent("Drive", isDirectory: true)
+    private struct ProviderEntry: Decodable {
+        let path: String
+        let kind: String
+        let size: UInt64
+    }
+
+    static var baseDirectory: URL {
+        runtimeDirectory ?? runtimeDirectories[0]
     }
 
     static var configDirectory: URL {
@@ -160,13 +163,20 @@ enum FileProviderStorage {
     }
 
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
-        guard let url = url(for: identifier) else { return nil }
-        return item(for: url, identifier: identifier)
+        if identifier == .rootContainer || identifier == .workingSet {
+            return .root
+        }
+        guard let path = path(for: identifier),
+              let entry = providerList().entries.first(where: { $0.path == path })
+        else {
+            return nil
+        }
+        return item(for: entry)
     }
 
-    static func url(for identifier: NSFileProviderItemIdentifier) -> URL? {
+    static func path(for identifier: NSFileProviderItemIdentifier) -> String? {
         if identifier == .rootContainer || identifier == .workingSet {
-            return driveRoot
+            return ""
         }
         let raw = identifier.rawValue
         guard raw.hasPrefix(pathPrefix) else { return nil }
@@ -177,63 +187,40 @@ enum FileProviderStorage {
         else {
             return nil
         }
-        return driveRoot.appendingPathComponent(relative)
+        return relative
     }
 
-    static func identifier(for url: URL) -> NSFileProviderItemIdentifier? {
-        guard let relative = relativePath(for: url) else { return nil }
-        if relative.isEmpty {
+    static func identifier(for path: String) -> NSFileProviderItemIdentifier {
+        if path.isEmpty {
             return .rootContainer
         }
-        let encoded = Data(relative.utf8).base64EncodedString()
+        let encoded = Data(path.utf8).base64EncodedString()
         return NSFileProviderItemIdentifier("\(pathPrefix)\(encoded)")
     }
 
     static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
-        guard let directory = url(for: containerIdentifier) else { return [] }
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [
-                .contentTypeKey,
-                .creationDateKey,
-                .contentModificationDateKey,
-                .fileSizeKey,
-                .isDirectoryKey,
-            ],
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return urls
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-            .compactMap { url in
-                guard let itemIdentifier = Self.identifier(for: url) else { return nil }
-                return item(for: url, identifier: itemIdentifier)
-            }
+        guard let parent = path(for: containerIdentifier) else { return [] }
+        return providerList().entries
+            .filter { parentPath(for: $0.path) == parent }
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+            .map(item(for:))
     }
 
     static func createItem(
         template: NSFileProviderItem,
         contents: URL?
     ) throws -> FileProviderItem {
-        let parent = url(for: template.parentItemIdentifier) ?? driveRoot
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        let destination = uniqueDestination(
-            parent.appendingPathComponent(template.filename),
-            mayReuseExactName: true
-        )
+        let parent = path(for: template.parentItemIdentifier) ?? ""
+        let destination = joinedPath(parent: parent, name: template.filename)
         if (template.contentType ?? .data).conforms(to: .folder) {
-            try FileManager.default.createDirectory(
-                at: destination,
-                withIntermediateDirectories: true
-            )
+            _ = try runIDrive(arguments: ["provider", "mkdir", destination])
         } else if let contents {
-            try replaceItem(at: destination, with: contents)
+            _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
         } else {
-            FileManager.default.createFile(atPath: destination.path, contents: Data())
+            let empty = try emptyTemporaryFile()
+            _ = try runIDrive(arguments: ["provider", "write", destination, empty.path])
         }
-        importDrive()
-        guard let identifier = identifier(for: destination),
-              let item = item(for: destination, identifier: identifier)
-        else {
+        guard let item = item(for: identifier(for: destination)) else {
             throw NSError.fileProviderErrorForNonExistentItem(
                 withIdentifier: template.itemIdentifier
             )
@@ -246,129 +233,139 @@ enum FileProviderStorage {
         changedFields: NSFileProviderItemFields,
         contents: URL?
     ) throws -> FileProviderItem {
-        guard let original = url(for: item.itemIdentifier) else {
+        guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         var destination = original
-        if changedFields.contains(.filename), item.filename != original.lastPathComponent {
-            destination = original.deletingLastPathComponent().appendingPathComponent(item.filename)
-            try FileManager.default.moveItem(at: original, to: destination)
+        if changedFields.contains(.filename), item.filename != fileName(for: original) {
+            destination = joinedPath(parent: parentPath(for: original), name: item.filename)
+            _ = try runIDrive(arguments: ["provider", "rename", original, destination])
         }
         if let contents, !(item.contentType ?? .data).conforms(to: .folder) {
-            try replaceItem(at: destination, with: contents)
+            _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
         }
-        importDrive()
-        guard let identifier = identifier(for: destination),
-              let updated = self.item(for: destination, identifier: identifier)
-        else {
+        guard let updated = self.item(for: identifier(for: destination)) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         return updated
     }
 
     static func deleteItem(identifier: NSFileProviderItemIdentifier) throws {
-        guard let url = url(for: identifier), url != driveRoot else {
+        guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
-        try FileManager.default.removeItem(at: url)
-        importDrive()
+        _ = try runIDrive(arguments: ["provider", "delete", path])
+    }
+
+    static func contentsURL(for identifier: NSFileProviderItemIdentifier) throws -> URL {
+        guard let path = path(for: identifier), !path.isEmpty else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
+        }
+        let directory = try temporaryDirectory()
+        let output = directory
+            .appendingPathComponent(UUID().uuidString, isDirectory: false)
+            .appendingPathExtension((path as NSString).pathExtension)
+        _ = try runIDrive(arguments: ["provider", "read", path, output.path])
+        return output
     }
 
     static func currentAnchor() -> NSFileProviderSyncAnchor {
-        let modified = (try? driveRoot.resourceValues(
-            forKeys: [.contentModificationDateKey]
-        ).contentModificationDate)?.timeIntervalSince1970 ?? 0
-        return NSFileProviderSyncAnchor(rawValue: Data("iris-drive-\(modified)".utf8))
+        let anchor = providerList().anchor ?? "unavailable"
+        return NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
     }
 
-    private static func item(
-        for url: URL,
-        identifier: NSFileProviderItemIdentifier
-    ) -> FileProviderItem? {
-        if identifier == .rootContainer {
-            return .root
-        }
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let values = try? url.resourceValues(forKeys: [
-            .contentTypeKey,
-            .creationDateKey,
-            .contentModificationDateKey,
-            .fileSizeKey,
-            .isDirectoryKey,
-        ])
-        let isDirectory = values?.isDirectory == true
-        let contentType = isDirectory
+    private static func item(for entry: ProviderEntry) -> FileProviderItem {
+        let isDirectory = entry.kind == "directory"
+        let contentType: UTType = isDirectory
             ? UTType.folder
-            : values?.contentType ?? UTType(filenameExtension: url.pathExtension) ?? .data
-        let parentIdentifier = Self.identifier(for: url.deletingLastPathComponent()) ?? .rootContainer
-        let size = isDirectory ? nil : (values?.fileSize).map { NSNumber(value: $0) }
+            : UTType(filenameExtension: (entry.path as NSString).pathExtension) ?? .data
         return FileProviderItem(
-            itemIdentifier: identifier,
-            parentItemIdentifier: parentIdentifier,
-            filename: url.lastPathComponent,
+            itemIdentifier: identifier(for: entry.path),
+            parentItemIdentifier: identifier(for: parentPath(for: entry.path)),
+            filename: fileName(for: entry.path),
             contentType: contentType,
-            itemSize: size,
-            created: values?.creationDate,
-            modified: values?.contentModificationDate
+            itemSize: isDirectory ? nil : NSNumber(value: entry.size),
+            created: nil,
+            modified: nil
         )
     }
 
-    private static func importDrive() {
-        guard let executable = idriveExecutable, !executable.isEmpty else { return }
+    private static func providerList() -> ProviderList {
+        do {
+            let data = try runIDrive(arguments: ["provider", "list"])
+            return try JSONDecoder().decode(ProviderList.self, from: data)
+        } catch {
+            NSLog("Iris Drive FileProvider provider list failed: \(error)")
+            return ProviderList(anchor: nil, entries: [])
+        }
+    }
+
+    private static func runIDrive(arguments: [String]) throws -> Data {
+        guard let executable = idriveExecutable, !executable.isEmpty else {
+            throw providerError("bundled idrive helper unavailable")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["--config-dir", configDirectory.path, "import", driveRoot.path]
+        process.arguments = ["--config-dir", configDirectory.path] + arguments
         var environment = ProcessInfo.processInfo.environment
         environment["IRIS_DRIVE_CONFIG_DIR"] = configDirectory.path
         process.environment = environment
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            NSLog("Iris Drive FileProvider import failed: \(error)")
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+        if process.terminationStatus != 0 {
+            let message = String(data: errorOutput, encoding: .utf8) ?? "idrive provider failed"
+            throw providerError(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        return output
     }
 
-    private static func replaceItem(at destination: URL, with source: URL) throws {
-        try FileManager.default.createDirectory(
-            at: destination.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.copyItem(at: source, to: destination)
-    }
-
-    private static func uniqueDestination(
-        _ url: URL,
-        mayReuseExactName: Bool
-    ) -> URL {
-        if mayReuseExactName || !FileManager.default.fileExists(atPath: url.path) {
-            return url
-        }
-        let directory = url.deletingLastPathComponent()
-        let base = url.deletingPathExtension().lastPathComponent
-        let ext = url.pathExtension
-        for index in 2...999 {
-            let name = ext.isEmpty ? "\(base) \(index)" : "\(base) \(index).\(ext)"
-            let candidate = directory.appendingPathComponent(name)
-            if !FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
+    private static func emptyTemporaryFile() throws -> URL {
+        let url = try temporaryDirectory()
+            .appendingPathComponent(UUID().uuidString, isDirectory: false)
+        FileManager.default.createFile(atPath: url.path, contents: Data())
         return url
     }
 
-    private static func relativePath(for url: URL) -> String? {
-        let root = driveRoot.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        if path == root {
+    private static func temporaryDirectory() throws -> URL {
+        let directory = baseDirectory.appendingPathComponent(tempDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory
+    }
+
+    private static func joinedPath(parent: String, name: String) -> String {
+        let cleanName = name.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if parent.isEmpty {
+            return cleanName
+        }
+        return "\(parent)/\(cleanName)"
+    }
+
+    private static func parentPath(for path: String) -> String {
+        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let slash = value.lastIndex(of: "/") else {
             return ""
         }
-        let prefix = root.hasSuffix("/") ? root : root + "/"
-        guard path.hasPrefix(prefix) else { return nil }
-        return String(path.dropFirst(prefix.count))
+        return String(value[..<slash])
+    }
+
+    private static func fileName(for path: String) -> String {
+        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let slash = value.lastIndex(of: "/") else {
+            return value
+        }
+        return String(value[value.index(after: slash)...])
     }
 
     private static func isSafeRelativePath(_ path: String) -> Bool {
@@ -383,6 +380,14 @@ enum FileProviderStorage {
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return base.appendingPathComponent("Iris Drive", isDirectory: true)
+    }
+
+    private static func providerError(_ message: String) -> NSError {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.serverUnreachable.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 
     private static func currentProcessAppGroupContainerURL() -> URL? {

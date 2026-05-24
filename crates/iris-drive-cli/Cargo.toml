@@ -23,6 +23,7 @@ iris-drive-core.workspace = true
 hashtree-core.workspace = true
 hashtree-embedded.workspace = true
 hashtree-fs.workspace = true
+hashtree-provider.workspace = true
 hashtree-lmdb.workspace = true
 nostr-sdk.workspace = true
 notify.workspace = true

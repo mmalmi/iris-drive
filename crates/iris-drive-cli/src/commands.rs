@@ -103,6 +103,9 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 0)]
         at: usize,
     },
+    /// Hidden native-provider bridge used by FileProvider/FUSE adapters.
+    #[command(hide = true, subcommand)]
+    Provider(ProviderCmd),
     /// Walk this device's `.hashtree/prev` revision chain and print each root
     /// CID + top-level entry count, newest-first. Blocks GC'd from
     /// the local store terminate the walk silently.
@@ -229,6 +232,43 @@ pub(crate) enum RelaysCmd {
     Remove { url: String },
     /// Restore the default relay list.
     Reset,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProviderCmd {
+    /// Print the virtual merged drive tree as JSON.
+    List,
+    /// Export one virtual file into a provider-owned temporary file.
+    Read {
+        /// Virtual path inside the drive.
+        path: String,
+        /// Output file path.
+        output: PathBuf,
+    },
+    /// Create or replace one virtual file from a provider-owned temporary file.
+    Write {
+        /// Virtual path inside the drive.
+        path: String,
+        /// Source file path.
+        source: PathBuf,
+    },
+    /// Create a virtual directory.
+    Mkdir {
+        /// Virtual path inside the drive.
+        path: String,
+    },
+    /// Delete a virtual file or directory.
+    Delete {
+        /// Virtual path inside the drive.
+        path: String,
+    },
+    /// Rename or move a virtual item.
+    Rename {
+        /// Existing virtual path inside the drive.
+        old_path: String,
+        /// New virtual path inside the drive.
+        new_path: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -16,6 +16,7 @@ Repo notes for AI coding agents; pair with operator-local instructions.
 - Nostr subscriptions, peer discovery, and mutable-root watches: prefer open subscriptions over one-shot timed fetches. No response inside one window is not evidence of absence.
 - Treat explicit misses differently from timeouts when routing requests.
 - Bound per-peer work/memory; heartbeats without bytes do not keep requests alive forever.
+- Mounts must be virtual provider surfaces, not materialized normal folders. Use FileProvider, FUSE, WinFsp, SAF, WebDAV, or equivalent virtual adapters over hashtree/provider roots; do not add user-visible materialized-folder fallbacks.
 - Record performance experiments in `docs/EXPERIMENTS.md`; omit identifying info (pubkeys, secrets, IPs, private hostnames, raw hashes) unless explicitly asked.
 - Never `git pull`/`git rebase` from `htree://self/*`; it is publish-only storage, not an integration upstream.
 - After relevant tests/build/lint pass, commit and push to htree (`htree://self/iris-drive`).

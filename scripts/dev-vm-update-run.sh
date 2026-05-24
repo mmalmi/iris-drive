@@ -741,21 +741,26 @@ run_linux() {
 write_macos_fileprovider_runtime() {
   local app_base="$1"
   local config_dir="$2"
-  local drive_dir="$3"
-  local idrive_path="$4"
+  local idrive_path="$3"
+  local runtime_dirs=(
+    "$app_base"
+    "$HOME/Library/Application Support/Iris Drive"
+  )
 
-  python3 - "$config_dir" "$drive_dir" "$idrive_path" \
-    "$app_base" \
-    "$HOME/Library/Group Containers/group.to.iris.drive" \
-    "$HOME/Library/Application Support/Iris Drive" <<'PY'
+  case "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}}" in
+    1|true|TRUE|yes|YES|on|ON)
+      runtime_dirs+=("$HOME/Library/Group Containers/group.to.iris.drive")
+      ;;
+  esac
+
+  python3 - "$config_dir" "$idrive_path" "${runtime_dirs[@]}" <<'PY'
 import json
 import os
 import sys
 
-config_dir, drive_dir, idrive_path, *directories = sys.argv[1:]
+config_dir, idrive_path, *directories = sys.argv[1:]
 payload = {
     "config_dir": config_dir,
-    "drive_dir": drive_dir,
     "idrive_executable": idrive_path,
 }
 seen = set()
@@ -777,7 +782,7 @@ run_macos() {
   local idrive="$iris_repo/target/debug/idrive"
   local app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
-  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}"
+  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Application Support/Iris Drive Dev}"
   local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
   local app_stdout="/tmp/iris-drive-macos-app.out"
@@ -807,9 +812,9 @@ run_macos() {
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
   pkill -x idrive >/dev/null 2>&1 || true
-  mkdir -p "$config_dir" "$app_base/Drive"
+  mkdir -p "$config_dir"
   if [[ ! -f "$config_dir/key" && -f "$legacy_app_base/Config/key" ]]; then
-    log "migrating macOS dev app data into FileProvider app group"
+    log "migrating macOS dev app data into FileProvider runtime base"
     mkdir -p "$app_base"
     ditto "$legacy_app_base/Config" "$config_dir"
     if [[ -d "$legacy_app_base/Hashtree" ]]; then
@@ -819,7 +824,6 @@ run_macos() {
   write_macos_fileprovider_runtime \
     "$app_base" \
     "$config_dir" \
-    "$app_base/Drive" \
     "$app/Contents/MacOS/idrive"
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
@@ -880,10 +884,9 @@ run_macos() {
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
-  "$idrive" --config-dir "$config_dir" materialize "$app_base/Drive" >/tmp/iris-drive-macos-materialize.log 2>&1 \
-    || log "warning: macOS materialize failed; see /tmp/iris-drive-macos-materialize.log"
-  if [[ ! -d "$app_base/Drive" ]]; then
-    log "macOS FileProvider drive directory was not created at $app_base/Drive"
+  if ! "$idrive" --config-dir "$config_dir" provider list >/tmp/iris-drive-macos-provider-list.json 2>&1; then
+    log "macOS virtual provider list failed"
+    cat /tmp/iris-drive-macos-provider-list.json >&2 2>/dev/null || true
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true
     exit 4
   fi

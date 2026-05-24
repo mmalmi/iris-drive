@@ -54,7 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var openControlPanelWindow: (() -> Void)?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
-    private var driveMaterializeWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -597,9 +596,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let paths = runtimePaths()
-        NSLog(
-            "Iris Drive runtime paths config=\(paths.configDirectory.path) drive=\(paths.workingDirectory.path)"
-        )
+        NSLog("Iris Drive runtime paths config=\(paths.configDirectory.path)")
         runtimePathsForMenu = paths
         do {
             try ensureDirectory(paths.configDirectory)
@@ -611,9 +608,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
             startDaemon(idrive, paths: paths)
-            if !externalDaemonMode {
-                scheduleDriveMaterialize(paths: paths, reason: "startup")
-            }
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             updateStatus("Sync failed")
@@ -664,7 +658,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
                 self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
                 self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
-                self.scheduleDriveMaterialize(paths: paths, reason: "setup")
                 DispatchQueue.main.async {
                     self.userRequestedSyncStop = false
                     self.startDaemon(idrive, paths: paths)
@@ -733,24 +726,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleFileProviderOpenFailure(_ reason: String) {
         updateStatus("FileProvider unavailable")
         NSLog("Iris Drive FileProvider open failed: \(reason)")
-        if materializedDriveFallbackAllowed {
-            openMaterializedDriveFolder()
-        } else {
-            NSSound.beep()
-        }
-    }
-
-    private func openMaterializedDriveFolder() {
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
-        scheduleDriveMaterialize(paths: paths, reason: "open-drive")
-        if NSWorkspace.shared.open(paths.workingDirectory) {
-            updateStatus("Drive folder opened")
-            NSLog("Iris Drive materialized drive folder opened: \(paths.workingDirectory.path)")
-        } else {
-            updateStatus("Drive mount unavailable")
-            NSSound.beep()
-        }
+        NSSound.beep()
     }
 
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
@@ -944,8 +920,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         return IrisDriveRuntimePaths(
-            configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true),
-            workingDirectory: baseDirectory.appendingPathComponent("Drive", isDirectory: true)
+            configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true)
         )
     }
 
@@ -955,10 +930,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var externalFileProviderRuntimeMode: Bool {
         environmentFlag("IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL")
-    }
-
-    private var materializedDriveFallbackAllowed: Bool {
-        environmentFlag("IRIS_DRIVE_ALLOW_MATERIALIZED_FALLBACK")
     }
 
     private func environmentFlag(_ name: String) -> Bool {
@@ -1117,25 +1088,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.updateStatus("Device roster updated")
                 case "drive_root":
                     self.updateStatus("Peer root updated")
-                    self.scheduleDriveMaterialize(
-                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
-                        reason: event
-                    )
+                    self.signalFileProviderDomain()
                 case "blossom_downloaded":
                     self.updateStatus("Fetched blocks")
-                    self.scheduleDriveMaterialize(
-                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
-                        reason: event
-                    )
+                    self.signalFileProviderDomain()
                 case "fips_downloaded",
-                     "materialized_drive_root",
-                     "materialized_files_root",
-                     "startup_materialized",
+                     "mounted_root",
+                     "mount_refreshed",
                      "mount_refresh_skipped":
-                    self.scheduleDriveMaterialize(
-                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
-                        reason: event
-                    )
+                    self.signalFileProviderDomain()
                 case "shutdown":
                     self.updateStatus("Sync stopped")
                 case "initial_publish_error", "auto_publish_error", "apply_error":
@@ -1273,7 +1234,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func prepareFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) {
         do {
-            try ensureDirectory(paths.workingDirectory)
             try ensureDirectory(paths.configDirectory)
             if externalFileProviderRuntimeMode {
                 NSLog("Iris Drive FileProvider runtime managed externally")
@@ -1289,7 +1249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func writeFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) throws {
         let runtime = FileProviderRuntimeConfig(
             configDirectory: paths.configDirectory.path,
-            driveDirectory: paths.workingDirectory.path,
             idriveExecutable: idrive?.path
         )
         let data = try JSONEncoder().encode(runtime)
@@ -1315,33 +1274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return directories.filter { directory in
             seen.insert(directory.standardizedFileURL.path).inserted
         }
-    }
-
-    private func scheduleDriveMaterialize(paths: IrisDriveRuntimePaths, reason: String) {
-        if externalDaemonMode {
-            NSLog("Iris Drive external daemon mode skipped app materialize for \(reason)")
-            return
-        }
-        driveMaterializeWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.driveMaterializeWorkItem = nil
-            let idrive = self.idriveExecutableURL()
-            self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
-            do {
-                _ = try self.runIDrive(
-                    idrive,
-                    arguments: ["materialize", paths.workingDirectory.path],
-                    paths: paths
-                )
-                self.signalFileProviderDomain()
-                NSLog("Iris Drive materialized FileProvider folder for \(reason)")
-            } catch {
-                NSLog("Iris Drive FileProvider materialize failed for \(reason): \(error)")
-            }
-        }
-        driveMaterializeWorkItem = item
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5, execute: item)
     }
 
     private func signalFileProviderDomain() {
@@ -1470,17 +1402,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 private struct IrisDriveRuntimePaths {
     let configDirectory: URL
-    let workingDirectory: URL
 }
 
 private struct FileProviderRuntimeConfig: Encodable {
     let configDirectory: String
-    let driveDirectory: String
     let idriveExecutable: String?
 
     enum CodingKeys: String, CodingKey {
         case configDirectory = "config_dir"
-        case driveDirectory = "drive_dir"
         case idriveExecutable = "idrive_executable"
     }
 }

@@ -149,9 +149,6 @@ open_args=(
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
 )
-if run_ui_smoke; then
-  open_args+=(--env "IRIS_DRIVE_ALLOW_MATERIALIZED_FALLBACK=1")
-fi
 open "${open_args[@]}" "$APP_PATH"
 
 if ! wait_for_process "$APP_PROCESS_NAME" 10; then
@@ -185,8 +182,7 @@ if run_ui_smoke; then
     exit 1
   fi
 
-  if ! wait_for_log "Iris Drive mounted drive folder opened" 10 \
-    && ! wait_for_log "Iris Drive materialized drive folder opened" 1; then
+  if ! wait_for_log "Iris Drive mounted drive folder opened" 10; then
     echo "FAIL: Show Drive Folder did not open the drive folder." >&2
     show_recent_logs >&2
     exit 1

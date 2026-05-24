@@ -166,6 +166,266 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
     })
 }
 
+#[derive(Debug, Serialize)]
+struct ProviderListEntry {
+    path: String,
+    kind: &'static str,
+    size: u64,
+}
+
+pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .context("building virtual provider root")?;
+        let provider =
+            HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
+
+        match command {
+            ProviderCmd::List => {
+                let entries = provider_entries(&provider).await?;
+                println!(
+                    "{}",
+                    json!({
+                        "anchor": provider.anchor().await.as_str(),
+                        "root_cid": visible.root_cid.to_string(),
+                        "file_count": visible.file_count,
+                        "top_level_entries": visible.top_level_entries,
+                        "entries": entries,
+                    })
+                );
+            }
+            ProviderCmd::Read { path, output } => {
+                let path = normalize_provider_path(&path)?;
+                let item = provider.item(&path).await?;
+                if item.kind == ItemKind::Directory {
+                    anyhow::bail!("cannot read directory: {path}");
+                }
+                let bytes = provider.read(&path, 0, item.size).await?;
+                if let Some(parent) = output.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("creating {}", parent.display()))?;
+                }
+                std::fs::write(&output, bytes)
+                    .with_context(|| format!("writing {}", output.display()))?;
+                println!(
+                    "{}",
+                    json!({
+                        "path": path,
+                        "output": output.display().to_string(),
+                        "size": item.size,
+                    })
+                );
+            }
+            ProviderCmd::Write { path, source } => {
+                let path = normalize_provider_path(&path)?;
+                let bytes = std::fs::read(&source)
+                    .with_context(|| format!("reading {}", source.display()))?;
+                write_provider_file(&provider, &path, &bytes).await?;
+                print_provider_mutation(&mut daemon, &provider, &path).await?;
+            }
+            ProviderCmd::Mkdir { path } => {
+                let path = normalize_provider_path(&path)?;
+                create_provider_dir(&provider, &path).await?;
+                print_provider_mutation(&mut daemon, &provider, &path).await?;
+            }
+            ProviderCmd::Delete { path } => {
+                let path = normalize_provider_path(&path)?;
+                delete_provider_path(&provider, &path).await?;
+                print_provider_mutation(&mut daemon, &provider, &path).await?;
+            }
+            ProviderCmd::Rename { old_path, new_path } => {
+                let old_path = normalize_provider_path(&old_path)?;
+                let new_path = normalize_provider_path(&new_path)?;
+                rename_provider_path(&provider, &old_path, &new_path).await?;
+                print_provider_mutation(&mut daemon, &provider, &new_path).await?;
+            }
+        }
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+async fn provider_entries(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+) -> Result<Vec<ProviderListEntry>> {
+    let mut entries = Vec::new();
+    let mut stack = vec![String::new()];
+    while let Some(parent) = stack.pop() {
+        let mut children = provider.read_dir(&parent).await?;
+        children.sort_by(|a, b| a.id.cmp(&b.id));
+        for child in children {
+            let item = provider.item(&child.id).await?;
+            let kind = match item.kind {
+                ItemKind::Directory => {
+                    stack.push(child.id.clone());
+                    "directory"
+                }
+                ItemKind::File => "file",
+            };
+            entries.push(ProviderListEntry {
+                path: child.id,
+                kind,
+                size: item.size,
+            });
+        }
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
+}
+
+async fn write_provider_file(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_string()).await {
+        Ok(item) if item.kind == ItemKind::Directory => {
+            anyhow::bail!("cannot replace directory with file: {path}");
+        }
+        Ok(_) => {
+            provider.truncate(&path.to_string(), 0).await?;
+        }
+        Err(_) => {
+            provider.create_file(&parent, &name).await?;
+        }
+    }
+    if !bytes.is_empty() {
+        provider.write(&path.to_string(), 0, bytes).await?;
+    }
+    Ok(())
+}
+
+async fn create_provider_dir(provider: &HashTreeProviderFs<FsBlobStore>, path: &str) -> Result<()> {
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_string()).await {
+        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
+        Ok(_) => anyhow::bail!("cannot replace file with directory: {path}"),
+        Err(_) => {
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+    }
+}
+
+async fn ensure_provider_dirs(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    parent: &str,
+) -> Result<()> {
+    let mut current = String::new();
+    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
+        let next = if current.is_empty() {
+            segment.to_string()
+        } else {
+            format!("{current}/{segment}")
+        };
+        match provider.item(&next).await {
+            Ok(item) if item.kind == ItemKind::Directory => {}
+            Ok(_) => anyhow::bail!("parent component is not a directory: {next}"),
+            Err(_) => {
+                provider.create_dir(&current, segment).await?;
+            }
+        }
+        current = next;
+    }
+    Ok(())
+}
+
+async fn delete_provider_path(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<()> {
+    let root = path.to_string();
+    let mut stack = vec![root.clone()];
+    let mut directories = Vec::new();
+    while let Some(current) = stack.pop() {
+        let item = provider.item(&current).await?;
+        if item.kind == ItemKind::Directory {
+            directories.push(current.clone());
+            for child in provider.read_dir(&current).await? {
+                stack.push(child.id);
+            }
+        } else {
+            let (parent, name) = split_provider_path(&current)?;
+            provider.remove(&parent, &name).await?;
+        }
+    }
+    for directory in directories.into_iter().rev() {
+        let (parent, name) = split_provider_path(&directory)?;
+        provider.remove(&parent, &name).await?;
+    }
+    Ok(())
+}
+
+async fn rename_provider_path(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    let (old_parent, old_name) = split_provider_path(old_path)?;
+    let (new_parent, new_name) = split_provider_path(new_path)?;
+    ensure_provider_dirs(provider, &new_parent).await?;
+    provider
+        .rename(&old_parent, &old_name, &new_parent, &new_name)
+        .await?;
+    Ok(())
+}
+
+async fn print_provider_mutation(
+    daemon: &mut Daemon,
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    changed_path: &str,
+) -> Result<()> {
+    let root = provider.current_root().await;
+    let report = daemon.import_visible_root(root).await?;
+    println!(
+        "{}",
+        json!({
+            "path": changed_path,
+            "root_cid": report.root_cid,
+            "file_count": report.file_count,
+            "top_level_entries": report.top_level_entries,
+        })
+    );
+    Ok(())
+}
+
+fn normalize_provider_path(path: &str) -> Result<String> {
+    let trimmed = path.trim_matches('/');
+    let parts = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            if segment == "." || segment == ".." {
+                anyhow::bail!("invalid virtual path component: {segment}");
+            }
+            Ok(segment)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if parts.is_empty() {
+        anyhow::bail!("virtual path must not be empty");
+    }
+    Ok(parts.join("/"))
+}
+
+fn split_provider_path(path: &str) -> Result<(String, String)> {
+    let path = normalize_provider_path(path)?;
+    let mut parts = path.rsplitn(2, '/');
+    let name = parts.next().unwrap_or_default().to_string();
+    let parent = parts.next().unwrap_or_default().to_string();
+    Ok((parent, name))
+}
+
 pub(crate) async fn walk_device_tree(
     tree: &HashTree<hashtree_fs::FsBlobStore>,
     root: &Cid,

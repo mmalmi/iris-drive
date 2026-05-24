@@ -45,11 +45,14 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        if let url = FileProviderStorage.url(for: itemIdentifier),
-           let item = FileProviderStorage.item(for: itemIdentifier) {
+        do {
+            let url = try FileProviderStorage.contentsURL(for: itemIdentifier)
+            guard let item = FileProviderStorage.item(for: itemIdentifier) else {
+                throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier)
+            }
             completionHandler(url, item, nil)
-        } else {
-            completionHandler(nil, nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier))
+        } catch {
+            completionHandler(nil, nil, error)
         }
         progress.completedUnitCount = 1
         return progress

@@ -3162,6 +3162,7 @@ dependencies = [
  "hashtree-fs",
  "hashtree-fuse",
  "hashtree-lmdb",
+ "hashtree-provider",
  "iris-drive-core",
  "nostr-sdk 0.35.0",
  "notify",

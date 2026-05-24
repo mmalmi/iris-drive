@@ -11,6 +11,7 @@ use hashtree_core::{
 };
 use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;
+use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::{
     AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, DeviceRootRef, Drive,
     DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
@@ -123,6 +124,7 @@ fn run_cli() -> ExitCode {
         Command::Import { dir } => cmd_import(&config_dir, &dir),
         Command::Materialize { dir } => cmd_materialize(&config_dir, &dir),
         Command::List { at } => cmd_list(&config_dir, at),
+        Command::Provider(command) => cmd_provider(&config_dir, command),
         Command::History { limit } => cmd_history(&config_dir, limit),
         Command::Event(ev) => match ev {
             EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
