@@ -592,10 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 at: paths.configDirectory,
                 withIntermediateDirectories: true
             )
-            let status = try runIDrive(idrive, arguments: ["status"], paths: paths)
-            applyStatusData(status)
-            let initialized = statusJSON(from: status)["initialized"] as? Bool ?? false
-            if !initialized {
+            if !localProfileExists(paths: paths) {
                 updateStatus("Setup needed")
                 return
             }
@@ -607,6 +604,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             updateStatus("Sync failed")
         }
+    }
+
+    private func localProfileExists(paths: IrisDriveRuntimePaths) -> Bool {
+        FileManager.default.fileExists(
+            atPath: paths.configDirectory.appendingPathComponent("key").path
+        )
     }
 
     private func setupArguments(command: String, label: String, extra: [String]) -> [String] {
@@ -773,6 +776,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         try process.run()
+        let deadline = Date().addingTimeInterval(15)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            terminateDaemonProcess(process)
+            outputGroup.wait()
+            throw NSError(
+                domain: "IrisDriveMac",
+                code: 124,
+                userInfo: [NSLocalizedDescriptionKey: "idrive command timed out"]
+            )
+        }
         process.waitUntilExit()
         outputGroup.wait()
 
