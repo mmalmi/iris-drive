@@ -32,6 +32,41 @@ const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(750);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 64;
+const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+
+/// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
+/// defaults so native Iris instances can join the same fallback overlay when
+/// direct device-to-device UDP/WebRTC is unavailable.
+const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
+    (
+        "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8",
+        &["udp:217.160.76.169:2121"],
+    ),
+    (
+        "npub17lpmzulpc98d8ff727k6e98atxn3phzupzsqqwe54ytduym747ws4tw5zm",
+        &["udp:82.223.139.182:2121"],
+    ),
+    (
+        "npub1u0z26dc4qeneu5rvwvmpfhtwh3522ed6rlgxr9jarrfnjrc6ew4qxjysrs",
+        &["udp:88.208.241.33:2121"],
+    ),
+    (
+        "npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98",
+        &["udp:217.77.8.91:2121", "tcp:217.77.8.91:443"],
+    ),
+    (
+        "npub10yffd020a4ag8zcy75f9pruq3rnghvvhd5hphl9s62zgp35s560qrksp9u",
+        &["udp:23.182.128.74:2121", "tcp:23.182.128.74:443"],
+    ),
+    (
+        "npub136yqae6na688fs75g95ppps3lxe07fvxefj77938zf47uhm6074sxw8ctm",
+        &["udp:54.183.70.180:2121", "tcp:54.183.70.180:443"],
+    ),
+    (
+        "npub1gd7ye2qp2lphhzx75fynnjzaxx4dqanddecet0wtt5ss5ek8h9ps62wdkf",
+        &["udp:74.208.245.160:2121"],
+    ),
+];
 
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
@@ -89,10 +124,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 .with_request_retry_interval(FIPS_REQUEST_RETRY_INTERVAL)
                 .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS),
         );
-        let receiver_task = transport.start();
         transport
-            .set_peer_configs(authorized_device_fips_peers(config, &transport_settings))
+            .set_peer_configs_with_routing_peers(
+                authorized_device_fips_peers(config, &transport_settings),
+                bootstrap_fips_peers(&transport_settings),
+            )
             .await;
+        let receiver_task = transport.start();
         let mesh_pubsub = transport
             .start_mesh_pubsub(
                 local_store.clone(),
@@ -130,10 +168,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
         self.transport
-            .set_peer_configs(authorized_device_fips_peers(
-                config,
-                &self.transport_settings,
-            ))
+            .set_peer_configs_with_routing_peers(
+                authorized_device_fips_peers(config, &self.transport_settings),
+                bootstrap_fips_peers(&self.transport_settings),
+            )
             .await;
     }
 
@@ -217,6 +255,8 @@ pub struct FipsTransportSettings {
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
     pub static_peer_hints: Vec<(String, Vec<String>)>,
+    pub bootstrap_peer_hints: Vec<(String, Vec<String>)>,
+    pub open_discovery_max_pending: usize,
 }
 
 impl Default for FipsTransportSettings {
@@ -228,6 +268,8 @@ impl Default for FipsTransportSettings {
             udp_public: false,
             udp_external_addr: None,
             static_peer_hints: Vec::new(),
+            bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
+            open_discovery_max_pending: FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         }
     }
 }
@@ -239,6 +281,14 @@ impl FipsTransportSettings {
         let udp_external_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR");
         let udp_public =
             bool_env("IRIS_DRIVE_FIPS_UDP_PUBLIC").unwrap_or_else(|| udp_external_addr.is_some());
+        let bootstrap_enabled = bool_env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP").unwrap_or(true);
+        let bootstrap_peer_hints = if !bootstrap_enabled {
+            Vec::new()
+        } else if let Ok(value) = std::env::var("IRIS_DRIVE_FIPS_BOOTSTRAP_PEERS") {
+            parse_static_peer_hints(&value)
+        } else {
+            default_fips_bootstrap_peer_hints()
+        };
         Self {
             enable_udp: bool_env("IRIS_DRIVE_FIPS_ENABLE_UDP").unwrap_or(true),
             enable_webrtc: bool_env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC").unwrap_or(true),
@@ -248,6 +298,9 @@ impl FipsTransportSettings {
             static_peer_hints: parse_static_peer_hints(
                 &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
             ),
+            bootstrap_peer_hints,
+            open_discovery_max_pending: usize_env("IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING")
+                .unwrap_or(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING),
         }
     }
 }
@@ -269,7 +322,7 @@ fn fips_endpoint_options(
         udp_external_addr: settings.udp_external_addr.clone(),
         webrtc_auto_connect: true,
         webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
-        open_discovery_max_pending: 0,
+        open_discovery_max_pending: settings.open_discovery_max_pending,
         packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
     }
 }
@@ -283,6 +336,10 @@ fn non_empty_env(name: &str) -> Option<String> {
 
 fn bool_env(name: &str) -> Option<bool> {
     parse_bool_env_value(std::env::var(name).ok()?.trim())
+}
+
+fn usize_env(name: &str) -> Option<usize> {
+    std::env::var(name).ok()?.trim().parse().ok()
 }
 
 fn parse_bool_env_value(value: &str) -> Option<bool> {
@@ -361,6 +418,51 @@ fn authorized_device_fips_peers(
                 })
         })
         .collect()
+}
+
+fn bootstrap_fips_peers(settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
+    settings
+        .bootstrap_peer_hints
+        .iter()
+        .filter_map(|(npub, addresses)| {
+            let npub = normalize_fips_peer_npub(npub)?;
+            let udp_addresses = addresses
+                .iter()
+                .map(|address| address.trim().to_string())
+                .filter(|address| !address.is_empty())
+                .collect::<Vec<_>>();
+            (!udp_addresses.is_empty()).then_some(FipsPeerConfig {
+                npub,
+                udp_addresses,
+            })
+        })
+        .collect()
+}
+
+fn default_fips_bootstrap_peer_hints() -> Vec<(String, Vec<String>)> {
+    DEFAULT_FIPS_BOOTSTRAP_PEERS
+        .iter()
+        .map(|(npub, addresses)| {
+            (
+                (*npub).to_string(),
+                addresses
+                    .iter()
+                    .map(|address| (*address).to_string())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn normalize_fips_peer_npub(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    PublicKey::from_hex(trimmed)
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .or_else(|| Some(trimmed.to_string()))
 }
 
 fn static_peer_addresses_for_device(
@@ -653,6 +755,8 @@ mod tests {
             udp_public: true,
             udp_external_addr: Some("10.44.94.98:2121".to_string()),
             static_peer_hints: Vec::new(),
+            bootstrap_peer_hints: Vec::new(),
+            open_discovery_max_pending: 8,
         };
 
         let options = fips_endpoint_options(
@@ -671,6 +775,23 @@ mod tests {
             Some("10.44.94.98:2121")
         );
         assert!(options.webrtc_auto_connect);
+        assert_eq!(options.open_discovery_max_pending, 8);
+    }
+
+    #[test]
+    fn default_transport_settings_seed_fips_bootstrap_transit() {
+        let settings = FipsTransportSettings::default();
+
+        assert_eq!(settings.open_discovery_max_pending, 8);
+        assert_eq!(
+            settings.bootstrap_peer_hints.len(),
+            DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
+        );
+        assert!(settings.bootstrap_peer_hints.iter().any(|(_, addresses)| {
+            addresses
+                .iter()
+                .any(|address| address.starts_with("tcp:") || address.starts_with("udp:"))
+        }));
     }
 
     #[test]
