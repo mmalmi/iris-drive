@@ -480,6 +480,7 @@ run_macos() {
     | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
 }
 
+ensure_build_space "$HOME/src/iris-drive" "repository sync"
 sync_repo "$HOME/src/hashtree" hashtree "$HASHTREE_BARE"
 sync_repo "$HOME/src/iris-drive" iris-drive "$IRIS_BARE"
 case "$KIND" in
