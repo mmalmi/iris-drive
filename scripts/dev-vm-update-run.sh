@@ -1369,6 +1369,71 @@ function Detect-OverlayIp {
   }
 }
 
+function Stop-IdriveDaemon([string]$ConfigDir) {
+  $Pids = @()
+  $StatusFile = Join-Path $ConfigDir "daemon-status.json"
+  $LockFile = Join-Path $ConfigDir "daemon.lock"
+  if (Test-Path $StatusFile) {
+    try {
+      $Status = Get-Content -Raw $StatusFile | ConvertFrom-Json
+      if ($Status.pid) { $Pids += [int]$Status.pid }
+    } catch {}
+  }
+  if (Test-Path $LockFile) {
+    try {
+      $LockPid = (Get-Content -Raw $LockFile).Trim()
+      if ($LockPid) { $Pids += [int]$LockPid }
+    } catch {}
+  }
+  foreach ($PidValue in ($Pids | Select-Object -Unique)) {
+    try {
+      $Process = Get-Process -Id $PidValue -ErrorAction Stop
+      if ($Process.ProcessName -eq "idrive") {
+        Stop-Process -InputObject $Process -Force -ErrorAction Stop
+      }
+    } catch {}
+  }
+  Remove-Item -Force -ErrorAction SilentlyContinue $LockFile
+}
+
+function Start-IdriveDaemon([string]$Idrive, [string]$ConfigDir, [string]$PublishDir) {
+  New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+  Stop-IdriveDaemon $ConfigDir
+  $DaemonOut = Join-Path $env:TEMP "iris-drive-windows-daemon.out.log"
+  $DaemonErr = Join-Path $env:TEMP "iris-drive-windows-daemon.err.log"
+  Remove-Item -Force -ErrorAction SilentlyContinue $DaemonOut, $DaemonErr
+  $Args = @(
+    "--config-dir", $ConfigDir,
+    "daemon",
+    "--watch-interval", "2",
+    "--watch-debounce-ms", "100",
+    "--no-gateway"
+  )
+  $Process = Start-Process `
+    -FilePath $Idrive `
+    -ArgumentList $Args `
+    -WorkingDirectory $PublishDir `
+    -RedirectStandardOutput $DaemonOut `
+    -RedirectStandardError $DaemonErr `
+    -WindowStyle Hidden `
+    -PassThru
+  for ($i = 0; $i -lt 40; $i++) {
+    if ($Process.HasExited) {
+      if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
+      throw "idrive daemon exited during startup"
+    }
+    try {
+      $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
+      if ($Status.network.fips.enabled -and $Status.network.fips.running) {
+        return $Process
+      }
+    } catch {}
+    Start-Sleep -Milliseconds 500
+  }
+  if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
+  throw "idrive daemon did not report running FIPS status"
+}
+
 $IrisRepo = Join-Path $HOME "src\iris-drive"
 $HashtreeRepo = Join-Path $HOME "src\hashtree"
 $FipsRepo = Join-Path $HOME "src\fips"
@@ -1402,10 +1467,19 @@ $Exe = Join-Path $PublishDir "IrisDrive.exe"
 if (-not (Test-Path $Exe)) {
   throw "missing published Windows app: $Exe"
 }
+$Idrive = Join-Path $PublishDir "idrive.exe"
+$ConfigDir = Join-Path $env:APPDATA "iris-drive"
+if (-not (Test-Path $Idrive)) {
+  throw "missing published idrive helper: $Idrive"
+}
+Write-Log "starting Windows idrive daemon"
+$DaemonProcess = Start-IdriveDaemon $Idrive $ConfigDir $PublishDir
+$env:IRIS_DRIVE_CLI = $Idrive
 Write-Log "starting Windows app"
 $LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
 @"
 @echo off
+set IRIS_DRIVE_CLI=$Idrive
 set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FipsPort
 set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=
 set IRIS_DRIVE_FIPS_UDP_PUBLIC=false
@@ -1436,9 +1510,8 @@ if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
   throw "Windows app did not start"
 }
 
-$Idrive = Join-Path $PublishDir "idrive.exe"
 try {
-  $Status = & $Idrive status | ConvertFrom-Json
+  $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
   $Connected = $Status.network.fips.connected_peers -join ","
   $Peers = @($Status.peers | ForEach-Object { "$($_.label):$($_.fips_online):$($_.sync_state)" }) -join ", "
   Write-Output "connected_peers=[$Connected]"

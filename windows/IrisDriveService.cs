@@ -109,8 +109,6 @@ public sealed class IrisDriveService
                 "--no-gateway"),
             EnableRaisingEvents = true,
         };
-        process.StartInfo.Environment["IRIS_DRIVE_PARENT_PID"] =
-            Environment.ProcessId.ToString();
         process.OutputDataReceived += (_, _) => { };
         process.ErrorDataReceived += (_, _) => { };
         process.Start();
