@@ -281,7 +281,7 @@ for candidate in \
   "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn"
 do
   [[ -n "$candidate" && -x "$candidate" ]] || continue
-  if "$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); daemon=d.get("daemon") or {}; running=daemon.get("running"); source=d.get("status_source"); ip=(d.get("tunnel_ip") or "").split("/")[0]; sys.exit(1 if not ip or (running is False and source != "daemon") else 0); print(ip)'; then
+  if "$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); daemon=d.get("daemon") or {}; running=daemon.get("running"); source=d.get("status_source"); ip=(d.get("tunnel_ip") or "").split("/")[0]; invalid=not ip or (running is False and source != "daemon"); print(ip) if not invalid else None; sys.exit(1 if invalid else 0)'; then
     exit 0
   fi
 done
