@@ -241,9 +241,9 @@ fi
 if [[ "$SKIP_PUSH" != "1" ]]; then
   for i in "${!LABELS[@]}"; do
     log "pushing iris-drive HEAD to ${LABELS[$i]} (${IRIS_REMOTES[$i]}:$SYNC_BRANCH)"
-    git -C "$ROOT" push "${IRIS_REMOTES[$i]}" "HEAD:refs/heads/$SYNC_BRANCH"
+    git -C "$ROOT" push "${IRIS_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
     log "pushing hashtree HEAD to ${LABELS[$i]} (${HASHTREE_REMOTES[$i]}:$SYNC_BRANCH)"
-    git -C "$HASHTREE_ROOT" push "${HASHTREE_REMOTES[$i]}" "HEAD:refs/heads/$SYNC_BRANCH"
+    git -C "$HASHTREE_ROOT" push "${HASHTREE_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
   done
 fi
 
@@ -467,6 +467,8 @@ run_macos() {
   local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}"
   local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
+  local app_stdout="/tmp/iris-drive-macos-app.out"
+  local app_stderr="/tmp/iris-drive-macos-app.err"
   local overlay_ip=""
   local external_addr=""
 
@@ -496,7 +498,7 @@ run_macos() {
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
   pkill -x idrive >/dev/null 2>&1 || true
-  mkdir -p "$config_dir"
+  mkdir -p "$config_dir" "$app_base/Drive"
   if [[ ! -f "$config_dir/key" && -f "$legacy_app_base/Config/key" ]]; then
     log "migrating macOS dev app data into FileProvider app group"
     mkdir -p "$app_base"
@@ -507,15 +509,38 @@ run_macos() {
   fi
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
+  rm -f "$app_stdout" "$app_stderr"
   sleep 1
   open \
-    --env "IRIS_DRIVE_APP_BASE_DIR=$app_base" \
+    --stdout "$app_stdout" \
+    --stderr "$app_stderr" \
     --env "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
     --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$external_addr" \
     --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=true" \
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
     "$app"
-  sleep 8
+  for _ in {1..30}; do
+    if pgrep -x "Iris Drive" >/dev/null 2>&1 \
+      && pgrep -f "Contents/MacOS/idrive .* daemon" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
+  if ! pgrep -x "Iris Drive" >/dev/null 2>&1; then
+    log "macOS app did not stay running"
+    tail -n 80 "$app_stderr" >&2 2>/dev/null || true
+    exit 4
+  fi
+  if ! pgrep -f "Contents/MacOS/idrive .* daemon" >/dev/null 2>&1; then
+    log "macOS app did not start the iris-drive daemon"
+    tail -n 120 "$app_stderr" >&2 2>/dev/null || true
+    exit 4
+  fi
+  if [[ ! -d "$app_base/Drive" ]]; then
+    log "macOS FileProvider drive directory was not created at $app_base/Drive"
+    tail -n 120 "$app_stderr" >&2 2>/dev/null || true
+    exit 4
+  fi
   "$idrive" --config-dir "$config_dir" status \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); f=(d.get("network") or {}).get("fips") or {}; print("connected_peers=", f.get("connected_peers")); print("peers=", [(p.get("label"), p.get("fips_online"), p.get("sync_state")) for p in d.get("peers", [])])'
 }
@@ -527,7 +552,8 @@ sign_macos_app() {
   local sign_identity="${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}"
   local app_entitlements="$iris_repo/macos/IrisDriveMac.entitlements"
   local appex_entitlements="$iris_repo/macos/FileProvider/FileProvider.entitlements"
-  local dev_entitlements=""
+  local app_dev_entitlements=""
+  local appex_dev_entitlements=""
 
   if [[ -z "$sign_identity" ]]; then
     sign_identity="$(security find-identity -v -p codesigning 2>/dev/null \
@@ -537,9 +563,27 @@ sign_macos_app() {
 
   if [[ -z "$sign_identity" ]]; then
     sign_identity="-"
-    app_entitlements=""
-    dev_entitlements="$(mktemp -t iris-drive-dev-entitlements.XXXXXX.plist)"
-    cat > "$dev_entitlements" <<'EOF'
+    app_dev_entitlements="$(mktemp -t iris-drive-dev-app-entitlements.XXXXXX.plist)"
+    appex_dev_entitlements="$(mktemp -t iris-drive-dev-appex-entitlements.XXXXXX.plist)"
+    cat > "$app_dev_entitlements" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.to.iris.drive</string>
+  </array>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+</dict>
+</plist>
+EOF
+    cat > "$appex_dev_entitlements" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -555,8 +599,9 @@ sign_macos_app() {
 </dict>
 </plist>
 EOF
-    appex_entitlements="$dev_entitlements"
-    log "codesigning macOS app ad-hoc; FileProvider extension keeps app-group entitlements"
+    app_entitlements="$app_dev_entitlements"
+    appex_entitlements="$appex_dev_entitlements"
+    log "codesigning macOS app ad-hoc with app-group dev entitlements"
   else
     log "codesigning macOS app with identity: $sign_identity"
   fi
@@ -576,7 +621,7 @@ EOF
   else
     codesign --force --sign "$sign_identity" "$app" >/dev/null
   fi
-  rm -f "$dev_entitlements"
+  rm -f "$app_dev_entitlements" "$appex_dev_entitlements"
   codesign --verify --deep --strict --verbose=2 "$app" >/dev/null
 }
 

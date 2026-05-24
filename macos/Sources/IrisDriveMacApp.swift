@@ -64,12 +64,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installWindowObserver()
         observeWindows()
         updateStatus("Starting sync")
-        registerFileProviderDomain { [weak self] state in
-            DispatchQueue.main.async {
-                self?.fileProviderDomainState = state
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            NSLog("Iris Drive launching daemon bootstrap")
+            self?.bootstrapAndStartDaemon()
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            registerFileProviderDomain { state in
+                DispatchQueue.main.async {
+                    self?.fileProviderDomainState = state
+                }
             }
         }
-        bootstrapAndStartDaemon()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -586,13 +591,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let paths = runtimePaths()
+        NSLog(
+            "Iris Drive runtime paths config=\(paths.configDirectory.path) drive=\(paths.workingDirectory.path)"
+        )
         runtimePathsForMenu = paths
         do {
-            try FileManager.default.createDirectory(
-                at: paths.configDirectory,
-                withIntermediateDirectories: true
-            )
+            try ensureDirectory(paths.configDirectory)
             if !localProfileExists(paths: paths) {
+                NSLog("Iris Drive local profile not found at \(paths.configDirectory.path)")
                 updateStatus("Setup needed")
                 return
             }
@@ -610,6 +616,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FileManager.default.fileExists(
             atPath: paths.configDirectory.appendingPathComponent("key").path
         )
+    }
+
+    private func ensureDirectory(_ url: URL) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            if isDirectory.boolValue {
+                return
+            }
+            throw NSError(
+                domain: "IrisDriveMac",
+                code: 20,
+                userInfo: [NSLocalizedDescriptionKey: "\(url.path) is not a directory"]
+            )
+        }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
     private func setupArguments(command: String, label: String, extra: [String]) -> [String] {
@@ -660,8 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         guard let manager = NSFileProviderManager(for: domain) else {
             NSLog("Iris Drive FileProvider manager unavailable")
-            updateStatus("Drive mount unavailable")
-            NSSound.beep()
+            openMaterializedDriveFolder()
             return
         }
 
@@ -688,8 +708,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
             NSLog("Iris Drive failed to open mounted drive folder: \(url.path)")
-            updateStatus("Drive mount unavailable")
-            NSSound.beep()
+            openMaterializedDriveFolder()
         }
     }
 
@@ -882,7 +901,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             baseDirectory = FileManager.default
                 .containerURL(forSecurityApplicationGroupIdentifier: irisDriveAppGroupIdentifier)
-                ?? fallbackApplicationSupportDirectory()
+                ?? appGroupContainerFallbackDirectory()
         }
 
         return IrisDriveRuntimePaths(
@@ -891,12 +910,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    private func fallbackApplicationSupportDirectory() -> URL {
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return base.appendingPathComponent(irisDriveDisplayName, isDirectory: true)
+    private func appGroupContainerFallbackDirectory() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Group Containers", isDirectory: true)
+            .appendingPathComponent(irisDriveAppGroupIdentifier, isDirectory: true)
     }
 
     private func statusJSON(from data: Data) -> [String: Any] {
@@ -1131,30 +1149,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func prepareFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) {
         do {
-            try FileManager.default.createDirectory(
-                at: paths.workingDirectory,
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.createDirectory(
-                at: paths.configDirectory,
-                withIntermediateDirectories: true
-            )
-            let payload: [String: Any] = [
-                "config_dir": paths.configDirectory.path,
-                "drive_dir": paths.workingDirectory.path,
-                "idrive_executable": idrive?.path ?? "",
-                "updated_at": Date().timeIntervalSince1970,
-            ]
-            let data = try JSONSerialization.data(
-                withJSONObject: payload,
-                options: [.prettyPrinted, .sortedKeys]
-            )
-            try data.write(
-                to: paths.workingDirectory
-                    .deletingLastPathComponent()
-                    .appendingPathComponent("fileprovider-runtime.json"),
-                options: [.atomic]
-            )
+            try ensureDirectory(paths.workingDirectory)
+            try ensureDirectory(paths.configDirectory)
+            NSLog("Iris Drive FileProvider runtime prepared")
         } catch {
             NSLog("Iris Drive FileProvider runtime preparation failed: \(error)")
         }
@@ -1216,6 +1213,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func setDaemonRunning(_ running: Bool) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setDaemonRunning(running)
+            }
+            return
+        }
         IrisDriveStatus.shared.daemonRunning = running
         startSyncMenuItem?.isEnabled = !running
         stopSyncMenuItem?.isEnabled = running

@@ -118,6 +118,20 @@ enum FileProviderStorage {
         return try? JSONDecoder().decode(Runtime.self, from: data)
     }
 
+    static var idriveExecutable: String? {
+        if let configured = runtime?.idriveExecutable, !configured.isEmpty {
+            return configured
+        }
+        let contents = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bundled = contents
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("idrive")
+        guard FileManager.default.isExecutableFile(atPath: bundled.path) else { return nil }
+        return bundled.path
+    }
+
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
         guard let url = url(for: identifier) else { return nil }
         return item(for: url, identifier: identifier)
@@ -273,7 +287,7 @@ enum FileProviderStorage {
     }
 
     private static func importDrive() {
-        guard let executable = runtime?.idriveExecutable, !executable.isEmpty else { return }
+        guard let executable = idriveExecutable, !executable.isEmpty else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["--config-dir", configDirectory.path, "import", driveRoot.path]
