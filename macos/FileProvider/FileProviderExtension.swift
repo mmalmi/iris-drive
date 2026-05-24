@@ -14,12 +14,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        switch containerItemIdentifier {
-        case .rootContainer, .workingSet:
-            return FileProviderEnumerator()
-        default:
+        guard containerItemIdentifier == .rootContainer
+            || containerItemIdentifier == .workingSet
+            || FileProviderStorage.item(for: containerItemIdentifier)?.contentType == .folder
+        else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: containerItemIdentifier)
         }
+        return FileProviderEnumerator(containerIdentifier: containerItemIdentifier)
     }
 
     func item(
@@ -28,8 +29,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        if identifier == .rootContainer {
-            completionHandler(FileProviderItem.root, nil)
+        if let item = FileProviderStorage.item(for: identifier) {
+            completionHandler(item, nil)
         } else {
             completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
         }
@@ -44,7 +45,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(nil, nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier))
+        if let url = FileProviderStorage.url(for: itemIdentifier),
+           let item = FileProviderStorage.item(for: itemIdentifier) {
+            completionHandler(url, item, nil)
+        } else {
+            completionHandler(nil, nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier))
+        }
         progress.completedUnitCount = 1
         return progress
     }
@@ -63,7 +69,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         ) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(nil, [], false, unsupportedError())
+        do {
+            let item = try FileProviderStorage.createItem(
+                template: itemTemplate,
+                contents: url
+            )
+            completionHandler(item, [], false, nil)
+        } catch {
+            completionHandler(nil, [], false, error)
+        }
         progress.completedUnitCount = 1
         return progress
     }
@@ -83,7 +97,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         ) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(nil, [], false, unsupportedError())
+        do {
+            let updated = try FileProviderStorage.modifyItem(
+                item,
+                changedFields: changedFields,
+                contents: newContents
+            )
+            completionHandler(updated, [], false, nil)
+        } catch {
+            completionHandler(nil, [], false, error)
+        }
         progress.completedUnitCount = 1
         return progress
     }
@@ -96,12 +119,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        completionHandler(unsupportedError())
+        do {
+            try FileProviderStorage.deleteItem(identifier: identifier)
+            completionHandler(nil)
+        } catch {
+            completionHandler(error)
+        }
         progress.completedUnitCount = 1
         return progress
-    }
-
-    private func unsupportedError() -> NSError {
-        NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError)
     }
 }

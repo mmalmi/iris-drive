@@ -435,7 +435,8 @@ run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
   local app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
-  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/.local/share/iris-drive-dev-app}"
+  local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/group.to.iris.drive}"
+  local legacy_app_base="$HOME/.local/share/iris-drive-dev-app"
   local config_dir="$app_base/Config"
   local overlay_ip=""
   local external_addr=""
@@ -455,6 +456,12 @@ run_macos() {
   cp "$idrive" "$app/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
   codesign --force --sign - "$app/Contents/MacOS/idrive" >/dev/null 2>&1 || true
+  codesign --force --sign - \
+    --entitlements "$iris_repo/macos/FileProvider/FileProvider.entitlements" \
+    "$app/Contents/PlugIns/IrisDriveFileProvider.appex" >/dev/null 2>&1 || true
+  codesign --force --sign - \
+    --entitlements "$iris_repo/macos/IrisDriveMac.entitlements" \
+    "$app" >/dev/null 2>&1 || true
   [[ "$NO_RUN" == "1" ]] && return 0
 
   overlay_ip="$(detect_overlay_ip || true)"
@@ -465,6 +472,14 @@ run_macos() {
   log "restarting macOS app"
   pkill -x "Iris Drive" >/dev/null 2>&1 || true
   mkdir -p "$config_dir"
+  if [[ ! -f "$config_dir/key" && -f "$legacy_app_base/Config/key" ]]; then
+    log "migrating macOS dev app data into FileProvider app group"
+    mkdir -p "$app_base"
+    ditto "$legacy_app_base/Config" "$config_dir"
+    if [[ -d "$legacy_app_base/Hashtree" ]]; then
+      ditto "$legacy_app_base/Hashtree" "$app_base/Hashtree"
+    fi
+  fi
   stop_idrive_daemon "$config_dir"
   rm -f "$config_dir/daemon.lock"
   sleep 1
@@ -617,7 +632,28 @@ if (-not (Test-Path $Exe)) {
   throw "missing published Windows app: $Exe"
 }
 Write-Log "starting Windows app"
-Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
+$LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
+@"
+@echo off
+set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FipsPort
+set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$ExternalAddr
+set IRIS_DRIVE_FIPS_UDP_PUBLIC=true
+set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
+cd /d "$PublishDir"
+start "" "$Exe"
+"@ | Set-Content -Encoding ASCII $LaunchScript
+
+$TaskName = "IrisDriveDevLaunch"
+try {
+  $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
+  $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
+  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
+  Start-ScheduledTask -TaskName $TaskName
+} catch {
+  Write-Log "interactive scheduled launch failed, falling back to SSH session launch: $_"
+  Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
+}
 Start-Sleep -Seconds 8
 
 $Idrive = Join-Path $PublishDir "idrive.exe"

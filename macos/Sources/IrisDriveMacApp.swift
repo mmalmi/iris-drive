@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var openControlPanelWindow: (() -> Void)?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
+    private var driveMaterializeWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handOffToExistingInstanceIfNeeded() {
@@ -598,6 +599,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
+            prepareFileProviderRuntime(paths: paths, idrive: idrive)
+            scheduleDriveMaterialize(paths: paths, reason: "startup")
             startDaemon(idrive, paths: paths)
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
@@ -627,6 +630,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
                 _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
                 self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
+                self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
+                self.scheduleDriveMaterialize(paths: paths, reason: "setup")
                 DispatchQueue.main.async {
                     self.userRequestedSyncStop = false
                     self.startDaemon(idrive, paths: paths)
@@ -641,8 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showMountedDriveFolder() {
         if fileProviderDomainState == .unavailable {
             NSLog("Iris Drive FileProvider domain unavailable")
-            updateStatus("Drive mount unavailable")
-            NSSound.beep()
+            openMaterializedDriveFolder()
             return
         }
 
@@ -670,8 +674,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     NSLog("Iris Drive mounted folder unavailable")
                 }
-                self.updateStatus("Drive mount unavailable")
-                NSSound.beep()
+                self.openMaterializedDriveFolder()
             }
         }
     }
@@ -681,6 +684,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
             NSLog("Iris Drive failed to open mounted drive folder: \(url.path)")
+            updateStatus("Drive mount unavailable")
+            NSSound.beep()
+        }
+    }
+
+    private func openMaterializedDriveFolder() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
+        scheduleDriveMaterialize(paths: paths, reason: "open-drive")
+        if NSWorkspace.shared.open(paths.workingDirectory) {
+            updateStatus("Drive folder opened")
+            NSLog("Iris Drive materialized drive folder opened: \(paths.workingDirectory.path)")
+        } else {
             updateStatus("Drive mount unavailable")
             NSSound.beep()
         }
@@ -706,6 +722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("Iris Drive sync daemon started")
             setDaemonRunning(true)
             updateStatus("Sync running")
+            prepareFileProviderRuntime(paths: paths, idrive: idrive)
             refreshStatus()
         } catch {
             NSLog("Iris Drive daemon failed to start: \(error)")
@@ -989,8 +1006,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.updateStatus("Device roster updated")
                 case "drive_root":
                     self.updateStatus("Peer root updated")
+                    self.scheduleDriveMaterialize(
+                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
+                        reason: event
+                    )
                 case "blossom_downloaded":
                     self.updateStatus("Fetched blocks")
+                    self.scheduleDriveMaterialize(
+                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
+                        reason: event
+                    )
+                case "fips_downloaded",
+                     "materialized_drive_root",
+                     "materialized_files_root",
+                     "startup_materialized",
+                     "mount_refresh_skipped":
+                    self.scheduleDriveMaterialize(
+                        paths: self.runtimePathsForMenu ?? self.runtimePaths(),
+                        reason: event
+                    )
                 case "shutdown":
                     self.updateStatus("Sync stopped")
                 case "initial_publish_error", "auto_publish_error", "apply_error":
@@ -1060,6 +1094,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.applyStatusData(data)
             } catch {
                 NSLog("Iris Drive status refresh failed: \(error)")
+            }
+        }
+    }
+
+    private func prepareFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) {
+        do {
+            try FileManager.default.createDirectory(
+                at: paths.workingDirectory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: paths.configDirectory,
+                withIntermediateDirectories: true
+            )
+            let payload: [String: Any] = [
+                "config_dir": paths.configDirectory.path,
+                "drive_dir": paths.workingDirectory.path,
+                "idrive_executable": idrive?.path ?? "",
+                "updated_at": Date().timeIntervalSince1970,
+            ]
+            let data = try JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(
+                to: paths.workingDirectory
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("fileprovider-runtime.json"),
+                options: [.atomic]
+            )
+        } catch {
+            NSLog("Iris Drive FileProvider runtime preparation failed: \(error)")
+        }
+    }
+
+    private func scheduleDriveMaterialize(paths: IrisDriveRuntimePaths, reason: String) {
+        driveMaterializeWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.driveMaterializeWorkItem = nil
+            let idrive = self.idriveExecutableURL()
+            self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
+            do {
+                _ = try self.runIDrive(
+                    idrive,
+                    arguments: ["materialize", paths.workingDirectory.path],
+                    paths: paths
+                )
+                self.signalFileProviderDomain()
+                NSLog("Iris Drive materialized FileProvider folder for \(reason)")
+            } catch {
+                NSLog("Iris Drive FileProvider materialize failed for \(reason): \(error)")
+            }
+        }
+        driveMaterializeWorkItem = item
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    private func signalFileProviderDomain() {
+        let domain = NSFileProviderDomain(
+            identifier: irisDriveDomainIdentifier,
+            displayName: irisDriveDisplayName
+        )
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        manager.signalEnumerator(for: .rootContainer) { error in
+            if let error {
+                NSLog("Iris Drive FileProvider signal root failed: \(error)")
+            }
+        }
+        manager.signalEnumerator(for: .workingSet) { error in
+            if let error {
+                NSLog("Iris Drive FileProvider signal working set failed: \(error)")
             }
         }
     }

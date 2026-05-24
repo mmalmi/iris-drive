@@ -1,13 +1,20 @@
 import FileProvider
 
 final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
+    private let containerIdentifier: NSFileProviderItemIdentifier
+
+    init(containerIdentifier: NSFileProviderItemIdentifier) {
+        self.containerIdentifier = containerIdentifier
+        super.init()
+    }
+
     func invalidate() {}
 
     func enumerateItems(
         for observer: NSFileProviderEnumerationObserver,
         startingAt page: NSFileProviderPage
     ) {
-        observer.didEnumerate([])
+        observer.didEnumerate(FileProviderStorage.children(of: containerIdentifier))
         observer.finishEnumerating(upTo: nil)
     }
 
@@ -15,14 +22,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from syncAnchor: NSFileProviderSyncAnchor
     ) {
-        observer.finishEnumeratingChanges(upTo: Self.currentAnchor, moreComing: false)
+        observer.finishEnumeratingChanges(upTo: FileProviderStorage.currentAnchor(), moreComing: false)
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(Self.currentAnchor)
+        completionHandler(FileProviderStorage.currentAnchor())
     }
-
-    private static let currentAnchor = NSFileProviderSyncAnchor(
-        rawValue: Data("iris-drive-bootstrap-v1".utf8)
-    )
 }
