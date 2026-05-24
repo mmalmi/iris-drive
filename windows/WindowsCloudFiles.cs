@@ -66,30 +66,49 @@ public sealed record WindowsCloudLocalStateEntry(string Path, string Kind, long 
 
     public static WindowsCloudLocalStateEntry? FromJson(JsonElement element)
     {
-        var path = element.TryGetProperty("path", out var pathValue) &&
-            pathValue.ValueKind == JsonValueKind.String
-                ? NormalizePath(pathValue.GetString() ?? "")
-                : "";
+        var path = TryGetString(element, "path", "Path") is { } parsedPath
+            ? NormalizePath(parsedPath)
+            : "";
         if (string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
-        var kind = element.TryGetProperty("kind", out var kindValue) &&
-            kindValue.ValueKind == JsonValueKind.String
-                ? kindValue.GetString() ?? "file"
-                : "file";
-        var size = element.TryGetProperty("size", out var sizeValue) &&
-            sizeValue.ValueKind == JsonValueKind.Number &&
-            sizeValue.TryGetInt64(out var parsedSize)
-                ? parsedSize
-                : 0;
-        var sha256 = element.TryGetProperty("sha256", out var shaValue) &&
-            shaValue.ValueKind == JsonValueKind.String
-                ? shaValue.GetString()
-                : null;
+        var kind = TryGetString(element, "kind", "Kind") ?? "file";
+        var size = TryGetInt64(element, "size", "Size") ?? 0;
+        var sha256 = TryGetString(element, "sha256", "Sha256");
 
         return new WindowsCloudLocalStateEntry(path, kind, size, sha256);
+    }
+
+    private static string? TryGetString(JsonElement element, string lowerName, string upperName)
+    {
+        if (element.TryGetProperty(lowerName, out var lowerValue) &&
+            lowerValue.ValueKind == JsonValueKind.String)
+        {
+            return lowerValue.GetString();
+        }
+
+        return element.TryGetProperty(upperName, out var upperValue) &&
+            upperValue.ValueKind == JsonValueKind.String
+                ? upperValue.GetString()
+                : null;
+    }
+
+    private static long? TryGetInt64(JsonElement element, string lowerName, string upperName)
+    {
+        if (element.TryGetProperty(lowerName, out var lowerValue) &&
+            lowerValue.ValueKind == JsonValueKind.Number &&
+            lowerValue.TryGetInt64(out var lowerParsed))
+        {
+            return lowerParsed;
+        }
+
+        return element.TryGetProperty(upperName, out var upperValue) &&
+            upperValue.ValueKind == JsonValueKind.Number &&
+            upperValue.TryGetInt64(out var upperParsed)
+                ? upperParsed
+                : null;
     }
 
     private static string NormalizePath(string path) =>
