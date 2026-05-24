@@ -61,7 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
     private var fileProviderRepairInFlight = false
+    private var fileProviderReimportInFlight = false
     private var lastFileProviderRepairAt = Date.distantPast
+    private var lastFileProviderReimportAt = Date.distantPast
+    private var lastFileProviderReimportKey: String?
     private var startupFileProviderDomainResetDone = false
     private var statusRefreshTimer: Timer?
     private var externalStatusFileSource: DispatchSourceFileSystemObject?
@@ -107,6 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     DispatchQueue.main.async {
                         self.fileProviderRegistrationInFlight = false
                         self.fileProviderDomainState = state
+                        if state == .registered {
+                            self.scheduleFileProviderReimport(
+                                reason: "domain registered",
+                                key: "domain-registered"
+                            )
+                        }
                     }
                 }
                 if resetDomain {
@@ -1123,6 +1132,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environmentFlag("IRIS_DRIVE_FILEPROVIDER_RESET_ON_START")
     }
 
+    private var fileProviderReimportEnabled: Bool {
+        !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER_REIMPORT")
+    }
+
     private var fileProviderIntegrationEnabled: Bool {
         guard !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER") else {
             return false
@@ -1540,6 +1553,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func scheduleFileProviderReimport(reason: String, key: String) {
+        guard fileProviderIntegrationEnabled && fileProviderReimportEnabled else { return }
+        guard !fileProviderReimportInFlight else { return }
+        let now = Date()
+        guard key != lastFileProviderReimportKey
+            || now.timeIntervalSince(lastFileProviderReimportAt) >= 10
+        else {
+            return
+        }
+
+        fileProviderReimportInFlight = true
+        lastFileProviderReimportAt = now
+        lastFileProviderReimportKey = key
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            let domain = irisDriveFileProviderDomain(runtime: self.currentFileProviderRuntimeConfig())
+            guard let manager = NSFileProviderManager(for: domain) else {
+                self.fileProviderReimportInFlight = false
+                NSLog("Iris Drive FileProvider reimport skipped; manager unavailable")
+                return
+            }
+            manager.reimportItems(below: .rootContainer) { error in
+                DispatchQueue.main.async {
+                    self.fileProviderReimportInFlight = false
+                    if let error {
+                        NSLog("Iris Drive FileProvider reimport failed (\(reason)): \(error)")
+                    } else {
+                        NSLog("Iris Drive FileProvider reimport requested (\(reason))")
+                    }
+                }
+            }
+        }
+    }
+
     private func signalFileProviderDomainForExternalStatusIfNeeded(key: String) {
         guard fileProviderIntegrationEnabled else { return }
         let now = Date()
@@ -1550,6 +1597,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastExternalFileProviderSignalKey = key
         lastExternalFileProviderSignalAt = now
         signalFileProviderDomain()
+        if changed {
+            scheduleFileProviderReimport(reason: "status changed", key: key)
+        }
     }
 
     private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {
