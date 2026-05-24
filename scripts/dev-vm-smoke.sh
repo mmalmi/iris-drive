@@ -298,18 +298,20 @@ run_macos_open_smoke() {
     *) log "skipping macOS UI smoke"; return 0 ;;
   esac
 
-  log "clicking macOS Open Drive Folder"
+  log "requesting macOS Open Drive Folder"
   local before
   before="$(ssh "$MACOS_REMOTE" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0')"
-  ssh "$MACOS_REMOTE" 'osascript' <<'APPLESCRIPT' >/dev/null
-tell application "System Events"
-  tell process "Iris Drive"
-    click menu bar item 1 of menu bar 2
-    delay 0.2
-    click menu item "Open Drive Folder" of menu 1 of menu bar item 1 of menu bar 2
-  end tell
-end tell
-APPLESCRIPT
+  ssh "$MACOS_REMOTE" '/usr/bin/swift -' <<'REMOTE_SWIFT' >/dev/null
+import Foundation
+
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("to.iris.drive.showDriveFolder"),
+    object: nil,
+    userInfo: nil,
+    deliverImmediately: true
+)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+REMOTE_SWIFT
 
   local start
   start="$(date +%s)"

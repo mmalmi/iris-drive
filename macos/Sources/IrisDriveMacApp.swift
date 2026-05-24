@@ -9,6 +9,8 @@ private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
+private let irisDriveShowDriveFolderNotification =
+    Notification.Name("to.iris.drive.showDriveFolder")
 private let irisDriveAssociatedHosts: Set<String> = [
     "drive.iris.to",
     "docs.iris.to",
@@ -111,6 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: irisDriveShowControlPanelNotification,
             object: nil
         )
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: irisDriveShowDriveFolderNotification,
+            object: nil
+        )
     }
 
     func applicationShouldHandleReopen(
@@ -170,6 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showControlPanel()
     }
 
+    @objc private func handleShowDriveFolderNotification(_ notification: Notification) {
+        showDriveFolder()
+    }
+
     private func isIrisWebURL(_ url: URL) -> Bool {
         guard url.scheme == "https",
               let host = url.host?.lowercased()
@@ -190,6 +201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self,
             selector: #selector(handleShowControlPanelNotification),
             name: irisDriveShowControlPanelNotification,
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleShowDriveFolderNotification),
+            name: irisDriveShowDriveFolderNotification,
             object: nil
         )
     }

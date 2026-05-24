@@ -118,16 +118,18 @@ wait_for_log() {
   return 1
 }
 
-click_show_drive_folder() {
-  osascript >/dev/null <<'APPLESCRIPT'
-tell application "System Events"
-  tell process "Iris Drive"
-    click menu bar item 1 of menu bar 2
-    delay 0.2
-    click menu item "Open Drive Folder" of menu 1 of menu bar item 1 of menu bar 2
-  end tell
-end tell
-APPLESCRIPT
+request_show_drive_folder() {
+  /usr/bin/swift - >/dev/null <<'SWIFT'
+import Foundation
+
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("to.iris.drive.showDriveFolder"),
+    object: nil,
+    userInfo: nil,
+    deliverImmediately: true
+)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+SWIFT
 }
 
 APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
@@ -176,8 +178,8 @@ if ! wait_for_daemon 10; then
 fi
 
 if run_ui_smoke; then
-  if ! click_show_drive_folder; then
-    echo "FAIL: could not click the Show Drive Folder menu item." >&2
+  if ! request_show_drive_folder; then
+    echo "FAIL: could not request Show Drive Folder." >&2
     show_recent_logs >&2
     exit 1
   fi
