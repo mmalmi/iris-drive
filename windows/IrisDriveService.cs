@@ -120,6 +120,7 @@ public sealed class IrisDriveService
     public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
     {
         var entries = await ProviderEntriesAsync();
+        WriteProviderPathCache(entries);
         return WindowsCloudFiles.EnsureSyncRoot(entries, ReadProviderFile);
     }
 
@@ -221,6 +222,28 @@ public sealed class IrisDriveService
             .Select(WindowsCloudFileEntry.FromJson)
             .Where(entry => !string.IsNullOrWhiteSpace(entry.Path))
             .ToArray();
+    }
+
+    private void WriteProviderPathCache(IReadOnlyList<WindowsCloudFileEntry> entries)
+    {
+        try
+        {
+            Directory.CreateDirectory(DefaultConfigDirectory);
+            var paths = entries
+                .Select(entry => entry.Path)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+            var json = JsonSerializer.Serialize(new { paths });
+            File.WriteAllText(
+                Path.Combine(DefaultConfigDirectory, "windows-cloud-provider-paths.json"),
+                json);
+        }
+        catch
+        {
+            // The Rust watcher treats this as an optimization hint; sync still works without it.
+        }
     }
 
     private byte[] ReadProviderFile(string path)

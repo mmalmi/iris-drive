@@ -637,6 +637,7 @@ async fn import_windows_cloud_root_changes_and_publish(
         .context("building Windows Cloud Files provider root")?;
     let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
     let before = provider.current_root().await;
+    let placeholder_paths = load_windows_cloud_provider_path_cache(config_dir);
     let mut changed_paths = BTreeSet::new();
     for path in prune_ignored_provider_paths(&provider).await? {
         changed_paths.insert(path);
@@ -645,7 +646,9 @@ async fn import_windows_cloud_root_changes_and_publish(
     for change in changes {
         match change {
             WindowsCloudRootChange::Upsert(path) => {
-                if apply_windows_cloud_upsert(&provider, sync_root, &path).await? {
+                if apply_windows_cloud_upsert(&provider, sync_root, &path, &placeholder_paths)
+                    .await?
+                {
                     changed_paths.insert(path);
                 }
             }
@@ -655,14 +658,24 @@ async fn import_windows_cloud_root_changes_and_publish(
                 }
             }
             WindowsCloudRootChange::Rename { old_path, new_path } => {
-                if apply_windows_cloud_rename(&provider, sync_root, &old_path, &new_path).await? {
+                if apply_windows_cloud_rename(
+                    &provider,
+                    sync_root,
+                    &old_path,
+                    &new_path,
+                    &placeholder_paths,
+                )
+                .await?
+                {
                     changed_paths.insert(old_path);
                     changed_paths.insert(new_path);
                 }
             }
             WindowsCloudRootChange::Rescan => {
                 for path in windows_cloud_local_materialized_paths(sync_root)? {
-                    if apply_windows_cloud_upsert(&provider, sync_root, &path).await? {
+                    if apply_windows_cloud_upsert(&provider, sync_root, &path, &placeholder_paths)
+                        .await?
+                    {
                         changed_paths.insert(path);
                     }
                 }
@@ -693,6 +706,7 @@ async fn apply_windows_cloud_rename(
     sync_root: &Path,
     old_path: &str,
     new_path: &str,
+    placeholder_paths: &BTreeSet<String>,
 ) -> Result<bool> {
     let old_path = normalize_provider_path(old_path)?;
     let new_path = normalize_provider_path(new_path)?;
@@ -703,7 +717,8 @@ async fn apply_windows_cloud_rename(
     }
     if iris_drive_core::path_has_ignored_component(&old_path) {
         let deleted_old = apply_windows_cloud_delete(provider, &old_path).await?;
-        let upserted_new = apply_windows_cloud_upsert(provider, sync_root, &new_path).await?;
+        let upserted_new =
+            apply_windows_cloud_upsert(provider, sync_root, &new_path, placeholder_paths).await?;
         return Ok(deleted_old || upserted_new);
     }
     let new_full_path = windows_cloud_full_path(sync_root, &new_path);
@@ -718,7 +733,8 @@ async fn apply_windows_cloud_rename(
     }
 
     let deleted = apply_windows_cloud_delete(provider, &old_path).await?;
-    let upserted = apply_windows_cloud_upsert(provider, sync_root, &new_path).await?;
+    let upserted =
+        apply_windows_cloud_upsert(provider, sync_root, &new_path, placeholder_paths).await?;
     Ok(deleted || upserted)
 }
 
@@ -743,6 +759,7 @@ async fn apply_windows_cloud_upsert(
     provider: &HashTreeProviderFs<FsBlobStore>,
     sync_root: &Path,
     path: &str,
+    placeholder_paths: &BTreeSet<String>,
 ) -> Result<bool> {
     let path = match normalize_provider_path(path) {
         Ok(path) => path,
@@ -750,6 +767,9 @@ async fn apply_windows_cloud_upsert(
     };
     if iris_drive_core::path_has_ignored_component(&path) {
         return apply_windows_cloud_delete(provider, &path).await;
+    }
+    if placeholder_paths.contains(&path) && provider.item(&path).await.is_err() {
+        return Ok(false);
     }
     let mut changed = false;
     let mut stack = vec![path];
@@ -893,6 +913,24 @@ fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
     }
     paths.sort();
     Ok(paths)
+}
+
+fn load_windows_cloud_provider_path_cache(config_dir: &Path) -> BTreeSet<String> {
+    let path = config_dir.join("windows-cloud-provider-paths.json");
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return BTreeSet::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return BTreeSet::new();
+    };
+    value
+        .get("paths")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|path| normalize_provider_path(path).ok())
+        .collect()
 }
 
 fn windows_cloud_full_path(root: &Path, virtual_path: &str) -> PathBuf {
@@ -1570,7 +1608,12 @@ mod tests {
         .unwrap();
 
         assert!(
-            apply_windows_cloud_upsert(&provider, sync_root.path(), ".Trash-1000")
+            apply_windows_cloud_upsert(
+                &provider,
+                sync_root.path(),
+                ".Trash-1000",
+                &BTreeSet::new(),
+            )
                 .await
                 .unwrap()
         );
@@ -1619,7 +1662,12 @@ mod tests {
         std::fs::write(sync_root.path().join("remote.txt"), b"same").unwrap();
 
         assert!(
-            !apply_windows_cloud_upsert(&provider, sync_root.path(), "remote.txt")
+            !apply_windows_cloud_upsert(
+                &provider,
+                sync_root.path(),
+                "remote.txt",
+                &BTreeSet::new(),
+            )
                 .await
                 .unwrap()
         );
@@ -1636,10 +1684,43 @@ mod tests {
         std::fs::create_dir(sync_root.path().join("existing")).unwrap();
 
         assert!(
-            !apply_windows_cloud_upsert(&provider, sync_root.path(), "existing")
+            !apply_windows_cloud_upsert(
+                &provider,
+                sync_root.path(),
+                "existing",
+                &BTreeSet::new(),
+            )
                 .await
                 .unwrap()
         );
         assert_eq!(provider.current_root().await, before);
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_upsert_skips_stale_cached_placeholder() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        let before = provider.current_root().await;
+
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::write(sync_root.path().join("remote-deleted.txt"), b"stale").unwrap();
+        let placeholder_paths = BTreeSet::from(["remote-deleted.txt".to_string()]);
+
+        assert!(
+            !apply_windows_cloud_upsert(
+                &provider,
+                sync_root.path(),
+                "remote-deleted.txt",
+                &placeholder_paths,
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(provider.current_root().await, before);
+        assert!(
+            provider
+                .item(&"remote-deleted.txt".to_string())
+                .await
+                .is_err()
+        );
     }
 }
