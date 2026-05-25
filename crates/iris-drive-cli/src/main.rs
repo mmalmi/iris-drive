@@ -73,6 +73,7 @@ const ROOT_UPDATE_THROTTLE_MS: u64 = 1_000;
 const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 30;
+const LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
 
 #[cfg(windows)]
 fn main() -> ExitCode {
@@ -375,6 +376,36 @@ mod daemon_lock_tests {
                 .iter()
                 .all(|event| !event.key.contains(&second.to_string())),
             "materialized parent root must stay local-only: {events:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_mesh_sync_events_refuse_unreadable_local_root() {
+        let cfg_dir = tempdir().unwrap();
+        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let account = config.account.clone().unwrap();
+        let mut drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .clone();
+        let missing_root = Cid::encrypted([0x42; 32], [0x24; 32]).to_string();
+        drive.device_roots.insert(
+            account.device_pubkey.clone(),
+            DeviceRootRef::legacy(missing_root.clone(), 1, 1),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let error = build_current_sync_events(cfg_dir.path(), &config, &account)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains(&missing_root),
+            "error should name unreadable root {missing_root}: {error}"
         );
     }
 

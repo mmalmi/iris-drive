@@ -330,6 +330,7 @@ pub(crate) async fn build_current_sync_events(
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
+        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
         let authorized_devices = authorized_device_pubkeys(state);
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
@@ -455,6 +456,80 @@ pub(crate) fn direct_root_event(key: String, event: &Event) -> Result<DirectRoot
 
 pub(crate) fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
     format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
+}
+
+pub(crate) async fn ensure_publishable_root_locally_available(
+    config_dir: &Path,
+    root_cid_str: &str,
+) -> Result<()> {
+    let root_cid =
+        Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let mut last_error: Option<anyhow::Error> = None;
+    for delay_ms in
+        std::iter::once(0).chain(LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS.iter().copied())
+    {
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+        match collect_local_root_hashes(config_dir, &root_cid).await {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if delay_ms < *LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS.last().unwrap_or(&0)
+                    && local_root_availability_error_message_is_retryable(&format!(
+                        "{error:#}"
+                    )) =>
+            {
+                tracing::warn!(
+                    root_cid = root_cid_str,
+                    delay_ms,
+                    error = %error,
+                    "publishable root hit a transient local store read; retrying"
+                );
+                last_error = Some(error);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("root {root_cid_str} is not locally readable for publish")
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("root availability check did not run")))
+        .with_context(|| format!("root {root_cid_str} is not locally readable for publish"))
+}
+
+async fn collect_local_root_hashes(config_dir: &Path, root: &Cid) -> Result<usize> {
+    let daemon = Daemon::open(config_dir).context("opening daemon for local root availability")?;
+    daemon
+        .tree()
+        .list_directory(root)
+        .await
+        .context("reading local root directory")?;
+    let hashes = collect_hashes(daemon.tree(), root, 4)
+        .await
+        .context("walking local root blocks")?;
+    let store = daemon.tree().get_store().clone();
+    for hash in &hashes {
+        if !store
+            .has(hash)
+            .await
+            .with_context(|| format!("checking local block {}", to_hex(hash)))?
+        {
+            return Err(anyhow::anyhow!(
+                "local store is missing root block {}",
+                to_hex(hash)
+            ));
+        }
+    }
+    Ok(hashes.len())
+}
+
+fn local_root_availability_error_message_is_retryable(message: &str) -> bool {
+    let has_store_context = message.contains("Store error") || message.contains("IO error");
+    has_store_context
+        && (message.contains("os error 2")
+            || message.contains("No such file or directory")
+            || message.contains("The system cannot find the file specified"))
 }
 
 fn direct_root_initial_seq() -> u64 {
@@ -790,6 +865,7 @@ pub(crate) async fn publish_current_state(
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
+        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
