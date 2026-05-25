@@ -1712,6 +1712,13 @@ function Stop-IdriveDaemon([string]$ConfigDir) {
 }
 
 function Stop-IrisDriveDevProcesses([string]$IrisRepo, [string]$ConfigDir) {
+  foreach ($TaskName in @("IrisDriveDevDaemon", "IrisDriveDevLaunch")) {
+    try {
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    } catch {}
+  }
+
   $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
   $Prefixes = @(
     (Join-Path $IrisRepo ""),
@@ -1757,23 +1764,34 @@ function Start-IdriveDaemon([string]$Idrive, [string]$ConfigDir, [string]$Publis
   $DaemonOut = Join-Path $env:TEMP "iris-drive-windows-daemon.out.log"
   $DaemonErr = Join-Path $env:TEMP "iris-drive-windows-daemon.err.log"
   Remove-Item -Force -ErrorAction SilentlyContinue $DaemonOut, $DaemonErr
-  $Args = @(
-    "--config-dir", $ConfigDir,
-    "daemon",
-    "--watch-interval", "2",
-    "--watch-debounce-ms", "100",
-    "--no-gateway"
-  )
-  $Process = Start-Process `
-    -FilePath $Idrive `
-    -ArgumentList $Args `
-    -WorkingDirectory $PublishDir `
-    -RedirectStandardOutput $DaemonOut `
-    -RedirectStandardError $DaemonErr `
-    -WindowStyle Hidden `
-    -PassThru
+
+  $DaemonScript = Join-Path $PublishDir "launch-idrive-daemon-dev.cmd"
+@"
+@echo off
+set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=$env:IRIS_DRIVE_FIPS_UDP_BIND_ADDR
+set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR
+set IRIS_DRIVE_FIPS_UDP_PUBLIC=$env:IRIS_DRIVE_FIPS_UDP_PUBLIC
+set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=$env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC
+set IRIS_DRIVE_FIPS_STATIC_PEERS=$env:IRIS_DRIVE_FIPS_STATIC_PEERS
+set IRIS_DRIVE_WINDOWS_CLOUD_DEBUG=$env:IRIS_DRIVE_WINDOWS_CLOUD_DEBUG
+cd /d "$PublishDir"
+"$Idrive" --config-dir "$ConfigDir" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway > "$DaemonOut" 2> "$DaemonErr"
+"@ | Set-Content -Encoding ASCII $DaemonScript
+
+  $TaskName = "IrisDriveDevDaemon"
+  try {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+  } catch {}
+  $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$DaemonScript`"" -WorkingDirectory $PublishDir
+  $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
+  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
+  Start-ScheduledTask -TaskName $TaskName
+
   for ($i = 0; $i -lt 40; $i++) {
-    if ($Process.HasExited) {
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($Task -and $Task.State -eq "Ready" -and $i -gt 2) {
       if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
       throw "idrive daemon exited during startup"
     }
@@ -1830,7 +1848,7 @@ if (-not (Test-Path $Idrive)) {
   throw "missing published idrive helper: $Idrive"
 }
 Write-Log "starting Windows idrive daemon"
-$DaemonProcess = Start-IdriveDaemon $Idrive $ConfigDir $PublishDir
+Start-IdriveDaemon $Idrive $ConfigDir $PublishDir
 $env:IRIS_DRIVE_CLI = $Idrive
 $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
 Write-Log "starting Windows app"
