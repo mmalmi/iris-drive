@@ -30,6 +30,8 @@ use tokio::sync::mpsc;
 const MOUNT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(target_os = "linux")]
 const MOUNT_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+#[cfg(target_os = "linux")]
+const MAX_DIRECTORY_MONITOR_WAKE_DIRS: usize = 2048;
 
 #[cfg(target_os = "linux")]
 pub(crate) struct IrisDriveMount {
@@ -98,6 +100,7 @@ impl IrisDriveMountHandle {
         self.fs
             .replace_root(visible.root_cid.clone())
             .map_err(|error| anyhow::anyhow!("refreshing mounted root: {error}"))?;
+        wake_directory_monitors(&self.mountpoint);
         Ok(visible)
     }
 }
@@ -219,6 +222,33 @@ fn wait_for_mountpoint_ready(mountpoint: &Path) -> Result<()> {
             }
         }
         std::thread::sleep(MOUNT_READY_POLL_INTERVAL);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wake_directory_monitors(root: &Path) {
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+
+    while let Some(dir) = stack.pop() {
+        if visited >= MAX_DIRECTORY_MONITOR_WAKE_DIRS {
+            break;
+        }
+        visited += 1;
+
+        let _ = std::fs::remove_file(dir.join(hashtree_fuse::DIRECTORY_REFRESH_SENTINEL_NAME));
+
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            }
+        }
     }
 }
 

@@ -449,6 +449,7 @@ dir="$1"
 token="$2"
 target="$HOME/Iris Drive/$dir"
 mkdir -p "$target"
+find "$target" -maxdepth 1 -mindepth 1 >/dev/null 2>&1 || true
 log="/tmp/iris-drive-gio-monitor-$token.log"
 pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
 rm -f "$log" "$pidfile"
@@ -456,14 +457,17 @@ rm -f "$log" "$pidfile"
 REMOTE_SH
 }
 
-ubuntu_monitor_saw() {
+ubuntu_monitor_saw_any() {
   local token="$1"
-  local needle="$2"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" "$needle" <<'REMOTE_SH'
+  shift
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" "$@" <<'REMOTE_SH'
 set -Eeuo pipefail
 token="$1"
-needle="$2"
-grep -F "$needle" "/tmp/iris-drive-gio-monitor-$token.log" >/dev/null
+shift
+for needle in "$@"; do
+  grep -F "$needle" "/tmp/iris-drive-gio-monitor-$token.log" >/dev/null && exit 0
+done
+exit 1
 REMOTE_SH
 }
 
@@ -543,8 +547,9 @@ run_sync_smoke() {
   log "checking Linux directory monitor sees a remote Windows create"
   ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
   write_windows_file "$live_file" "live from windows $RUN_ID"
-  wait_for "Ubuntu directory monitor sees Windows create" 45 \
-    ubuntu_monitor_saw "$monitor_token" "$(basename "$live_file")"
+  wait_for "Ubuntu directory monitor wakes for Windows create" 45 \
+    ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" ".iris-drive-refresh"
+  wait_for "Ubuntu live create is visible after monitor wake" 15 wait_ubuntu_file_has "$live_file"
   ubuntu_stop_directory_monitor "$monitor_token"
   wait_for "Windows live create reaches macOS provider" 75 macos_provider_has "$live_file"
 
