@@ -5,7 +5,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
     case peers
     case backups
-    case network
     case settings
 
     var id: Self { self }
@@ -18,8 +17,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "Devices"
         case .backups:
             return "Backups"
-        case .network:
-            return "Network"
         case .settings:
             return "Settings"
         }
@@ -33,8 +30,6 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "person.2.fill"
         case .backups:
             return "lock.shield.fill"
-        case .network:
-            return "network"
         case .settings:
             return "gearshape.fill"
         }
@@ -46,6 +41,13 @@ private enum IrisDriveSetupMode {
     case create
     case restore
     case link
+}
+
+private enum IrisDriveSyncState {
+    case upToDate
+    case syncing(Int, Int)
+    case paused
+    case attention
 }
 
 struct IrisDriveControlPanel: View {
@@ -63,10 +65,8 @@ struct IrisDriveControlPanel: View {
     @State private var setupOwner = ""
     @State private var approveDeviceKey = ""
     @State private var approveDeviceLabel = ""
-
-    private let columns = [
-        GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .topLeading)
-    ]
+    @State private var showAddDevice = false
+    @State private var showAddBackup = false
 
     var body: some View {
         Group {
@@ -85,15 +85,31 @@ struct IrisDriveControlPanel: View {
         HStack(spacing: 0) {
             sidebar
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    actions
-                    header
-                    selectedContent
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch selectedTab {
+        case .drive:
+            page { driveHome }
+        case .peers:
+            page { peers }
+        case .backups:
+            page { backups }
+        case .settings:
+            settingsForm
+        }
+    }
+
+    private func page<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                content()
             }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -216,199 +232,280 @@ struct IrisDriveControlPanel: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "externaldrive.fill")
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(.primary)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(status.driveName)
-                    .font(.title2.weight(.semibold))
-                Text(status.message)
+    // MARK: My Drive
+
+    private var driveHome: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 16) {
+                    Image(systemName: heroIcon)
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundStyle(heroColor)
+                        .frame(width: 48)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(status.driveName)
+                            .font(.title2.weight(.semibold))
+                        Text(heroText)
+                            .font(.headline)
+                            .foregroundStyle(heroColor)
+                    }
+                    Spacer()
+                }
+                Divider()
+                Text(summaryLine)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
-            StatusPill(text: status.daemonRunning ? "Running" : "Stopped")
-        }
-    }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-    private var actions: some View {
-        HStack(spacing: 10) {
             Button(action: controller.showDriveFolder) {
-                Label("Open Drive Folder", systemImage: "folder.fill")
+                Label("Open in Finder", systemImage: "folder.fill")
+                    .frame(maxWidth: .infinity)
             }
-            Button(action: controller.copyDriveLink) {
-                Label("Copy Snapshot", systemImage: "link")
-            }
-            .disabled(status.snapshotLinkURL == nil)
-            Button(action: controller.openDriveLink) {
-                Label("Open Snapshot", systemImage: "safari.fill")
-            }
-            .disabled(status.snapshotLinkURL == nil)
-            Divider()
-                .frame(height: 22)
-            Button(action: controller.restartSync) {
-                Label("Restart", systemImage: "arrow.clockwise")
-            }
-            Button(action: controller.stopSync) {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .disabled(!status.daemonRunning)
-            Button(action: controller.startSync) {
-                Label("Start", systemImage: "play.fill")
-            }
-            .disabled(status.daemonRunning)
-        }
-        .buttonStyle(.bordered)
-    }
-
-    @ViewBuilder
-    private var selectedContent: some View {
-        switch selectedTab {
-        case .drive:
-            overview
-        case .peers:
-            peers
-        case .backups:
-            backups
-        case .network:
-            network
-        case .settings:
-            settings
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
     }
 
-    private var overview: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            StatTile(title: "Files", value: optionalCount(status.fileCount ?? status.topLevelEntries))
-            StatTile(title: "Blocks", value: "\(status.localBlockCount)")
-            StatTile(title: "Storage", value: byteString(status.localBlockBytes))
-            StatTile(
-                title: "Devices",
-                value: "\(status.publishedDeviceRoots)/\(status.authorizedDeviceCount)"
-            )
+    private var syncState: IrisDriveSyncState {
+        if !status.daemonRunning {
+            return .paused
+        }
+        let message = status.message.lowercased()
+        if message.contains("attention") || message.contains("failed") {
+            return .attention
+        }
+        if let upload = status.lastUpload,
+           upload.totalHashes > 0,
+           upload.uploaded < upload.totalHashes {
+            return .syncing(upload.uploaded, upload.totalHashes)
+        }
+        return .upToDate
+    }
+
+    private var heroIcon: String {
+        switch syncState {
+        case .upToDate:
+            return "checkmark.circle.fill"
+        case .syncing:
+            return "arrow.triangle.2.circlepath"
+        case .paused:
+            return "pause.circle.fill"
+        case .attention:
+            return "exclamationmark.triangle.fill"
         }
     }
+
+    private var heroColor: Color {
+        switch syncState {
+        case .upToDate:
+            return .green
+        case .syncing:
+            return .accentColor
+        case .paused:
+            return .secondary
+        case .attention:
+            return .orange
+        }
+    }
+
+    private var heroText: String {
+        switch syncState {
+        case .upToDate:
+            return "Up to date"
+        case let .syncing(done, total):
+            return "Syncing \(done) of \(total)…"
+        case .paused:
+            return "Paused"
+        case .attention:
+            return "Needs attention"
+        }
+    }
+
+    private var summaryLine: String {
+        let files = status.fileCount ?? status.topLevelEntries ?? 0
+        return [
+            countLabel(files, "file"),
+            "\(byteString(status.localBlockBytes)) used",
+            countLabel(status.authorizedDeviceCount, "device"),
+        ].joined(separator: "  ·  ")
+    }
+
+    // MARK: Devices
 
     private var peers: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionTitle("Devices")
-            accountKeys
-            if status.hasOwnerSigningAuthority {
-                approveDeviceForm
-            }
-            authorizedDevices
-        }
-    }
-
-    private var accountKeys: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            AccountKeyRow(title: "Owner", value: status.ownerNpub) {
-                controller.copyOwnerKey()
-            }
-            AccountKeyRow(title: "This device", value: status.deviceNpub) {
-                controller.copyDeviceKey()
-            }
-            AccountInfoRow(title: "State", value: status.authorizationState ?? "-")
-        }
-    }
-
-    private var approveDeviceForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Approve device")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                TextField("Device public key", text: $approveDeviceKey)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                TextField("Device label", text: $approveDeviceLabel)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 150)
-                Button {
-                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel)
-                    approveDeviceKey = ""
-                    approveDeviceLabel = ""
-                } label: {
-                    Label("Approve", systemImage: "checkmark.circle.fill")
+            HStack {
+                SectionTitle("Devices")
+                Spacer()
+                if status.hasOwnerSigningAuthority {
+                    Button {
+                        showAddDevice = true
+                    } label: {
+                        Label("Add Device", systemImage: "plus")
+                    }
                 }
-                .disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }
-    }
-
-    private var authorizedDevices: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Authorized")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if status.peers.isEmpty {
-                Text("No authorized devices")
-                    .foregroundStyle(.secondary)
+                emptyState("No devices yet")
             } else {
                 ForEach(status.peers) { peer in
                     PeerRow(peer: peer)
                 }
             }
         }
-    }
-
-    private var settings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Settings")
-            Toggle(
-                "Menu bar on close",
-                isOn: Binding(
-                    get: { status.closeToMenuBarOnClose },
-                    set: { controller.setCloseToMenuBarOnClose($0) }
-                )
-            )
-            .toggleStyle(.checkbox)
+        .sheet(isPresented: $showAddDevice) {
+            addDeviceSheet
         }
     }
 
-    private var network: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Network")
-            FipsDiagnostics(status: status.fips)
-            EndpointGroup(title: "Blossom", values: status.blossomServers)
-            relayEditor
+    private var addDeviceSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add a device")
+                .font(.title3.weight(.semibold))
+            Text("Paste the public key shown on the other device when you link it.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("Device public key", text: $approveDeviceKey)
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+            TextField("Name (optional)", text: $approveDeviceLabel)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    showAddDevice = false
+                }
+                Button("Add") {
+                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel)
+                    approveDeviceKey = ""
+                    approveDeviceLabel = ""
+                    showAddDevice = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
+        .padding(20)
+        .frame(width: 420)
     }
+
+    // MARK: Backups
 
     private var backups: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Backups")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                SectionTitle("Backups")
+                Spacer()
+                Button {
+                    controller.syncBackups()
+                } label: {
+                    Label("Sync Now", systemImage: "arrow.up.circle")
+                }
+                .disabled(status.backupTargets.isEmpty)
+                Button {
+                    showAddBackup = true
+                } label: {
+                    Label("Add Backup", systemImage: "plus")
+                }
+            }
             if status.backupTargets.isEmpty {
-                Text("No backup targets")
-                    .foregroundStyle(.secondary)
+                emptyState("No backups yet")
             } else {
                 ForEach(status.backupTargets) { target in
                     BackupTargetRow(target: target)
                 }
             }
-            HStack(spacing: 8) {
-                TextField("https://, npub1..., fs:/path, lmdb:/path", text: $backupInput)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .onSubmit { addBackupFromInput() }
-                TextField("Label", text: $backupLabel)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 140)
-                    .onSubmit { addBackupFromInput() }
-                Button {
+        }
+        .sheet(isPresented: $showAddBackup) {
+            addBackupSheet
+        }
+    }
+
+    private var addBackupSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add a backup")
+                .font(.title3.weight(.semibold))
+            TextField("Destination", text: $backupInput)
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+            TextField("Name (optional)", text: $backupLabel)
+                .textFieldStyle(.roundedBorder)
+            Text("A web address, another device (npub…), or a local path (fs:/…, lmdb:/…).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    showAddBackup = false
+                }
+                Button("Add") {
                     addBackupFromInput()
-                } label: {
-                    Image(systemName: "plus")
+                    showAddBackup = false
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(backupInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button {
-                    controller.syncBackups()
-                } label: {
-                    Label("Sync", systemImage: "arrow.up.circle.fill")
-                }
             }
         }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    // MARK: Settings
+
+    private var settingsForm: some View {
+        Form {
+            Section("General") {
+                Toggle(
+                    "Keep in menu bar when closed",
+                    isOn: Binding(
+                        get: { status.closeToMenuBarOnClose },
+                        set: { controller.setCloseToMenuBarOnClose($0) }
+                    )
+                )
+            }
+
+            Section("Account") {
+                AccountKeyRow(title: "Owner", value: status.ownerNpub) {
+                    controller.copyOwnerKey()
+                }
+                AccountKeyRow(title: "This device", value: status.deviceNpub) {
+                    controller.copyDeviceKey()
+                }
+                AccountInfoRow(title: "State", value: status.authorizationState ?? "-")
+            }
+
+            Section("Network") {
+                relayEditor
+                EndpointGroup(title: "Blossom", values: status.blossomServers)
+                FipsDiagnostics(status: status.fips)
+            }
+
+            Section("Sync & advanced") {
+                HStack(spacing: 10) {
+                    Button("Start") { controller.startSync() }
+                        .disabled(status.daemonRunning)
+                    Button("Stop") { controller.stopSync() }
+                        .disabled(!status.daemonRunning)
+                    Button("Restart") { controller.restartSync() }
+                }
+                Button("Copy snapshot link") { controller.copyDriveLink() }
+                    .disabled(status.snapshotLinkURL == nil)
+                Button("Open snapshot link") { controller.openDriveLink() }
+                    .disabled(status.snapshotLinkURL == nil)
+                LabeledContent("Blocks", value: "\(status.localBlockCount)")
+                LabeledContent("Storage", value: byteString(status.localBlockBytes))
+            }
+
+            Section("About") {
+                LabeledContent("Drive", value: status.driveName)
+                LabeledContent("Version", value: appVersion)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private var relayEditor: some View {
@@ -505,8 +602,21 @@ struct IrisDriveControlPanel: View {
         }
     }
 
-    private func optionalCount(_ value: Int?) -> String {
-        value.map(String.init) ?? "0"
+    // MARK: Helpers
+
+    private func emptyState(_ text: String) -> some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    private func countLabel(_ value: Int, _ singular: String) -> String {
+        "\(value) \(singular)\(value == 1 ? "" : "s")"
     }
 
     private func byteString(_ bytes: Int64) -> String {
@@ -552,6 +662,22 @@ struct IrisDriveControlPanel: View {
     private func relayStatusLabel(_ status: String) -> String {
         status == "configured" ? "saved" : status
     }
+}
+
+func irisDriveCopyToPasteboard(_ value: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(value, forType: .string)
+}
+
+private let irisDriveTimestampFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+}()
+
+private func irisDriveDateString(_ epoch: Int) -> String {
+    irisDriveTimestampFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(epoch)))
 }
 
 private struct AccountKeyRow: View {
@@ -628,19 +754,6 @@ private struct SidebarRow: View {
     }
 }
 
-private struct StatusPill: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .padding(.vertical, 5)
-            .padding(.horizontal, 9)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(Capsule())
-    }
-}
-
 private struct SectionTitle: View {
     let title: String
 
@@ -654,134 +767,174 @@ private struct SectionTitle: View {
     }
 }
 
-private struct StatTile: View {
-    let title: String
+private struct DetailRow: View {
+    let label: String
     let value: String
+    var copyable = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
             Text(value)
-                .font(.title3.weight(.semibold))
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if copyable {
+                Button {
+                    irisDriveCopyToPasteboard(value)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
 private struct PeerRow: View {
     let peer: IrisDrivePeerStatus
-
-    private static let timestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter
-    }()
+    @State private var expanded = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(peer.fipsOnline ? Color.green : Color.secondary.opacity(0.65))
-                .frame(width: 8, height: 8)
-                .accessibilityLabel(peer.fipsOnline ? "Online" : "Offline")
-                .help(peer.fipsOnline ? "Online" : "Offline")
-            Image(systemName: peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(peerTitle)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                Text(peer.npub)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if !peerMetadata.isEmpty {
-                    Text(peerMetadata)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    expanded.toggle()
                 }
+            } label: {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                    Image(systemName: peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
+                        .frame(width: 24)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Text(peer.hasRoot ? "Root" : "No root")
-                .foregroundStyle(.secondary)
-            Text(peerPrivacy)
-                .font(.caption.weight(.semibold))
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(Capsule())
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    DetailRow(label: "Public key", value: peer.npub, copyable: true)
+                    if let root = peer.rootCID {
+                        DetailRow(label: "Root", value: root, copyable: true)
+                    }
+                    if let generation = peer.dckGeneration {
+                        DetailRow(label: "Key generation", value: "\(generation)")
+                    }
+                    if let published = peer.publishedAt {
+                        DetailRow(label: "Updated", value: irisDriveDateString(published))
+                    }
+                    DetailRow(label: "Visibility", value: privacy)
+                }
+                .padding(.top, 12)
+            }
         }
-        .padding(.vertical, 8)
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var peerTitle: String {
+    private var title: String {
         peer.label ?? (peer.isCurrentDevice ? "This Mac" : peer.npub)
     }
 
-    private var peerMetadata: String {
-        var parts: [String] = []
-        if let root = peer.rootCID {
-            parts.append("Root \(shortRoot(root))")
+    private var subtitle: String {
+        if peer.isCurrentDevice {
+            return "This device"
         }
-        if let generation = peer.dckGeneration {
-            parts.append("DCK \(generation)")
-        }
-        if let published = peer.publishedAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(published))
-            parts.append("Published \(Self.timestampFormatter.string(from: date))")
-        }
-        return parts.joined(separator: " | ")
+        return peer.fipsOnline ? "Online" : "Offline"
     }
 
-    private var peerPrivacy: String {
+    private var privacy: String {
         guard peer.hasRoot else {
             return "Pending"
         }
         return peer.rootIsPrivate == false ? "Public" : "Private"
     }
-
-    private func shortRoot(_ root: String) -> String {
-        guard root.count > 20 else {
-            return root
-        }
-        return "\(String(root.prefix(10)))...\(String(root.suffix(6)))"
-    }
 }
 
 private struct BackupTargetRow: View {
     let target: IrisDriveBackupTarget
+    @State private var expanded = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: target.iconName)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(target.title)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                Text(target.detail)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: target.iconName)
+                        .frame(width: 24)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(target.title)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                        Text(statusLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Text(target.state)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    DetailRow(label: "Destination", value: target.target, copyable: true)
+                    if let uploaded = target.uploaded, let total = target.totalHashes {
+                        DetailRow(label: "Progress", value: "\(uploaded)/\(total)")
+                    }
+                }
+                .padding(.top, 12)
+            }
         }
-        .padding(.vertical, 8)
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var statusLine: String {
+        if let uploaded = target.uploaded,
+           let total = target.totalHashes,
+           total > 0,
+           uploaded < total {
+            return "Syncing \(Int(Double(uploaded) / Double(total) * 100))%"
+        }
+        switch target.state.lowercased() {
+        case "synced":
+            return "Up to date"
+        default:
+            return target.state
+        }
     }
 }
 
@@ -815,7 +968,7 @@ private struct FipsDiagnostics: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("FIPS")
+            Text("Connectivity")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             LazyVGrid(
