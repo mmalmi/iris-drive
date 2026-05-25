@@ -79,7 +79,16 @@ Environment:
                                       report fips_online=true (default: 60).
   IRIS_DRIVE_DEV_VM_FIPS_READY_TIMEOUT
                                       Seconds to wait for a restarted daemon to
-                                      report FIPS running (default: 180).
+                                      report FIPS running (default: 300).
+  IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP
+                                      Override FIPS bootstrap discovery for VM
+                                      daemons. Defaults to false when static
+                                      peer hints are present, otherwise true.
+  IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING
+                                      Override FIPS open discovery fanout for VM
+                                      daemons. Defaults to 0 when static peer
+                                      hints are present, otherwise the app
+                                      default.
   IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=1
                                       Fail macOS runs unless the app is signed
                                       with FileProvider-capable entitlements.
@@ -651,6 +660,8 @@ run_posix_target() {
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf 'STATIC_PEERS=%s\n' "$(sh_quote "$static_peers")"
+    printf 'FIPS_ENABLE_BOOTSTRAP=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP:-}")"
+    printf 'FIPS_OPEN_DISCOVERY_MAX_PENDING=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
     printf 'PRUNE_COMPILED_CACHE=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE:-0}")"
     printf 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}")"
@@ -664,6 +675,20 @@ set -Eeuo pipefail
 
 MACOS_CODESIGN_KEYCHAIN=""
 MACOS_XCODE_SIGNED_IDENTITY=""
+
+FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="$FIPS_ENABLE_BOOTSTRAP"
+if [[ -z "$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" ]]; then
+  if [[ -n "$STATIC_PEERS" ]]; then
+    FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="false"
+  else
+    FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="true"
+  fi
+fi
+
+FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="$FIPS_OPEN_DISCOVERY_MAX_PENDING"
+if [[ -z "$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" && -n "$STATIC_PEERS" ]]; then
+  FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="0"
+fi
 
 log() {
   printf '[%s] %s\n' "$LABEL" "$*" >&2
@@ -914,12 +939,7 @@ idrive_status_json_retry() {
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     : > "$err"
     if output="$("$idrive" --config-dir "$config_dir" status 2>"$err")" \
-      && STATUS_JSON="$output" python3 - <<'PY' >/dev/null 2>&1
-import json
-import os
-
-json.loads(os.environ["STATUS_JSON"])
-PY
+      && python3 -c 'import json, sys; json.load(sys.stdin)' <<< "$output" >/dev/null 2>&1
     then
       rm -f "$err"
       printf '%s\n' "$output"
@@ -937,14 +957,39 @@ PY
 
 idrive_status_fips_running() {
   local status_json="$1"
-  STATUS_JSON="$status_json" python3 - <<'PY'
+  python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+fips = (data.get("network") or {}).get("fips") or {}
+if fips:
+    sys.exit(0 if fips.get("enabled") and fips.get("running") else 1)
+
+daemon_fips = data.get("fips_block_sync")
+daemon_error = data.get("fips_block_sync_error")
+running = data.get("running") and data.get("fresh") is not False
+has_fips = isinstance(daemon_fips, dict) and daemon_fips.get("endpoint_npub")
+sys.exit(0 if running and has_fips and not daemon_error else 1)
+' <<< "$status_json"
+}
+
+daemon_status_json_for_pid() {
+  local config_dir="$1"
+  local daemon_pid="$2"
+  local status_file="$config_dir/daemon-status.json"
+  [[ -f "$status_file" ]] || return 1
+  STATUS_FILE="$status_file" DAEMON_PID="$daemon_pid" python3 - <<'PY'
 import json
 import os
 import sys
 
-data = json.loads(os.environ["STATUS_JSON"])
-fips = (data.get("network") or {}).get("fips") or {}
-sys.exit(0 if fips.get("enabled") and fips.get("running") else 1)
+with open(os.environ["STATUS_FILE"], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+if str(data.get("pid", "")) != os.environ["DAEMON_PID"]:
+    sys.exit(1)
+json.dump(data, sys.stdout, separators=(",", ":"))
+sys.stdout.write("\n")
 PY
 }
 
@@ -952,7 +997,7 @@ wait_for_idrive_fips_status() {
   local idrive="$1"
   local config_dir="$2"
   local daemon_pid="$3"
-  local timeout="${IRIS_DRIVE_DEV_VM_FIPS_READY_TIMEOUT:-180}"
+  local timeout="${IRIS_DRIVE_DEV_VM_FIPS_READY_TIMEOUT:-300}"
   local started="$SECONDS"
   local status_json=""
 
@@ -960,7 +1005,7 @@ wait_for_idrive_fips_status() {
     if ! process_running "$daemon_pid"; then
       return 2
     fi
-    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
+    if status_json="$(daemon_status_json_for_pid "$config_dir" "$daemon_pid")" \
       && idrive_status_fips_running "$status_json" >/dev/null; then
       printf '%s\n' "$status_json"
       return 0
@@ -968,6 +1013,11 @@ wait_for_idrive_fips_status() {
     sleep 0.5
   done
 
+  if status_json="$(daemon_status_json_for_pid "$config_dir" "$daemon_pid")" \
+    && idrive_status_fips_running "$status_json" >/dev/null; then
+    printf '%s\n' "$status_json"
+    return 0
+  fi
   if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
     && idrive_status_fips_running "$status_json" >/dev/null; then
     printf '%s\n' "$status_json"
@@ -978,12 +1028,12 @@ wait_for_idrive_fips_status() {
 
 print_idrive_status_summary() {
   local status_json="$1"
-  STATUS_JSON="$status_json" python3 - <<'PY'
+  python3 -c '
 import json
-import os
+import sys
 
-data = json.loads(os.environ["STATUS_JSON"])
-fips = (data.get("network") or {}).get("fips") or {}
+data = json.load(sys.stdin)
+fips = (data.get("network") or {}).get("fips") or data.get("fips_block_sync") or {}
 print("connected_peers=", fips.get("connected_peers"))
 print(
     "peers=",
@@ -992,7 +1042,7 @@ print(
         for peer in data.get("peers", [])
     ],
 )
-PY
+' <<< "$status_json"
 }
 
 idrive_provider_list_retry() {
@@ -1038,6 +1088,8 @@ run_linux() {
     "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
     "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" \
+    "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
       --watch-interval 2 \
@@ -1438,6 +1490,8 @@ run_macos() {
     --env "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
     --env "IRIS_DRIVE_FIPS_UDP_PUBLIC=false"
     --env "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true"
+    --env "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE"
+    --env "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE"
     --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS"
     --env "IRIS_DRIVE_APP_BASE_DIR=$app_base"
     --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true"
@@ -1466,6 +1520,8 @@ run_macos() {
     "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
     "IRIS_DRIVE_FIPS_UDP_PUBLIC=false" \
     "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true" \
+    "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" \
+    "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
       --watch-interval 2 \
@@ -1829,8 +1885,24 @@ run_windows_target() {
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
     printf '$FipsPort = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf '$StaticPeers = %s\n' "$(ps_quote "$static_peers")"
+    printf '$FipsEnableBootstrap = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP:-}")"
+    printf '$FipsOpenDiscoveryMaxPending = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
+
+$FipsEnableBootstrapEffective = $FipsEnableBootstrap
+if ([string]::IsNullOrWhiteSpace($FipsEnableBootstrapEffective)) {
+  if ([string]::IsNullOrWhiteSpace($StaticPeers)) {
+    $FipsEnableBootstrapEffective = "true"
+  } else {
+    $FipsEnableBootstrapEffective = "false"
+  }
+}
+
+$FipsOpenDiscoveryMaxPendingEffective = $FipsOpenDiscoveryMaxPending
+if ([string]::IsNullOrWhiteSpace($FipsOpenDiscoveryMaxPendingEffective) -and -not [string]::IsNullOrWhiteSpace($StaticPeers)) {
+  $FipsOpenDiscoveryMaxPendingEffective = "0"
+}
 
 function Write-Log([string]$Message) {
   [Console]::Error.WriteLine("[$Label] $Message")
@@ -2074,6 +2146,8 @@ $env:IRIS_DRIVE_FIPS_UDP_BIND_ADDR = "0.0.0.0:$FipsPort"
 $env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR = ""
 $env:IRIS_DRIVE_FIPS_UDP_PUBLIC = "false"
 $env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC = "true"
+$env:IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP = $FipsEnableBootstrapEffective
+$env:IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING = $FipsOpenDiscoveryMaxPendingEffective
 $env:IRIS_DRIVE_FIPS_STATIC_PEERS = $StaticPeers
 $env:IRIS_DRIVE_WINDOWS_CLOUD_DEBUG = "1"
 
@@ -2100,6 +2174,8 @@ set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FipsPort
 set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=
 set IRIS_DRIVE_FIPS_UDP_PUBLIC=false
 set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
+set IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FipsEnableBootstrapEffective
+set IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FipsOpenDiscoveryMaxPendingEffective
 set IRIS_DRIVE_FIPS_STATIC_PEERS=$StaticPeers
 set IRIS_DRIVE_WINDOWS_CLOUD_DEBUG=1
 cd /d "$PublishDir"
