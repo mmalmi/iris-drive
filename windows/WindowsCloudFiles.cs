@@ -156,7 +156,6 @@ public static partial class WindowsCloudFiles
     private const uint ShcnfPathW = 0x0005;
     private const uint ShcnfFlushNowait = 0x2000;
     private const int PendingProviderMutationTtlSeconds = 120;
-    private const int RecentLocalUpsertSeconds = 300;
     private const string LocalStateFileName = "windows-cloud-local-state.json";
     private static readonly Guid ProviderId = new("2b58fb5d-b823-4d84-bd52-fcf9bd297fd4");
     private static readonly object ConnectionLock = new();
@@ -257,21 +256,56 @@ public static partial class WindowsCloudFiles
         }
     }
 
-    public static void MarkProviderDeletePending(string path)
+    public static bool MarkProviderDeletePending(string path)
     {
         var normalized = NormalizeVirtualPath(path);
         if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
         {
-            return;
+            return false;
         }
 
         lock (PendingProviderMutationLock)
         {
             PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            if (PendingProviderDeletes.Keys.Any(existing =>
+                    PathContainsOrEquals(existing, normalized) ||
+                    PathContainsOrEquals(normalized, existing)) ||
+                PendingProviderPreserves.ContainsKey(normalized))
+            {
+                return false;
+            }
+
             PendingProviderDeletes[normalized] = DateTimeOffset.UtcNow;
         }
 
         DebugLog($"provider delete pending path={normalized}");
+        return true;
+    }
+
+    public static bool TryMarkProviderDeletePending(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
+        {
+            return false;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            if (PendingProviderDeletes.Keys.Any(existing =>
+                    PathContainsOrEquals(existing, normalized) ||
+                    PathContainsOrEquals(normalized, existing)) ||
+                PendingProviderPreserves.ContainsKey(normalized))
+            {
+                return false;
+            }
+
+            PendingProviderDeletes[normalized] = DateTimeOffset.UtcNow;
+        }
+
+        DebugLog($"provider delete pending path={normalized}");
+        return true;
     }
 
     public static void MarkProviderRenamePending(string oldPath, string newPath)
@@ -308,6 +342,37 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    public static bool ProviderMutationIsPending(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return false;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            return PendingProviderDeletes.ContainsKey(normalized) ||
+                PendingProviderPreserves.ContainsKey(normalized);
+        }
+    }
+
+    public static bool ProviderDeleteIsPending(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return false;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            return PendingProviderDeletes.ContainsKey(normalized);
+        }
+    }
+
     public static void ReconcilePendingProviderMutations(
         IReadOnlyCollection<WindowsCloudFileEntry> entries)
     {
@@ -341,12 +406,13 @@ public static partial class WindowsCloudFiles
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
-        var cutoff = DateTimeOffset.UtcNow.AddSeconds(-RecentLocalUpsertSeconds);
         var providerEntries = PlaceholderEntries(entries)
             .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
         var previousByPath = previousState
             .GroupBy(entry => NormalizeVirtualPath(entry.Path), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var pendingDeletes = PendingProviderDeletePaths();
+        var pendingPreserves = PendingProviderPreservePaths();
         var upserts = new List<WindowsCloudLocalUpsert>();
         if (!Directory.Exists(SyncRootPath))
         {
@@ -365,15 +431,12 @@ public static partial class WindowsCloudFiles
 
         foreach (var topLevel in topLevelEntries)
         {
-            if (!RecentEnough(topLevel, cutoff))
-            {
-                continue;
-            }
-
             CollectRecentLocalFileUpserts(
                 topLevel,
                 providerEntries,
                 previousByPath,
+                pendingDeletes,
+                pendingPreserves,
                 upserts);
         }
 
@@ -393,9 +456,10 @@ public static partial class WindowsCloudFiles
             return Array.Empty<WindowsCloudLocalDelete>();
         }
 
-        var cutoff = DateTimeOffset.UtcNow.AddSeconds(-RecentLocalUpsertSeconds);
         var providerEntries = PlaceholderEntries(entries)
             .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var pendingDeletes = PendingProviderDeletePaths();
+        var pendingPreserves = PendingProviderPreservePaths();
         var deletes = new List<WindowsCloudLocalDelete>();
 
         foreach (var previous in previousState)
@@ -403,8 +467,9 @@ public static partial class WindowsCloudFiles
             var path = NormalizeVirtualPath(previous.Path);
             if (string.IsNullOrEmpty(path) ||
                 PathHasIgnoredComponent(path) ||
+                pendingDeletes.Contains(path) ||
+                pendingPreserves.Contains(path) ||
                 previous.IsDirectory ||
-                string.IsNullOrWhiteSpace(previous.Sha256) ||
                 !providerEntries.TryGetValue(path, out var providerEntry) ||
                 providerEntry.IsDirectory)
             {
@@ -414,25 +479,21 @@ public static partial class WindowsCloudFiles
             var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(path));
             var parentPath = Path.GetDirectoryName(fullPath);
             if (string.IsNullOrWhiteSpace(parentPath) ||
-                !Directory.Exists(parentPath) ||
-                !RecentEnough(parentPath, cutoff))
+                !Directory.Exists(parentPath))
             {
                 continue;
             }
 
             try
             {
-                if (File.Exists(fullPath) && !ExistingPlaceholder(fullPath))
+                if (!File.Exists(fullPath))
                 {
-                    continue;
+                    deletes.Add(new WindowsCloudLocalDelete(path));
                 }
             }
             catch
             {
-                continue;
             }
-
-            deletes.Add(new WindowsCloudLocalDelete(path));
         }
 
         return deletes
@@ -810,6 +871,8 @@ public static partial class WindowsCloudFiles
         string startPath,
         IReadOnlyDictionary<string, WindowsCloudFileEntry> providerEntries,
         IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath,
+        IReadOnlySet<string> pendingDeletes,
+        IReadOnlySet<string> pendingPreserves,
         ICollection<WindowsCloudLocalUpsert> upserts)
     {
         var stack = new Stack<string>();
@@ -820,6 +883,11 @@ public static partial class WindowsCloudFiles
             var fullPath = stack.Pop();
             var relative = NormalizeVirtualPath(Path.GetRelativePath(SyncRootPath, fullPath));
             if (string.IsNullOrEmpty(relative) || PathHasIgnoredComponent(relative))
+            {
+                continue;
+            }
+
+            if (pendingDeletes.Contains(relative) || pendingPreserves.Contains(relative))
             {
                 continue;
             }
@@ -900,18 +968,6 @@ public static partial class WindowsCloudFiles
         return previousByPath.TryGetValue(path, out var previous) &&
             previous.Size == snapshot.Value.Size &&
             string.Equals(previous.Sha256, snapshot.Value.Sha256, StringComparison.Ordinal);
-    }
-
-    private static bool RecentEnough(string fullPath, DateTimeOffset cutoff)
-    {
-        try
-        {
-            return File.GetLastWriteTimeUtc(fullPath) >= cutoff.UtcDateTime;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static void PrunePendingProviderMutations(DateTimeOffset now)
@@ -1249,6 +1305,14 @@ public static partial class WindowsCloudFiles
 
     private static string NormalizeVirtualPath(string path) =>
         path.Replace('\\', '/').Trim('/');
+
+    private static bool PathContainsOrEquals(string ancestor, string path)
+    {
+        var normalizedAncestor = NormalizeVirtualPath(ancestor);
+        var normalizedPath = NormalizeVirtualPath(path);
+        return string.Equals(normalizedAncestor, normalizedPath, StringComparison.Ordinal) ||
+            normalizedPath.StartsWith(normalizedAncestor + "/", StringComparison.Ordinal);
+    }
 
     private static bool PathHasIgnoredComponent(string path)
     {

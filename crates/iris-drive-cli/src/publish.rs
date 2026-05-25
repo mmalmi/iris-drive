@@ -93,8 +93,10 @@ pub(crate) struct DirectRootFrame {
 #[derive(Default)]
 pub(crate) struct DirectRootExchange {
     cached_events: BTreeMap<String, DirectRootEvent>,
+    published_keys: BTreeMap<String, std::time::Instant>,
     seen_keys: BTreeSet<String>,
     subscribed_streams: BTreeSet<String>,
+    known_mesh_peers: BTreeSet<String>,
 }
 
 impl DirectRootExchange {
@@ -130,10 +132,16 @@ impl DirectRootExchange {
         };
         self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
             .await;
+        self.refresh_known_mesh_peers(sync).await;
         let stream = direct_root_mesh_stream(&state.owner_pubkey);
         let events = build_current_sync_events(config_dir, config, state).await?;
+        let now = std::time::Instant::now();
         for event in events {
+            let should_publish = self.should_publish_key(&event.key, now);
             self.cache_event(event.clone());
+            if !should_publish {
+                continue;
+            }
             let frame = DirectRootFrame {
                 key: event.key.clone(),
                 event_id: event.event_id.clone(),
@@ -175,6 +183,7 @@ impl DirectRootExchange {
         if let Some(state) = config.account.as_ref() {
             self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
                 .await;
+            self.refresh_known_mesh_peers(sync).await;
         }
     }
 
@@ -244,6 +253,30 @@ impl DirectRootExchange {
                 break;
             };
             self.cached_events.remove(&key);
+            self.published_keys.remove(&key);
+        }
+    }
+
+    fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
+        if self.published_keys.get(key).is_some_and(|last| {
+            now.duration_since(*last)
+                < std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        }) {
+            return false;
+        }
+        self.published_keys.insert(key.to_string(), now);
+        true
+    }
+
+    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) {
+        let peers = sync
+            .mesh_peer_ids()
+            .await
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if peers != self.known_mesh_peers {
+            self.known_mesh_peers = peers;
+            self.published_keys.clear();
         }
     }
 }
@@ -651,8 +684,15 @@ pub(crate) async fn import_mount_root_and_publish(
             Ok(()) => None,
             Err(error) => Some(format!("{error:#}")),
         };
-    let publish =
-        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
+    spawn_publish_current_state(
+        client.clone(),
+        config_dir.to_path_buf(),
+        updated_config,
+        updated_state,
+        false,
+        "mounted_root_publish_finished",
+        json!({"root_cid": import.root_cid.clone()}),
+    );
     println!(
         "{}",
         json!({
@@ -663,10 +703,48 @@ pub(crate) async fn import_mount_root_and_publish(
                 "top_level_entries": import.top_level_entries,
             },
             "direct_root_mesh_error": direct_root_mesh_error,
-            "publish": publish_state_report_json(&publish),
+            "publish": {"queued": true, "upload_blossom": false},
         })
     );
     Ok(())
+}
+
+pub(crate) fn spawn_publish_current_state(
+    client: nostr_sdk::Client,
+    config_dir: PathBuf,
+    config: AppConfig,
+    state: AccountState,
+    upload_blossom: bool,
+    event_name: &'static str,
+    context: Value,
+) {
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let payload = match publish_current_state(
+            &client,
+            &config_dir,
+            &config,
+            &state,
+            upload_blossom,
+        )
+        .await
+        {
+            Ok(report) => json!({
+                "event": event_name,
+                "elapsed_ms": started.elapsed().as_millis(),
+                "context": context,
+                "publish": publish_state_report_json(&report),
+            }),
+            Err(error) => json!({
+                "event": format!("{event_name}_error"),
+                "elapsed_ms": started.elapsed().as_millis(),
+                "context": context,
+                "error": format!("{error:#}"),
+            }),
+        };
+        write_daemon_status(&config_dir, payload.clone());
+        println!("{payload}");
+    });
 }
 
 pub(crate) async fn publish_current_state(

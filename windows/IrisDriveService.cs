@@ -3,12 +3,15 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace IrisDrive.WindowsShell;
 
 public sealed class IrisDriveService
 {
+    private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
+
     public string DefaultConfigDirectory =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -233,6 +236,19 @@ public sealed class IrisDriveService
         return RunForOutputAsync(arguments);
     }
 
+    private async Task RunProviderMutationAsync(params string[] arguments)
+    {
+        await ProviderMutationGate.WaitAsync();
+        try
+        {
+            await RunAsync(arguments);
+        }
+        finally
+        {
+            ProviderMutationGate.Release();
+        }
+    }
+
     private async Task<IReadOnlyList<WindowsCloudFileEntry>> ProviderEntriesAsync()
     {
         using var document = await RunJsonAsync("provider", "list");
@@ -282,11 +298,17 @@ public sealed class IrisDriveService
         var changed = false;
         foreach (var delete in deletes)
         {
+            if (!WindowsCloudFiles.TryMarkProviderDeletePending(delete.Path))
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider delete skipped from local scan because mutation is pending path={delete.Path}");
+                continue;
+            }
+
             try
             {
-                WindowsCloudFiles.MarkProviderDeletePending(delete.Path);
                 WindowsCloudFiles.DebugLog($"provider delete start from local scan path={delete.Path}");
-                await RunAsync("provider", "delete", delete.Path);
+                await RunProviderMutationAsync("provider", "delete", delete.Path);
                 WindowsCloudFiles.DebugLog($"provider delete published from local scan path={delete.Path}");
                 changed = true;
             }
@@ -300,10 +322,17 @@ public sealed class IrisDriveService
 
         foreach (var upsert in upserts)
         {
+            if (WindowsCloudFiles.ProviderMutationIsPending(upsert.Path))
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider write skipped from local scan because mutation is pending path={upsert.Path}");
+                continue;
+            }
+
             try
             {
                 WindowsCloudFiles.DebugLog($"provider write start from local scan path={upsert.Path}");
-                await RunAsync("provider", "write", upsert.Path, upsert.FullPath);
+                await RunProviderMutationAsync("provider", "write", upsert.Path, upsert.FullPath);
                 WindowsCloudFiles.DebugLog($"provider write published from local scan path={upsert.Path}");
                 changed = true;
             }
@@ -342,14 +371,35 @@ public sealed class IrisDriveService
 
     private void QueueProviderDelete(string path)
     {
-        WindowsCloudFiles.MarkProviderDeletePending(path);
+        if (!WindowsCloudFiles.MarkProviderDeletePending(path))
+        {
+            WindowsCloudFiles.DebugLog($"provider delete skipped from Cloud Files notify path={path}");
+            return;
+        }
+
         WindowsCloudFiles.DebugLog($"provider delete queued from Cloud Files notify path={path}");
         _ = Task.Run(async () =>
         {
             try
             {
+                await Task.Delay(250);
+                if (!WindowsCloudFiles.ProviderDeleteIsPending(path))
+                {
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete skipped because pending marker was coalesced path={path}");
+                    return;
+                }
+
+                if (WindowsCloudFiles.SyncRootEntryExists(path))
+                {
+                    WindowsCloudFiles.ClearProviderMutationPending(path);
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete skipped because local path exists again path={path}");
+                    return;
+                }
+
                 WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={path}");
-                await RunAsync("provider", "delete", path);
+                await RunProviderMutationAsync("provider", "delete", path);
                 WindowsCloudFiles.DebugLog($"provider delete published from Cloud Files notify path={path}");
             }
             catch (Exception error)
@@ -371,7 +421,7 @@ public sealed class IrisDriveService
             {
                 WindowsCloudFiles.DebugLog(
                     $"provider rename start from Cloud Files notify old={oldPath} new={newPath}");
-                await RunAsync("provider", "rename", oldPath, newPath);
+                await RunProviderMutationAsync("provider", "rename", oldPath, newPath);
                 WindowsCloudFiles.DebugLog(
                     $"provider rename published from Cloud Files notify old={oldPath} new={newPath}");
             }

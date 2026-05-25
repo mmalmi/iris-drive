@@ -358,6 +358,14 @@ enum FileProviderStorage {
         return syncAnchor(for: snapshot.anchor)
     }
 
+    static func currentProviderAnchor() -> NSFileProviderSyncAnchor {
+        let list = providerList()
+        guard list.anchor != nil else {
+            return storedSnapshotAnchor() ?? bootstrapAnchor()
+        }
+        return syncAnchor(for: list.anchor)
+    }
+
     static func bootstrapAnchor() -> NSFileProviderSyncAnchor {
         syncAnchor(for: "bootstrap")
     }

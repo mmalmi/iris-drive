@@ -191,7 +191,7 @@ run_remote_exec() {
   kind="$(host_value "$label" kind)"
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
-    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
   else
     printf "%s" "$script" | ssh "$ssh_host" 'bash -se'
   fi
@@ -498,7 +498,7 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
 & \$idrive @daemonArgs > \$log 2> \$err
 "
-    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' >/dev/null 2>&1 &
+    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1
     if ! kill -0 "$(host_value "$label" daemon_ssh_pid)" 2>/dev/null; then

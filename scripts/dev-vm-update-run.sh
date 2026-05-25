@@ -246,7 +246,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "failed to create bare git repo: $BareRepo"
 }
 REMOTE_PS
-      } | ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+      } | ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
       ;;
     *)
       {
@@ -416,7 +416,7 @@ detect_remote_overlay_ip() {
   local host="$2"
   local ip=""
   if [[ "$kind" == "windows" ]]; then
-    ip="$(ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS' 2>/dev/null || true
+    ip="$(ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
 $ErrorActionPreference = "SilentlyContinue"
 $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
 if (-not $Nvpn) {
@@ -474,7 +474,7 @@ can_target_reach_overlay_ip() {
   local ip="$3"
 
   if [[ "$kind" == "windows" ]]; then
-    ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<REMOTE_PS >/dev/null 2>&1
+    ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<REMOTE_PS >/dev/null 2>&1
 \$ErrorActionPreference = "SilentlyContinue"
 \$Ip = "$ip"
 if (Test-Connection -ComputerName \$Ip -Count 1 -Quiet) {
@@ -1711,6 +1711,46 @@ function Stop-IdriveDaemon([string]$ConfigDir) {
   Remove-Item -Force -ErrorAction SilentlyContinue $LockFile
 }
 
+function Stop-IrisDriveDevProcesses([string]$IrisRepo, [string]$ConfigDir) {
+  $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
+  $Prefixes = @(
+    (Join-Path $IrisRepo ""),
+    (Join-Path $PublishDir ""),
+    (Join-Path $ConfigDir "")
+  ) | ForEach-Object { $_.TrimEnd("\") }
+
+  $Processes = Get-CimInstance Win32_Process |
+    Where-Object { $_.Name -in @("IrisDrive.exe", "idrive.exe") }
+
+  foreach ($ProcessInfo in $Processes) {
+    $CommandLine = [string]$ProcessInfo.CommandLine
+    $ExecutablePath = [string]$ProcessInfo.ExecutablePath
+    $MatchesDevTree = $false
+    foreach ($Prefix in $Prefixes) {
+      if (-not $Prefix) { continue }
+      if ($CommandLine.Contains($Prefix) -or $ExecutablePath.Contains($Prefix)) {
+        $MatchesDevTree = $true
+        break
+      }
+    }
+    if (-not $MatchesDevTree) { continue }
+    try {
+      Stop-Process -Id $ProcessInfo.ProcessId -Force -ErrorAction Stop
+    } catch {}
+  }
+
+  for ($i = 0; $i -lt 20; $i++) {
+    $StillRunning = Get-CimInstance Win32_Process |
+      Where-Object {
+        $_.Name -in @("IrisDrive.exe", "idrive.exe") -and
+        (([string]$_.CommandLine).Contains($IrisRepo) -or
+         ([string]$_.ExecutablePath).Contains($IrisRepo))
+      }
+    if (-not $StillRunning) { return }
+    Start-Sleep -Milliseconds 100
+  }
+}
+
 function Start-IdriveDaemon([string]$Idrive, [string]$ConfigDir, [string]$PublishDir) {
   New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
   Stop-IdriveDaemon $ConfigDir
@@ -1752,6 +1792,7 @@ function Start-IdriveDaemon([string]$Idrive, [string]$ConfigDir, [string]$Publis
 $IrisRepo = Join-Path $HOME "src\iris-drive"
 $HashtreeRepo = Join-Path $HOME "src\hashtree"
 $FipsRepo = Join-Path $HOME "src\fips"
+$ConfigDir = Join-Path $env:APPDATA "iris-drive"
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
 Sync-Repo $FipsRepo "fips" $FipsBare $FipsSyncBranch $FipsTargetBranch
 Sync-Repo $IrisRepo "iris-drive" $IrisBare
@@ -1766,6 +1807,7 @@ if ($NoRun -eq "1") {
 }
 
 Write-Log "publishing Windows dev app"
+Stop-IrisDriveDevProcesses $IrisRepo $ConfigDir
 Build-Idrive $IrisRepo
 $PublishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\windows-publish.ps1", "-Configuration", "Debug", "-StopRunningApp", "-SkipCliBuild")
 powershell @PublishArgs
@@ -1784,7 +1826,6 @@ if (-not (Test-Path $Exe)) {
   throw "missing published Windows app: $Exe"
 }
 $Idrive = Join-Path $PublishDir "idrive.exe"
-$ConfigDir = Join-Path $env:APPDATA "iris-drive"
 if (-not (Test-Path $Idrive)) {
   throw "missing published idrive helper: $Idrive"
 }
@@ -1837,7 +1878,7 @@ try {
   Write-Log "status read failed after launch: $_"
 }
 REMOTE_PS
-  } | ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+  } | ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
 }
 
 remote_status_json() {
@@ -1872,20 +1913,39 @@ config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
 REMOTE_SH
       ;;
     windows)
-      ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS'
-$ErrorActionPreference = "Stop"
-$PublishDir = Join-Path $HOME "src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish"
-$Idrive = Join-Path $PublishDir "idrive.exe"
-if (-not (Test-Path $Idrive)) {
-  $Idrive = Join-Path $HOME "src\iris-drive\target\debug\idrive.exe"
-}
-& $Idrive status
-REMOTE_PS
+      ssh "$host" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+remote_status_json_retry() {
+  local kind="$1"
+  local host="$2"
+  local attempts="${3:-5}"
+  local delay="${4:-0.5}"
+  local attempt
+  local output=""
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    output="$(remote_status_json "$kind" "$host" 2>/dev/null || true)"
+    if [[ -n "$output" ]] \
+      && STATUS_JSON="$output" python3 - <<'PY' >/dev/null 2>&1
+import json
+import os
+
+json.loads(os.environ["STATUS_JSON"])
+PY
+    then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  return 1
 }
 
 remote_transport_diagnostics() {
@@ -1933,7 +1993,7 @@ check_tcp fips_bootstrap_tcp_54_183_70_180_443 54.183.70.180 443
 REMOTE_SH
       ;;
     windows)
-      ssh "$host" 'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"' <<'REMOTE_PS'
+      ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS'
 $ProgressPreference = "SilentlyContinue"
 function Check-Https {
   try {
@@ -2010,7 +2070,7 @@ print_connectivity_diagnostics() {
 
   for i in "${!LABELS[@]}"; do
     printf '[dev-vms] %s diagnostics:\n' "${LABELS[$i]}" >&2
-    if status="$(remote_status_json "${KINDS[$i]}" "${HOSTS[$i]}" 2>/dev/null)"; then
+    if status="$(remote_status_json_retry "${KINDS[$i]}" "${HOSTS[$i]}" 3 0.5)"; then
       STATUS_JSON="$status" python3 <<'PY' | sed 's/^/[dev-vms]   /' >&2
 import json
 import os
@@ -2113,7 +2173,7 @@ check_dev_vm_connectivity() {
         expected+=("$(target_peer_hint_key "${HOSTS[$j]}")")
       done
 
-      if ! status="$(remote_status_json "${KINDS[$i]}" "${HOSTS[$i]}" 2>/dev/null)"; then
+      if ! status="$(remote_status_json_retry "${KINDS[$i]}" "${HOSTS[$i]}" 3 0.5)"; then
         failures+=("${LABELS[$i]}: status unavailable")
         continue
       fi

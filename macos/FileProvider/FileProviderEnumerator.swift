@@ -53,7 +53,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        let anchor = FileProviderStorage.storedSnapshotAnchor() ?? FileProviderStorage.bootstrapAnchor()
+        let anchor = FileProviderStorage.currentProviderAnchor()
         FileProviderStorage.debugLog(
             "current sync anchor \(String(data: anchor.rawValue, encoding: .utf8) ?? "unreadable")"
         )

@@ -28,6 +28,18 @@ file-provider backends differ.
 
 ## Desktop test target
 
+The local "e2e everything between 3 VMs" command is:
+
+```bash
+just e2e-3vms
+```
+
+It runs the Rust workspace tests, updates/builds/starts the configured macOS,
+Ubuntu, and Windows dev VMs, then runs the native 3-VM sync battery against the
+real FileProvider, FUSE, and Cloud Files surfaces. VM hostnames stay in
+`~/.config/iris-drive/dev-lab.env` or local git remotes, not in tracked files.
+The native smoke writes per-hop timing JSONL to `target/e2e-3vms-*-timings.jsonl`.
+
 The minimum parity smoke for Linux is:
 
 1. Create an owner profile on one VM.
@@ -36,6 +48,8 @@ The minimum parity smoke for Linux is:
 4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
 5. Create, rename, edit, and delete files inside the mounted drive.
 6. Confirm authorized peers receive the new roots without falling back to a normal folder scan.
+7. Confirm native directory viewers/watchers wake after remote creates without reopening the folder.
+8. Confirm the three native visible directories have matching path/content manifests and no unintended conflict copies.
 
 The same flow is valid for macOS once the visible app has the latest control
 panel build.

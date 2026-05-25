@@ -11,7 +11,11 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 RUN_ID="${IRIS_DRIVE_DEV_VM_SMOKE_ID:-$(date -u +%Y%m%d-%H%M%S)}"
-SMOKE_DIR="codex-lab-smoke/$RUN_ID"
+SMOKE_ROOT="codex-lab-smoke"
+SMOKE_DIR="$SMOKE_ROOT/$RUN_ID"
+TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
+mkdir -p "$(dirname "$TIMINGS_FILE")"
+: >"$TIMINGS_FILE"
 
 log() {
   printf '[dev-vm-smoke] %s\n' "$*" >&2
@@ -20,6 +24,26 @@ log() {
 die() {
   printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+record_timing() {
+  local label="$1"
+  local elapsed="$2"
+  local status="$3"
+  printf '{"run_id":"%s","label":"%s","elapsed_seconds":%s,"status":"%s"}\n' \
+    "$(json_escape "$RUN_ID")" \
+    "$(json_escape "$label")" \
+    "$elapsed" \
+    "$(json_escape "$status")" \
+    >>"$TIMINGS_FILE"
 }
 
 remote_or_die() {
@@ -47,13 +71,21 @@ ps_single_quote() {
 
 win_ps() {
   ssh "$WINDOWS_REMOTE" \
-    'powershell -NoProfile -ExecutionPolicy Bypass -Command "`$script = [Console]::In.ReadToEnd(); Invoke-Expression `$script"'
+    'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
 }
 
 win_idrive_json() {
   local args=("$@")
   local ps_args=""
   local arg
+  if [[ ${#args[@]} -eq 1 && "${args[0]}" == "status" ]]; then
+    ssh "$WINDOWS_REMOTE" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
+    return
+  fi
+  if [[ ${#args[@]} -eq 2 && "${args[0]}" == "provider" && "${args[1]}" == "list" ]]; then
+    ssh "$WINDOWS_REMOTE" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" provider list"'
+    return
+  fi
   for arg in "${args[@]}"; do
     ps_args+=" '$(printf "%s" "$arg" | sed "s/'/''/g")'"
   done
@@ -192,6 +224,107 @@ if (Test-Path -LiteralPath \$Path) {
 REMOTE_PS
 }
 
+windows_start_directory_monitor() {
+  local dir="$1"
+  local token="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Target = Join-Path \$HOME ("Iris Drive\\$dir")
+New-Item -ItemType Directory -Force -Path \$Target | Out-Null
+Get-ChildItem -LiteralPath \$Target -Force | Out-Null
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+\$PidFile = Join-Path \$env:TEMP "iris-drive-fsw-$token.pid"
+\$Script = Join-Path \$env:TEMP "iris-drive-fsw-$token.ps1"
+Remove-Item -LiteralPath \$Log, \$PidFile, \$Script -Force -ErrorAction SilentlyContinue
+@'
+param(
+  [Parameter(Mandatory = \$true)][string]\$Target,
+  [Parameter(Mandatory = \$true)][string]\$Log
+)
+\$ErrorActionPreference = "Stop"
+\$Watcher = [System.IO.FileSystemWatcher]::new(\$Target)
+\$Watcher.IncludeSubdirectories = \$false
+\$Watcher.EnableRaisingEvents = \$true
+\$Registrations = @()
+foreach (\$EventName in @("Created", "Deleted", "Changed", "Renamed")) {
+  \$Registrations += Register-ObjectEvent -InputObject \$Watcher -EventName \$EventName -MessageData \$Log -Action {
+    \$Name = \$EventArgs.Name
+    if (-not \$Name -and \$EventArgs.FullPath) {
+      \$Name = [System.IO.Path]::GetFileName(\$EventArgs.FullPath)
+    }
+    Add-Content -LiteralPath \$Event.MessageData -Value ("{0} {1}" -f \$EventArgs.ChangeType, \$Name)
+  }
+}
+try {
+  \$Deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Date) -lt \$Deadline) {
+    Wait-Event -Timeout 1 | Out-Null
+  }
+} finally {
+  foreach (\$Registration in \$Registrations) {
+    Unregister-Event -SubscriptionId \$Registration.Id -ErrorAction SilentlyContinue
+  }
+  \$Watcher.Dispose()
+}
+'@ | Set-Content -LiteralPath \$Script -Encoding UTF8
+\$Process = Start-Process -FilePath "powershell" -ArgumentList @(
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  \$Script,
+  "-Target",
+  \$Target,
+  "-Log",
+  \$Log
+) -WindowStyle Hidden -PassThru
+Set-Content -LiteralPath \$PidFile -Encoding ASCII -Value \$Process.Id
+REMOTE_PS
+}
+
+windows_monitor_saw_any() {
+  local token="$1"
+  shift
+  local needles=("$@")
+  local ps_needles="@("
+  local sep=""
+  local needle
+  for needle in "${needles[@]}"; do
+    ps_needles+="$sep$(ps_single_quote "$needle")"
+    sep=","
+  done
+  ps_needles+=")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+if (-not (Test-Path -LiteralPath \$Log)) {
+  exit 1
+}
+\$Text = Get-Content -LiteralPath \$Log -Raw
+foreach (\$Needle in $ps_needles) {
+  if (\$Text.Contains(\$Needle)) {
+    exit 0
+  }
+}
+exit 1
+REMOTE_PS
+}
+
+windows_stop_directory_monitor() {
+  local token="$1"
+  win_ps <<REMOTE_PS || true
+\$ErrorActionPreference = "SilentlyContinue"
+\$PidFile = Join-Path \$env:TEMP "iris-drive-fsw-$token.pid"
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+\$Script = Join-Path \$env:TEMP "iris-drive-fsw-$token.ps1"
+if (Test-Path -LiteralPath \$PidFile) {
+  \$ProcessId = [int](Get-Content -LiteralPath \$PidFile -Raw)
+  Stop-Process -Id \$ProcessId -Force
+}
+Remove-Item -LiteralPath \$PidFile, \$Log, \$Script -Force
+REMOTE_PS
+}
+
 wait_for() {
   local label="$1"
   local timeout="$2"
@@ -200,9 +333,14 @@ wait_for() {
   start="$(date +%s)"
   while true; do
     if "$@"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "ok"
+      log "ok in ${elapsed}s: $label"
       return 0
     fi
     if (( $(date +%s) - start >= timeout )); then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "timeout"
       die "timed out waiting for $label"
     fi
     sleep 1
@@ -392,6 +530,35 @@ fi
 REMOTE_SH
 }
 
+cleanup_previous_smoke_root() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_ROOT:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping previous smoke root cleanup"; return 0 ;;
+  esac
+
+  log "cleaning previous native smoke root"
+  delete_ubuntu_path "$SMOKE_ROOT" || true
+  delete_windows_path "$SMOKE_ROOT" || true
+  delete_macos_provider_path "$SMOKE_ROOT" || true
+
+  local start
+  start="$(date +%s)"
+  while (( $(date +%s) - start < 45 )); do
+    if wait_ubuntu_missing "$SMOKE_ROOT" &&
+      wait_windows_disk_missing "$SMOKE_ROOT" &&
+      macos_provider_missing "$SMOKE_ROOT"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "previous smoke root best-effort cleanup" "$elapsed" "ok"
+      log "ok in ${elapsed}s: previous smoke root best-effort cleanup"
+      return 0
+    fi
+    sleep 1
+  done
+  local elapsed=$(( $(date +%s) - start ))
+  record_timing "previous smoke root best-effort cleanup" "$elapsed" "warning"
+  log "warning after ${elapsed}s: previous smoke root still has local remnants"
+}
+
 write_macos_provider_file() {
   local path="$1"
   local content="$2"
@@ -483,6 +650,205 @@ fi
 REMOTE_SH
 }
 
+ubuntu_visible_manifest() {
+  local dir="$1"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$dir" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+root="$HOME/Iris Drive/$dir"
+python3 - "$root" <<'PY'
+import hashlib
+import json
+import os
+import sys
+
+root = sys.argv[1]
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh"}
+if not os.path.isdir(root):
+    raise SystemExit(1)
+entries = []
+for current, dirs, files in os.walk(root):
+    dirs[:] = sorted(name for name in dirs if name not in ignored)
+    for name in dirs:
+        path = os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+        entries.append({"path": path, "kind": "directory", "size": 0, "sha256": None})
+    for name in sorted(files):
+        if name in ignored:
+            continue
+        full = os.path.join(current, name)
+        path = os.path.relpath(full, root).replace(os.sep, "/")
+        digest = hashlib.sha256()
+        with open(full, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        entries.append({
+            "path": path,
+            "kind": "file",
+            "size": os.path.getsize(full),
+            "sha256": digest.hexdigest(),
+        })
+entries.sort(key=lambda entry: entry["path"])
+print(json.dumps({"entries": entries}, sort_keys=True))
+PY
+REMOTE_SH
+}
+
+macos_visible_manifest() {
+  local dir="$1"
+  ssh "$MACOS_REMOTE" 'bash -se' "$dir" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+python3 - "$HOME/Library/CloudStorage" "$dir" <<'PY'
+import hashlib
+import json
+import os
+import sys
+
+cloud_root = sys.argv[1]
+relative = sys.argv[2]
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh"}
+roots = []
+if os.path.isdir(cloud_root):
+    roots = [
+        os.path.join(cloud_root, name)
+        for name in sorted(os.listdir(cloud_root))
+        if name.startswith("IrisDrive")
+    ]
+for drive_root in roots:
+    root = os.path.join(drive_root, relative)
+    if not os.path.isdir(root):
+        continue
+    entries = []
+    for current, dirs, files in os.walk(root):
+        dirs[:] = sorted(name for name in dirs if name not in ignored)
+        for name in dirs:
+            path = os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+            entries.append({"path": path, "kind": "directory", "size": 0, "sha256": None})
+        for name in sorted(files):
+            if name in ignored:
+                continue
+            full = os.path.join(current, name)
+            path = os.path.relpath(full, root).replace(os.sep, "/")
+            digest = hashlib.sha256()
+            with open(full, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            entries.append({
+                "path": path,
+                "kind": "file",
+                "size": os.path.getsize(full),
+                "sha256": digest.hexdigest(),
+            })
+    entries.sort(key=lambda entry: entry["path"])
+    print(json.dumps({"entries": entries}, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+REMOTE_SH
+}
+
+windows_visible_manifest() {
+  local dir="$1"
+  win_ps <<REMOTE_PS | tr -d '\r'
+\$ErrorActionPreference = "Stop"
+\$Root = Join-Path \$HOME ("Iris Drive\\$dir")
+if (-not (Test-Path -LiteralPath \$Root -PathType Container)) {
+  exit 1
+}
+\$Ignored = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+@(".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh") | ForEach-Object { [void]\$Ignored.Add(\$_) }
+\$Entries = @()
+Get-ChildItem -LiteralPath \$Root -Force -Recurse | Sort-Object FullName | ForEach-Object {
+  if (\$Ignored.Contains(\$_.Name)) {
+    return
+  }
+  \$Relative = \$_.FullName.Substring(\$Root.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace("\\", "/")
+  if ([string]::IsNullOrWhiteSpace(\$Relative)) {
+    return
+  }
+  if (\$_.PSIsContainer) {
+    \$Entries += [pscustomobject]@{
+      path = \$Relative
+      kind = "directory"
+      size = 0
+      sha256 = \$null
+    }
+  } else {
+    \$Hash = (Get-FileHash -LiteralPath \$_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    \$Entries += [pscustomobject]@{
+      path = \$Relative
+      kind = "file"
+      size = \$_.Length
+      sha256 = \$Hash
+    }
+  }
+}
+[pscustomobject]@{ entries = @(\$Entries) } | ConvertTo-Json -Depth 5 -Compress
+REMOTE_PS
+}
+
+visible_smoke_dir_matches() {
+  local dir="$1"
+  shift
+  local expected_json
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  expected_json="$(python3 - "$@" <<'PY'
+import hashlib
+import json
+import sys
+
+args = sys.argv[1:]
+if len(args) % 2:
+    raise SystemExit("expected path/content pairs")
+entries = []
+for path, content in zip(args[0::2], args[1::2]):
+    data = (content + "\n").encode()
+    entries.append({
+        "path": path,
+        "kind": "file",
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    })
+entries.sort(key=lambda entry: entry["path"])
+print(json.dumps({"entries": entries}, sort_keys=True))
+PY
+)"
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  EXPECTED_JSON="$expected_json" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import json
+import os
+import sys
+
+expected = json.loads(os.environ["EXPECTED_JSON"])
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+    "macos": json.loads(os.environ["MACOS_JSON"]),
+    "windows": json.loads(os.environ["WINDOWS_JSON"]),
+}
+
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != expected:
+        raise SystemExit(
+            f"{name} visible manifest differs: expected={expected} actual={manifest}"
+        )
+PY
+}
+
 run_sync_smoke() {
   local windows_file="$SMOKE_DIR/from-windows.txt"
   local ubuntu_file="$SMOKE_DIR/from-ubuntu-placeholder.txt"
@@ -491,7 +857,9 @@ run_sync_smoke() {
   local windows_rename_src="$SMOKE_DIR/windows-rename-src.txt"
   local windows_rename_dst="$SMOKE_DIR/windows-rename-dst.txt"
   local live_file="$SMOKE_DIR/live-from-windows.txt"
+  local windows_live_file="$SMOKE_DIR/live-from-ubuntu-for-windows.txt"
   local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
+  local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
 
   log "checking Windows-origin create then Ubuntu-origin delete"
   write_windows_file "$windows_file" "from windows $RUN_ID"
@@ -553,6 +921,21 @@ run_sync_smoke() {
   ubuntu_stop_directory_monitor "$monitor_token"
   wait_for "Windows live create reaches macOS provider" 75 macos_provider_has "$live_file"
 
+  log "checking Windows directory monitor sees a remote Ubuntu create"
+  windows_start_directory_monitor "$SMOKE_DIR" "$windows_monitor_token"
+  write_ubuntu_file "$windows_live_file" "live from ubuntu $RUN_ID"
+  wait_for "Windows directory monitor wakes for Ubuntu create" 75 \
+    windows_monitor_saw_any "$windows_monitor_token" "$(basename "$windows_live_file")"
+  wait_for "Ubuntu live create is visible on Windows disk" 15 wait_windows_disk_has "$windows_live_file"
+  windows_stop_directory_monitor "$windows_monitor_token"
+
+  log "checking native visible directories converge without conflict fan-out"
+  wait_for "native visible smoke directory manifests converge" 75 \
+    visible_smoke_dir_matches "$SMOKE_DIR" \
+    "$(basename "$live_file")" "live from windows $RUN_ID" \
+    "$(basename "$windows_live_file")" "live from ubuntu $RUN_ID" \
+    "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
+
   delete_ubuntu_path "$SMOKE_DIR" || true
 }
 
@@ -602,6 +985,8 @@ REMOTE_SWIFT
 check_revisions
 check_fips_online
 check_provider_noise
+cleanup_previous_smoke_root
 run_sync_smoke
 run_macos_open_smoke
+log "timings written to $TIMINGS_FILE"
 log "ok"

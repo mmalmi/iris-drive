@@ -209,10 +209,13 @@ pub fn apply_remote_files_root_event(
     else {
         return Ok(FilesRootApply::UnknownDrive);
     };
-    if let Some(existing) = drive.device_roots.get(&device_pubkey)
-        && existing.published_at >= incoming_root.published_at
-    {
-        return Ok(FilesRootApply::StaleTimestamp);
+    if let Some(existing) = drive.device_roots.get(&device_pubkey) {
+        if existing.device_seq > 0 {
+            return Ok(FilesRootApply::StaleTimestamp);
+        }
+        if existing.published_at >= incoming_root.published_at {
+            return Ok(FilesRootApply::StaleTimestamp);
+        }
     }
     drive.last_root_cid = Some(incoming_root.root_cid.clone());
     drive.device_roots.insert(device_pubkey, incoming_root);
@@ -656,6 +659,40 @@ mod tests {
             cfg.drive("main").unwrap().last_root_cid.as_deref(),
             Some(root.root_cid.as_str())
         );
+    }
+
+    #[test]
+    fn apply_files_root_event_does_not_replace_causal_native_root() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, acct) = config_with_owner_account(dir.path());
+        let native_root = causal_encrypted_root(0x5b, 100, 1, 4);
+        cfg.drives[0]
+            .device_roots
+            .insert(acct.state.device_pubkey.clone(), native_root.clone());
+        let legacy_root = encrypted_root(0x5c, 1_700_000_000, 0);
+        let event = build_private_hashtree_root_event(
+            acct.owner_key.as_ref().unwrap().keys(),
+            "main",
+            &legacy_root,
+        )
+        .unwrap();
+
+        let outcome = apply_remote_files_root_event(
+            &mut cfg,
+            &event,
+            Some(acct.owner_key.as_ref().unwrap().keys()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, FilesRootApply::StaleTimestamp);
+        let entry = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&acct.state.device_pubkey)
+            .unwrap();
+        assert_eq!(entry.root_cid, native_root.root_cid);
+        assert_eq!(entry.device_seq, 4);
     }
 
     #[test]

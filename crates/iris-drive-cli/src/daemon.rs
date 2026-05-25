@@ -83,6 +83,20 @@ pub(crate) fn cmd_daemon(
             None::<mpsc::UnboundedReceiver<WindowsCloudRootChange>>,
             None::<Value>,
         );
+        let (mut config_root_change_rx, _config_root_watcher, config_root_watch_status) =
+            match start_config_root_watch(config_dir) {
+                Ok((rx, watcher, status)) => (Some(rx), Some(watcher), Some(status)),
+                Err(error) => {
+                    println!(
+                        "{}",
+                        json!({"event": "config_root_watch_error", "error": format!("{error:#}")})
+                    );
+                    (None, None, Some(json!({
+                        "watching": false,
+                        "error": format!("{error:#}"),
+                    })))
+                }
+            };
         let gateway = if enable_gateway {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
@@ -154,17 +168,20 @@ pub(crate) fn cmd_daemon(
                 "backend": "hashtree-fuse",
             })
         });
+        let root_update_debounce = root_update_debounce_duration(watch_debounce_ms);
         let subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
                 "watch_interval_secs": watch_interval,
                 "watch_debounce_ms": watch_debounce_ms,
+                "root_update_throttle_ms": root_update_debounce.as_millis(),
                 "mount": mount_status,
                 "relay_statuses": relay_statuses,
                 "embedded_hashtree": embedded_hashtree_status,
                 "browser_gateway": gateway_status,
                 "windows_cloud_root": windows_cloud_status,
+                "config_root_watch": config_root_watch_status,
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
@@ -272,7 +289,7 @@ pub(crate) fn cmd_daemon(
                         while let Ok(next) = rx.try_recv() {
                             visible_root = next;
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
+                        tokio::time::sleep(root_update_debounce).await;
                         while let Ok(next) = rx.try_recv() {
                             visible_root = next;
                         }
@@ -290,6 +307,7 @@ pub(crate) fn cmd_daemon(
                     {
                         Ok(()) => {
                             mount_tombstone_base = Some(imported_visible_root);
+                            update_last_provider_root_key(config_dir, &mut last_provider_root_key);
                         }
                         Err(error) => println!(
                             "{}",
@@ -301,7 +319,7 @@ pub(crate) fn cmd_daemon(
                     while let Ok(next) = webdav_root_rx.try_recv() {
                         update.visible_root = next.visible_root;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
+                    tokio::time::sleep(root_update_debounce).await;
                     while let Ok(next) = webdav_root_rx.try_recv() {
                         update.visible_root = next.visible_root;
                     }
@@ -315,7 +333,9 @@ pub(crate) fn cmd_daemon(
                     )
                     .await
                     {
-                        Ok(()) => {}
+                        Ok(()) => {
+                            update_last_provider_root_key(config_dir, &mut last_provider_root_key);
+                        }
                         Err(error) => println!(
                             "{}",
                             json!({"event": "virtual_publish_error", "error": format!("{error:#}")})
@@ -334,7 +354,7 @@ pub(crate) fn cmd_daemon(
                         while let Ok(next) = rx.try_recv() {
                             changes.push(next);
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(watch_debounce_ms)).await;
+                        tokio::time::sleep(root_update_debounce).await;
                         while let Ok(next) = rx.try_recv() {
                             changes.push(next);
                         }
@@ -351,6 +371,7 @@ pub(crate) fn cmd_daemon(
                         .await
                         {
                             Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
+                                update_last_provider_root_key(config_dir, &mut last_provider_root_key);
                                 emit_daemon_status_event(config_dir, json!({
                                     "event": "windows_cloud_root_published",
                                     "root_cid": root_cid,
@@ -363,6 +384,35 @@ pub(crate) fn cmd_daemon(
                                 json!({"event": "windows_cloud_root_publish_error", "error": format!("{error:#}")})
                             ),
                         }
+                    }
+                }
+                Some(()) = async {
+                    if let Some(rx) = config_root_change_rx.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<()>>().await
+                    }
+                } => {
+                    if let Some(rx) = config_root_change_rx.as_mut() {
+                        while rx.try_recv().is_ok() {}
+                        tokio::time::sleep(root_update_debounce).await;
+                        while rx.try_recv().is_ok() {}
+                    }
+                    match publish_provider_root_if_changed(
+                        &client,
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(Some(_updated_config)) => {}
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "trigger": "config_root_watch", "error": format!("{error:#}")})
+                        ),
                     }
                 }
                 Some(reason) = async {
@@ -424,6 +474,7 @@ pub(crate) fn cmd_daemon(
                         .await
                         {
                             Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
+                                update_last_provider_root_key(config_dir, &mut last_provider_root_key);
                                 emit_daemon_status_event(config_dir, json!({
                                     "event": "windows_cloud_root_published",
                                     "root_cid": root_cid,
@@ -503,19 +554,28 @@ async fn publish_provider_root_if_changed(
             Ok(()) => None,
             Err(error) => Some(format!("{error:#}")),
         };
-    let publish =
-        publish_current_state(client, config_dir, &updated_config, &updated_state, true).await?;
+    spawn_publish_current_state(
+        client.clone(),
+        config_dir.to_path_buf(),
+        updated_config,
+        updated_state,
+        false,
+        "provider_root_publish_finished",
+        json!({"root_key": current_key.clone()}),
+    );
     emit_daemon_status_event(
         config_dir,
         json!({
             "event": "provider_root_published",
             "root_key": current_key,
             "direct_root_mesh_error": direct_root_mesh_error,
-            "publish": publish_state_report_json(&publish),
+            "publish": {"queued": true, "upload_blossom": false},
         }),
     );
 
-    Ok(Some(updated_config))
+    Ok(Some(AppConfig::load_or_default(config_path_in(
+        config_dir,
+    ))?))
 }
 
 fn current_device_root_key(config: &AppConfig) -> Option<String> {
@@ -526,6 +586,76 @@ fn current_device_root_key(config: &AppConfig) -> Option<String> {
         "{}:{}:{}",
         drive.drive_id, state.device_pubkey, root.root_cid
     ))
+}
+
+fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
+    if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
+        *last_root_key = current_device_root_key(&config);
+    }
+}
+
+fn root_update_debounce_duration(watch_debounce_ms: u64) -> std::time::Duration {
+    std::time::Duration::from_millis(watch_debounce_ms.max(ROOT_UPDATE_THROTTLE_MS))
+}
+
+fn start_config_root_watch(
+    config_dir: &Path,
+) -> Result<(
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    notify::RecommendedWatcher,
+    Value,
+)> {
+    use notify::{RecursiveMode, Watcher};
+
+    let config_path = config_path_in(config_dir);
+    let parent = config_path.parent().unwrap_or(config_dir).to_path_buf();
+    std::fs::create_dir_all(&parent)
+        .with_context(|| format!("creating config directory {}", parent.display()))?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let callback_tx = tx.clone();
+    let watched_config = config_path.clone();
+    let mut watcher = notify::recommended_watcher(move |result| match result {
+        Ok(event) => {
+            if event_touches_path(&event, &watched_config) {
+                let _ = callback_tx.send(());
+            }
+        }
+        Err(error) => {
+            eprintln!("config root watch error: {error:#}");
+        }
+    })
+    .context("creating config root watcher")?;
+    watcher
+        .watch(&parent, RecursiveMode::NonRecursive)
+        .with_context(|| format!("watching config directory {}", parent.display()))?;
+
+    Ok((
+        rx,
+        watcher,
+        json!({
+            "watching": true,
+            "path": config_path.display().to_string(),
+        }),
+    ))
+}
+
+fn event_touches_path(event: &notify::Event, target: &Path) -> bool {
+    event
+        .paths
+        .iter()
+        .any(|path| paths_refer_to_same_file(path, target))
+}
+
+fn paths_refer_to_same_file(path: &Path, target: &Path) -> bool {
+    if path == target {
+        return true;
+    }
+    path.file_name() == target.file_name()
+        && path
+            .parent()
+            .zip(target.parent())
+            .is_some_and(|(a, b)| a == b)
 }
 
 #[derive(Debug, Clone)]
@@ -680,7 +810,7 @@ async fn import_windows_cloud_root_changes_and_publish(
                 }
             }
             WindowsCloudRootChange::Delete(path) => {
-                if apply_windows_cloud_delete(&provider, &path).await? {
+                if apply_windows_cloud_delete_if_local_missing(&provider, sync_root, &path).await? {
                     changed_paths.insert(path);
                 }
             }
@@ -801,6 +931,27 @@ async fn apply_windows_cloud_delete(
         }
         Err(_) => Ok(false),
     }
+}
+
+async fn apply_windows_cloud_delete_if_local_missing(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    sync_root: &Path,
+    path: &str,
+) -> Result<bool> {
+    let path = match normalize_provider_path(path) {
+        Ok(path) => path,
+        Err(_) => return Ok(false),
+    };
+    let full_path = windows_cloud_full_path(sync_root, &path);
+    match std::fs::symlink_metadata(&full_path) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("reading metadata for {}", full_path.display()));
+        }
+    }
+    apply_windows_cloud_delete(provider, &path).await
 }
 
 async fn apply_windows_cloud_upsert(
@@ -1724,19 +1875,50 @@ pub(crate) fn spawn_root_apply_followup(
     }
 
     tokio::spawn(async move {
-        if let Some(root_cid) = root_cid_to_pull
-            && let Err(error) = pull_blocks_for_root_bounded(
-                &config_dir,
-                &config,
-                &root_cid,
-                fips_blocks.as_deref(),
-            )
-            .await
-        {
-            println!(
-                "{}",
-                json!({"event": "block_download_error", "error": error})
-            );
+        if let Some(root_cid) = root_cid_to_pull {
+            let mut last_error = None;
+            for delay_secs in EVENT_BLOCK_PULL_RETRY_DELAYS {
+                if *delay_secs > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(*delay_secs)).await;
+                }
+                match pull_blocks_for_root_bounded(
+                    &config_dir,
+                    &config,
+                    &root_cid,
+                    fips_blocks.as_deref(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        last_error = None;
+                        break;
+                    }
+                    Err(error) => {
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "block_download_retry",
+                                "root_cid": root_cid,
+                                "delay_secs": delay_secs,
+                                "error": error,
+                            })
+                        );
+                        last_error = Some(error);
+                    }
+                }
+            }
+            if let Some(error) = last_error {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "block_download_error",
+                        "root_cid": root_cid,
+                        "error": error,
+                        "materialize_skipped": should_materialize,
+                    })
+                );
+                return;
+            }
         }
 
         if should_materialize {
@@ -1766,10 +1948,12 @@ pub(crate) async fn pull_blocks_for_root(
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
     let mut attempted = false;
+    let mut fips_had_peers = false;
     let mut errors = Vec::new();
     if let Some(sync) = fips_blocks {
         let connected_peers = sync.connected_peer_ids().await;
         let mesh_peers = sync.mesh_peer_ids().await;
+        fips_had_peers = !connected_peers.is_empty() || !mesh_peers.is_empty();
         if connected_peers.is_empty() && mesh_peers.is_empty() {
             println!(
                 "{}",
@@ -1811,7 +1995,7 @@ pub(crate) async fn pull_blocks_for_root(
         }
     }
 
-    if !config.blossom_servers.is_empty() {
+    if should_try_blossom_download(config, attempted, fips_had_peers) {
         attempted = true;
         match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
             Ok(report) => {
@@ -1839,6 +2023,15 @@ pub(crate) async fn pull_blocks_for_root(
                 );
             }
         }
+    } else if !config.blossom_servers.is_empty() && attempted && fips_had_peers {
+        println!(
+            "{}",
+            json!({
+                "event": "blossom_download_skipped",
+                "root_cid": root_cid_str,
+                "reason": "fips_peers_available",
+            })
+        );
     }
 
     if attempted {
@@ -1851,6 +2044,14 @@ pub(crate) async fn pull_blocks_for_root(
             "no block download transport available for {root_cid_str}"
         ))
     }
+}
+
+fn should_try_blossom_download(
+    config: &AppConfig,
+    fips_attempted: bool,
+    fips_had_peers: bool,
+) -> bool {
+    !config.blossom_servers.is_empty() && !(fips_attempted && fips_had_peers)
 }
 
 pub(crate) async fn pull_blocks_for_root_bounded(
@@ -1940,6 +2141,56 @@ mod tests {
         let tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(store)).public()));
         let provider = HashTreeProviderFs::fresh(tree).await.unwrap();
         (dir, provider)
+    }
+
+    #[test]
+    fn live_block_pull_skips_blossom_when_fips_peers_exist() {
+        let mut config = AppConfig {
+            blossom_servers: vec!["https://upload.example".to_string()],
+            ..AppConfig::default()
+        };
+
+        assert!(!should_try_blossom_download(&config, true, true));
+        assert!(should_try_blossom_download(&config, true, false));
+        assert!(should_try_blossom_download(&config, false, false));
+
+        config.blossom_servers.clear();
+        assert!(!should_try_blossom_download(&config, false, false));
+    }
+
+    #[test]
+    fn config_root_watch_filters_to_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        let event = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths: vec![config.clone()],
+            attrs: notify::event::EventAttributes::new(),
+        };
+        let other = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths: vec![dir.path().join("daemon-status.json")],
+            attrs: notify::event::EventAttributes::new(),
+        };
+
+        assert!(event_touches_path(&event, &config));
+        assert!(!event_touches_path(&other, &config));
+    }
+
+    #[test]
+    fn root_update_debounce_has_one_second_floor() {
+        assert_eq!(
+            root_update_debounce_duration(100),
+            std::time::Duration::from_millis(1_000)
+        );
+        assert_eq!(
+            root_update_debounce_duration(2_500),
+            std::time::Duration::from_millis(2_500)
+        );
     }
 
     #[test]
@@ -2137,6 +2388,85 @@ mod tests {
         assert!(provider.item(&recycle).await.is_err());
         assert!(provider.item(&noise).await.is_ok());
         assert!(provider.item(&keep).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_event_delete_skips_when_local_directory_exists() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "codex-lab/run/live.txt", b"live")
+            .await
+            .unwrap();
+        let before = provider.current_root().await;
+
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(sync_root.path().join("codex-lab").join("run")).unwrap();
+
+        assert!(
+            !apply_windows_cloud_delete_if_local_missing(
+                &provider,
+                sync_root.path(),
+                "codex-lab/run",
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(provider.current_root().await, before);
+        assert!(
+            provider
+                .item(&"codex-lab/run/live.txt".to_string())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_event_delete_applies_when_local_path_is_missing() {
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "codex-lab/run/gone.txt", b"gone")
+            .await
+            .unwrap();
+
+        let sync_root = tempfile::tempdir().unwrap();
+
+        assert!(
+            apply_windows_cloud_delete_if_local_missing(
+                &provider,
+                sync_root.path(),
+                "codex-lab/run",
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            provider
+                .item(&"codex-lab/run/gone.txt".to_string())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.blossom_servers.clear();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        spawn_root_apply_followup(
+            config_dir.path().to_path_buf(),
+            config,
+            Some("not-a-cid".to_string()),
+            None,
+            true,
+            "test_refresh",
+            Some(tx),
+        );
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
