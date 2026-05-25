@@ -282,12 +282,24 @@ fn same_or_conflict(
 /// Produce a Dropbox-style conflict filename: `name (conflict from X).ext`.
 #[must_use]
 pub fn conflict_filename(original: &str, device_label: &str) -> String {
+    const MAX_COMPONENT_BYTES: usize = 240;
+
     let (dir, name) = split_dir_name(original);
     let (stem, ext) = split_stem_ext(name);
+    let ext = truncate_utf8(ext, ext.len().min(48));
+    let marker_prefix = " (conflict from ";
+    let marker_suffix = ")";
+    let fixed_bytes = marker_prefix.len() + marker_suffix.len() + ext.len();
+    let available = MAX_COMPONENT_BYTES.saturating_sub(fixed_bytes);
+    let label_budget = device_label.len().min(available.saturating_sub(1));
+    let label = truncate_utf8(device_label, label_budget);
+    let stem_budget = available.saturating_sub(label.len());
+    let stem = truncate_utf8(stem, stem_budget);
+
     if ext.is_empty() {
-        format!("{dir}{stem} (conflict from {device_label})")
+        format!("{dir}{stem}{marker_prefix}{label}{marker_suffix}")
     } else {
-        format!("{dir}{stem} (conflict from {device_label}){ext}")
+        format!("{dir}{stem}{marker_prefix}{label}{marker_suffix}{ext}")
     }
 }
 
@@ -333,6 +345,17 @@ fn split_stem_ext(name: &str) -> (&str, &str) {
         }
         _ => (name, ""),
     }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 #[cfg(test)]
@@ -592,6 +615,24 @@ mod tests {
             conflict_filename("docs.v1/README", "phone"),
             "docs.v1/README (conflict from phone)"
         );
+    }
+
+    #[test]
+    fn conflict_filename_caps_component_length() {
+        let name = format!("{}.txt", "a".repeat(260));
+        let path = conflict_filename(&name, &"d".repeat(64));
+        let component = path.rsplit('/').next().unwrap();
+        assert!(component.len() <= 240, "{component}");
+        assert!(component.ends_with(".txt"));
+        assert!(component.contains(" (conflict from "));
+    }
+
+    #[test]
+    fn conflict_filename_truncates_at_utf8_boundary() {
+        let path = conflict_filename(&format!("{}.txt", "å".repeat(180)), "phone");
+        let component = path.rsplit('/').next().unwrap();
+        assert!(component.len() <= 240, "{component}");
+        assert!(component.ends_with(".txt"));
     }
 
     #[test]
