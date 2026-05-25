@@ -24,3 +24,4 @@ Repo notes for AI coding agents; pair with operator-local instructions.
 ## Naming
 
 CLI binary is `idrive`; hashtree CLI is `htree`; do not collide. Say "the iris-drive daemon" for this daemon, distinct from "the hashtree daemon" it wraps.
+- in general, no need to await nostr publishes
