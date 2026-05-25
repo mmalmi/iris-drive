@@ -1008,6 +1008,28 @@ public static partial class WindowsCloudFiles
     {
         if (!providerEntries.TryGetValue(path, out var providerEntry) || providerEntry.IsDirectory)
         {
+            if (previousByPath.TryGetValue(path, out var previousMissingProvider) &&
+                !previousMissingProvider.IsDirectory &&
+                !string.IsNullOrWhiteSpace(previousMissingProvider.Sha256))
+            {
+                LocalFileSnapshot? previousSnapshot;
+                try
+                {
+                    previousSnapshot = SnapshotLocalFile(fullPath);
+                }
+                catch
+                {
+                    return true;
+                }
+
+                return previousSnapshot is not null &&
+                    previousSnapshot.Value.Size == previousMissingProvider.Size &&
+                    string.Equals(
+                        previousSnapshot.Value.Sha256,
+                        previousMissingProvider.Sha256,
+                        StringComparison.Ordinal);
+            }
+
             return false;
         }
 
