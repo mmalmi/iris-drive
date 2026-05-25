@@ -352,6 +352,36 @@ wait_for() {
   done
 }
 
+wait_for_quiet() {
+  local label="$1"
+  local timeout="$2"
+  local interval="$3"
+  shift 3
+  local start
+  start="$(date +%s)"
+  while true; do
+    sleep "$interval"
+    if "$@"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "ok"
+      log "ok in ${elapsed}s: $label"
+      return 0
+    fi
+    if (( $(date +%s) - start >= timeout )); then
+      sleep "$interval"
+      if "$@"; then
+        local elapsed=$(( $(date +%s) - start ))
+        record_timing "$label" "$elapsed" "ok"
+        log "ok in ${elapsed}s: $label"
+        return 0
+      fi
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "timeout"
+      die "timed out waiting for $label"
+    fi
+  done
+}
+
 wait_windows_disk_has() {
   local path="$1"
   [[ "$(windows_disk_state "$path")" == yes:* ]]
@@ -873,7 +903,7 @@ run_sync_smoke() {
   wait_for "Windows file reaches macOS visible FileProvider folder" 60 \
     macos_visible_drive_has "$windows_file"
   delete_ubuntu_path "$windows_file"
-  wait_for "Ubuntu delete removes Windows disk file" 360 wait_windows_disk_missing "$windows_file"
+  wait_for_quiet "Ubuntu delete removes Windows disk file" 360 10 wait_windows_disk_missing "$windows_file"
   wait_for "Ubuntu delete removes Windows provider file" 120 windows_provider_missing "$windows_file"
 
   log "checking Windows placeholder delete publishes back to Ubuntu"
@@ -900,7 +930,7 @@ run_sync_smoke() {
   wait_for "Ubuntu file reaches Windows disk before macOS delete" 60 wait_windows_disk_has "$macos_delete_file"
   delete_macos_provider_path "$macos_delete_file"
   wait_for "macOS provider delete removes Ubuntu file" 75 wait_ubuntu_missing "$macos_delete_file"
-  wait_for "macOS provider delete removes Windows disk file" 240 wait_windows_disk_missing "$macos_delete_file"
+  wait_for_quiet "macOS provider delete removes Windows disk file" 240 10 wait_windows_disk_missing "$macos_delete_file"
   wait_for "macOS provider delete removes Windows provider file" 75 windows_provider_missing "$macos_delete_file"
 
   log "checking Windows-origin rename/create updates other live providers"
