@@ -77,6 +77,9 @@ Environment:
   IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
                                       Seconds to wait for all selected peers to
                                       report fips_online=true (default: 60).
+  IRIS_DRIVE_DEV_VM_FIPS_READY_TIMEOUT
+                                      Seconds to wait for a restarted daemon to
+                                      report FIPS running (default: 180).
   IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=1
                                       Fail macOS runs unless the app is signed
                                       with FileProvider-capable entitlements.
@@ -945,6 +948,34 @@ sys.exit(0 if fips.get("enabled") and fips.get("running") else 1)
 PY
 }
 
+wait_for_idrive_fips_status() {
+  local idrive="$1"
+  local config_dir="$2"
+  local daemon_pid="$3"
+  local timeout="${IRIS_DRIVE_DEV_VM_FIPS_READY_TIMEOUT:-180}"
+  local started="$SECONDS"
+  local status_json=""
+
+  while (( SECONDS - started < timeout )); do
+    if ! process_running "$daemon_pid"; then
+      return 2
+    fi
+    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
+      && idrive_status_fips_running "$status_json" >/dev/null; then
+      printf '%s\n' "$status_json"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
+    && idrive_status_fips_running "$status_json" >/dev/null; then
+    printf '%s\n' "$status_json"
+    return 0
+  fi
+  return 1
+}
+
 print_idrive_status_summary() {
   local status_json="$1"
   STATUS_JSON="$status_json" python3 - <<'PY'
@@ -1017,26 +1048,16 @@ run_linux() {
       > /tmp/iris-drive-daemon.log 2>&1 < /dev/null &
   local daemon_pid="$!"
   disown "$daemon_pid" >/dev/null 2>&1 || true
-  local daemon_ready=0
   local status_json=""
-  for _ in {1..150}; do
-    if ! process_running "$daemon_pid"; then
-      tail -120 /tmp/iris-drive-daemon.log >&2 || true
-      die "idrive daemon exited during startup"
-    fi
-    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
-      && idrive_status_fips_running "$status_json" >/dev/null; then
-      daemon_ready=1
-      break
-    fi
-    sleep 0.2
-  done
-  if [[ "$daemon_ready" != "1" ]]; then
+  local wait_status=0
+  status_json="$(wait_for_idrive_fips_status "$idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
+  if [[ "$wait_status" == "2" ]]; then
+    tail -120 /tmp/iris-drive-daemon.log >&2 || true
+    die "idrive daemon exited during startup"
+  fi
+  if [[ "$wait_status" != "0" ]]; then
     tail -120 /tmp/iris-drive-daemon.log >&2 || true
     die "idrive daemon did not report running FIPS"
-  fi
-  if [[ -z "$status_json" ]]; then
-    status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 8 0.5)"
   fi
   print_idrive_status_summary "$status_json"
 }
@@ -1453,22 +1474,14 @@ run_macos() {
   daemon_pid="$!"
   disown "$daemon_pid" >/dev/null 2>&1 || true
   local status_json=""
-  for _ in {1..40}; do
-    if ! process_running "$daemon_pid"; then
-      log "macOS idrive daemon exited during startup"
-      tail -n 120 "$daemon_log" >&2 2>/dev/null || true
-      exit 4
-    fi
-    if status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 1 0.1)" \
-      && idrive_status_fips_running "$status_json" >/dev/null; then
-      break
-    fi
-    sleep 0.5
-  done
-  if [[ -z "$status_json" ]]; then
-    status_json="$(idrive_status_json_retry "$idrive" "$config_dir" 8 0.5)" || true
+  local wait_status=0
+  status_json="$(wait_for_idrive_fips_status "$idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
+  if [[ "$wait_status" == "2" ]]; then
+    log "macOS idrive daemon exited during startup"
+    tail -n 120 "$daemon_log" >&2 2>/dev/null || true
+    exit 4
   fi
-  if [[ -z "$status_json" ]] || ! idrive_status_fips_running "$status_json" >/dev/null; then
+  if [[ "$wait_status" != "0" ]]; then
     log "macOS idrive daemon did not report running FIPS status"
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
