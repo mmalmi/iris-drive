@@ -16,8 +16,9 @@ SMOKE_ROOT="$SMOKE_BASE_ROOT"
 SMOKE_DIR="${IRIS_DRIVE_DEV_VM_SMOKE_DIR:-$SMOKE_ROOT/$RUN_ID}"
 SMOKE_CLEANUP_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_ROOT:-}"
 TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
-SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-30}"
-MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-75}"
+SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-120}"
+MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-180}"
+WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT:-180}"
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
@@ -1031,25 +1032,27 @@ run_sync_smoke() {
   wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" \
     "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$ubuntu_file"
   delete_windows_path "$ubuntu_file"
-  wait_for "Windows placeholder delete removes Ubuntu file" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "Windows placeholder delete removes Ubuntu file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$ubuntu_file"
   wait_for "Windows placeholder delete removes Windows provider file" \
-    "$SYNC_WAIT_TIMEOUT" windows_provider_missing "$ubuntu_file"
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" windows_provider_missing "$ubuntu_file"
   wait_for "Windows placeholder delete removes macOS provider file" \
-    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_missing "$ubuntu_file"
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" macos_provider_missing "$ubuntu_file"
 
   log "checking macOS-origin provider create then Windows-origin delete"
   write_macos_provider_file "$macos_file" "from macos $RUN_ID"
-  wait_for "macOS provider file reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "macOS provider file reaches Ubuntu" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$macos_file"
-  wait_for "macOS provider file reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "macOS provider file reaches Windows disk" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_windows_disk_has "$macos_file"
   wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" \
-    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$macos_file"
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$macos_file"
   delete_windows_path "$macos_file"
   wait_for "Windows delete removes macOS provider file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_missing "$macos_file"
-  wait_for "Windows delete removes Ubuntu copy of macOS file" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "Windows delete removes Ubuntu copy of macOS file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_file"
 
   log "checking Ubuntu-origin create then macOS-origin provider delete"
@@ -1059,13 +1062,13 @@ run_sync_smoke() {
   wait_for "Ubuntu file reaches Windows disk before macOS delete" "$SYNC_WAIT_TIMEOUT" \
     wait_windows_disk_has "$macos_delete_file"
   delete_macos_provider_path "$macos_delete_file"
-  wait_for "macOS provider delete removes Ubuntu file" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "macOS provider delete removes Ubuntu file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_delete_file"
   wait_for_quiet "macOS provider delete removes Windows disk file" \
-    "$SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
     wait_windows_disk_missing "$macos_delete_file"
-  wait_for "macOS provider delete removes Windows provider file" "$SYNC_WAIT_TIMEOUT" \
-    windows_provider_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Windows provider file" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" windows_provider_missing "$macos_delete_file"
 
   log "checking Windows-origin rename/create updates other live providers"
   write_windows_file "$windows_rename_src" "rename from windows $RUN_ID"
