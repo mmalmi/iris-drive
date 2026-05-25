@@ -403,6 +403,11 @@ public partial class MainWindow : Window
 
     private bool EnsureDaemonRunning(IrisDriveStatusData status)
     {
+        if (ExternalDaemonMode)
+        {
+            return true;
+        }
+
         if (daemon is { HasExited: false } || service.DaemonLockIsRunning(status))
         {
             return true;
@@ -423,6 +428,12 @@ public partial class MainWindow : Window
 
     private void StopDaemon()
     {
+        if (ExternalDaemonMode)
+        {
+            daemon = null;
+            return;
+        }
+
         var stopped = false;
         if (daemon is { HasExited: false })
         {
@@ -989,5 +1000,18 @@ public partial class MainWindow : Window
         }
 
         return unit == 0 ? $"{bytes} B" : $"{value:0.0} {units[unit]}";
+    }
+
+    private static bool ExternalDaemonMode =>
+        IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_EXTERNAL_DAEMON"));
+
+    private static bool IsTruthy(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
     }
 }

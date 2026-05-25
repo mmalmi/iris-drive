@@ -108,7 +108,9 @@ public sealed class IrisDriveService
             StartInfo = CreateStartInfo(
                 "daemon",
                 "--watch-interval",
-                "0",
+                "2",
+                "--watch-debounce-ms",
+                "100",
                 "--no-gateway"),
             EnableRaisingEvents = true,
         };

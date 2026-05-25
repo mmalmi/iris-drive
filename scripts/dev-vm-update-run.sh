@@ -1832,11 +1832,13 @@ if (-not (Test-Path $Idrive)) {
 Write-Log "starting Windows idrive daemon"
 $DaemonProcess = Start-IdriveDaemon $Idrive $ConfigDir $PublishDir
 $env:IRIS_DRIVE_CLI = $Idrive
+$env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
 Write-Log "starting Windows app"
 $LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
 @"
 @echo off
 set IRIS_DRIVE_CLI=$Idrive
+set IRIS_DRIVE_EXTERNAL_DAEMON=true
 set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FipsPort
 set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=
 set IRIS_DRIVE_FIPS_UDP_PUBLIC=false
