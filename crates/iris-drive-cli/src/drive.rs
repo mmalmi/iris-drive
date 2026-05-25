@@ -394,6 +394,8 @@ pub(crate) async fn delete_provider_path(
     Ok(())
 }
 
+const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
+
 pub(crate) async fn rename_provider_path(
     provider: &HashTreeProviderFs<FsBlobStore>,
     old_path: &str,
@@ -415,9 +417,7 @@ async fn print_provider_mutation(
     tombstone_base_root: Option<Cid>,
 ) -> Result<()> {
     let root = provider.current_root().await;
-    let report = daemon
-        .import_visible_root_with_tombstone_base(root, tombstone_base_root)
-        .await?;
+    let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
     println!(
         "{}",
         json!({
@@ -428,6 +428,43 @@ async fn print_provider_mutation(
         })
     );
     Ok(())
+}
+
+async fn import_provider_root_with_retry(
+    daemon: &mut Daemon,
+    root: Cid,
+    tombstone_base_root: Option<Cid>,
+) -> Result<iris_drive_core::daemon::ImportReport> {
+    let mut attempt = 0;
+    loop {
+        match daemon
+            .import_visible_root_with_tombstone_base(root.clone(), tombstone_base_root.clone())
+            .await
+        {
+            Ok(report) => return Ok(report),
+            Err(error)
+                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
+                    && provider_import_error_message_is_retryable(&error.to_string()) =>
+            {
+                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                tracing::warn!(
+                    error = %error,
+                    delay_ms,
+                    "provider import hit a transient store read; retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn provider_import_error_message_is_retryable(message: &str) -> bool {
+    message.contains("Store error")
+        && (message.contains("os error 2")
+            || message.contains("No such file or directory")
+            || message.contains("The system cannot find the file specified"))
 }
 
 pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
@@ -560,6 +597,22 @@ mod tests {
                 vec!["foreign.txt".to_string()]
             );
         });
+    }
+
+    #[test]
+    fn provider_import_retries_windows_transient_missing_store_reads() {
+        assert!(provider_import_error_message_is_retryable(
+            "index: tree: Store error: IO error: The system cannot find the file specified. (os error 2)"
+        ));
+        assert!(provider_import_error_message_is_retryable(
+            "index: tree: Store error: IO error: No such file or directory (os error 2)"
+        ));
+        assert!(!provider_import_error_message_is_retryable(
+            "index: tree: Missing chunk: abc123"
+        ));
+        assert!(!provider_import_error_message_is_retryable(
+            "config: invalid json"
+        ));
     }
 }
 
