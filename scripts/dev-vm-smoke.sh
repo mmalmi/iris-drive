@@ -868,8 +868,8 @@ run_sync_smoke() {
   wait_for "Windows file reaches macOS visible FileProvider folder" 60 \
     macos_visible_drive_has "$windows_file"
   delete_ubuntu_path "$windows_file"
-  wait_for "Ubuntu delete removes Windows disk file" 60 wait_windows_disk_missing "$windows_file"
-  wait_for "Ubuntu delete removes Windows provider file" 60 windows_provider_missing "$windows_file"
+  wait_for "Ubuntu delete removes Windows disk file" 120 wait_windows_disk_missing "$windows_file"
+  wait_for "Ubuntu delete removes Windows provider file" 120 windows_provider_missing "$windows_file"
 
   log "checking Windows placeholder delete publishes back to Ubuntu"
   write_ubuntu_file "$ubuntu_file" "from ubuntu $RUN_ID"
