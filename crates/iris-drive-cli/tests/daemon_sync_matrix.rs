@@ -470,8 +470,8 @@ impl SyncCluster {
     }
 
     async fn wait_for_convergence_from(&self, client: Client, label: &str) {
-        let expected = dir_snapshot(self.path(client));
-        self.wait_for_snapshot(&expected, label).await;
+        let expected = visible_dir_snapshot(self.path(client));
+        self.wait_for_visible_snapshot(&expected, label).await;
     }
 
     async fn wait_for_snapshot(&self, expected: &DirSnapshot, label: &str) {

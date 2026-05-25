@@ -136,6 +136,7 @@ pub(crate) fn cmd_daemon(
             .await
             .context("opening subscription")?;
         let mut notifications = client.notifications();
+        let mut relay_notifications_open = true;
         let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
         let mut config = config.clone();
@@ -239,9 +240,15 @@ pub(crate) fn cmd_daemon(
                     println!("{}", json!({ "event": "shutdown", "reason": "parent_exit" }));
                     break;
                 }
-                recv = notifications.recv() => {
+                recv = async {
+                    if relay_notifications_open {
+                        Some(notifications.recv().await)
+                    } else {
+                        std::future::pending::<Option<Result<RelayPoolNotification, RecvError>>>().await
+                    }
+                } => {
                     match recv {
-                        Ok(RelayPoolNotification::Event { event, .. }) => {
+                        Some(Ok(RelayPoolNotification::Event { event, .. })) => {
                             if let Err(e) =
                                 apply_one_event(
                                     &client,
@@ -270,12 +277,19 @@ pub(crate) fn cmd_daemon(
                                 );
                             }
                         }
-                        Ok(RelayPoolNotification::Shutdown)
-                        | Err(RecvError::Closed) => break,
-                        Ok(_) => {}
-                        Err(RecvError::Lagged(n)) => {
+                        Some(Ok(RelayPoolNotification::Shutdown)) => {
+                            relay_notifications_open = false;
+                            println!("{}", json!({"event": "relay_notifications_closed", "reason": "shutdown"}));
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(RecvError::Closed)) => {
+                            relay_notifications_open = false;
+                            println!("{}", json!({"event": "relay_notifications_closed", "reason": "closed"}));
+                        }
+                        Some(Err(RecvError::Lagged(n))) => {
                             println!("{}", json!({"event": "lagged", "skipped": n}));
                         }
+                        None => {}
                     }
                 }
                 Some(mut visible_root) = async {
