@@ -854,7 +854,12 @@ async fn import_windows_cloud_root_changes_and_publish(
 
     let root = provider.current_root().await;
     let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
-    write_windows_cloud_local_state(config_dir, sync_root, &current_entries);
+    write_windows_cloud_local_state(
+        config_dir,
+        sync_root,
+        &current_entries,
+        &previous_local_state,
+    );
     drop(provider);
     drop(daemon);
 
@@ -1246,6 +1251,57 @@ async fn windows_cloud_provider_expected_entries(
     Ok(entries)
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct WindowsCloudProjectionRefresh {
+    entry_count: usize,
+    removed_paths: Vec<String>,
+}
+
+#[cfg(windows)]
+fn windows_cloud_projection_root() -> Option<PathBuf> {
+    dirs::home_dir()
+        .map(|home| home.join("Iris Drive"))
+        .filter(|root| root.is_dir())
+}
+
+#[cfg(not(windows))]
+fn windows_cloud_projection_root() -> Option<PathBuf> {
+    None
+}
+
+async fn refresh_windows_cloud_local_projection(
+    config_dir: &Path,
+    sync_root: &Path,
+) -> Result<WindowsCloudProjectionRefresh> {
+    let daemon =
+        Daemon::open(config_dir).context("opening daemon for Windows Cloud Files projection")?;
+    let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+        .await
+        .context("building Windows Cloud Files projection root")?;
+    let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
+    let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let expected_paths: BTreeSet<String> = current_entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    let previous_local_state = load_windows_cloud_local_state(config_dir);
+    let removed_paths = windows_cloud_remove_stale_synced_local_items(
+        sync_root,
+        &expected_paths,
+        &previous_local_state,
+    );
+    write_windows_cloud_local_state(
+        config_dir,
+        sync_root,
+        &current_entries,
+        &previous_local_state,
+    );
+    Ok(WindowsCloudProjectionRefresh {
+        entry_count: current_entries.len(),
+        removed_paths,
+    })
+}
+
 fn load_windows_cloud_local_state(config_dir: &Path) -> Vec<WindowsCloudLocalStateEntry> {
     let path = config_dir.join(WINDOWS_CLOUD_LOCAL_STATE_FILE);
     let Ok(raw) = std::fs::read_to_string(path) else {
@@ -1399,8 +1455,9 @@ fn write_windows_cloud_local_state(
     config_dir: &Path,
     sync_root: &Path,
     entries: &[WindowsCloudExpectedEntry],
+    previous_state: &[WindowsCloudLocalStateEntry],
 ) {
-    let state = snapshot_windows_cloud_local_state(sync_root, entries);
+    let state = snapshot_windows_cloud_local_state(sync_root, entries, previous_state);
     let value = json!({ "entries": state });
     if let Ok(raw) = serde_json::to_string(&value) {
         let _ = std::fs::create_dir_all(config_dir);
@@ -1411,12 +1468,15 @@ fn write_windows_cloud_local_state(
 fn snapshot_windows_cloud_local_state(
     sync_root: &Path,
     entries: &[WindowsCloudExpectedEntry],
+    previous_state: &[WindowsCloudLocalStateEntry],
 ) -> Vec<WindowsCloudLocalStateEntry> {
     let mut state = Vec::new();
+    let mut current_paths = BTreeSet::new();
     for entry in entries {
         if iris_drive_core::path_has_ignored_component(&entry.path) {
             continue;
         }
+        current_paths.insert(entry.path.clone());
         let full_path = windows_cloud_full_path(sync_root, &entry.path);
         if entry.kind == "directory" {
             if full_path.is_dir() {
@@ -1450,8 +1510,62 @@ fn snapshot_windows_cloud_local_state(
             });
         }
     }
+    for previous in
+        windows_cloud_retained_stale_local_state(sync_root, &current_paths, previous_state)
+    {
+        if current_paths.insert(previous.path.clone()) {
+            state.push(previous);
+        }
+    }
     state.sort_by(|a, b| a.path.cmp(&b.path));
     state
+}
+
+fn windows_cloud_retained_stale_local_state(
+    sync_root: &Path,
+    current_paths: &BTreeSet<String>,
+    previous_state: &[WindowsCloudLocalStateEntry],
+) -> Vec<WindowsCloudLocalStateEntry> {
+    let mut retained = Vec::new();
+    for previous in previous_state {
+        let Ok(path) = normalize_provider_path(&previous.path) else {
+            continue;
+        };
+        if iris_drive_core::path_has_ignored_component(&path) || current_paths.contains(&path) {
+            continue;
+        }
+        let full_path = windows_cloud_full_path(sync_root, &path);
+        if previous.is_directory() {
+            if full_path.is_dir() && !windows_cloud_path_is_reparse_point(&full_path) {
+                retained.push(WindowsCloudLocalStateEntry {
+                    path,
+                    kind: previous.kind.clone(),
+                    size: previous.size,
+                    sha256: previous.sha256.clone(),
+                });
+            }
+            continue;
+        }
+        let Some(expected_hash) = previous.sha256.as_deref() else {
+            continue;
+        };
+        if !full_path.is_file() || windows_cloud_path_is_reparse_point(&full_path) {
+            continue;
+        }
+        let Ok(Some(snapshot)) = windows_cloud_snapshot_local_file(&full_path) else {
+            continue;
+        };
+        if snapshot.size == previous.size && snapshot.sha256 == expected_hash {
+            retained.push(WindowsCloudLocalStateEntry {
+                path,
+                kind: previous.kind.clone(),
+                size: previous.size,
+                sha256: previous.sha256.clone(),
+            });
+        }
+    }
+    retained.sort_by(|a, b| a.path.cmp(&b.path));
+    retained
 }
 
 fn windows_cloud_full_path(root: &Path, virtual_path: &str) -> PathBuf {
@@ -1922,6 +2036,33 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if should_materialize {
+            let mut refreshed_windows_cloud = false;
+            if let Some(sync_root) = windows_cloud_projection_root() {
+                match refresh_windows_cloud_local_projection(&config_dir, &sync_root).await {
+                    Ok(report) => {
+                        refreshed_windows_cloud = true;
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "windows_cloud_projection_refreshed",
+                                "trigger": materialize_event,
+                                "root": sync_root.display().to_string(),
+                                "entry_count": report.entry_count,
+                                "removed_paths": report.removed_paths,
+                            })
+                        );
+                    }
+                    Err(error) => println!(
+                        "{}",
+                        json!({
+                            "event": "windows_cloud_projection_refresh_error",
+                            "trigger": materialize_event,
+                            "root": sync_root.display().to_string(),
+                            "error": format!("{error:#}"),
+                        })
+                    ),
+                }
+            }
             if let Some(tx) = mount_refresh {
                 if tx.send(materialize_event).await.is_err() {
                     println!(
@@ -1929,6 +2070,9 @@ pub(crate) fn spawn_root_apply_followup(
                         json!({"event": "mount_refresh_error", "error": "mount refresh worker stopped"})
                     );
                 }
+                return;
+            }
+            if refreshed_windows_cloud {
                 return;
             }
             println!(
@@ -2323,6 +2467,40 @@ mod tests {
 
         assert!(removed.is_empty());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn windows_cloud_state_retains_unremoved_stale_synced_file_for_retry() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::write(sync_root.path().join("remote.txt"), b"same").unwrap();
+        let previous = vec![WindowsCloudLocalStateEntry {
+            path: "remote.txt".to_string(),
+            kind: "file".to_string(),
+            size: 4,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+        }];
+
+        let retained =
+            windows_cloud_retained_stale_local_state(sync_root.path(), &BTreeSet::new(), &previous);
+
+        assert_eq!(retained, previous);
+    }
+
+    #[test]
+    fn windows_cloud_state_drops_stale_file_after_local_edit() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::write(sync_root.path().join("remote.txt"), b"edited").unwrap();
+        let previous = vec![WindowsCloudLocalStateEntry {
+            path: "remote.txt".to_string(),
+            kind: "file".to_string(),
+            size: 4,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+        }];
+
+        let retained =
+            windows_cloud_retained_stale_local_state(sync_root.path(), &BTreeSet::new(), &previous);
+
+        assert!(retained.is_empty());
     }
 
     #[tokio::test]

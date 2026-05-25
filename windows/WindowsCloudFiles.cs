@@ -241,12 +241,15 @@ public static partial class WindowsCloudFiles
 
     public static void WriteLocalState(
         string configDirectory,
-        IReadOnlyCollection<WindowsCloudFileEntry> entries)
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null)
     {
         try
         {
             Directory.CreateDirectory(configDirectory);
-            var state = SnapshotLocalState(entries);
+            var state = SnapshotLocalState(
+                entries,
+                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
             var json = JsonSerializer.Serialize(new { entries = state });
             File.WriteAllText(Path.Combine(configDirectory, LocalStateFileName), json);
         }
@@ -678,11 +681,15 @@ public static partial class WindowsCloudFiles
         new(path, nativeSyncRootReady: false, warning);
 
     private static IReadOnlyList<WindowsCloudLocalStateEntry> SnapshotLocalState(
-        IReadOnlyCollection<WindowsCloudFileEntry> entries)
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
         var state = new List<WindowsCloudLocalStateEntry>();
-        foreach (var entry in PlaceholderEntries(entries))
+        var currentPaths = new HashSet<string>(StringComparer.Ordinal);
+        var placeholderEntries = PlaceholderEntries(entries).ToArray();
+        foreach (var entry in placeholderEntries)
         {
+            currentPaths.Add(entry.Path);
             var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(entry.Path));
             try
             {
@@ -727,9 +734,68 @@ public static partial class WindowsCloudFiles
             }
         }
 
+        foreach (var previous in RetainedStaleLocalState(previousState, currentPaths))
+        {
+            if (!currentPaths.Add(previous.Path))
+            {
+                continue;
+            }
+            state.Add(previous);
+        }
+
         return state
             .OrderBy(entry => entry.Path, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static IEnumerable<WindowsCloudLocalStateEntry> RetainedStaleLocalState(
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState,
+        IReadOnlySet<string> currentPaths)
+    {
+        foreach (var previous in previousState)
+        {
+            var path = NormalizeVirtualPath(previous.Path);
+            if (string.IsNullOrEmpty(path) ||
+                PathHasIgnoredComponent(path) ||
+                currentPaths.Contains(path))
+            {
+                continue;
+            }
+
+            var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(path));
+            var retain = false;
+            try
+            {
+                if (previous.IsDirectory)
+                {
+                    if (Directory.Exists(fullPath) && !ExistingPlaceholder(fullPath))
+                    {
+                        retain = true;
+                    }
+                }
+                else if (File.Exists(fullPath) &&
+                    !ExistingPlaceholder(fullPath) &&
+                    !string.IsNullOrWhiteSpace(previous.Sha256))
+                {
+                    var snapshot = SnapshotLocalFile(fullPath);
+                    retain = snapshot is not null &&
+                        snapshot.Value.Size == previous.Size &&
+                        string.Equals(
+                            snapshot.Value.Sha256,
+                            previous.Sha256,
+                            StringComparison.Ordinal);
+                }
+            }
+            catch
+            {
+                // Keep cache writes best-effort; the next refresh will rebuild from disk again.
+            }
+
+            if (retain)
+            {
+                yield return previous with { Path = path };
+            }
+        }
     }
 
     private static LocalFileSnapshot? SnapshotLocalFile(string fullPath)
