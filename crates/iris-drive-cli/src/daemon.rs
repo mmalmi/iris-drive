@@ -885,13 +885,12 @@ async fn import_windows_cloud_root_changes_and_publish(
 
     let root = provider.current_root().await;
     let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
-    let unprotected_paths = BTreeSet::new();
     write_windows_cloud_local_state(
         config_dir,
         sync_root,
         &current_entries,
         &previous_local_state,
-        &unprotected_paths,
+        &protected_local_mutations,
     );
     drop(provider);
     drop(daemon);
@@ -1737,9 +1736,12 @@ fn snapshot_windows_cloud_local_state(
             });
         }
     }
-    for previous in
-        windows_cloud_retained_stale_local_state(sync_root, &current_paths, previous_state)
-    {
+    for previous in windows_cloud_retained_stale_local_state(
+        sync_root,
+        &current_paths,
+        previous_state,
+        protected_paths,
+    ) {
         if current_paths.insert(previous.path.clone()) {
             state.push(previous);
         }
@@ -1752,13 +1754,17 @@ fn windows_cloud_retained_stale_local_state(
     sync_root: &Path,
     current_paths: &BTreeSet<String>,
     previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
 ) -> Vec<WindowsCloudLocalStateEntry> {
     let mut retained = Vec::new();
     for previous in previous_state {
         let Ok(path) = normalize_provider_path(&previous.path) else {
             continue;
         };
-        if iris_drive_core::path_has_ignored_component(&path) || current_paths.contains(&path) {
+        if iris_drive_core::path_has_ignored_component(&path)
+            || current_paths.contains(&path)
+            || windows_cloud_path_is_protected_local_mutation(&path, protected_paths)
+        {
             continue;
         }
         let full_path = windows_cloud_full_path(sync_root, &path);
@@ -2892,6 +2898,37 @@ mod tests {
     }
 
     #[test]
+    fn windows_cloud_local_state_does_not_retain_protected_previous_state() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(sync_root.path().join("smoke")).unwrap();
+        std::fs::write(
+            sync_root.path().join("smoke").join("from-windows.txt"),
+            b"same",
+        )
+        .unwrap();
+        let previous = vec![
+            WindowsCloudLocalStateEntry {
+                path: "smoke".to_string(),
+                kind: "directory".to_string(),
+                size: 0,
+                sha256: None,
+            },
+            WindowsCloudLocalStateEntry {
+                path: "smoke/from-windows.txt".to_string(),
+                kind: "file".to_string(),
+                size: 4,
+                sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            },
+        ];
+        let protected = BTreeSet::from(["smoke/from-windows.txt".to_string()]);
+
+        let state =
+            snapshot_windows_cloud_local_state(sync_root.path(), &[], &previous, &protected);
+
+        assert!(state.is_empty());
+    }
+
+    #[test]
     fn windows_cloud_state_retains_unremoved_stale_synced_file_for_retry() {
         let sync_root = tempfile::tempdir().unwrap();
         std::fs::write(sync_root.path().join("remote.txt"), b"same").unwrap();
@@ -2902,8 +2939,12 @@ mod tests {
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
         }];
 
-        let retained =
-            windows_cloud_retained_stale_local_state(sync_root.path(), &BTreeSet::new(), &previous);
+        let retained = windows_cloud_retained_stale_local_state(
+            sync_root.path(),
+            &BTreeSet::new(),
+            &previous,
+            &BTreeSet::new(),
+        );
 
         assert_eq!(retained, previous);
     }
@@ -2919,8 +2960,12 @@ mod tests {
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
         }];
 
-        let retained =
-            windows_cloud_retained_stale_local_state(sync_root.path(), &BTreeSet::new(), &previous);
+        let retained = windows_cloud_retained_stale_local_state(
+            sync_root.path(),
+            &BTreeSet::new(),
+            &previous,
+            &BTreeSet::new(),
+        );
 
         assert!(retained.is_empty());
     }
