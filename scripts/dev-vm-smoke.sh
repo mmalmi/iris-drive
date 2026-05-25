@@ -11,8 +11,13 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 RUN_ID="${IRIS_DRIVE_DEV_VM_SMOKE_ID:-$(date -u +%Y%m%d-%H%M%S)}"
-SMOKE_ROOT="codex-lab-smoke"
-SMOKE_DIR="$SMOKE_ROOT/$RUN_ID"
+if [[ -n "${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-}" ]]; then
+  SMOKE_ROOT="$IRIS_DRIVE_DEV_VM_SMOKE_ROOT"
+  SMOKE_DIR="$SMOKE_ROOT/$RUN_ID"
+else
+  SMOKE_ROOT="codex-lab-smoke-$RUN_ID"
+  SMOKE_DIR="$SMOKE_ROOT"
+fi
 TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
@@ -533,30 +538,30 @@ REMOTE_SH
 cleanup_previous_smoke_root() {
   case "${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_ROOT:-1}" in
     1|true|TRUE|yes|YES|on|ON) ;;
-    *) log "skipping previous smoke root cleanup"; return 0 ;;
+    *) log "skipping smoke root cleanup"; return 0 ;;
   esac
 
-  log "cleaning previous native smoke root"
-  delete_ubuntu_path "$SMOKE_ROOT" || true
-  delete_windows_path "$SMOKE_ROOT" || true
-  delete_macos_provider_path "$SMOKE_ROOT" || true
+  log "cleaning native smoke root"
+  delete_ubuntu_path "$SMOKE_DIR" || true
+  delete_windows_path "$SMOKE_DIR" || true
+  delete_macos_provider_path "$SMOKE_DIR" || true
 
   local start
   start="$(date +%s)"
   while (( $(date +%s) - start < 45 )); do
-    if wait_ubuntu_missing "$SMOKE_ROOT" &&
-      wait_windows_disk_missing "$SMOKE_ROOT" &&
-      macos_provider_missing "$SMOKE_ROOT"; then
+    if wait_ubuntu_missing "$SMOKE_DIR" &&
+      wait_windows_disk_missing "$SMOKE_DIR" &&
+      macos_provider_missing "$SMOKE_DIR"; then
       local elapsed=$(( $(date +%s) - start ))
-      record_timing "previous smoke root best-effort cleanup" "$elapsed" "ok"
-      log "ok in ${elapsed}s: previous smoke root best-effort cleanup"
+      record_timing "smoke root best-effort cleanup" "$elapsed" "ok"
+      log "ok in ${elapsed}s: smoke root best-effort cleanup"
       return 0
     fi
     sleep 1
   done
   local elapsed=$(( $(date +%s) - start ))
-  record_timing "previous smoke root best-effort cleanup" "$elapsed" "warning"
-  log "warning after ${elapsed}s: previous smoke root still has local remnants"
+  record_timing "smoke root best-effort cleanup" "$elapsed" "warning"
+  log "warning after ${elapsed}s: smoke root still has local remnants"
 }
 
 write_macos_provider_file() {
