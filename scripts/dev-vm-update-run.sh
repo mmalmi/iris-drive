@@ -617,6 +617,11 @@ log() {
   printf '[%s] %s\n' "$LABEL" "$*" >&2
 }
 
+die() {
+  log "$*"
+  exit 1
+}
+
 expand_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
@@ -964,7 +969,7 @@ run_linux() {
   local daemon_pid="$!"
   local daemon_ready=0
   local status_json=""
-  for _ in {1..50}; do
+  for _ in {1..150}; do
     if ! process_running "$daemon_pid"; then
       tail -120 /tmp/iris-drive-daemon.log >&2 || true
       die "idrive daemon exited during startup"
@@ -1034,6 +1039,104 @@ macos_app_group_identifier() {
     return 0
   fi
   printf '%s\n' "group.to.iris.drive"
+}
+
+macos_embedded_profile_team() {
+  local app="$1"
+  local profile="$app/Contents/embedded.provisionprofile"
+  local decoded
+
+  [[ -f "$profile" ]] || return 0
+  decoded="$(mktemp -t iris-drive-profile.XXXXXX.plist)"
+  if security cms -D -i "$profile" > "$decoded" 2>/dev/null; then
+    python3 - "$decoded" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    profile = plistlib.load(handle)
+teams = profile.get("TeamIdentifier") or []
+if teams:
+    print(teams[0])
+PY
+  fi
+  rm -f "$decoded"
+}
+
+macos_codesign_team_identifier() {
+  local bundle="$1"
+  codesign -dvv "$bundle" 2>&1 \
+    | sed -n 's/^TeamIdentifier=//p' \
+    | head -n 1 || true
+}
+
+macos_entitlement_team_identifier() {
+  local app="$1"
+  local team="${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}"
+  team="${team%.}"
+  if [[ -n "$team" ]]; then
+    printf '%s\n' "$team"
+    return 0
+  fi
+
+  team="$(macos_embedded_profile_team "$app")"
+  team="${team%.}"
+  if [[ -n "$team" ]]; then
+    printf '%s\n' "$team"
+    return 0
+  fi
+
+  team="$(macos_codesign_team_identifier "$app")"
+  team="${team%.}"
+  if [[ -n "$team" ]]; then
+    printf '%s\n' "$team"
+  fi
+}
+
+macos_prepare_entitlements_for_signing() {
+  local entitlements="$1"
+  local team="$2"
+  local output
+
+  [[ -n "$entitlements" && -f "$entitlements" ]] || return 0
+  if ! grep -q '\$(TeamIdentifierPrefix)' "$entitlements"; then
+    return 0
+  fi
+  [[ -n "$team" ]] || return 0
+
+  output="$(mktemp -t iris-drive-entitlements.XXXXXX.plist)"
+  sed "s|\$(TeamIdentifierPrefix)|$team.|g" "$entitlements" > "$output"
+  printf '%s\n' "$output"
+}
+
+macos_embedded_profile_codesign_identity() {
+  local app="$1"
+  local profile="$app/Contents/embedded.provisionprofile"
+  local decoded
+  local identities
+
+  [[ -f "$profile" ]] || return 0
+  decoded="$(mktemp -t iris-drive-profile.XXXXXX.plist)"
+  security cms -D -i "$profile" > "$decoded" 2>/dev/null || {
+    rm -f "$decoded"
+    return 0
+  }
+  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  python3 - "$decoded" "$identities" <<'PY'
+import hashlib
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    profile = plistlib.load(handle)
+identities = sys.argv[2].upper()
+for cert in profile.get("DeveloperCertificates", []):
+    fingerprint = hashlib.sha1(cert).hexdigest().upper()
+    if fingerprint in identities:
+        print(fingerprint)
+        break
+PY
+  rm -f "$decoded"
 }
 
 copy_macos_dev_tree_best_effort() {
@@ -1203,6 +1306,16 @@ run_macos() {
     fi
   fi
   install_macos_dev_app "$built_app" "$app"
+  if [[ -z "${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}" && -z "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}" ]]; then
+    local profile_team
+    profile_team="$(macos_embedded_profile_team "$app")"
+    if [[ -n "$profile_team" ]]; then
+      app_group="$profile_team.to.iris.drive"
+      group_app_base="$HOME/Library/Group Containers/$app_group/Iris Drive Dev"
+      app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$group_app_base}"
+      config_dir="$app_base/Config"
+    fi
+  fi
   cp "$idrive" "$app/Contents/MacOS/idrive"
   cp "$idrive" "$appex/Contents/MacOS/idrive"
   chmod +x "$app/Contents/MacOS/idrive"
@@ -1330,14 +1443,26 @@ sign_macos_app() {
   local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
   local appex_dev_entitlements=""
+  local generated_app_entitlements=""
+  local generated_appex_entitlements=""
+  local entitlement_team=""
+  local source_app_entitlements=""
+  local source_appex_entitlements=""
 
   if macos_fileprovider_required; then
     [[ -f "$xcode_app_entitlements" ]] && app_entitlements="$xcode_app_entitlements"
     [[ -f "$xcode_appex_entitlements" ]] && appex_entitlements="$xcode_appex_entitlements"
+    entitlement_team="$(macos_entitlement_team_identifier "$app")"
   fi
+  source_app_entitlements="$app_entitlements"
+  source_appex_entitlements="$appex_entitlements"
 
   if [[ -z "$sign_identity" && -n "$MACOS_XCODE_SIGNED_IDENTITY" ]]; then
     sign_identity="$MACOS_XCODE_SIGNED_IDENTITY"
+  fi
+
+  if [[ -z "$sign_identity" ]]; then
+    sign_identity="$(macos_embedded_profile_codesign_identity "$app")"
   fi
 
   if [[ -z "$sign_identity" ]]; then
@@ -1383,6 +1508,17 @@ EOF
     log "codesigning macOS app with identity: $sign_identity"
   fi
 
+  if [[ "$sign_identity" != "-" ]]; then
+    generated_app_entitlements="$(
+      macos_prepare_entitlements_for_signing "$app_entitlements" "$entitlement_team"
+    )"
+    generated_appex_entitlements="$(
+      macos_prepare_entitlements_for_signing "$appex_entitlements" "$entitlement_team"
+    )"
+    app_entitlements="${generated_app_entitlements:-$app_entitlements}"
+    appex_entitlements="${generated_appex_entitlements:-$appex_entitlements}"
+  fi
+
   local codesign_base=(codesign --force --sign "$sign_identity")
   if [[ -n "$MACOS_CODESIGN_KEYCHAIN" && "$sign_identity" != "-" ]]; then
     codesign_base+=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
@@ -1410,7 +1546,45 @@ EOF
   else
     "${codesign_base[@]}" "$app" >/dev/null
   fi
-  rm -f "$app_dev_entitlements" "$appex_dev_entitlements"
+
+  if [[ "$sign_identity" != "-" ]] &&
+    { grep -q '\$(TeamIdentifierPrefix)' "$source_app_entitlements" 2>/dev/null ||
+      grep -q '\$(TeamIdentifierPrefix)' "$source_appex_entitlements" 2>/dev/null; }; then
+    if [[ -z "$entitlement_team" ]]; then
+      entitlement_team="$(macos_codesign_team_identifier "$app")"
+      entitlement_team="${entitlement_team%.}"
+    fi
+    [[ -n "$entitlement_team" ]] \
+      || die "cannot resolve TeamIdentifierPrefix from signed macOS app"
+
+    if [[ -z "$generated_appex_entitlements" ]]; then
+      generated_appex_entitlements="$(
+        macos_prepare_entitlements_for_signing "$source_appex_entitlements" "$entitlement_team"
+      )"
+    fi
+    if [[ -n "$generated_appex_entitlements" ]]; then
+      "${codesign_base[@]}" \
+        --entitlements "$generated_appex_entitlements" \
+        "$appex" >/dev/null
+    fi
+
+    if [[ -z "$generated_app_entitlements" ]]; then
+      generated_app_entitlements="$(
+        macos_prepare_entitlements_for_signing "$source_app_entitlements" "$entitlement_team"
+      )"
+    fi
+    if [[ -n "$generated_app_entitlements" ]]; then
+      "${codesign_base[@]}" \
+        --entitlements "$generated_app_entitlements" \
+        "$app" >/dev/null
+    fi
+  fi
+
+  rm -f \
+    "$app_dev_entitlements" \
+    "$appex_dev_entitlements" \
+    "$generated_app_entitlements" \
+    "$generated_appex_entitlements"
   codesign --verify --deep --strict --verbose=2 "$app" >/dev/null
 }
 
@@ -1763,7 +1937,8 @@ function Start-IdriveDaemon([string]$Idrive, [string]$ConfigDir, [string]$Publis
   Stop-IdriveDaemon $ConfigDir
   $DaemonOut = Join-Path $env:TEMP "iris-drive-windows-daemon.out.log"
   $DaemonErr = Join-Path $env:TEMP "iris-drive-windows-daemon.err.log"
-  Remove-Item -Force -ErrorAction SilentlyContinue $DaemonOut, $DaemonErr
+  $CloudFilesLog = Join-Path $ConfigDir "windows-cloud-files.log"
+  Remove-Item -Force -ErrorAction SilentlyContinue $DaemonOut, $DaemonErr, $CloudFilesLog
 
   $DaemonScript = Join-Path $PublishDir "launch-idrive-daemon-dev.cmd"
 @"

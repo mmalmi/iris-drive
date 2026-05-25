@@ -10,6 +10,7 @@ namespace IrisDrive.WindowsShell;
 
 public sealed class IrisDriveService
 {
+    private const string LocalMutationScanEnv = "IRIS_DRIVE_WINDOWS_CLOUD_SCAN_LOCAL_MUTATIONS";
     private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
 
     public string DefaultConfigDirectory =>
@@ -127,7 +128,8 @@ public sealed class IrisDriveService
         var entries = await ProviderEntriesAsync();
         WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
         var previousState = WindowsCloudFiles.LoadLocalState(DefaultConfigDirectory);
-        if (await PublishRecentLocalFileMutationsAsync(entries, previousState))
+        if (LocalMutationScanEnabled &&
+            await PublishRecentLocalFileMutationsAsync(entries, previousState))
         {
             entries = await ProviderEntriesAsync();
             WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
@@ -153,6 +155,12 @@ public sealed class IrisDriveService
         WriteProviderPathCache(entries);
         return preparation;
     }
+
+    private static bool LocalMutationScanEnabled =>
+        string.Equals(
+            Environment.GetEnvironmentVariable(LocalMutationScanEnv),
+            "1",
+            StringComparison.Ordinal);
 
     public bool DaemonLockIsRunning(IrisDriveStatusData status)
     {

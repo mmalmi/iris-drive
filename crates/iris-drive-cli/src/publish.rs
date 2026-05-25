@@ -97,6 +97,7 @@ pub(crate) struct DirectRootExchange {
     seen_keys: BTreeSet<String>,
     subscribed_streams: BTreeSet<String>,
     known_mesh_peers: BTreeSet<String>,
+    next_mesh_publish_seq: u64,
 }
 
 impl DirectRootExchange {
@@ -106,7 +107,8 @@ impl DirectRootExchange {
             return;
         };
         let stream = direct_root_mesh_stream(owner_pubkey);
-        if self.subscribed_streams.insert(stream.clone()) {
+        let peers_changed = self.refresh_known_mesh_peers(sync).await;
+        if self.subscribed_streams.insert(stream.clone()) || peers_changed {
             let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
             println!(
                 "{}",
@@ -132,7 +134,6 @@ impl DirectRootExchange {
         };
         self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
             .await;
-        self.refresh_known_mesh_peers(sync).await;
         let stream = direct_root_mesh_stream(&state.owner_pubkey);
         let events = build_current_sync_events(config_dir, config, state).await?;
         let now = std::time::Instant::now();
@@ -148,14 +149,14 @@ impl DirectRootExchange {
                 event_json: event.json.clone(),
             };
             let bytes = serde_json::to_vec(&frame)?;
-            let publish_stats = sync
-                .publish_mesh_pubsub(stream.clone(), direct_root_seq(&event.key), bytes)
-                .await;
+            let seq = self.next_mesh_publish_seq();
+            let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
             println!(
                 "{}",
                 json!({
                     "event": "direct_root_mesh_publish",
                     "stream": stream,
+                    "seq": seq,
                     "root_key": event.key,
                     "root_event_id": event.event_id,
                     "kind": event.kind,
@@ -183,7 +184,6 @@ impl DirectRootExchange {
         if let Some(state) = config.account.as_ref() {
             self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
                 .await;
-            self.refresh_known_mesh_peers(sync).await;
         }
     }
 
@@ -268,16 +268,28 @@ impl DirectRootExchange {
         true
     }
 
-    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) {
-        let peers = sync
-            .mesh_peer_ids()
+    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
+        let mut peers = sync
+            .connected_peer_ids()
             .await
             .into_iter()
             .collect::<BTreeSet<_>>();
+        peers.extend(sync.mesh_peer_ids().await);
         if peers != self.known_mesh_peers {
             self.known_mesh_peers = peers;
             self.published_keys.clear();
+            return true;
         }
+        false
+    }
+
+    fn next_mesh_publish_seq(&mut self) -> u64 {
+        if self.next_mesh_publish_seq == 0 {
+            self.next_mesh_publish_seq = direct_root_initial_seq();
+        } else {
+            self.next_mesh_publish_seq = self.next_mesh_publish_seq.saturating_add(1);
+        }
+        self.next_mesh_publish_seq
     }
 }
 
@@ -445,11 +457,12 @@ pub(crate) fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
     format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
 }
 
-pub(crate) fn direct_root_seq(key: &str) -> u64 {
-    let hash = hashtree_core::sha256(key.as_bytes());
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&hash[..8]);
-    u64::from_be_bytes(bytes).max(1)
+fn direct_root_initial_seq() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX - 1))
+        .unwrap_or(1)
+        .max(1)
 }
 
 pub(crate) async fn announce_current_state_direct(
@@ -931,5 +944,23 @@ where
         Ok(Ok(value)) => Ok(value),
         Ok(Err(error)) => Err(error.to_string()),
         Err(_) => Err(format!("timed out after {}s", timeout.as_secs())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_root_mesh_publish_sequence_is_monotonic() {
+        let mut exchange = DirectRootExchange::default();
+
+        let first = exchange.next_mesh_publish_seq();
+        let second = exchange.next_mesh_publish_seq();
+        let third = exchange.next_mesh_publish_seq();
+
+        assert!(first > 0);
+        assert_eq!(second, first + 1);
+        assert_eq!(third, second + 1);
     }
 }

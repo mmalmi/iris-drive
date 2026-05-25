@@ -607,7 +607,7 @@ public partial class MainWindow : Window
     }
 
     private static bool DriveFolderFullyPrepared(DriveFolderPreparation driveFolder) =>
-        driveFolder.NativeSyncRootReady && driveFolder.SkippedLocalItemCount == 0;
+        driveFolder.NativeSyncRootReady;
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)
     {

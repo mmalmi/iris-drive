@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace IrisDrive.WindowsShell;
 
@@ -156,7 +157,12 @@ public static partial class WindowsCloudFiles
     private const uint ShcnfPathW = 0x0005;
     private const uint ShcnfFlushNowait = 0x2000;
     private const int PendingProviderMutationTtlSeconds = 120;
+    private const int PendingProviderCleanupDeleteTtlSeconds = 30;
+    private const int StalePlaceholderGraceSeconds = 15;
+    private const int DeleteRetryCount = 50;
+    private const int DeleteRetryDelayMs = 100;
     private const string LocalStateFileName = "windows-cloud-local-state.json";
+    private const string CleanupDeleteFileName = "windows-cloud-cleanup-deletes.json";
     private static readonly Guid ProviderId = new("2b58fb5d-b823-4d84-bd52-fcf9bd297fd4");
     private static readonly object ConnectionLock = new();
     private static readonly object PendingProviderMutationLock = new();
@@ -164,12 +170,19 @@ public static partial class WindowsCloudFiles
         new(StringComparer.Ordinal);
     private static readonly Dictionary<string, DateTimeOffset> PendingProviderPreserves =
         new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, DateTimeOffset> PendingProviderCleanupDeletes =
+        new(StringComparer.Ordinal);
     private static CloudFilesConnection? activeConnection;
 
     public static string SyncRootPath =>
         System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Iris Drive");
+
+    private static string ConfigDirectoryPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "iris-drive");
 
     public static void DebugLog(string message)
     {
@@ -183,9 +196,7 @@ public static partial class WindowsCloudFiles
 
         try
         {
-            var configDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "iris-drive");
+            var configDirectory = ConfigDirectoryPath;
             Directory.CreateDirectory(configDirectory);
             File.AppendAllText(
                 Path.Combine(configDirectory, "windows-cloud-files.log"),
@@ -341,7 +352,10 @@ public static partial class WindowsCloudFiles
             {
                 PendingProviderDeletes.Remove(path);
                 PendingProviderPreserves.Remove(path);
+                PendingProviderCleanupDeletes.Remove(path);
             }
+
+            PersistProviderCleanupDeletesLocked();
         }
     }
 
@@ -538,8 +552,8 @@ public static partial class WindowsCloudFiles
                 {
                     if (Directory.Exists(fullPath) && !ExistingPlaceholder(fullPath))
                     {
-                        Directory.Delete(fullPath, recursive: false);
-                        removedAny = true;
+                        MarkProviderCleanupDelete(path);
+                        removedAny |= TryDeleteDirectory(fullPath, recursive: false);
                     }
 
                     continue;
@@ -561,8 +575,8 @@ public static partial class WindowsCloudFiles
                 }
 
                 ClearReadOnlyAttribute(fullPath);
-                File.Delete(fullPath);
-                removedAny = true;
+                MarkProviderCleanupDelete(path);
+                removedAny |= TryDeleteFile(fullPath);
             }
             catch
             {
@@ -1061,6 +1075,7 @@ public static partial class WindowsCloudFiles
     private static void PrunePendingProviderMutations(DateTimeOffset now)
     {
         var minCreatedAt = now.AddSeconds(-PendingProviderMutationTtlSeconds);
+        var minCleanupCreatedAt = now.AddSeconds(-PendingProviderCleanupDeleteTtlSeconds);
         foreach (var path in PendingProviderDeletes
             .Where(entry => entry.Value < minCreatedAt)
             .Select(entry => entry.Key)
@@ -1076,6 +1091,97 @@ public static partial class WindowsCloudFiles
         {
             PendingProviderPreserves.Remove(path);
         }
+
+        foreach (var path in PendingProviderCleanupDeletes
+            .Where(entry => entry.Value < minCleanupCreatedAt)
+            .Select(entry => entry.Key)
+            .ToArray())
+        {
+            PendingProviderCleanupDeletes.Remove(path);
+        }
+    }
+
+    private static void MarkProviderCleanupDelete(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
+        {
+            return;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            PendingProviderCleanupDeletes[normalized] = DateTimeOffset.UtcNow;
+            PersistProviderCleanupDeletesLocked();
+        }
+
+        DebugLogPath(normalized, "provider cleanup delete pending");
+    }
+
+    private static bool TryConsumeProviderCleanupDelete(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return false;
+        }
+
+        string[] matches;
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            matches = PendingProviderCleanupDeletes.Keys
+                .Where(existing =>
+                    PathContainsOrEquals(existing, normalized) ||
+                    PathContainsOrEquals(normalized, existing))
+                .ToArray();
+            foreach (var match in matches)
+            {
+                PendingProviderCleanupDeletes.Remove(match);
+            }
+
+            if (matches.Length > 0)
+            {
+                PersistProviderCleanupDeletesLocked();
+            }
+        }
+
+        if (matches.Length == 0)
+        {
+            return false;
+        }
+
+        DebugLogPath(normalized, "ignored provider cleanup delete notify");
+        return true;
+    }
+
+    private static void PersistProviderCleanupDeletesLocked()
+    {
+        try
+        {
+            var path = Path.Combine(ConfigDirectoryPath, CleanupDeleteFileName);
+            if (PendingProviderCleanupDeletes.Count == 0)
+            {
+                File.Delete(path);
+                return;
+            }
+
+            Directory.CreateDirectory(ConfigDirectoryPath);
+            var entries = PendingProviderCleanupDeletes
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => new
+                {
+                    path = entry.Key,
+                    created_at_unix_ms = entry.Value.ToUnixTimeMilliseconds(),
+                })
+                .ToArray();
+            File.WriteAllText(path, JsonSerializer.Serialize(new { entries }));
+        }
+        catch
+        {
+            // The daemon also has in-process guards; the shared marker is best effort.
+        }
     }
 
     private static void RemoveStalePlaceholders(string syncRootPath, HashSet<string> expectedPaths)
@@ -1085,6 +1191,8 @@ public static partial class WindowsCloudFiles
             return;
         }
 
+        var removedAny = false;
+        var parentDirectories = new HashSet<string>(StringComparer.Ordinal);
         foreach (var fullPath in Directory
             .EnumerateFileSystemEntries(syncRootPath, "*", SearchOption.AllDirectories)
             .OrderByDescending(path => path.Count(ch => ch == Path.DirectorySeparatorChar)))
@@ -1100,21 +1208,57 @@ public static partial class WindowsCloudFiles
                 continue;
             }
 
+            if (PlaceholderIsTooRecentToPrune(fullPath))
+            {
+                DebugLogPath(relative, "skip recent stale placeholder");
+                continue;
+            }
+
+            if (Directory.Exists(fullPath) && DirectoryHasChildren(fullPath))
+            {
+                DebugLogPath(relative, "skip non-empty stale placeholder directory");
+                continue;
+            }
+
             try
             {
+                ClearReadOnlyAttribute(fullPath);
+                MarkProviderCleanupDelete(relative);
+                var removed = false;
                 if (Directory.Exists(fullPath))
                 {
-                    Directory.Delete(fullPath, recursive: true);
+                    removed = TryDeleteDirectory(fullPath, recursive: false);
                 }
                 else
                 {
-                    File.Delete(fullPath);
+                    removed = TryDeleteFile(fullPath);
+                }
+
+                if (removed)
+                {
+                    removedAny = true;
+                    parentDirectories.Add(ParentPath(relative));
+                    DebugLogPath(relative, "removed stale placeholder");
                 }
             }
             catch
             {
                 // Explorer or Cloud Files may have a transient handle; the next refresh retries.
             }
+        }
+
+        if (!removedAny)
+        {
+            return;
+        }
+
+        parentDirectories.Add("");
+        foreach (var parent in parentDirectories)
+        {
+            var fullPath = string.IsNullOrEmpty(parent)
+                ? syncRootPath
+                : Path.Combine(syncRootPath, FromVirtualPath(parent));
+            NotifyShellDirectoryChanged(fullPath);
         }
     }
 
@@ -1151,11 +1295,11 @@ public static partial class WindowsCloudFiles
                 ClearReadOnlyAttribute(fullPath);
                 if (Directory.Exists(fullPath))
                 {
-                    Directory.Delete(fullPath, recursive: true);
+                    _ = TryDeleteDirectory(fullPath, recursive: true);
                 }
                 else if (File.Exists(fullPath))
                 {
-                    File.Delete(fullPath);
+                    _ = TryDeleteFile(fullPath);
                 }
             }
             catch
@@ -1163,6 +1307,82 @@ public static partial class WindowsCloudFiles
                 // Explorer or Cloud Files may have a transient handle; the next refresh retries.
             }
         }
+    }
+
+    private static bool PlaceholderIsTooRecentToPrune(string fullPath)
+    {
+        try
+        {
+            var isDirectory = Directory.Exists(fullPath);
+            var createdAt = isDirectory
+                ? Directory.GetCreationTimeUtc(fullPath)
+                : File.GetCreationTimeUtc(fullPath);
+            var modifiedAt = isDirectory
+                ? Directory.GetLastWriteTimeUtc(fullPath)
+                : File.GetLastWriteTimeUtc(fullPath);
+            var newestTimestamp = createdAt > modifiedAt ? createdAt : modifiedAt;
+            return newestTimestamp > DateTime.UtcNow.AddSeconds(-StalePlaceholderGraceSeconds);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool DirectoryHasChildren(string fullPath)
+    {
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(fullPath).Any();
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static bool TryDeleteFile(string fullPath)
+    {
+        return TryDeleteWithRetry(() =>
+        {
+            if (File.Exists(fullPath))
+            {
+                File.Delete(fullPath);
+            }
+        });
+    }
+
+    private static bool TryDeleteDirectory(string fullPath, bool recursive)
+    {
+        return TryDeleteWithRetry(() =>
+        {
+            if (Directory.Exists(fullPath))
+            {
+                Directory.Delete(fullPath, recursive);
+            }
+        });
+    }
+
+    private static bool TryDeleteWithRetry(Action delete)
+    {
+        for (var attempt = 0; attempt < DeleteRetryCount; attempt++)
+        {
+            try
+            {
+                delete();
+                return true;
+            }
+            catch when (attempt + 1 < DeleteRetryCount)
+            {
+                Thread.Sleep(DeleteRetryDelayMs);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private static void ClearReadOnlyAttribute(string fullPath)
@@ -1590,6 +1810,12 @@ public static partial class WindowsCloudFiles
             {
                 var path = FileIdentityToPath(info);
                 DebugLog($"cloud delete notify path={path}");
+                if (TryConsumeProviderCleanupDelete(path))
+                {
+                    AckDelete(info, StatusSuccess);
+                    return;
+                }
+
                 deletePath?.Invoke(path);
                 AckDelete(info, StatusSuccess);
             }

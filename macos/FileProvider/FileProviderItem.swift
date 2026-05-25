@@ -338,8 +338,14 @@ enum FileProviderStorage {
 
     static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
         let list = providerList()
+        var items = [FileProviderItem]()
+        if list.anchor != nil {
+            items.append(.root(anchor: list.anchor))
+            items.append(.trash(anchor: list.anchor))
+        }
+        items.append(contentsOf: list.entries.map { item(for: $0, anchor: list.anchor) })
         return (
-            list.entries.map { item(for: $0, anchor: list.anchor) },
+            items,
             syncAnchor(for: list.anchor)
         )
     }

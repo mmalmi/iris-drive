@@ -797,6 +797,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     let before = provider.current_root().await;
     let placeholder_paths = load_windows_cloud_provider_path_cache(config_dir);
     let previous_local_state = load_windows_cloud_local_state(config_dir);
+    let protected_local_mutations = windows_cloud_protected_local_mutation_paths(&changes);
     let mut changed_paths = BTreeSet::new();
     for path in prune_ignored_provider_paths(&provider).await? {
         changed_paths.insert(path);
@@ -810,6 +811,7 @@ async fn import_windows_cloud_root_changes_and_publish(
         sync_root,
         &expected_paths,
         &previous_local_state,
+        &protected_local_mutations,
     ) {
         changed_paths.insert(path);
     }
@@ -824,6 +826,9 @@ async fn import_windows_cloud_root_changes_and_publish(
                 }
             }
             WindowsCloudRootChange::Delete(path) => {
+                if consume_windows_cloud_cleanup_delete_marker(config_dir, &path) {
+                    continue;
+                }
                 if apply_windows_cloud_delete_if_local_missing(&provider, sync_root, &path).await? {
                     changed_paths.insert(path);
                 }
@@ -846,6 +851,9 @@ async fn import_windows_cloud_root_changes_and_publish(
                 for path in
                     windows_cloud_missing_cached_provider_paths(sync_root, &placeholder_paths)?
                 {
+                    if consume_windows_cloud_cleanup_delete_marker(config_dir, &path) {
+                        continue;
+                    }
                     if apply_windows_cloud_delete(&provider, &path).await? {
                         changed_paths.insert(path);
                     }
@@ -865,14 +873,25 @@ async fn import_windows_cloud_root_changes_and_publish(
             }
         }
     }
+    for path in windows_cloud_missing_previous_local_state_paths(
+        sync_root,
+        &previous_local_state,
+        &protected_local_mutations,
+    )? {
+        if apply_windows_cloud_delete(&provider, &path).await? {
+            changed_paths.insert(path);
+        }
+    }
 
     let root = provider.current_root().await;
     let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let unprotected_paths = BTreeSet::new();
     write_windows_cloud_local_state(
         config_dir,
         sync_root,
         &current_entries,
         &previous_local_state,
+        &unprotected_paths,
     );
     drop(provider);
     drop(daemon);
@@ -896,6 +915,37 @@ async fn import_windows_cloud_root_changes_and_publish(
         root_cid: root.to_string(),
         paths: changed_paths.into_iter().collect(),
     })
+}
+
+fn windows_cloud_protected_local_mutation_paths(
+    changes: &[WindowsCloudRootChange],
+) -> BTreeSet<String> {
+    let mut protected = BTreeSet::new();
+    for change in changes {
+        match change {
+            WindowsCloudRootChange::Upsert(path) => {
+                windows_cloud_insert_path_and_ancestors(&mut protected, path);
+            }
+            WindowsCloudRootChange::Rename { new_path, .. } => {
+                windows_cloud_insert_path_and_ancestors(&mut protected, new_path);
+            }
+            WindowsCloudRootChange::Delete(_) | WindowsCloudRootChange::Rescan { .. } => {}
+        }
+    }
+    protected
+}
+
+fn windows_cloud_insert_path_and_ancestors(paths: &mut BTreeSet<String>, path: &str) {
+    let Ok(mut path) = normalize_provider_path(path) else {
+        return;
+    };
+    while !path.is_empty() {
+        paths.insert(path.clone());
+        let Some((parent, _name)) = path.rsplit_once('/') else {
+            break;
+        };
+        path = parent.to_string();
+    }
 }
 
 async fn apply_windows_cloud_rename(
@@ -1196,6 +1246,42 @@ fn windows_cloud_missing_cached_provider_paths(
     Ok(paths)
 }
 
+fn windows_cloud_missing_previous_local_state_paths(
+    root: &Path,
+    previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for previous in previous_state {
+        let Ok(path) = normalize_provider_path(&previous.path) else {
+            continue;
+        };
+        if iris_drive_core::path_has_ignored_component(&path)
+            || windows_cloud_path_is_protected_local_mutation(&path, protected_paths)
+        {
+            continue;
+        }
+        let full_path = windows_cloud_full_path(root, &path);
+        match std::fs::symlink_metadata(&full_path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                paths.push(path);
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("reading metadata for {}", full_path.display()));
+            }
+        }
+    }
+    paths.sort_by(|a, b| {
+        b.split('/')
+            .count()
+            .cmp(&a.split('/').count())
+            .then_with(|| b.cmp(a))
+    });
+    Ok(paths)
+}
+
 fn load_windows_cloud_provider_path_cache(config_dir: &Path) -> BTreeSet<String> {
     let path = config_dir.join("windows-cloud-provider-paths.json");
     let Ok(raw) = std::fs::read_to_string(path) else {
@@ -1214,7 +1300,93 @@ fn load_windows_cloud_provider_path_cache(config_dir: &Path) -> BTreeSet<String>
         .collect()
 }
 
+fn consume_windows_cloud_cleanup_delete_marker(config_dir: &Path, path: &str) -> bool {
+    let Ok(path) = normalize_provider_path(path) else {
+        return false;
+    };
+    let marker_path = config_dir.join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE);
+    let Ok(raw) = std::fs::read_to_string(&marker_path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return false;
+    };
+    let Some(entries) = value.get("entries").and_then(Value::as_array) else {
+        return false;
+    };
+
+    let now_ms = windows_cloud_cleanup_marker_now_ms();
+    let min_created_at_ms = now_ms.saturating_sub(WINDOWS_CLOUD_CLEANUP_DELETE_MARKER_SECS * 1_000);
+    let mut matched = false;
+    let mut changed = false;
+    let mut retained = Vec::new();
+    for entry in entries {
+        let Some(marker) = windows_cloud_cleanup_delete_marker_from_json(entry) else {
+            changed = true;
+            continue;
+        };
+        if marker.created_at_unix_ms < min_created_at_ms {
+            changed = true;
+            continue;
+        }
+        if windows_cloud_paths_overlap(&marker.path, &path)
+            || windows_cloud_paths_overlap(&path, &marker.path)
+        {
+            matched = true;
+            changed = true;
+            continue;
+        }
+        retained.push(marker);
+    }
+
+    if changed {
+        write_windows_cloud_cleanup_delete_markers(config_dir, &retained);
+    }
+
+    matched
+}
+
+fn windows_cloud_cleanup_delete_marker_from_json(
+    value: &Value,
+) -> Option<WindowsCloudCleanupDeleteMarker> {
+    let path = windows_cloud_json_string(value, "path", "Path")
+        .and_then(|path| normalize_provider_path(path).ok())?;
+    let created_at_unix_ms = windows_cloud_json_u64(value, "created_at_unix_ms", "CreatedAtUnixMs")
+        .or_else(|| value.get("createdAtUnixMs").and_then(Value::as_u64))?;
+    Some(WindowsCloudCleanupDeleteMarker {
+        path,
+        created_at_unix_ms,
+    })
+}
+
+fn write_windows_cloud_cleanup_delete_markers(
+    config_dir: &Path,
+    markers: &[WindowsCloudCleanupDeleteMarker],
+) {
+    let path = config_dir.join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE);
+    if markers.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    if std::fs::create_dir_all(config_dir).is_err() {
+        return;
+    }
+    let value = json!({ "entries": markers });
+    if let Ok(raw) = serde_json::to_string(&value) {
+        let _ = std::fs::write(path, raw);
+    }
+}
+
+fn windows_cloud_cleanup_marker_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis().try_into().unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
 const WINDOWS_CLOUD_LOCAL_STATE_FILE: &str = "windows-cloud-local-state.json";
+const WINDOWS_CLOUD_CLEANUP_DELETE_FILE: &str = "windows-cloud-cleanup-deletes.json";
+const WINDOWS_CLOUD_CLEANUP_DELETE_MARKER_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct WindowsCloudExpectedEntry {
@@ -1229,6 +1401,12 @@ struct WindowsCloudLocalStateEntry {
     kind: String,
     size: u64,
     sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+struct WindowsCloudCleanupDeleteMarker {
+    path: String,
+    created_at_unix_ms: u64,
 }
 
 impl WindowsCloudLocalStateEntry {
@@ -1303,12 +1481,14 @@ async fn refresh_windows_cloud_local_projection(
         sync_root,
         &expected_paths,
         &previous_local_state,
+        &BTreeSet::new(),
     );
     write_windows_cloud_local_state(
         config_dir,
         sync_root,
         &current_entries,
         &previous_local_state,
+        &BTreeSet::new(),
     );
     Ok(WindowsCloudProjectionRefresh {
         entry_count: current_entries.len(),
@@ -1372,6 +1552,7 @@ fn windows_cloud_remove_stale_synced_local_items(
     sync_root: &Path,
     expected_paths: &BTreeSet<String>,
     previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
 ) -> Vec<String> {
     if previous_state.is_empty() {
         return Vec::new();
@@ -1393,11 +1574,14 @@ fn windows_cloud_remove_stale_synced_local_items(
         if iris_drive_core::path_has_ignored_component(&path) || expected_paths.contains(&path) {
             continue;
         }
+        if windows_cloud_path_is_protected_local_mutation(&path, protected_paths) {
+            continue;
+        }
         let full_path = windows_cloud_full_path(sync_root, &path);
         if previous.is_directory() {
             if full_path.is_dir()
                 && !windows_cloud_path_is_reparse_point(&full_path)
-                && std::fs::remove_dir(&full_path).is_ok()
+                && windows_cloud_remove_dir_with_retry(&full_path)
             {
                 removed.push(path);
             }
@@ -1417,12 +1601,35 @@ fn windows_cloud_remove_stale_synced_local_items(
             continue;
         }
         let _ = windows_cloud_clear_readonly(&full_path);
-        if std::fs::remove_file(&full_path).is_ok() {
+        if windows_cloud_remove_file_with_retry(&full_path) {
             removed.push(path);
         }
     }
 
     removed
+}
+
+fn windows_cloud_remove_file_with_retry(path: &Path) -> bool {
+    windows_cloud_remove_with_retry(|| std::fs::remove_file(path))
+}
+
+fn windows_cloud_remove_dir_with_retry(path: &Path) -> bool {
+    windows_cloud_remove_with_retry(|| std::fs::remove_dir(path))
+}
+
+fn windows_cloud_remove_with_retry(mut remove: impl FnMut() -> std::io::Result<()>) -> bool {
+    let started = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(5);
+    let delay = std::time::Duration::from_millis(100);
+
+    loop {
+        match remove() {
+            Ok(()) => return true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) if started.elapsed() < timeout => std::thread::sleep(delay),
+            Err(_) => return false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1470,8 +1677,10 @@ fn write_windows_cloud_local_state(
     sync_root: &Path,
     entries: &[WindowsCloudExpectedEntry],
     previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
 ) {
-    let state = snapshot_windows_cloud_local_state(sync_root, entries, previous_state);
+    let state =
+        snapshot_windows_cloud_local_state(sync_root, entries, previous_state, protected_paths);
     let value = json!({ "entries": state });
     if let Ok(raw) = serde_json::to_string(&value) {
         let _ = std::fs::create_dir_all(config_dir);
@@ -1483,11 +1692,15 @@ fn snapshot_windows_cloud_local_state(
     sync_root: &Path,
     entries: &[WindowsCloudExpectedEntry],
     previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
 ) -> Vec<WindowsCloudLocalStateEntry> {
     let mut state = Vec::new();
     let mut current_paths = BTreeSet::new();
     for entry in entries {
         if iris_drive_core::path_has_ignored_component(&entry.path) {
+            continue;
+        }
+        if windows_cloud_path_is_protected_local_mutation(&entry.path, protected_paths) {
             continue;
         }
         current_paths.insert(entry.path.clone());
@@ -1580,6 +1793,25 @@ fn windows_cloud_retained_stale_local_state(
     }
     retained.sort_by(|a, b| a.path.cmp(&b.path));
     retained
+}
+
+fn windows_cloud_path_is_protected_local_mutation(
+    path: &str,
+    protected_paths: &BTreeSet<String>,
+) -> bool {
+    protected_paths
+        .iter()
+        .any(|protected| windows_cloud_paths_overlap(path, protected))
+}
+
+fn windows_cloud_paths_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn windows_cloud_full_path(root: &Path, virtual_path: &str) -> PathBuf {
@@ -1893,9 +2125,10 @@ pub(crate) async fn apply_one_event(
                         .and_then(|drive| drive.device_roots.get(device_pubkey))
                         .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
                 });
+        let followup = drive_root_followup_plan(was_applied, stale_current_root);
         let root_cid_to_pull = parsed
             .as_ref()
-            .filter(|_| was_applied || stale_current_root)
+            .filter(|_| followup.pull_blocks)
             .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
         emit_daemon_status_event(
             config_dir,
@@ -1917,7 +2150,7 @@ pub(crate) async fn apply_one_event(
             config.clone(),
             root_cid_to_pull,
             fips_blocks,
-            was_applied || stale_current_root,
+            followup.materialize,
             "materialized_drive_root",
             mount_refresh,
         );
@@ -1987,6 +2220,19 @@ pub(crate) fn apply_files_root_event(
         mount_refresh,
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct DriveRootFollowupPlan {
+    pull_blocks: bool,
+    materialize: bool,
+}
+
+fn drive_root_followup_plan(was_applied: bool, stale_current_root: bool) -> DriveRootFollowupPlan {
+    DriveRootFollowupPlan {
+        pull_blocks: was_applied || stale_current_root,
+        materialize: was_applied,
+    }
 }
 
 pub(crate) fn spawn_root_apply_followup(
@@ -2392,6 +2638,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn windows_cloud_detects_missing_previous_local_state_after_rename_to_event() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(sync_root.path().join("renames")).unwrap();
+        std::fs::write(sync_root.path().join("renames").join("dst.txt"), b"renamed").unwrap();
+        let previous_state = vec![
+            WindowsCloudLocalStateEntry {
+                path: "renames/src.txt".to_string(),
+                kind: "file".to_string(),
+                size: 7,
+                sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+            },
+            WindowsCloudLocalStateEntry {
+                path: "renames/dst.txt".to_string(),
+                kind: "file".to_string(),
+                size: 7,
+                sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+            },
+        ];
+        let protected_paths = BTreeSet::from(["renames/dst.txt".to_string()]);
+
+        let missing = windows_cloud_missing_previous_local_state_paths(
+            sync_root.path(),
+            &previous_state,
+            &protected_paths,
+        )
+        .unwrap();
+
+        assert_eq!(missing, vec!["renames/src.txt".to_string()]);
+    }
+
+    #[test]
+    fn windows_cloud_cleanup_delete_marker_suppresses_delete_once() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let now_ms = windows_cloud_cleanup_marker_now_ms();
+        std::fs::write(
+            config_dir.path().join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE),
+            serde_json::to_string(&json!({
+                "entries": [
+                    {
+                        "path": "codex-lab/run/from-windows.txt",
+                        "created_at_unix_ms": now_ms,
+                    },
+                    {
+                        "path": "keep.txt",
+                        "created_at_unix_ms": now_ms,
+                    },
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(consume_windows_cloud_cleanup_delete_marker(
+            config_dir.path(),
+            "codex-lab/run/from-windows.txt",
+        ));
+        assert!(!consume_windows_cloud_cleanup_delete_marker(
+            config_dir.path(),
+            "codex-lab/run/from-windows.txt",
+        ));
+
+        let raw =
+            std::fs::read_to_string(config_dir.path().join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE))
+                .unwrap();
+        let value: Value = serde_json::from_str(&raw).unwrap();
+        let paths: Vec<_> = value
+            .get("entries")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.get("path").and_then(Value::as_str))
+            .collect();
+        assert_eq!(paths, vec!["keep.txt"]);
+    }
+
+    #[test]
+    fn windows_cloud_cleanup_delete_marker_prunes_expired_entries() {
+        let config_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            config_dir.path().join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE),
+            r#"{"entries":[{"path":"old.txt","created_at_unix_ms":1}]}"#,
+        )
+        .unwrap();
+
+        assert!(!consume_windows_cloud_cleanup_delete_marker(
+            config_dir.path(),
+            "old.txt",
+        ));
+        assert!(
+            !config_dir
+                .path()
+                .join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE)
+                .exists()
+        );
+    }
+
     #[tokio::test]
     async fn windows_cloud_rescan_upserts_nested_local_file() {
         let (_blocks, provider) = fresh_test_provider().await;
@@ -2455,6 +2798,7 @@ mod tests {
             sync_root.path(),
             &BTreeSet::new(),
             &state,
+            &BTreeSet::new(),
         );
 
         assert_eq!(removed, vec!["remote.txt".to_string()]);
@@ -2477,10 +2821,74 @@ mod tests {
             sync_root.path(),
             &BTreeSet::new(),
             &state,
+            &BTreeSet::new(),
         );
 
         assert!(removed.is_empty());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn windows_cloud_stale_cleanup_preserves_protected_local_mutation() {
+        let sync_root = tempfile::tempdir().unwrap();
+        let dir = sync_root.path().join("smoke");
+        let file = dir.join("from-windows.txt");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(&file, b"same").unwrap();
+        let state = vec![
+            WindowsCloudLocalStateEntry {
+                path: "smoke".to_string(),
+                kind: "directory".to_string(),
+                size: 0,
+                sha256: None,
+            },
+            WindowsCloudLocalStateEntry {
+                path: "smoke/from-windows.txt".to_string(),
+                kind: "file".to_string(),
+                size: 4,
+                sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            },
+        ];
+        let protected = BTreeSet::from(["smoke".to_string()]);
+
+        let removed = windows_cloud_remove_stale_synced_local_items(
+            sync_root.path(),
+            &BTreeSet::new(),
+            &state,
+            &protected,
+        );
+
+        assert!(removed.is_empty());
+        assert!(dir.exists());
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn windows_cloud_local_state_omits_protected_local_mutation() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(sync_root.path().join("smoke")).unwrap();
+        std::fs::write(
+            sync_root.path().join("smoke").join("from-windows.txt"),
+            b"same",
+        )
+        .unwrap();
+        let entries = vec![
+            WindowsCloudExpectedEntry {
+                path: "smoke".to_string(),
+                kind: "directory",
+                size: 0,
+            },
+            WindowsCloudExpectedEntry {
+                path: "smoke/from-windows.txt".to_string(),
+                kind: "file",
+                size: 4,
+            },
+        ];
+        let protected = BTreeSet::from(["smoke/from-windows.txt".to_string()]);
+
+        let state = snapshot_windows_cloud_local_state(sync_root.path(), &entries, &[], &protected);
+
+        assert!(state.is_empty());
     }
 
     #[test]
@@ -2658,6 +3066,24 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
                 .await
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn stale_drive_root_followup_pulls_blocks_without_materializing() {
+        assert_eq!(
+            drive_root_followup_plan(false, true),
+            DriveRootFollowupPlan {
+                pull_blocks: true,
+                materialize: false,
+            }
+        );
+        assert_eq!(
+            drive_root_followup_plan(true, false),
+            DriveRootFollowupPlan {
+                pull_blocks: true,
+                materialize: true,
+            }
         );
     }
 

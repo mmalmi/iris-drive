@@ -11,14 +11,16 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 RUN_ID="${IRIS_DRIVE_DEV_VM_SMOKE_ID:-$(date -u +%Y%m%d-%H%M%S)}"
-if [[ -n "${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-}" ]]; then
-  SMOKE_ROOT="$IRIS_DRIVE_DEV_VM_SMOKE_ROOT"
-  SMOKE_DIR="$SMOKE_ROOT/$RUN_ID"
-else
-  SMOKE_ROOT="codex-lab-smoke-$RUN_ID"
-  SMOKE_DIR="$SMOKE_ROOT"
-fi
+SMOKE_BASE_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-codex-lab-smoke}"
+SMOKE_ROOT="$SMOKE_BASE_ROOT"
+SMOKE_DIR="${IRIS_DRIVE_DEV_VM_SMOKE_DIR:-$SMOKE_ROOT/$RUN_ID}"
+SMOKE_CLEANUP_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_ROOT:-}"
 TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
+SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-30}"
+MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-75}"
+SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
+MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
+SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
 
@@ -37,6 +39,10 @@ json_escape() {
   value="${value//\"/\\\"}"
   value="${value//$'\n'/\\n}"
   printf '%s' "$value"
+}
+
+base64_arg() {
+  printf '%s' "$1" | base64 | tr -d '\n'
 }
 
 record_timing() {
@@ -76,7 +82,7 @@ ps_single_quote() {
 
 win_ps() {
   ssh "$WINDOWS_REMOTE" \
-    'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+    'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
 
 win_idrive_json() {
@@ -143,6 +149,10 @@ path="$1"
 REMOTE_SH
 }
 
+ubuntu_provider_missing() {
+  ! ubuntu_provider_has "$1"
+}
+
 macos_provider_has() {
   local path="$1"
   macos_idrive_json provider list \
@@ -151,9 +161,34 @@ macos_provider_has() {
 
 macos_visible_drive_has() {
   local path="$1"
-  ssh "$MACOS_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$MACOS_VISIBLE_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
+probe_timeout="$2"
+
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$limit"
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  ) &
+  local watchdog=$!
+  local status=0
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  kill "$watchdog" >/dev/null 2>&1 || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
+}
+
 enumerate_parent_chain() {
   local root="$1"
   local relative="$2"
@@ -163,20 +198,20 @@ enumerate_parent_chain() {
 
   parent="$(dirname "$relative")"
   current="$root"
-  /bin/ls -la "$current" >/dev/null 2>&1 || true
+  run_limited "$probe_timeout" /bin/ls -la "$current" >/dev/null 2>&1 || true
   [[ "$parent" != "." ]] || return 0
   IFS='/' read -r -a parts <<< "$parent"
   for part in "${parts[@]}"; do
     [[ -n "$part" ]] || continue
     current="$current/$part"
-    /bin/ls -la "$current" >/dev/null 2>&1 || true
+    run_limited "$probe_timeout" /bin/ls -la "$current" >/dev/null 2>&1 || true
   done
 }
 
 while IFS= read -r root; do
   [[ -n "$root" ]] || continue
   enumerate_parent_chain "$root" "$path"
-  if [[ -e "$root/$path" ]]; then
+  if run_limited "$probe_timeout" /bin/test -e "$root/$path"; then
     exit 0
   fi
 done < <(find "$HOME/Library/CloudStorage" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null || true)
@@ -215,7 +250,8 @@ windows_disk_state() {
   win_ps <<REMOTE_PS | tr -d '\r'
 \$ErrorActionPreference = "Stop"
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
-if (Test-Path -LiteralPath \$Path) {
+\$Exists = Test-Path -LiteralPath \$Path
+if (\$Exists) {
   \$Item = Get-Item -LiteralPath \$Path -Force
   \$Kind = if ((\$Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
     "reparse"
@@ -315,6 +351,14 @@ exit 1
 REMOTE_PS
 }
 
+windows_monitor_saw_any_or_disk_has() {
+  local token="$1"
+  local path="$2"
+  local name
+  name="$(basename "$path")"
+  windows_monitor_saw_any "$token" "$name" || wait_windows_disk_has "$path"
+}
+
 windows_stop_directory_monitor() {
   local token="$1"
   win_ps <<REMOTE_PS || true
@@ -360,7 +404,6 @@ wait_for_quiet() {
   local start
   start="$(date +%s)"
   while true; do
-    sleep "$interval"
     if "$@"; then
       local elapsed=$(( $(date +%s) - start ))
       record_timing "$label" "$elapsed" "ok"
@@ -368,17 +411,11 @@ wait_for_quiet() {
       return 0
     fi
     if (( $(date +%s) - start >= timeout )); then
-      sleep "$interval"
-      if "$@"; then
-        local elapsed=$(( $(date +%s) - start ))
-        record_timing "$label" "$elapsed" "ok"
-        log "ok in ${elapsed}s: $label"
-        return 0
-      fi
       local elapsed=$(( $(date +%s) - start ))
       record_timing "$label" "$elapsed" "timeout"
       die "timed out waiting for $label"
     fi
+    sleep "$interval"
   done
 }
 
@@ -499,12 +536,15 @@ check_provider_noise() {
 write_windows_file() {
   local path="$1"
   local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
   win_ps <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
 \$Parent = Split-Path -Parent \$Path
 New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
-Set-Content -LiteralPath \$Path -Encoding ASCII -Value "$content"
+\$Content = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$content_b64"))
+[System.IO.File]::WriteAllText(\$Path, \$Content + [string][char]10, [System.Text.Encoding]::ASCII)
 REMOTE_PS
 }
 
@@ -513,7 +553,9 @@ delete_windows_path() {
   win_ps <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
-Remove-Item -LiteralPath \$Path -Force -Recurse
+if (Test-Path -LiteralPath \$Path) {
+  Remove-Item -LiteralPath \$Path -Force -Recurse
+}
 REMOTE_PS
 }
 
@@ -538,10 +580,13 @@ REMOTE_PS
 write_ubuntu_file() {
   local path="$1"
   local content="$2"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" "$content" <<'REMOTE_SH'
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
-content="$2"
+content_b64="$2"
+content="$(python3 -c 'import base64, sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode("utf-8"))' "$content_b64")"
 if command -v timeout >/dev/null 2>&1; then
   timeout 10s mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
   printf '%s\n' "$content" | timeout 10s tee "$HOME/Iris Drive/$path" >/dev/null
@@ -565,23 +610,47 @@ fi
 REMOTE_SH
 }
 
+delete_ubuntu_provider_path() {
+  local path="$1"
+  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+"$HOME/src/iris-drive/target/debug/idrive" provider delete "$path" >/dev/null
+REMOTE_SH
+}
+
 cleanup_previous_smoke_root() {
   case "${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_ROOT:-1}" in
     1|true|TRUE|yes|YES|on|ON) ;;
     *) log "skipping smoke root cleanup"; return 0 ;;
   esac
+  if [[ -z "$SMOKE_CLEANUP_ROOT" ]]; then
+    log "skipping smoke root cleanup"
+    return 0
+  fi
 
-  log "cleaning native smoke root"
-  delete_ubuntu_path "$SMOKE_DIR" || true
-  delete_windows_path "$SMOKE_DIR" || true
-  delete_macos_provider_path "$SMOKE_DIR" || true
+  local cleanup_is_current=0
+  if [[ "$SMOKE_CLEANUP_ROOT" == "$SMOKE_DIR" ]]; then
+    cleanup_is_current=1
+  elif [[ "$SMOKE_DIR" == "$SMOKE_CLEANUP_ROOT/"* ]]; then
+    die "smoke cleanup root '$SMOKE_CLEANUP_ROOT' must not contain current run dir '$SMOKE_DIR'"
+  fi
+
+  log "cleaning previous native smoke root $SMOKE_CLEANUP_ROOT"
+  delete_ubuntu_path "$SMOKE_CLEANUP_ROOT" || true
+  delete_ubuntu_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
+  delete_windows_path "$SMOKE_CLEANUP_ROOT" || true
+  delete_windows_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
+  delete_macos_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
 
   local start
   start="$(date +%s)"
-  while (( $(date +%s) - start < 45 )); do
-    if wait_ubuntu_missing "$SMOKE_DIR" &&
-      wait_windows_disk_missing "$SMOKE_DIR" &&
-      macos_provider_missing "$SMOKE_DIR"; then
+  while (( $(date +%s) - start < SMOKE_CLEANUP_TIMEOUT )); do
+    if wait_ubuntu_missing "$SMOKE_CLEANUP_ROOT" &&
+      ubuntu_provider_missing "$SMOKE_CLEANUP_ROOT" &&
+      wait_windows_disk_missing "$SMOKE_CLEANUP_ROOT" &&
+      windows_provider_missing "$SMOKE_CLEANUP_ROOT" &&
+      macos_provider_missing "$SMOKE_CLEANUP_ROOT"; then
       local elapsed=$(( $(date +%s) - start ))
       record_timing "smoke root best-effort cleanup" "$elapsed" "ok"
       log "ok in ${elapsed}s: smoke root best-effort cleanup"
@@ -590,17 +659,34 @@ cleanup_previous_smoke_root() {
     sleep 1
   done
   local elapsed=$(( $(date +%s) - start ))
+  local remnants=()
+  local remnant_text
+  wait_ubuntu_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("ubuntu-disk")
+  ubuntu_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("ubuntu-provider")
+  wait_windows_disk_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("windows-disk")
+  windows_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("windows-provider")
+  macos_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("macos-provider")
+  remnant_text="none observed"
+  if (( ${#remnants[@]} > 0 )); then
+    remnant_text="${remnants[*]}"
+  fi
   record_timing "smoke root best-effort cleanup" "$elapsed" "warning"
-  log "warning after ${elapsed}s: smoke root still has local remnants"
+  if (( cleanup_is_current )); then
+    die "current smoke dir cleanup incomplete after ${elapsed}s: $remnant_text"
+  fi
+  log "warning after ${elapsed}s: smoke root still has local remnants: $remnant_text"
 }
 
 write_macos_provider_file() {
   local path="$1"
   local content="$2"
-  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$content" <<'REMOTE_SH'
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
-content="$2"
+content_b64="$2"
+content="$(python3 -c 'import base64, sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode("utf-8"))' "$content_b64")"
 macos_config_dir() {
   if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
     printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
@@ -630,6 +716,20 @@ REMOTE_SH
 delete_macos_provider_path() {
   local path="$1"
   macos_idrive_json provider delete "$path" >/dev/null
+}
+
+delete_windows_provider_path() {
+  local path="$1"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+& \$Idrive --config-dir \$ConfigDir provider delete "$path" | Out-Null
+REMOTE_PS
 }
 
 macos_app_log_line_count() {
@@ -898,74 +998,102 @@ run_sync_smoke() {
 
   log "checking Windows-origin create then Ubuntu-origin delete"
   write_windows_file "$windows_file" "from windows $RUN_ID"
-  wait_for "Windows file reaches Ubuntu" 60 wait_ubuntu_file_has "$windows_file"
-  wait_for "Windows file reaches macOS provider" 60 macos_provider_has "$windows_file"
-  wait_for "Windows file reaches macOS visible FileProvider folder" 60 \
+  wait_for "Windows file reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_file"
+  wait_for "Windows file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_file"
+  wait_for "Windows file reaches macOS visible FileProvider folder" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_visible_drive_has "$windows_file"
   delete_ubuntu_path "$windows_file"
-  wait_for_quiet "Ubuntu delete removes Windows disk file" 360 10 wait_windows_disk_missing "$windows_file"
-  wait_for "Ubuntu delete removes Windows provider file" 120 windows_provider_missing "$windows_file"
+  wait_for_quiet "Ubuntu delete removes Windows disk file" \
+    "$SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
+    wait_windows_disk_missing "$windows_file"
+  wait_for "Ubuntu delete removes Windows provider file" "$SYNC_WAIT_TIMEOUT" \
+    windows_provider_missing "$windows_file"
 
   log "checking Windows placeholder delete publishes back to Ubuntu"
   write_ubuntu_file "$ubuntu_file" "from ubuntu $RUN_ID"
-  wait_for "Ubuntu file reaches Windows disk" 60 wait_windows_disk_has "$ubuntu_file"
-  wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" 60 wait_windows_disk_reparse "$ubuntu_file"
+  wait_for "Ubuntu file reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_disk_has "$ubuntu_file"
+  wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" \
+    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$ubuntu_file"
   delete_windows_path "$ubuntu_file"
-  wait_for "Windows placeholder delete removes Ubuntu file" 75 wait_ubuntu_missing "$ubuntu_file"
-  wait_for "Windows placeholder delete removes Windows provider file" 75 windows_provider_missing "$ubuntu_file"
-  wait_for "Windows placeholder delete removes macOS provider file" 75 macos_provider_missing "$ubuntu_file"
+  wait_for "Windows placeholder delete removes Ubuntu file" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$ubuntu_file"
+  wait_for "Windows placeholder delete removes Windows provider file" \
+    "$SYNC_WAIT_TIMEOUT" windows_provider_missing "$ubuntu_file"
+  wait_for "Windows placeholder delete removes macOS provider file" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_missing "$ubuntu_file"
 
   log "checking macOS-origin provider create then Windows-origin delete"
   write_macos_provider_file "$macos_file" "from macos $RUN_ID"
-  wait_for "macOS provider file reaches Ubuntu" 60 wait_ubuntu_file_has "$macos_file"
-  wait_for "macOS provider file reaches Windows disk" 60 wait_windows_disk_has "$macos_file"
-  wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" 60 wait_windows_disk_reparse "$macos_file"
+  wait_for "macOS provider file reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$macos_file"
+  wait_for "macOS provider file reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_disk_has "$macos_file"
+  wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" \
+    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$macos_file"
   delete_windows_path "$macos_file"
-  wait_for "Windows delete removes macOS provider file" 75 macos_provider_missing "$macos_file"
-  wait_for "Windows delete removes Ubuntu copy of macOS file" 75 wait_ubuntu_missing "$macos_file"
+  wait_for "Windows delete removes macOS provider file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_missing "$macos_file"
+  wait_for "Windows delete removes Ubuntu copy of macOS file" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$macos_file"
 
   log "checking Ubuntu-origin create then macOS-origin provider delete"
   write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
-  wait_for "Ubuntu file reaches macOS provider" 60 macos_provider_has "$macos_delete_file"
-  wait_for "Ubuntu file reaches Windows disk before macOS delete" 60 wait_windows_disk_has "$macos_delete_file"
+  wait_for "Ubuntu file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$macos_delete_file"
+  wait_for "Ubuntu file reaches Windows disk before macOS delete" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_disk_has "$macos_delete_file"
   delete_macos_provider_path "$macos_delete_file"
-  wait_for "macOS provider delete removes Ubuntu file" 75 wait_ubuntu_missing "$macos_delete_file"
-  wait_for_quiet "macOS provider delete removes Windows disk file" 240 10 wait_windows_disk_missing "$macos_delete_file"
-  wait_for "macOS provider delete removes Windows provider file" 75 windows_provider_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Ubuntu file" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$macos_delete_file"
+  wait_for_quiet "macOS provider delete removes Windows disk file" \
+    "$SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
+    wait_windows_disk_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Windows provider file" "$SYNC_WAIT_TIMEOUT" \
+    windows_provider_missing "$macos_delete_file"
 
   log "checking Windows-origin rename/create updates other live providers"
   write_windows_file "$windows_rename_src" "rename from windows $RUN_ID"
-  wait_for "Windows rename source reaches Ubuntu" 60 wait_ubuntu_file_has "$windows_rename_src"
-  wait_for "Windows rename source reaches macOS provider" 60 macos_provider_has "$windows_rename_src"
+  wait_for "Windows rename source reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_rename_src"
+  wait_for "Windows rename source reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_rename_src"
   local macos_log_before
   macos_log_before="$(macos_app_log_line_count)"
   rename_windows_path "$windows_rename_src" "$windows_rename_dst"
-  wait_for "Windows rename destination reaches Ubuntu" 75 wait_ubuntu_file_has "$windows_rename_dst"
-  wait_for "Windows rename source disappears from Ubuntu" 75 wait_ubuntu_missing "$windows_rename_src"
-  wait_for "Windows rename destination reaches macOS provider" 75 macos_provider_has "$windows_rename_dst"
-  wait_for "Windows rename source disappears from macOS provider" 75 macos_provider_missing "$windows_rename_src"
-  wait_for "macOS FileProvider was signaled after Windows rename" 30 \
+  wait_for "Windows rename destination reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$windows_rename_src"
+  wait_for "Windows rename destination reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_missing "$windows_rename_src"
+  wait_for "macOS FileProvider was signaled after Windows rename" "$SYNC_WAIT_TIMEOUT" \
     macos_log_has_fileprovider_signal_after "$macos_log_before"
 
   log "checking Linux directory monitor sees a remote Windows create"
   ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
   write_windows_file "$live_file" "live from windows $RUN_ID"
-  wait_for "Ubuntu directory monitor wakes for Windows create" 45 \
+  wait_for "Ubuntu directory monitor wakes for Windows create" "$SYNC_WAIT_TIMEOUT" \
     ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" ".iris-drive-refresh"
   wait_for "Ubuntu live create is visible after monitor wake" 15 wait_ubuntu_file_has "$live_file"
   ubuntu_stop_directory_monitor "$monitor_token"
-  wait_for "Windows live create reaches macOS provider" 75 macos_provider_has "$live_file"
+  wait_for "Windows live create reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$live_file"
 
   log "checking Windows directory monitor sees a remote Ubuntu create"
   windows_start_directory_monitor "$SMOKE_DIR" "$windows_monitor_token"
   write_ubuntu_file "$windows_live_file" "live from ubuntu $RUN_ID"
-  wait_for "Windows directory monitor wakes for Ubuntu create" 75 \
-    windows_monitor_saw_any "$windows_monitor_token" "$(basename "$windows_live_file")"
+  wait_for "Windows directory monitor wakes or disk refreshes for Ubuntu create" \
+    "$SYNC_WAIT_TIMEOUT" windows_monitor_saw_any_or_disk_has \
+    "$windows_monitor_token" "$windows_live_file"
   wait_for "Ubuntu live create is visible on Windows disk" 15 wait_windows_disk_has "$windows_live_file"
   windows_stop_directory_monitor "$windows_monitor_token"
 
   log "checking native visible directories converge without conflict fan-out"
-  wait_for "native visible smoke directory manifests converge" 75 \
+  wait_for "native visible smoke directory manifests converge" "$SYNC_WAIT_TIMEOUT" \
     visible_smoke_dir_matches "$SMOKE_DIR" \
     "$(basename "$live_file")" "live from windows $RUN_ID" \
     "$(basename "$windows_live_file")" "live from ubuntu $RUN_ID" \

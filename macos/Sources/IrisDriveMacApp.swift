@@ -9,6 +9,7 @@ private let irisDriveDisplayName = "Iris Drive"
 private let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
+private let irisDriveFileProviderPathIdentifierPrefix = "path:"
 private let irisDriveAppGroupName = "to.iris.drive"
 private let irisDriveLegacyAppGroupIdentifier = "group.to.iris.drive"
 private let irisDriveShowControlPanelNotification =
@@ -1519,10 +1520,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard fileProviderIntegrationEnabled else { return }
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else { return }
-        let identifiers: [(NSFileProviderItemIdentifier, String)] = [
-            (.workingSet, "working set"),
-            (.rootContainer, "root"),
-        ]
+        signalFileProviderEnumerators(
+            [
+                (.workingSet, "working set"),
+                (.rootContainer, "root"),
+            ],
+            manager: manager
+        )
+        signalFileProviderDirectoryEnumerators(manager: manager)
+    }
+
+    private func signalFileProviderEnumerators(
+        _ identifiers: [(NSFileProviderItemIdentifier, String)],
+        manager: NSFileProviderManager
+    ) {
         for (identifier, label) in identifiers {
             manager.signalEnumerator(for: identifier) { error in
                 if let error {
@@ -1535,6 +1546,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    private func signalFileProviderDirectoryEnumerators(manager: NSFileProviderManager) {
+        guard let paths = runtimePathsForMenu else { return }
+        let idrive = idriveExecutableURL()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            do {
+                let data = try self.runIDrive(
+                    idrive,
+                    arguments: ["provider", "list"],
+                    paths: paths
+                )
+                let identifiers = try Self.fileProviderDirectorySignalIdentifiers(from: data)
+                self.signalFileProviderEnumerators(identifiers, manager: manager)
+            } catch {
+                NSLog("Iris Drive FileProvider directory signal skipped: \(error)")
+            }
+        }
+    }
+
+    private static func fileProviderDirectorySignalIdentifiers(
+        from data: Data
+    ) throws -> [(NSFileProviderItemIdentifier, String)] {
+        let list = try JSONDecoder().decode(FileProviderProviderList.self, from: data)
+        var paths = Set<String>()
+        for entry in list.entries {
+            var parent = fileProviderParentPath(for: entry.path)
+            while !parent.isEmpty {
+                paths.insert(parent)
+                parent = fileProviderParentPath(for: parent)
+            }
+            if entry.kind == "directory" {
+                paths.insert(entry.path)
+            }
+        }
+        return paths
+            .sorted()
+            .map { (fileProviderIdentifier(for: $0), "directory \($0)") }
+    }
+
+    private static func fileProviderIdentifier(for path: String) -> NSFileProviderItemIdentifier {
+        if path.isEmpty {
+            return .rootContainer
+        }
+        let encoded = Data(path.utf8).base64EncodedString()
+        return NSFileProviderItemIdentifier(
+            "\(irisDriveFileProviderPathIdentifierPrefix)\(encoded)"
+        )
+    }
+
+    private static func fileProviderParentPath(for path: String) -> String {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1 else { return "" }
+        return parts.dropLast().joined(separator: "/")
+    }
+
+    private struct FileProviderProviderList: Decodable {
+        let entries: [FileProviderProviderEntry]
+    }
+
+    private struct FileProviderProviderEntry: Decodable {
+        let path: String
+        let kind: String
     }
 
     private func repairFileProviderDomainAfterSignalFailure(_ error: Error) {
