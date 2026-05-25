@@ -1051,10 +1051,11 @@ idrive_provider_list_retry() {
   local output_file="$3"
   local attempts="${4:-8}"
   local delay="${5:-0.5}"
+  local stderr_file="${output_file}.stderr"
   local attempt
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if "$idrive" --config-dir "$config_dir" provider list >"$output_file" 2>&1 \
+    if "$idrive" --config-dir "$config_dir" provider list >"$output_file" 2>"$stderr_file" \
       && python3 - "$output_file" <<'PY' >/dev/null 2>&1
 import json
 import sys
@@ -1067,6 +1068,9 @@ PY
     fi
     sleep "$delay"
   done
+  if [[ -s "$stderr_file" ]]; then
+    cat "$stderr_file" >&2
+  fi
   return 1
 }
 
