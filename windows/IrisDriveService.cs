@@ -122,7 +122,7 @@ public sealed class IrisDriveService
         var entries = await ProviderEntriesAsync();
         WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
         var previousState = WindowsCloudFiles.LoadLocalState(DefaultConfigDirectory);
-        if (await PublishRecentLocalFileUpsertsAsync(entries, previousState))
+        if (await PublishRecentLocalFileMutationsAsync(entries, previousState))
         {
             entries = await ProviderEntriesAsync();
             WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
@@ -272,17 +272,32 @@ public sealed class IrisDriveService
         }
     }
 
-    private async Task<bool> PublishRecentLocalFileUpsertsAsync(
+    private async Task<bool> PublishRecentLocalFileMutationsAsync(
         IReadOnlyList<WindowsCloudFileEntry> entries,
         IReadOnlyList<WindowsCloudLocalStateEntry> previousState)
     {
         var upserts = WindowsCloudFiles.RecentLocalFileUpserts(entries, previousState);
-        if (upserts.Count == 0)
-        {
-            return false;
-        }
+        var deletes = WindowsCloudFiles.RecentLocalFileDeletes(entries, previousState);
 
         var changed = false;
+        foreach (var delete in deletes)
+        {
+            try
+            {
+                WindowsCloudFiles.MarkProviderDeletePending(delete.Path);
+                WindowsCloudFiles.DebugLog($"provider delete start from local scan path={delete.Path}");
+                await RunAsync("provider", "delete", delete.Path);
+                WindowsCloudFiles.DebugLog($"provider delete published from local scan path={delete.Path}");
+                changed = true;
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(delete.Path);
+                WindowsCloudFiles.DebugLog(
+                    $"provider delete local scan failed path={delete.Path} error={error.Message}");
+            }
+        }
+
         foreach (var upsert in upserts)
         {
             try

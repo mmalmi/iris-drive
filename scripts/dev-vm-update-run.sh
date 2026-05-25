@@ -782,6 +782,26 @@ terminate_pid() {
   kill -KILL "$pid" >/dev/null 2>&1 || true
 }
 
+detach_stale_mountpoint() {
+  local mountpoint="$1"
+  local target=""
+  [[ -n "$mountpoint" ]] || return 0
+  [[ -e "$mountpoint" ]] || return 0
+
+  if command -v findmnt >/dev/null 2>&1; then
+    target="$(findmnt -rn --target "$mountpoint" --output TARGET 2>/dev/null | head -n 1 || true)"
+    [[ "$target" == "$mountpoint" ]] || return 0
+  fi
+
+  if command -v fusermount3 >/dev/null 2>&1; then
+    fusermount3 -uz "$mountpoint" >/dev/null 2>&1 && return 0
+  fi
+  if command -v fusermount >/dev/null 2>&1; then
+    fusermount -uz "$mountpoint" >/dev/null 2>&1 && return 0
+  fi
+  umount -l "$mountpoint" >/dev/null 2>&1 || true
+}
+
 stop_idrive_daemon() {
   local config_dir="$1"
   local mountpoint="${2:-}"
@@ -820,6 +840,7 @@ stop_idrive_daemon() {
         terminate_pid "$pid"
       fi
     done < <(pgrep -u "$(id -u)" -f "idrive.* daemon " 2>/dev/null || true)
+    detach_stale_mountpoint "$mountpoint"
   fi
 }
 

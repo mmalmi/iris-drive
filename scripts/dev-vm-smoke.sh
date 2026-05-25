@@ -180,7 +180,12 @@ windows_disk_state() {
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
 if (Test-Path -LiteralPath \$Path) {
   \$Item = Get-Item -LiteralPath \$Path -Force
-  Write-Output ("yes:" + \$Item.Attributes.ToString())
+  \$Kind = if ((\$Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    "reparse"
+  } else {
+    "regular"
+  }
+  Write-Output ("yes:" + \$Kind + ":" + \$Item.Attributes.ToString())
 } else {
   Write-Output "no"
 }
@@ -216,7 +221,7 @@ wait_windows_disk_missing() {
 
 wait_windows_disk_reparse() {
   local path="$1"
-  [[ "$(windows_disk_state "$path")" == *ReparsePoint* ]]
+  [[ "$(windows_disk_state "$path")" == yes:reparse:* ]]
 }
 
 wait_ubuntu_file_has() {
@@ -224,7 +229,11 @@ wait_ubuntu_file_has() {
   ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
-test -f "$HOME/Iris Drive/$path"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 5s test -f "$HOME/Iris Drive/$path"
+else
+  test -f "$HOME/Iris Drive/$path"
+fi
 REMOTE_SH
 }
 
@@ -233,7 +242,11 @@ wait_ubuntu_missing() {
   ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
-test ! -e "$HOME/Iris Drive/$path"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 5s test ! -e "$HOME/Iris Drive/$path"
+else
+  test ! -e "$HOME/Iris Drive/$path"
+fi
 REMOTE_SH
 }
 
@@ -340,7 +353,12 @@ rename_windows_path() {
 \$NewPath = Join-Path \$HOME ("Iris Drive\\$new_path")
 \$Parent = Split-Path -Parent \$NewPath
 New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
-Move-Item -LiteralPath \$OldPath -Destination \$NewPath -Force
+\$OldParent = Split-Path -Parent \$OldPath
+if (\$OldParent -eq \$Parent) {
+  Rename-Item -LiteralPath \$OldPath -NewName (Split-Path -Leaf \$NewPath) -Force
+} else {
+  Move-Item -LiteralPath \$OldPath -Destination \$NewPath -Force
+}
 REMOTE_PS
 }
 
@@ -351,8 +369,13 @@ write_ubuntu_file() {
 set -Eeuo pipefail
 path="$1"
 content="$2"
-mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
-printf '%s\n' "$content" > "$HOME/Iris Drive/$path"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 10s mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
+  printf '%s\n' "$content" | timeout 10s tee "$HOME/Iris Drive/$path" >/dev/null
+else
+  mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
+  printf '%s\n' "$content" > "$HOME/Iris Drive/$path"
+fi
 REMOTE_SH
 }
 
@@ -361,7 +384,11 @@ delete_ubuntu_path() {
   ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
-rm -rf "$HOME/Iris Drive/$path"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 10s rm -rf "$HOME/Iris Drive/$path"
+else
+  rm -rf "$HOME/Iris Drive/$path"
+fi
 REMOTE_SH
 }
 

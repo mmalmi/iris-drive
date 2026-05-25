@@ -117,6 +117,8 @@ public sealed record WindowsCloudLocalStateEntry(string Path, string Kind, long 
 
 public sealed record WindowsCloudLocalUpsert(string Path, string FullPath);
 
+public sealed record WindowsCloudLocalDelete(string Path);
+
 public static partial class WindowsCloudFiles
 {
     private const string ProviderName = "Iris Drive";
@@ -379,6 +381,64 @@ public static partial class WindowsCloudFiles
             .GroupBy(upsert => upsert.Path, StringComparer.Ordinal)
             .Select(group => group.Last())
             .OrderBy(upsert => upsert.Path, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    public static IReadOnlyList<WindowsCloudLocalDelete> RecentLocalFileDeletes(
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
+    {
+        if (!Directory.Exists(SyncRootPath))
+        {
+            return Array.Empty<WindowsCloudLocalDelete>();
+        }
+
+        var cutoff = DateTimeOffset.UtcNow.AddSeconds(-RecentLocalUpsertSeconds);
+        var providerEntries = PlaceholderEntries(entries)
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var deletes = new List<WindowsCloudLocalDelete>();
+
+        foreach (var previous in previousState)
+        {
+            var path = NormalizeVirtualPath(previous.Path);
+            if (string.IsNullOrEmpty(path) ||
+                PathHasIgnoredComponent(path) ||
+                previous.IsDirectory ||
+                string.IsNullOrWhiteSpace(previous.Sha256) ||
+                !providerEntries.TryGetValue(path, out var providerEntry) ||
+                providerEntry.IsDirectory)
+            {
+                continue;
+            }
+
+            var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(path));
+            var parentPath = Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrWhiteSpace(parentPath) ||
+                !Directory.Exists(parentPath) ||
+                !RecentEnough(parentPath, cutoff))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (File.Exists(fullPath) && !ExistingPlaceholder(fullPath))
+                {
+                    continue;
+                }
+            }
+            catch
+            {
+                continue;
+            }
+
+            deletes.Add(new WindowsCloudLocalDelete(path));
+        }
+
+        return deletes
+            .GroupBy(delete => delete.Path, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .OrderBy(delete => delete.Path, StringComparer.Ordinal)
             .ToArray();
     }
 
