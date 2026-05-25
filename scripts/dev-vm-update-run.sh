@@ -1016,6 +1016,7 @@ run_linux() {
       --mountpoint "$mountpoint" \
       > /tmp/iris-drive-daemon.log 2>&1 < /dev/null &
   local daemon_pid="$!"
+  disown "$daemon_pid" >/dev/null 2>&1 || true
   local daemon_ready=0
   local status_json=""
   for _ in {1..150}; do
@@ -1450,6 +1451,7 @@ run_macos() {
       --watch-debounce-ms 100 \
       > "$daemon_log" 2>&1 < /dev/null &
   daemon_pid="$!"
+  disown "$daemon_pid" >/dev/null 2>&1 || true
   local status_json=""
   for _ in {1..40}; do
     if ! process_running "$daemon_pid"; then
