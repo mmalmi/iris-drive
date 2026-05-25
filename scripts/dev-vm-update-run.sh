@@ -48,6 +48,11 @@ Environment:
   IRIS_DRIVE_DEV_VM_MACOS_REMOTE      Git remote name for the macOS VM.
   IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE     Git remote name for the Ubuntu VM.
   IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE    Git remote name for the Windows VM.
+  IRIS_DRIVE_DEV_VM_MACOS_SSH_HOST    Optional SSH host override for commands.
+  IRIS_DRIVE_DEV_VM_UBUNTU_SSH_HOST   Optional SSH host override for commands.
+  IRIS_DRIVE_DEV_VM_WINDOWS_SSH_HOST  Optional SSH host override for commands.
+                                      Git remote hostnames still define peer
+                                      labels/static-hint keys.
   IRIS_DRIVE_DEV_VM_FIPS_PORT         UDP port advertised over nvpn (default: 22121).
   IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS
                                       auto/1/0 for direct nvpn static FIPS
@@ -283,13 +288,18 @@ REMOTE_SH
 declare -a LABELS=()
 declare -a KINDS=()
 declare -a HOSTS=()
+declare -a SSH_HOSTS=()
+declare -a ALL_LABELS=()
+declare -a ALL_KINDS=()
+declare -a ALL_HOSTS=()
+declare -a ALL_SSH_HOSTS=()
 declare -a IRIS_REMOTES=()
 declare -a HASHTREE_REMOTES=()
 declare -a FIPS_REMOTES=()
 declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
 declare -a FIPS_BARES=()
-declare -a OVERLAY_IPS=()
+declare -a ALL_OVERLAY_IPS=()
 declare -a STATIC_PEERS_BY_INDEX=()
 
 add_target_from_remotes() {
@@ -304,11 +314,10 @@ add_target_from_remotes() {
   local host
   local hashtree_host
   local fips_host
+  local ssh_host
   local iris_bare
   local hashtree_bare
   local fips_bare
-
-  contains_label "$label" || return 0
 
   iris_parts="$(remote_url_parts "$ROOT" "$iris_remote" || true)"
   hashtree_parts="$(remote_url_parts "$HASHTREE_ROOT" "$hashtree_remote" || true)"
@@ -333,16 +342,41 @@ add_target_from_remotes() {
   if [[ "$host" != "$fips_host" ]]; then
     die "$label iris-drive remote host ($host) differs from fips host ($fips_host)"
   fi
+  ssh_host="$(ssh_host_for_label "$label" "$host")"
+
+  ALL_LABELS+=("$label")
+  ALL_KINDS+=("$kind")
+  ALL_HOSTS+=("$host")
+  ALL_SSH_HOSTS+=("$ssh_host")
+
+  contains_label "$label" || return 0
 
   LABELS+=("$label")
   KINDS+=("$kind")
   HOSTS+=("$host")
+  SSH_HOSTS+=("$ssh_host")
   IRIS_REMOTES+=("$iris_remote")
   HASHTREE_REMOTES+=("$hashtree_remote")
   FIPS_REMOTES+=("$fips_remote")
   IRIS_BARES+=("$iris_bare")
   HASHTREE_BARES+=("$hashtree_bare")
   FIPS_BARES+=("$fips_bare")
+}
+
+ssh_host_for_label() {
+  local label="$1"
+  local default_host="$2"
+  local env_var
+  local value
+  env_var="IRIS_DRIVE_DEV_VM_$(printf '%s' "$label" | tr '[:lower:]-' '[:upper:]_')_SSH_HOST"
+  value="${!env_var:-}"
+  printf '%s\n' "${value:-$default_host}"
+}
+
+ssh_git_url() {
+  local host="$1"
+  local path="$2"
+  printf '%s:%s\n' "$host" "$path"
 }
 
 warn_or_fail_local_dirty "$ROOT" "iris-drive"
@@ -400,10 +434,11 @@ fi
 
 if [[ "$LIST_TARGETS" == "1" ]]; then
   for i in "${!LABELS[@]}"; do
-    printf '%s\t%s\t%s\tiris=%s\thashtree=%s\tfips=%s\n' \
+    printf '%s\t%s\t%s\tssh=%s\tiris=%s\thashtree=%s\tfips=%s\n' \
       "${LABELS[$i]}" \
       "${KINDS[$i]}" \
       "${HOSTS[$i]}" \
+      "${SSH_HOSTS[$i]}" \
       "${IRIS_BARES[$i]}" \
       "${HASHTREE_BARES[$i]}" \
       "${FIPS_BARES[$i]}"
@@ -414,16 +449,27 @@ fi
 detect_remote_overlay_ip() {
   local kind="$1"
   local host="$2"
+  local label="${3:-}"
+  local override_var=""
   local ip=""
+  if [[ -n "$label" ]]; then
+    override_var="IRIS_DRIVE_DEV_VM_$(printf '%s' "$label" | tr '[:lower:]-' '[:upper:]_')_NVPN_IP"
+    ip="${!override_var:-}"
+    if [[ -n "$ip" ]]; then
+      printf '%s\n' "${ip%%/*}"
+      return 0
+    fi
+  fi
   if [[ "$kind" == "windows" ]]; then
     ip="$(ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
+$TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 $ErrorActionPreference = "SilentlyContinue"
 $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
 if (-not $Nvpn) {
   $Candidate = Join-Path $HOME "src\nostr-vpn\target\debug\nvpn.exe"
   if (Test-Path $Candidate) { $Nvpn = $Candidate }
 }
-if ($Nvpn) {
+if (-not $TunnelIp -and $Nvpn) {
   try {
     $Status = & $Nvpn status --json | ConvertFrom-Json
     $Running = $true
@@ -431,9 +477,12 @@ if ($Nvpn) {
       $Running = [bool]$Status.daemon.running
     }
     if ($Running -and $Status.tunnel_ip) {
-      (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
+      $TunnelIp = (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
     }
   } catch {}
+}
+if ($TunnelIp) {
+  Write-Output $TunnelIp
 }
 REMOTE_PS
 )"
@@ -523,26 +572,26 @@ build_static_peer_hints() {
       ;;
   esac
 
-  for i in "${!LABELS[@]}"; do
-    ip="$(detect_remote_overlay_ip "${KINDS[$i]}" "${HOSTS[$i]}" || true)"
+  for i in "${!ALL_LABELS[@]}"; do
+    ip="$(detect_remote_overlay_ip "${ALL_KINDS[$i]}" "${ALL_SSH_HOSTS[$i]}" "${ALL_LABELS[$i]}" || true)"
     if [[ -z "$ip" ]]; then
-      log "warning: could not detect nvpn IP for ${LABELS[$i]} on ${HOSTS[$i]}; native FIPS may need WebRTC or relay fallback"
+      log "warning: could not detect nvpn IP for ${ALL_LABELS[$i]} on ${ALL_SSH_HOSTS[$i]}; native FIPS may need WebRTC or relay fallback"
       continue
     fi
-    OVERLAY_IPS[$i]="$ip"
+    ALL_OVERLAY_IPS[$i]="$ip"
   done
 
   for i in "${!LABELS[@]}"; do
     pieces=()
-    for j in "${!LABELS[@]}"; do
-      [[ "$i" == "$j" ]] && continue
-      ip="${OVERLAY_IPS[$j]:-}"
+    for j in "${!ALL_LABELS[@]}"; do
+      [[ "${LABELS[$i]}" == "${ALL_LABELS[$j]}" ]] && continue
+      ip="${ALL_OVERLAY_IPS[$j]:-}"
       [[ -n "$ip" ]] || continue
-      if [[ "$mode" == "auto" ]] && ! can_target_reach_overlay_ip "${KINDS[$i]}" "${HOSTS[$i]}" "$ip"; then
-        log "not using nvpn static FIPS hint ${LABELS[$i]} -> ${LABELS[$j]} ($ip); overlay address is not reachable from ${LABELS[$i]}"
+      if [[ "$mode" == "auto" ]] && ! can_target_reach_overlay_ip "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "$ip"; then
+        log "not using nvpn static FIPS hint ${LABELS[$i]} -> ${ALL_LABELS[$j]} ($ip); overlay address is not reachable from ${LABELS[$i]}"
         continue
       fi
-      key="$(target_peer_hint_key "${HOSTS[$j]}")"
+      key="$(target_peer_hint_key "${ALL_HOSTS[$j]}")"
       pieces+=("$key=$ip:$fips_port")
     done
 
@@ -562,16 +611,16 @@ build_static_peer_hints
 if [[ "$SKIP_PUSH" != "1" ]]; then
   for i in "${!LABELS[@]}"; do
     log "ensuring VM bare git repos exist for ${LABELS[$i]}"
-    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}"
-    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${HASHTREE_BARES[$i]}"
-    ensure_remote_bare_repo "${KINDS[$i]}" "${HOSTS[$i]}" "${FIPS_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${HASHTREE_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}"
 
-    log "pushing iris-drive HEAD to ${LABELS[$i]} (${IRIS_REMOTES[$i]}:$SYNC_BRANCH)"
-    git -C "$ROOT" push "${IRIS_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
-    log "pushing hashtree HEAD to ${LABELS[$i]} (${HASHTREE_REMOTES[$i]}:$SYNC_BRANCH)"
-    git -C "$HASHTREE_ROOT" push "${HASHTREE_REMOTES[$i]}" "+HEAD:refs/heads/$SYNC_BRANCH"
-    log "pushing fips HEAD to ${LABELS[$i]} (${FIPS_REMOTES[$i]}:$FIPS_SYNC_BRANCH)"
-    git -C "$FIPS_ROOT" push "${FIPS_REMOTES[$i]}" "+HEAD:refs/heads/$FIPS_SYNC_BRANCH"
+    log "pushing iris-drive HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${IRIS_BARES[$i]} $SYNC_BRANCH)"
+    git -C "$ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
+    log "pushing hashtree HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${HASHTREE_BARES[$i]} $SYNC_BRANCH)"
+    git -C "$HASHTREE_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${HASHTREE_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
+    log "pushing fips HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${FIPS_BARES[$i]} $FIPS_SYNC_BRANCH)"
+    git -C "$FIPS_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}")" "+HEAD:refs/heads/$FIPS_SYNC_BRANCH"
   done
 fi
 
@@ -2265,7 +2314,7 @@ print_connectivity_diagnostics() {
 
   for i in "${!LABELS[@]}"; do
     printf '[dev-vms] %s diagnostics:\n' "${LABELS[$i]}" >&2
-    if status="$(remote_status_json_retry "${KINDS[$i]}" "${HOSTS[$i]}" 3 0.5)"; then
+    if status="$(remote_status_json_retry "${KINDS[$i]}" "${SSH_HOSTS[$i]}" 3 0.5)"; then
       STATUS_JSON="$status" python3 <<'PY' | sed 's/^/[dev-vms]   /' >&2
 import json
 import os
@@ -2299,7 +2348,7 @@ PY
       printf '[dev-vms]   status=unavailable\n' >&2
     fi
 
-    remote_transport_diagnostics "${KINDS[$i]}" "${HOSTS[$i]}" \
+    remote_transport_diagnostics "${KINDS[$i]}" "${SSH_HOSTS[$i]}" \
       | sed 's/^/[dev-vms]   /' >&2 || true
   done
 }
@@ -2368,7 +2417,7 @@ check_dev_vm_connectivity() {
         expected+=("$(target_peer_hint_key "${HOSTS[$j]}")")
       done
 
-      if ! status="$(remote_status_json_retry "${KINDS[$i]}" "${HOSTS[$i]}" 3 0.5)"; then
+      if ! status="$(remote_status_json_retry "${KINDS[$i]}" "${SSH_HOSTS[$i]}" 3 0.5)"; then
         failures+=("${LABELS[$i]}: status unavailable")
         continue
       fi
@@ -2397,13 +2446,13 @@ check_dev_vm_connectivity() {
 }
 
 for i in "${!LABELS[@]}"; do
-  log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]}"
+  log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]} via ${SSH_HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"

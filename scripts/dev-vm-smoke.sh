@@ -72,16 +72,29 @@ remote_or_die() {
   die "set $env_var in $ENV_FILE or add a local git remote named $generic_name"
 }
 
+ssh_host_for_label() {
+  local label="$1"
+  local default_host="$2"
+  local env_var
+  local value
+  env_var="IRIS_DRIVE_DEV_VM_$(printf '%s' "$label" | tr '[:lower:]-' '[:upper:]_')_SSH_HOST"
+  value="${!env_var:-}"
+  printf '%s\n' "${value:-$default_host}"
+}
+
 MACOS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_MACOS_REMOTE macos)"
 UBUNTU_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE ubuntu)"
 WINDOWS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE windows)"
+MACOS_SSH_HOST="$(ssh_host_for_label macos "$MACOS_REMOTE")"
+UBUNTU_SSH_HOST="$(ssh_host_for_label ubuntu "$UBUNTU_REMOTE")"
+WINDOWS_SSH_HOST="$(ssh_host_for_label windows "$WINDOWS_REMOTE")"
 
 ps_single_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
 win_ps() {
-  ssh "$WINDOWS_REMOTE" \
+  ssh "$WINDOWS_SSH_HOST" \
     'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
 
@@ -90,11 +103,11 @@ win_idrive_json() {
   local ps_args=""
   local arg
   if [[ ${#args[@]} -eq 1 && "${args[0]}" == "status" ]]; then
-    ssh "$WINDOWS_REMOTE" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
+    ssh "$WINDOWS_SSH_HOST" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
     return
   fi
   if [[ ${#args[@]} -eq 2 && "${args[0]}" == "provider" && "${args[1]}" == "list" ]]; then
-    ssh "$WINDOWS_REMOTE" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" provider list"'
+    ssh "$WINDOWS_SSH_HOST" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" provider list"'
     return
   fi
   for arg in "${args[@]}"; do
@@ -114,7 +127,7 @@ REMOTE_PS
 
 macos_idrive_json() {
   local args=("$@")
-  ssh "$MACOS_REMOTE" 'bash -se' "${args[@]}" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "${args[@]}" <<'REMOTE_SH'
 set -Eeuo pipefail
 macos_config_dir() {
   if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
@@ -141,7 +154,7 @@ REMOTE_SH
 
 ubuntu_provider_has() {
   local path="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 "$HOME/src/iris-drive/target/debug/idrive" provider list \
@@ -161,7 +174,7 @@ macos_provider_has() {
 
 macos_visible_drive_has() {
   local path="$1"
-  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$MACOS_VISIBLE_PROBE_TIMEOUT" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$MACOS_VISIBLE_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 probe_timeout="$2"
@@ -436,7 +449,7 @@ wait_windows_disk_reparse() {
 
 wait_ubuntu_file_has() {
   local path="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 if command -v timeout >/dev/null 2>&1; then
@@ -449,7 +462,7 @@ REMOTE_SH
 
 wait_ubuntu_missing() {
   local path="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 if command -v timeout >/dev/null 2>&1; then
@@ -483,9 +496,9 @@ check_revisions() {
   local local_head
   local_head="$(git -C "$ROOT" rev-parse --short HEAD)"
   log "checking VM revisions against $local_head"
-  [[ "$(ssh "$UBUNTU_REMOTE" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
+  [[ "$(ssh "$UBUNTU_SSH_HOST" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
     || die "ubuntu VM is not on $local_head"
-  [[ "$(ssh "$MACOS_REMOTE" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
+  [[ "$(ssh "$MACOS_SSH_HOST" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
     || die "macOS VM is not on $local_head"
   [[ "$(win_ps <<'REMOTE_PS' | tr -d '\r'
 git -C (Join-Path $HOME "src\iris-drive") rev-parse --short HEAD
@@ -498,7 +511,7 @@ check_fips_online() {
   local ubuntu_status
   local macos_status
   local windows_status
-  ubuntu_status="$(ssh "$UBUNTU_REMOTE" '"$HOME/src/iris-drive/target/debug/idrive" status')"
+  ubuntu_status="$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" status')"
   macos_status="$(macos_idrive_json status)"
   windows_status="$(win_idrive_json status)"
   STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
@@ -528,7 +541,7 @@ PY
 
 check_provider_noise() {
   log "checking provider views for ignored trash paths"
-  assert_no_ignored_provider_paths ubuntu "$(ssh "$UBUNTU_REMOTE" '"$HOME/src/iris-drive/target/debug/idrive" provider list')"
+  assert_no_ignored_provider_paths ubuntu "$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" provider list')"
   assert_no_ignored_provider_paths macos "$(macos_idrive_json provider list)"
   assert_no_ignored_provider_paths windows "$(win_idrive_json provider list)"
 }
@@ -582,7 +595,7 @@ write_ubuntu_file() {
   local content="$2"
   local content_b64
   content_b64="$(base64_arg "$content")"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 content_b64="$2"
@@ -599,7 +612,7 @@ REMOTE_SH
 
 delete_ubuntu_path() {
   local path="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 if command -v timeout >/dev/null 2>&1; then
@@ -612,7 +625,7 @@ REMOTE_SH
 
 delete_ubuntu_provider_path() {
   local path="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$path" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 "$HOME/src/iris-drive/target/debug/idrive" provider delete "$path" >/dev/null
@@ -682,7 +695,7 @@ write_macos_provider_file() {
   local content="$2"
   local content_b64
   content_b64="$(base64_arg "$content")"
-  ssh "$MACOS_REMOTE" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 content_b64="$2"
@@ -733,19 +746,19 @@ REMOTE_PS
 }
 
 macos_app_log_line_count() {
-  ssh "$MACOS_REMOTE" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0'
+  ssh "$MACOS_SSH_HOST" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0'
 }
 
 macos_log_has_fileprovider_signal_after() {
   local before="$1"
-  ssh "$MACOS_REMOTE" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true" \
+  ssh "$MACOS_SSH_HOST" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true" \
     | grep -F "Iris Drive FileProvider signal working set ok" >/dev/null
 }
 
 ubuntu_start_directory_monitor() {
   local dir="$1"
   local token="$2"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$dir" "$token" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$token" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
 token="$2"
@@ -762,7 +775,7 @@ REMOTE_SH
 ubuntu_monitor_saw_any() {
   local token="$1"
   shift
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" "$@" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$token" "$@" <<'REMOTE_SH'
 set -Eeuo pipefail
 token="$1"
 shift
@@ -775,7 +788,7 @@ REMOTE_SH
 
 ubuntu_stop_directory_monitor() {
   local token="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$token" <<'REMOTE_SH' || true
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$token" <<'REMOTE_SH' || true
 set -Eeuo pipefail
 token="$1"
 pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
@@ -787,7 +800,7 @@ REMOTE_SH
 
 ubuntu_visible_manifest() {
   local dir="$1"
-  ssh "$UBUNTU_REMOTE" 'bash -se' "$dir" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
 root="$HOME/Iris Drive/$dir"
@@ -830,7 +843,7 @@ REMOTE_SH
 
 macos_visible_manifest() {
   local dir="$1"
-  ssh "$MACOS_REMOTE" 'bash -se' "$dir" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$dir" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
 python3 - "$HOME/Library/CloudStorage" "$dir" <<'PY'
@@ -1110,8 +1123,8 @@ run_macos_open_smoke() {
 
   log "requesting macOS Open Drive Folder"
   local before
-  before="$(ssh "$MACOS_REMOTE" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0')"
-  ssh "$MACOS_REMOTE" '/usr/bin/swift -' <<'REMOTE_SWIFT' >/dev/null
+  before="$(ssh "$MACOS_SSH_HOST" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0')"
+  ssh "$MACOS_SSH_HOST" '/usr/bin/swift -' <<'REMOTE_SWIFT' >/dev/null
 import Foundation
 
 DistributedNotificationCenter.default().postNotificationName(
@@ -1127,7 +1140,7 @@ REMOTE_SWIFT
   start="$(date +%s)"
   while true; do
     local recent
-    recent="$(ssh "$MACOS_REMOTE" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true")"
+    recent="$(ssh "$MACOS_SSH_HOST" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true")"
     if grep -F "Iris Drive FileProvider open failed" <<<"$recent" >/dev/null ||
       grep -F "Iris Drive failed to open mounted drive folder" <<<"$recent" >/dev/null; then
       printf '%s\n' "$recent" >&2
