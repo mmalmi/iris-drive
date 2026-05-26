@@ -352,14 +352,20 @@ impl DirectRootExchange {
     }
 
     async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
-        let mut peers = sync
-            .connected_peer_ids()
-            .await
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        peers.extend(sync.mesh_peer_ids().await);
-        if peers != self.known_mesh_peers {
-            self.known_mesh_peers = peers;
+        let authorized_peers = sync.authorized_peer_ids().await;
+        let mesh_peers = sync.mesh_peer_ids().await;
+        self.refresh_known_root_peers(authorized_peers, mesh_peers)
+    }
+
+    fn refresh_known_root_peers(
+        &mut self,
+        authorized_peers: impl IntoIterator<Item = String>,
+        mesh_peers: impl IntoIterator<Item = String>,
+    ) -> bool {
+        let mut root_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        root_peers.extend(mesh_peers);
+        if root_peers != self.known_mesh_peers {
+            self.known_mesh_peers = root_peers;
             self.published_keys.clear();
             return true;
         }
@@ -1184,6 +1190,25 @@ mod tests {
 
         assert_eq!(event.event_id, first.event_id);
         assert_eq!(event.json, first.json);
+    }
+
+    #[test]
+    fn direct_root_peer_churn_does_not_clear_republish_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:7:root";
+        let now = std::time::Instant::now();
+
+        assert!(exchange.refresh_known_root_peers(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(exchange.should_publish_key(key, now));
+
+        assert!(!exchange.refresh_known_root_peers(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_secs(1)));
     }
 
     #[test]
