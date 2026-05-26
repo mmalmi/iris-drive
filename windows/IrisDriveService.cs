@@ -139,7 +139,8 @@ public sealed class IrisDriveService
             entries,
             ReadProviderFile,
             QueueProviderDelete,
-            QueueProviderRename);
+            QueueProviderRename,
+            previousState);
         WindowsCloudFiles.DebugLog(
             $"prepare entries={entries.Count} native={preparation.NativeSyncRootReady} " +
             $"placeholders={preparation.PlaceholderCount} skipped={preparation.SkippedLocalItemCount} " +

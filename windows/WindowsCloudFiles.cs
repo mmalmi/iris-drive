@@ -646,7 +646,8 @@ public static partial class WindowsCloudFiles
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         Func<string, byte[]> readFile,
         Action<string>? deletePath = null,
-        Action<string, string>? renamePath = null)
+        Action<string, string>? renamePath = null,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null)
     {
         var path = SyncRootPath;
         Directory.CreateDirectory(path);
@@ -654,7 +655,10 @@ public static partial class WindowsCloudFiles
         try
         {
             RegisterSyncRoot(path);
-            var population = PopulatePlaceholders(path, entries);
+            var population = PopulatePlaceholders(
+                path,
+                entries,
+                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
             NotifyShellDirectoryChanged(path);
 
             lock (ConnectionLock)
@@ -823,7 +827,8 @@ public static partial class WindowsCloudFiles
 
     private static PlaceholderPopulationReport PopulatePlaceholders(
         string syncRootPath,
-        IReadOnlyCollection<WindowsCloudFileEntry> entries)
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
         var placeholderCount = 0;
         var skippedLocalItems = 0;
@@ -831,10 +836,15 @@ public static partial class WindowsCloudFiles
         var placeholderEntries = PlaceholderEntries(entries).ToArray();
         var pendingDeletes = PendingProviderDeletePaths();
         var pendingPreserves = PendingProviderPreservePaths();
+        var locallyMissingMaterialized = MissingMaterializedLocalPaths(
+            syncRootPath,
+            placeholderEntries,
+            previousState);
         var expectedPaths = new HashSet<string>(
             placeholderEntries.Select(entry => entry.Path)
                 .Concat(pendingDeletes)
-                .Concat(pendingPreserves),
+                .Concat(pendingPreserves)
+                .Where(path => !locallyMissingMaterialized.Contains(path)),
             StringComparer.Ordinal);
 
         RemoveIgnoredLocalItems(syncRootPath);
@@ -845,6 +855,13 @@ public static partial class WindowsCloudFiles
             if (pendingDeletes.Contains(entry.Path))
             {
                 DebugLogPath(entry.Path, "skip pending provider mutation");
+                continue;
+            }
+
+            if (locallyMissingMaterialized.Contains(entry.Path))
+            {
+                skippedLocalItems++;
+                DebugLogPath(entry.Path, "skip previously materialized local file missing from disk");
                 continue;
             }
 
@@ -906,6 +923,45 @@ public static partial class WindowsCloudFiles
             placeholderCount,
             skippedLocalItems,
             failedPlaceholderCount);
+    }
+
+    private static HashSet<string> MissingMaterializedLocalPaths(
+        string syncRootPath,
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
+    {
+        var providerFiles = entries
+            .Where(entry => !entry.IsDirectory)
+            .Select(entry => entry.Path)
+            .ToHashSet(StringComparer.Ordinal);
+        var missing = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var previous in previousState)
+        {
+            var path = NormalizeVirtualPath(previous.Path);
+            if (string.IsNullOrEmpty(path) ||
+                previous.IsDirectory ||
+                string.IsNullOrWhiteSpace(previous.Sha256) ||
+                !providerFiles.Contains(path))
+            {
+                continue;
+            }
+
+            var fullPath = Path.Combine(syncRootPath, FromVirtualPath(path));
+            try
+            {
+                if ((!File.Exists(fullPath) && !Directory.Exists(fullPath)) ||
+                    ExistingPlaceholder(fullPath))
+                {
+                    missing.Add(path);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return missing;
     }
 
     private static void NotifyShellDirectoryChanged(string path)

@@ -1273,7 +1273,14 @@ fn windows_cloud_missing_previous_local_state_paths(
         }
         let full_path = windows_cloud_full_path(root, &path);
         match std::fs::symlink_metadata(&full_path) {
-            Ok(_) => {}
+            Ok(metadata) => {
+                if windows_cloud_previous_local_state_reparse_counts_as_missing(
+                    previous,
+                    windows_cloud_metadata_is_reparse_point(&metadata),
+                ) {
+                    paths.push(path);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 paths.push(path);
             }
@@ -1290,6 +1297,13 @@ fn windows_cloud_missing_previous_local_state_paths(
             .then_with(|| b.cmp(a))
     });
     Ok(paths)
+}
+
+fn windows_cloud_previous_local_state_reparse_counts_as_missing(
+    previous: &WindowsCloudLocalStateEntry,
+    is_reparse_point: bool,
+) -> bool {
+    is_reparse_point && !previous.is_directory() && previous.sha256.is_some()
 }
 
 fn load_windows_cloud_provider_path_cache(config_dir: &Path) -> BTreeSet<String> {
@@ -2719,6 +2733,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(missing, vec!["renames/src.txt".to_string()]);
+    }
+
+    #[test]
+    fn windows_cloud_recreated_placeholder_counts_as_missing_local_file() {
+        let materialized = WindowsCloudLocalStateEntry {
+            path: "renames/src.txt".to_string(),
+            kind: "file".to_string(),
+            size: 7,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+        };
+        let placeholder = WindowsCloudLocalStateEntry {
+            path: "renames/src.txt".to_string(),
+            kind: "file".to_string(),
+            size: 7,
+            sha256: None,
+        };
+        let directory = WindowsCloudLocalStateEntry {
+            path: "renames".to_string(),
+            kind: "directory".to_string(),
+            size: 0,
+            sha256: None,
+        };
+
+        assert!(windows_cloud_previous_local_state_reparse_counts_as_missing(&materialized, true));
+        assert!(
+            !windows_cloud_previous_local_state_reparse_counts_as_missing(&materialized, false)
+        );
+        assert!(!windows_cloud_previous_local_state_reparse_counts_as_missing(&placeholder, true));
+        assert!(!windows_cloud_previous_local_state_reparse_counts_as_missing(&directory, true));
     }
 
     #[test]
