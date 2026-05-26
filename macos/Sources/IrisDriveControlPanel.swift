@@ -821,7 +821,11 @@ private struct PeerRow: View {
             } label: {
                 HStack(spacing: 12) {
                     Circle()
-                        .fill(peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5))
+                        .fill(
+                            peer.isCurrentDevice || peer.fipsOnline
+                                ? Color.green
+                                : Color.secondary.opacity(0.5)
+                        )
                         .frame(width: 8, height: 8)
                     Image(systemName: peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
                         .frame(width: 24)
