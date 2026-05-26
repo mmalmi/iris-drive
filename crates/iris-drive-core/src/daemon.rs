@@ -308,6 +308,7 @@ impl Daemon {
         let root_meta = self.root_meta_for_import(now);
         let mut scoped_tombstone_paths = None;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
+            let phase = std::time::Instant::now();
             let delta = local_visible_root_for_mount_import(
                 &self.tree,
                 &root,
@@ -316,6 +317,10 @@ impl Daemon {
                 tombstone_paths,
             )
             .await?;
+            tracing::debug!(
+                elapsed_ms = phase.elapsed().as_millis(),
+                "visible root import built local delta"
+            );
             scoped_tombstone_paths = Some(delta.tombstone_paths);
             delta.root
         } else {
@@ -325,7 +330,8 @@ impl Daemon {
             .as_ref()
             .map_or(tombstone_paths, |paths| Some(paths));
         let root_cid = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
-            layer_history_and_meta_on_root_with_tombstone_base_and_paths(
+            let phase = std::time::Instant::now();
+            let root_cid = layer_history_and_meta_on_root_with_tombstone_base_and_paths(
                 &self.tree,
                 import_root,
                 previous_root.as_ref(),
@@ -334,16 +340,27 @@ impl Daemon {
                 root_meta.as_ref(),
                 tombstone_paths,
             )
-            .await?
+            .await?;
+            tracing::debug!(
+                elapsed_ms = phase.elapsed().as_millis(),
+                "visible root import layered metadata"
+            );
+            root_cid
         } else {
-            layer_history_and_meta_on_root(
+            let phase = std::time::Instant::now();
+            let root_cid = layer_history_and_meta_on_root(
                 &self.tree,
                 import_root,
                 previous_root.as_ref(),
                 now,
                 root_meta.as_ref(),
             )
-            .await?
+            .await?;
+            tracing::debug!(
+                elapsed_ms = phase.elapsed().as_millis(),
+                "visible root import layered metadata"
+            );
+            root_cid
         };
 
         self.report_and_record_root(root_cid, None, root_meta.as_ref(), now)
@@ -359,21 +376,41 @@ impl Daemon {
     ) -> Result<ImportReport, DaemonError> {
         // Live-file count excludes the internal metadata directory from the
         // report.
+        let phase = std::time::Instant::now();
         let listing = self
             .tree
             .list_directory(&root_cid)
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "record root listed top-level entries"
+        );
         let top_level_entries = listing
             .iter()
             .filter(|e| e.name != crate::merge::META_DIR)
             .count();
+        let phase = std::time::Instant::now();
         let (files, _tombstones) = crate::merge::walk_device_tree(&self.tree, &root_cid)
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "record root walked device tree"
+        );
 
+        let phase = std::time::Instant::now();
         self.update_primary_drive(&root_cid, root_meta, published_at)?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "record root updated config"
+        );
+        let phase = std::time::Instant::now();
         self.persist_sync_cache_with_current_base().await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "record root persisted sync cache"
+        );
 
         Ok(ImportReport {
             root_cid: root_cid.to_string(),

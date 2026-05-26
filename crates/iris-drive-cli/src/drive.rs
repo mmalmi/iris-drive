@@ -181,17 +181,37 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         .build()
         .context("building tokio runtime")?;
     runtime.block_on(async {
+        let started = std::time::Instant::now();
         let mut daemon = Daemon::open(config_dir)
             .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "provider command opened daemon"
+        );
+        let phase = std::time::Instant::now();
         let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
             .await
             .context("building virtual provider root")?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "provider command built merged root"
+        );
+        let phase = std::time::Instant::now();
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "provider command opened provider root"
+        );
 
         match command {
             ProviderCmd::List => {
+                let phase = std::time::Instant::now();
                 let entries = provider_entries(&provider).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command listed entries"
+                );
                 println!(
                     "{}",
                     json!({
@@ -229,7 +249,12 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 let path = normalize_provider_path(&path)?;
                 let bytes = std::fs::read(&source)
                     .with_context(|| format!("reading {}", source.display()))?;
+                let phase = std::time::Instant::now();
                 write_provider_file(&provider, &path, &bytes).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command wrote file"
+                );
                 print_provider_mutation(
                     &mut daemon,
                     &provider,
@@ -240,7 +265,12 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::Mkdir { path } => {
                 let path = normalize_provider_path(&path)?;
+                let phase = std::time::Instant::now();
                 create_provider_dir(&provider, &path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command created directory"
+                );
                 print_provider_mutation(
                     &mut daemon,
                     &provider,
@@ -251,7 +281,12 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::Delete { path } => {
                 let path = normalize_provider_path(&path)?;
+                let phase = std::time::Instant::now();
                 delete_provider_path(&provider, &path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command deleted path"
+                );
                 print_provider_mutation(
                     &mut daemon,
                     &provider,
@@ -263,7 +298,12 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             ProviderCmd::Rename { old_path, new_path } => {
                 let old_path = normalize_provider_path(&old_path)?;
                 let new_path = normalize_provider_path(&new_path)?;
+                let phase = std::time::Instant::now();
                 rename_provider_path(&provider, &old_path, &new_path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command renamed path"
+                );
                 print_provider_mutation(
                     &mut daemon,
                     &provider,
@@ -441,8 +481,18 @@ async fn print_provider_mutation(
     changed_path: &str,
     tombstone_base_root: Option<Cid>,
 ) -> Result<()> {
+    let phase = std::time::Instant::now();
     let root = provider.current_root().await;
+    tracing::debug!(
+        elapsed_ms = phase.elapsed().as_millis(),
+        "provider command read current root"
+    );
+    let phase = std::time::Instant::now();
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    tracing::debug!(
+        elapsed_ms = phase.elapsed().as_millis(),
+        "provider command imported provider root"
+    );
     println!(
         "{}",
         json!({
