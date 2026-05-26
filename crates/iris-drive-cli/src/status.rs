@@ -824,7 +824,11 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
     let nostr_discovery_app = fips_status
         .and_then(|status| status.get("nostr_discovery_app"))
         .and_then(Value::as_str)
-        .or_else(|| fips_status.map(|_| iris_drive_core::fips_sync::FIPS_NOSTR_DISCOVERY_APP));
+        .or_else(|| {
+            fips_status
+                .and_then(|status| status.get("discovery_scope"))
+                .and_then(Value::as_str)
+        });
 
     json!({
         "enabled": fips_status.is_some(),
