@@ -88,7 +88,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
     local_store: Arc<L>,
     receiver_task: JoinHandle<()>,
-    mesh_pubsub: FipsMeshPubsub<L>,
+    mesh_pubsub: Arc<FipsMeshPubsub<L>>,
     endpoint_npub: String,
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
@@ -132,14 +132,16 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             )
             .await;
         let receiver_task = transport.start();
-        let mesh_pubsub = transport
-            .start_mesh_pubsub(
-                local_store.clone(),
-                endpoint.local_peer_id.clone(),
-                FIPS_REQUEST_TIMEOUT,
-            )
-            .await
-            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
+        let mesh_pubsub = Arc::new(
+            transport
+                .start_mesh_pubsub(
+                    local_store.clone(),
+                    endpoint.local_peer_id.clone(),
+                    FIPS_REQUEST_TIMEOUT,
+                )
+                .await
+                .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
+        );
 
         Ok(Self {
             transport,
@@ -253,7 +255,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
-        download_tree_with_transport(self.local_store.clone(), root, self.transport.clone()).await
+        download_tree_with_mesh(self.local_store.clone(), root, self.mesh_pubsub.clone()).await
     }
 }
 
@@ -375,6 +377,31 @@ where
     L: Store + Send + Sync + 'static,
 {
     let writeback = Arc::new(WriteBackFipsStore::new(local_store, transport));
+    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
+    let hashes = collect_hashes(&tree, root, 4).await?;
+    if writeback.missing() > 0 {
+        let detail = writeback
+            .first_missing()
+            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
+        return Err(FipsSyncError::MissingOnFips(detail));
+    }
+
+    Ok(DownloadReport {
+        total_hashes: hashes.len(),
+        fetched: writeback.fetched(),
+        already_local: writeback.already_local(),
+    })
+}
+
+pub async fn download_tree_with_mesh<L>(
+    local_store: Arc<L>,
+    root: &Cid,
+    mesh: Arc<FipsMeshPubsub<L>>,
+) -> Result<DownloadReport, FipsSyncError>
+where
+    L: Store + Send + Sync + 'static,
+{
+    let writeback = Arc::new(WriteBackMeshStore::new(local_store, mesh));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
     let hashes = collect_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
@@ -618,6 +645,91 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackFipsStore<L> {
     }
 }
 
+struct WriteBackMeshStore<L: Store + Send + Sync + 'static> {
+    local: Arc<L>,
+    mesh: Arc<FipsMeshPubsub<L>>,
+    fetched: std::sync::atomic::AtomicUsize,
+    already_local: std::sync::atomic::AtomicUsize,
+    missing: std::sync::atomic::AtomicUsize,
+    first_missing: Mutex<Option<String>>,
+}
+
+impl<L: Store + Send + Sync + 'static> WriteBackMeshStore<L> {
+    fn new(local: Arc<L>, mesh: Arc<FipsMeshPubsub<L>>) -> Self {
+        Self {
+            local,
+            mesh,
+            fetched: std::sync::atomic::AtomicUsize::new(0),
+            already_local: std::sync::atomic::AtomicUsize::new(0),
+            missing: std::sync::atomic::AtomicUsize::new(0),
+            first_missing: Mutex::new(None),
+        }
+    }
+
+    fn fetched(&self) -> usize {
+        self.fetched.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn already_local(&self) -> usize {
+        self.already_local
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn missing(&self) -> usize {
+        self.missing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn first_missing(&self) -> Option<String> {
+        self.first_missing
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+}
+
+#[async_trait]
+impl<L: Store + Send + Sync + 'static> Store for WriteBackMeshStore<L> {
+    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
+        self.local.put(hash, data).await
+    }
+
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        if let Some(bytes) = self.local.get(hash).await? {
+            self.already_local
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(Some(bytes));
+        }
+
+        if let Some(bytes) = self.mesh.get(hash).await? {
+            self.fetched
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(Some(bytes))
+        } else {
+            let hex = to_hex(hash);
+            if self
+                .missing
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0
+                && let Ok(mut first_missing) = self.first_missing.lock()
+            {
+                *first_missing = Some(hex);
+            }
+            Ok(None)
+        }
+    }
+
+    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+        if self.local.has(hash).await? {
+            return Ok(true);
+        }
+        self.mesh.has(hash).await
+    }
+
+    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
+        self.local.delete(hash).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,6 +744,7 @@ mod tests {
                 std::collections::HashMap<String, mpsc::UnboundedSender<FipsEndpointPacket>>,
             >,
         >,
+        links: Option<Arc<TokioMutex<std::collections::BTreeMap<String, Vec<String>>>>>,
         rx: TokioMutex<mpsc::UnboundedReceiver<FipsEndpointPacket>>,
     }
 
@@ -649,14 +762,63 @@ mod tests {
             Arc::new(Self {
                 id: id.to_string(),
                 network,
+                links: None,
                 rx: TokioMutex::new(rx),
             })
+        }
+
+        async fn new_linked(
+            id: &str,
+            network: Arc<
+                TokioMutex<
+                    std::collections::HashMap<String, mpsc::UnboundedSender<FipsEndpointPacket>>,
+                >,
+            >,
+            links: Arc<TokioMutex<std::collections::BTreeMap<String, Vec<String>>>>,
+        ) -> Arc<Self> {
+            let (tx, rx) = mpsc::unbounded_channel();
+            network.lock().await.insert(id.to_string(), tx);
+            Arc::new(Self {
+                id: id.to_string(),
+                network,
+                links: Some(links),
+                rx: TokioMutex::new(rx),
+            })
+        }
+
+        async fn visible_peers(&self) -> Vec<String> {
+            if let Some(links) = self.links.as_ref() {
+                return links
+                    .lock()
+                    .await
+                    .get(&self.id)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            self.network
+                .lock()
+                .await
+                .keys()
+                .filter(|id| *id != &self.id)
+                .cloned()
+                .collect()
         }
     }
 
     #[async_trait]
     impl FipsEndpointIo for FakeEndpoint {
         async fn send(&self, peer_id: &str, data: Vec<u8>) -> Result<(), FipsTransportError> {
+            if !self
+                .visible_peers()
+                .await
+                .iter()
+                .any(|peer| peer == peer_id)
+            {
+                return Err(FipsTransportError::Send(format!(
+                    "peer {peer_id} is not linked from {}",
+                    self.id
+                )));
+            }
             let tx = self
                 .network
                 .lock()
@@ -676,13 +838,7 @@ mod tests {
         }
 
         async fn peer_ids(&self) -> Vec<String> {
-            self.network
-                .lock()
-                .await
-                .keys()
-                .filter(|id| *id != &self.id)
-                .cloned()
-                .collect()
+            self.visible_peers().await
         }
 
         fn local_peer_id(&self) -> Option<String> {
@@ -733,6 +889,126 @@ mod tests {
         assert!(target_store.has(&file_cid.hash).await.unwrap());
 
         source_task.abort();
+        target_task.abort();
+    }
+
+    async fn wait_for_mesh_neighbors(
+        mesh: &FipsMeshPubsub<MemoryStore>,
+        expected: &[&str],
+    ) -> bool {
+        for _ in 0..50 {
+            let peers = mesh.peer_ids().await;
+            if expected
+                .iter()
+                .all(|expected_peer| peers.iter().any(|peer| peer == expected_peer))
+            {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
+        let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
+        let links = Arc::new(TokioMutex::new(std::collections::BTreeMap::from([
+            ("target".to_string(), vec!["relay".to_string()]),
+            (
+                "relay".to_string(),
+                vec!["target".to_string(), "source".to_string()],
+            ),
+            ("source".to_string(), vec!["relay".to_string()]),
+        ])));
+        let source_endpoint =
+            FakeEndpoint::new_linked("source", network.clone(), links.clone()).await;
+        let relay_endpoint =
+            FakeEndpoint::new_linked("relay", network.clone(), links.clone()).await;
+        let target_endpoint = FakeEndpoint::new_linked("target", network, links).await;
+
+        let source_store = Arc::new(MemoryStore::new());
+        let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
+        let (file_cid, _) = source_tree.put(b"hello through mesh").await.unwrap();
+        let root_cid = source_tree
+            .put_directory(vec![DirEntry {
+                name: "hello.txt".to_string(),
+                hash: file_cid.hash,
+                key: file_cid.key,
+                link_type: LinkType::File,
+                size: 18,
+                meta: None,
+            }])
+            .await
+            .unwrap();
+
+        let source_transport = Arc::new(HashtreeFipsTransport::new(
+            source_endpoint,
+            source_store.clone(),
+        ));
+        let relay_store = Arc::new(MemoryStore::new());
+        let relay_transport = Arc::new(HashtreeFipsTransport::new(
+            relay_endpoint,
+            relay_store.clone(),
+        ));
+        let target_store = Arc::new(MemoryStore::new());
+        let target_transport = Arc::new(HashtreeFipsTransport::new(
+            target_endpoint,
+            target_store.clone(),
+        ));
+        target_transport
+            .set_peers(vec!["source".to_string(), "relay".to_string()])
+            .await;
+        let source_task = source_transport.start();
+        let relay_task = relay_transport.start();
+        let target_task = target_transport.start();
+        let source_mesh = Arc::new(
+            source_transport
+                .start_mesh_pubsub(
+                    source_store.clone(),
+                    "source".to_string(),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap(),
+        );
+        let relay_mesh = Arc::new(
+            relay_transport
+                .start_mesh_pubsub(relay_store, "relay".to_string(), Duration::from_secs(2))
+                .await
+                .unwrap(),
+        );
+        let target_mesh = Arc::new(
+            target_transport
+                .start_mesh_pubsub(
+                    target_store.clone(),
+                    "target".to_string(),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap(),
+        );
+
+        assert!(wait_for_mesh_neighbors(&target_mesh, &["relay"]).await);
+        assert!(wait_for_mesh_neighbors(&relay_mesh, &["source", "target"]).await);
+        assert!(wait_for_mesh_neighbors(&source_mesh, &["relay"]).await);
+        assert!(
+            download_tree_with_transport(target_store.clone(), &root_cid, target_transport)
+                .await
+                .is_err(),
+            "raw FIPS transport should not fetch through an indirect relay"
+        );
+
+        let report = download_tree_with_mesh(target_store.clone(), &root_cid, target_mesh)
+            .await
+            .unwrap();
+
+        assert_eq!(report.fetched, 2);
+        assert_eq!(report.already_local, 0);
+        assert!(target_store.has(&root_cid.hash).await.unwrap());
+        assert!(target_store.has(&file_cid.hash).await.unwrap());
+
+        source_task.abort();
+        relay_task.abort();
         target_task.abort();
     }
 
