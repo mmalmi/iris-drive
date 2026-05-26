@@ -15,8 +15,8 @@ use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
 use crate::merge::{
-    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, TOMBSTONE_PREFIX,
-    WHOLE_FILE_HASH_META_KEY, walk_device_tree,
+    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, WHOLE_FILE_HASH_META_KEY,
+    walk_device_tree,
 };
 use crate::root_meta::DriveRootMeta;
 
@@ -905,34 +905,72 @@ async fn layer_tombstones<S: Store>(
     mut root: Cid,
     tombstones: &BTreeMap<String, i64>,
 ) -> Result<Cid, IndexError> {
-    // Gather every unique ancestor directory path under .tombstones/.
-    // The BTreeSet ordering puts shorter prefixes before their children,
-    // so creating them in iteration order guarantees parents exist
-    // before each set_entry call.
-    let mut ancestor_dirs: BTreeSet<Vec<String>> = BTreeSet::new();
-    for orig_path in tombstones.keys() {
-        let full = format!("{TOMBSTONE_PREFIX}/{orig_path}");
-        let segs: Vec<&str> = full.split('/').filter(|s| !s.is_empty()).collect();
-        for depth in 1..segs.len() {
-            ancestor_dirs.insert(segs[..depth].iter().map(|s| (*s).to_string()).collect());
+    let mut tombstone_tree = TombstoneDir::default();
+    for (orig_path, ts) in tombstones {
+        tombstone_tree.insert(orig_path, *ts);
+    }
+    let tombstone_root = materialize_tombstone_dir(tree, &tombstone_tree).await?;
+    let meta_root = tree
+        .put_directory(vec![
+            DirEntry::from_cid("tombstones", &tombstone_root).with_link_type(LinkType::Dir),
+        ])
+        .await?;
+    root = tree
+        .set_entry(&root, &[], META_DIR, &meta_root, 0, LinkType::Dir)
+        .await?;
+    Ok(root)
+}
+
+#[derive(Default)]
+struct TombstoneDir {
+    dirs: BTreeMap<String, TombstoneDir>,
+    files: BTreeMap<String, i64>,
+}
+
+impl TombstoneDir {
+    fn insert(&mut self, path: &str, tombstoned_at: i64) {
+        let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        self.insert_parts(&parts, tombstoned_at);
+    }
+
+    fn insert_parts(&mut self, parts: &[&str], tombstoned_at: i64) {
+        match parts {
+            [] => {}
+            [name] => {
+                self.files.insert((*name).to_string(), tombstoned_at);
+            }
+            [dir, rest @ ..] => {
+                self.dirs
+                    .entry((*dir).to_string())
+                    .or_default()
+                    .insert_parts(rest, tombstoned_at);
+            }
         }
     }
-    for dir_path in &ancestor_dirs {
-        root = ensure_dir(tree, &root, dir_path).await?;
-    }
-    for (orig_path, ts) in tombstones {
-        let full = format!("{TOMBSTONE_PREFIX}/{orig_path}");
-        let segs: Vec<&str> = full.split('/').filter(|s| !s.is_empty()).collect();
-        let (name, parent_segs) = segs
-            .split_last()
-            .expect("tombstone path always has at least one segment");
-        let bytes = ts.to_string().into_bytes();
-        let (cid, size) = tree.put(&bytes).await?;
-        root = tree
-            .set_entry(&root, parent_segs, name, &cid, size, LinkType::Blob)
-            .await?;
-    }
-    Ok(root)
+}
+
+fn materialize_tombstone_dir<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir: &'a TombstoneDir,
+) -> futures::future::BoxFuture<'a, Result<Cid, IndexError>> {
+    Box::pin(async move {
+        let mut entries = Vec::with_capacity(dir.dirs.len() + dir.files.len());
+        for (name, child) in &dir.dirs {
+            let cid = materialize_tombstone_dir(tree, child).await?;
+            entries.push(DirEntry::from_cid(name, &cid).with_link_type(LinkType::Dir));
+        }
+        for (name, tombstoned_at) in &dir.files {
+            let bytes = tombstoned_at.to_string().into_bytes();
+            let (cid, size) = tree.put(&bytes).await?;
+            entries.push(
+                DirEntry::from_cid(name, &cid)
+                    .with_size(size)
+                    .with_link_type(LinkType::Blob),
+            );
+        }
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(tree.put_directory(entries).await?)
+    })
 }
 
 /// Create `dir_path` as a directory under `root` if it isn't already.
