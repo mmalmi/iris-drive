@@ -1546,7 +1546,7 @@ run_macos() {
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
-  if ! idrive_provider_list_retry "$idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 8 0.5; then
+  if ! idrive_provider_list_retry "$idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 120 1; then
     log "macOS virtual provider list failed"
     cat /tmp/iris-drive-macos-provider-list.json >&2 2>/dev/null || true
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true

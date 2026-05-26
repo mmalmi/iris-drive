@@ -192,6 +192,17 @@ pub(crate) fn cmd_daemon(
 
         let startup_config = config.clone();
         let startup_state = state.clone();
+        for root_cid in startup_root_cids_needing_sync(config_dir, &config) {
+            spawn_root_apply_followup(
+                config_dir.to_path_buf(),
+                config.clone(),
+                Some(root_cid),
+                fips_blocks.clone(),
+                true,
+                "startup_root_sync",
+                mount_refresh_tx.clone(),
+            );
+        }
         spawn_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
@@ -2263,6 +2274,19 @@ fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
         .is_some()
 }
 
+fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<String> {
+    config
+        .drives
+        .iter()
+        .flat_map(|drive| drive.device_roots.values())
+        .filter(|root| !root.materialized_only)
+        .filter(|root| !root_has_successful_block_sync(config_dir, &root.root_cid))
+        .map(|root| root.root_cid.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 pub(crate) fn spawn_root_apply_followup(
     config_dir: PathBuf,
     config: AppConfig,
@@ -3159,6 +3183,45 @@ mod tests {
                 materialize: true,
             }
         );
+    }
+
+    #[test]
+    fn startup_root_sync_collects_unsynced_non_materialized_roots() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let synced = DeviceRootRef::legacy("already-synced", 10, 1);
+        let needs_sync = DeviceRootRef::legacy("needs-sync", 20, 1);
+        let duplicate = DeviceRootRef::legacy("needs-sync", 21, 1);
+        let mut materialized = DeviceRootRef::legacy("materialized-only", 30, 1);
+        materialized.materialized_only = true;
+        let mut drive = Drive {
+            owner_pubkey: "owner".to_string(),
+            drive_id: PRIMARY_DRIVE_ID.to_string(),
+            display_name: "My Drive".to_string(),
+            role: DriveRole::Owner,
+            device_roots: BTreeMap::new(),
+            last_root_cid: None,
+            key_hex: None,
+        };
+        drive.device_roots.insert("device-a".to_string(), synced);
+        drive
+            .device_roots
+            .insert("device-b".to_string(), needs_sync);
+        drive.device_roots.insert("device-c".to_string(), duplicate);
+        drive
+            .device_roots
+            .insert("device-d".to_string(), materialized);
+        let mut config = AppConfig::default();
+        config.drives.push(drive);
+        record_block_sync(
+            config_dir.path(),
+            "already-synced",
+            "fips",
+            &DownloadReport::default(),
+        );
+
+        let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
+
+        assert_eq!(roots, vec!["needs-sync".to_string()]);
     }
 
     #[tokio::test]
