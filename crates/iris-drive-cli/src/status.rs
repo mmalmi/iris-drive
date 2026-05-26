@@ -855,6 +855,12 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
             .and_then(|status| status.get("webrtc_enabled"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        "webrtc_max_connections": fips_status
+            .and_then(|status| status.get("webrtc_max_connections"))
+            .and_then(Value::as_u64),
+        "open_discovery_max_pending": fips_status
+            .and_then(|status| status.get("open_discovery_max_pending"))
+            .and_then(Value::as_u64),
         "mesh_peer_count": fips_status
             .and_then(|status| status.get("mesh_peer_count"))
             .and_then(Value::as_u64)

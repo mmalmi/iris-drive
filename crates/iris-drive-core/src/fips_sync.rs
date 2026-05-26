@@ -32,7 +32,7 @@ const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
-const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 2;
+const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 pub const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
@@ -1377,7 +1377,7 @@ mod tests {
         let settings = FipsTransportSettings::default();
 
         assert_eq!(settings.webrtc_max_connections, 16);
-        assert_eq!(settings.open_discovery_max_pending, 2);
+        assert_eq!(settings.open_discovery_max_pending, 0);
         assert_eq!(
             settings.bootstrap_peer_hints.len(),
             DEFAULT_FIPS_BOOTSTRAP_PEERS.len()

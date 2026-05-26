@@ -1999,6 +1999,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "udp_external_addr": transport.udp_external_addr.as_deref(),
         "webrtc_enabled": transport.enable_webrtc,
         "webrtc_max_connections": transport.webrtc_max_connections,
+        "open_discovery_max_pending": transport.open_discovery_max_pending,
         "mesh_peer_count": sync.mesh_peer_count().await,
         "mesh_peers": sync.mesh_peer_ids().await,
         "authorized_peers": sync.authorized_peer_ids().await,
