@@ -757,6 +757,17 @@ pub(crate) async fn import_mount_root_and_publish(
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
+    if !mount_visible_root_has_changed(&visible_root, tombstone_base_root.as_ref()) {
+        let payload = json!({
+            "event": "mounted_root_unchanged",
+            "root_cid": visible_root.to_string(),
+            "publish": {"queued": false},
+        });
+        write_daemon_status(config_dir, payload.clone());
+        println!("{payload}");
+        return Ok(());
+    }
+
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
     let import = daemon
@@ -795,6 +806,10 @@ pub(crate) async fn import_mount_root_and_publish(
         })
     );
     Ok(())
+}
+
+fn mount_visible_root_has_changed(visible_root: &Cid, tombstone_base_root: Option<&Cid>) -> bool {
+    !tombstone_base_root.is_some_and(|base| base == visible_root)
 }
 
 pub(crate) fn spawn_publish_current_state(
@@ -1038,5 +1053,15 @@ mod tests {
         assert!(first > 0);
         assert_eq!(second, first + 1);
         assert_eq!(third, second + 1);
+    }
+
+    #[test]
+    fn unchanged_mount_visible_root_is_not_publishable() {
+        let root = Cid::encrypted([0x11; 32], [0x22; 32]);
+        let other = Cid::encrypted([0x33; 32], [0x44; 32]);
+
+        assert!(!mount_visible_root_has_changed(&root, Some(&root)));
+        assert!(mount_visible_root_has_changed(&root, Some(&other)));
+        assert!(mount_visible_root_has_changed(&root, None));
     }
 }
