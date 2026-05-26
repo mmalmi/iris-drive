@@ -8,25 +8,26 @@
 //!
 //! Two flows:
 //!
-//! - **Upload** (after a local publish): walk the local tree from a
-//!   root CID, collect every unique hash, push each blob to the
+//! - **Upload** (after a local publish): walk the live-sync tree from a
+//!   root CID, collect every current hash, push each blob to the
 //!   configured write servers via `BlossomClient::upload_if_missing`.
 //! - **Download** (after a remote drive-root event): walk the same
 //!   tree, but through a [`WriteBackBlossomStore`] that falls back to
 //!   Blossom on local-store miss and persists the fetched bytes back
-//!   to local. `collect_hashes` does the traversal; the writeback is
-//!   transparent.
+//!   to local. The live sync block walker skips old `.hashtree/prev` history
+//!   targets so current sync is not blocked by stale historical bytes.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hashtree_blossom::BlossomClient;
-use hashtree_core::diff::collect_hashes;
 use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use thiserror::Error;
+
+use crate::block_sync::collect_live_sync_hashes;
 
 #[derive(Debug, Error)]
 pub enum BlossomSyncError {
@@ -52,7 +53,7 @@ pub struct UploadReport {
     pub already_present: usize,
 }
 
-/// Walk the local tree rooted at `root` and upload every block to the
+/// Walk the local tree rooted at `root` and upload every live-sync block to the
 /// configured Blossom write servers. Skips blobs the server already
 /// has via `upload_if_missing`.
 pub async fn upload_tree<S>(
@@ -66,7 +67,7 @@ where
     if client.write_servers().is_empty() {
         return Err(BlossomSyncError::NoServers);
     }
-    let hashes: HashSet<Hash> = collect_hashes(tree, root, 4).await?;
+    let hashes: HashSet<Hash> = collect_live_sync_hashes(tree, root, 4).await?;
     let mut report = UploadReport {
         total_hashes: hashes.len(),
         ..Default::default()
@@ -188,7 +189,7 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackBlossomStore<L> {
     }
 }
 
-/// Walk the tree rooted at `root` through a writeback store. Every
+/// Walk the live-sync tree rooted at `root` through a writeback store. Every
 /// block not already in `local_store` gets fetched from Blossom and
 /// persisted. Returns counts of fetched vs. already-present blocks.
 ///
@@ -208,7 +209,7 @@ where
     }
     let writeback = Arc::new(WriteBackBlossomStore::new(local_store, client));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()

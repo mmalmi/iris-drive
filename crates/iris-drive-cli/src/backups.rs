@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use hashtree_core::diff::collect_hashes;
 
 pub(crate) fn cmd_blossom_servers(
     config_dir: &std::path::Path,

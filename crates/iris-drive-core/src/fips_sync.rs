@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hashtree_core::diff::collect_hashes;
 use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
@@ -22,6 +21,7 @@ use nostr_sdk::nips::nip19::ToBech32;
 use thiserror::Error;
 use tokio::task::JoinHandle;
 
+use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::identity::DeviceIdentity;
@@ -384,7 +384,7 @@ where
 {
     let writeback = Arc::new(WriteBackFipsStore::new(local_store, transport));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()
@@ -409,7 +409,7 @@ where
 {
     let writeback = Arc::new(WriteBackMeshStore::new(local_store, mesh));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()
@@ -435,7 +435,7 @@ where
 {
     let writeback = Arc::new(WriteBackOverlayStore::new(local_store, transport, mesh));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_hashes(&tree, root, 4).await?;
+    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
         let detail = writeback
             .first_missing()
@@ -1126,6 +1126,63 @@ mod tests {
         assert_eq!(report.already_local, 0);
         assert!(target_store.has(&root_cid.hash).await.unwrap());
         assert!(target_store.has(&file_cid.hash).await.unwrap());
+
+        source_task.abort();
+        target_task.abort();
+    }
+
+    #[tokio::test]
+    async fn download_skips_unavailable_prev_history_target() {
+        let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
+        let source_endpoint = FakeEndpoint::new("source", network.clone()).await;
+        let target_endpoint = FakeEndpoint::new("target", network).await;
+
+        let source_store = Arc::new(MemoryStore::new());
+        let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
+        let (file_cid, _) = source_tree.put(b"current visible bytes").await.unwrap();
+        let visible_root = source_tree
+            .put_directory(vec![DirEntry {
+                name: "current.txt".to_string(),
+                hash: file_cid.hash,
+                key: file_cid.key,
+                link_type: LinkType::File,
+                size: 21,
+                meta: None,
+            }])
+            .await
+            .unwrap();
+        let missing_prev = Cid {
+            hash: [7; 32],
+            key: None,
+        };
+        let root_with_history =
+            crate::indexer::layer_prev_link(&source_tree, visible_root, &missing_prev)
+                .await
+                .unwrap();
+
+        let source_transport = Arc::new(HashtreeFipsTransport::new(source_endpoint, source_store));
+        let source_task = source_transport.start();
+
+        let target_store = Arc::new(MemoryStore::new());
+        let target_transport = Arc::new(HashtreeFipsTransport::new(
+            target_endpoint,
+            target_store.clone(),
+        ));
+        target_transport.set_peers(vec!["source".to_string()]).await;
+        let target_task = target_transport.start();
+
+        let report = download_tree_with_transport(
+            target_store.clone(),
+            &root_with_history,
+            target_transport,
+        )
+        .await
+        .unwrap();
+
+        assert!(report.fetched >= 3);
+        assert!(target_store.has(&root_with_history.hash).await.unwrap());
+        assert!(target_store.has(&file_cid.hash).await.unwrap());
+        assert!(!target_store.has(&missing_prev.hash).await.unwrap());
 
         source_task.abort();
         target_task.abort();

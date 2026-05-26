@@ -1,5 +1,6 @@
 pub mod account;
 pub mod app_keys;
+pub mod block_sync;
 pub mod blossom_sync;
 pub mod config;
 pub mod fips_sync;

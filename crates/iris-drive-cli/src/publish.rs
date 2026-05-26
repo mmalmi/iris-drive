@@ -505,9 +505,9 @@ async fn collect_local_root_hashes(config_dir: &Path, root: &Cid) -> Result<usiz
         .list_directory(root)
         .await
         .context("reading local root directory")?;
-    let hashes = collect_hashes(daemon.tree(), root, 4)
+    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
         .await
-        .context("walking local root blocks")?;
+        .context("walking local live-sync root blocks")?;
     let store = daemon.tree().get_store().clone();
     for hash in &hashes {
         if !store
