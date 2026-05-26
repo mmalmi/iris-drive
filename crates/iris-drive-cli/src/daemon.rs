@@ -2131,11 +2131,18 @@ pub(crate) async fn apply_one_event(
                         .and_then(|drive| drive.device_roots.get(device_pubkey))
                         .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
                 });
-        let followup = drive_root_followup_plan(was_applied, stale_current_root);
-        let root_cid_to_pull = parsed
+        let parsed_root_cid = parsed
+            .as_ref()
+            .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
+        let root_blocks_already_synced = parsed_root_cid
+            .as_deref()
+            .is_some_and(|root_cid| root_has_successful_block_sync(config_dir, root_cid));
+        let followup =
+            drive_root_followup_plan(was_applied, stale_current_root, root_blocks_already_synced);
+        let root_cid_to_pull = parsed_root_cid
             .as_ref()
             .filter(|_| followup.pull_blocks)
-            .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
+            .cloned();
         emit_daemon_status_event(
             config_dir,
             json!({
@@ -2234,11 +2241,26 @@ struct DriveRootFollowupPlan {
     materialize: bool,
 }
 
-fn drive_root_followup_plan(was_applied: bool, stale_current_root: bool) -> DriveRootFollowupPlan {
+fn drive_root_followup_plan(
+    was_applied: bool,
+    stale_current_root: bool,
+    root_blocks_already_synced: bool,
+) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
-        materialize: was_applied,
+        materialize: was_applied || (stale_current_root && !root_blocks_already_synced),
     }
+}
+
+fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
+    load_daemon_status(config_dir)
+        .and_then(|status| {
+            status
+                .get("block_sync_by_root")
+                .and_then(|roots| roots.get(root_cid))
+                .cloned()
+        })
+        .is_some()
 }
 
 pub(crate) fn spawn_root_apply_followup(
@@ -3115,16 +3137,23 @@ mod tests {
     }
 
     #[test]
-    fn stale_drive_root_followup_pulls_blocks_without_materializing() {
+    fn stale_drive_root_followup_materializes_until_blocks_sync() {
         assert_eq!(
-            drive_root_followup_plan(false, true),
+            drive_root_followup_plan(false, true, false),
+            DriveRootFollowupPlan {
+                pull_blocks: true,
+                materialize: true,
+            }
+        );
+        assert_eq!(
+            drive_root_followup_plan(false, true, true),
             DriveRootFollowupPlan {
                 pull_blocks: true,
                 materialize: false,
             }
         );
         assert_eq!(
-            drive_root_followup_plan(true, false),
+            drive_root_followup_plan(true, false, false),
             DriveRootFollowupPlan {
                 pull_blocks: true,
                 materialize: true,
