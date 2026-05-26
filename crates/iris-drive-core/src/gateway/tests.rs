@@ -205,6 +205,35 @@ async fn gateway_accepts_split_nhash_hostname() {
 }
 
 #[tokio::test]
+async fn gateway_accepts_nhash_resolver_hostname() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let nhash = test_nhash();
+    let htree = fake_htree_daemon(&format!("/htree/{nhash}/Aragorn.webp"), "webp-bytes").await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let response = http_get(
+        server.local_addr(),
+        LOCAL_NHASH_RESOLVER_HOST,
+        &format!("/{nhash}/Aragorn.webp"),
+    )
+    .await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("content-type: image/webp"), "{response}");
+    assert!(response.contains("webp-bytes"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
 async fn gateway_proxies_nhash_to_hashtree_daemon() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
@@ -257,19 +286,13 @@ async fn gateway_without_htree_upstream_does_not_use_global_daemon() {
 }
 
 #[test]
-fn local_nhash_url_splits_long_host_labels() {
+fn local_nhash_url_uses_nhash_resolver_host() {
     let nhash = "nhash1qqsvmfqp5hk00w9nerl4x5009ce5z7gj480g0z4zhq2pkvxl0vezprs9yr0u7t0w95k937aldt699ax2u29lpev8y50ewpsllp5e5kv5ta6vk26rfge";
     let url = local_nhash_url(17_321, nhash, Some("Aragorn.webp"));
     assert_eq!(
         url,
-        "http://nhash1qqsvmfqp5hk00w9nerl4x5009ce5z7gj480g0z4zhq2pkvxl0vezprs9y.r0u7t0w95k937aldt699ax2u29lpev8y50ewpsllp5e5kv5ta6vk26rfge.iris.localhost:17321/Aragorn.webp"
+        "http://nhash.iris.localhost:17321/nhash1qqsvmfqp5hk00w9nerl4x5009ce5z7gj480g0z4zhq2pkvxl0vezprs9yr0u7t0w95k937aldt699ax2u29lpev8y50ewpsllp5e5kv5ta6vk26rfge/Aragorn.webp"
     );
-    let host = url
-        .strip_prefix("http://")
-        .and_then(|rest| rest.split_once(':'))
-        .map(|(host, _)| host)
-        .unwrap();
-    assert!(host.split('.').all(|label| label.len() <= 63));
 }
 
 #[tokio::test]

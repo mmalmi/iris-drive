@@ -70,7 +70,10 @@ http://main.drive.iris.localhost:17321/
 
 Immutable hashtree roots are served from per-root hosts under
 `*.sites.iris.localhost`; `idrive status` and `idrive import` print those local
-gateway URLs when a root is available.
+gateway URLs when a root is available. Nhash links can also be opened through
+`http://nhash.iris.localhost:17321/<nhash>/...`. The resolver/gateway setting
+is on by default and can be changed with `idrive nhash-resolver enable` or
+`idrive nhash-resolver disable`.
 
 ## Layout
 

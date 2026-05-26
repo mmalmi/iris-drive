@@ -42,6 +42,7 @@ use self::paths::*;
 use self::response::*;
 
 const LOCAL_PORTAL_HOST: &str = "sites.iris.localhost";
+pub const LOCAL_NHASH_RESOLVER_HOST: &str = "nhash.iris.localhost";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
 const HASH_HOST_SUFFIX: &str = ".hash.localhost";
 const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";
@@ -432,6 +433,10 @@ fn resolve_gateway_request(
         return request_from_path_route(state, uri, headers, route, path_segments);
     }
 
+    if host == LOCAL_NHASH_RESOLVER_HOST {
+        return nhash_resolver_host_request(uri, headers, path_segments);
+    }
+
     if host == LOCAL_PORTAL_HOST {
         return Err(GatewayError::InvalidRequest(
             "use a content host such as main.drive.iris.localhost".into(),
@@ -489,6 +494,20 @@ fn request_from_path_route(
         PathRoute::Drive(drive_id) => drive_host_request(state, &drive_id, path_segments),
         PathRoute::Nhash(nhash) => nhash_request(&nhash, uri, headers, path_segments),
     }
+}
+
+fn nhash_resolver_host_request(
+    uri: &Uri,
+    headers: &HeaderMap,
+    mut path_segments: Vec<String>,
+) -> Result<GatewayRequest, GatewayError> {
+    if path_segments.is_empty() {
+        return Err(GatewayError::InvalidRequest(
+            "nhash resolver host requires /<nhash>/...".into(),
+        ));
+    }
+    let nhash = path_segments.remove(0);
+    nhash_request(&nhash, uri, headers, path_segments)
 }
 
 fn nhash_request(
@@ -846,12 +865,15 @@ pub fn local_immutable_url(port: u16, cid: &Cid) -> String {
 
 #[must_use]
 pub fn local_nhash_url(port: u16, nhash: &str, filename_hint: Option<&str>) -> String {
-    let host = split_dns_labels(&nhash.to_ascii_lowercase());
-    let path = filename_hint.filter(|hint| !hint.is_empty()).map_or_else(
-        || "/".to_string(),
-        |hint| format!("/{}", percent_encode_path_segment(hint)),
+    let mut path = format!(
+        "/{}",
+        percent_encode_path_segment(&nhash.to_ascii_lowercase())
     );
-    format!("http://{host}.iris.localhost:{port}{path}")
+    if let Some(hint) = filename_hint.filter(|hint| !hint.is_empty()) {
+        path.push('/');
+        path.push_str(&percent_encode_path_segment(hint));
+    }
+    format!("http://{LOCAL_NHASH_RESOLVER_HOST}:{port}{path}")
 }
 
 #[cfg(test)]

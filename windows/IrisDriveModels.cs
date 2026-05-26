@@ -24,6 +24,7 @@ public sealed class IrisDriveStatusData
     public int TopLevelEntries { get; init; }
     public int LocalBlockCount { get; init; }
     public long LocalBlockBytes { get; init; }
+    public bool LocalNhashResolverEnabled { get; init; } = true;
     public IReadOnlyList<DriveRow> Drives { get; init; } = Array.Empty<DriveRow>();
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
     public IReadOnlyList<BackupTargetRow> BackupTargets { get; init; } =
@@ -73,6 +74,7 @@ public sealed class IrisDriveStatusData
             TopLevelEntries = hashtree.HasValue ? Int(hashtree.Value, "top_level_entries") : 0,
             LocalBlockCount = hashtree.HasValue ? Int(hashtree.Value, "local_block_count") : 0,
             LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
+            LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
             Drives = drives,
             Peers = PeerRows(
                 root,
@@ -122,6 +124,27 @@ public sealed class IrisDriveStatusData
     private static string? ExtractDrivePath(JsonElement root)
     {
         return Bool(root, "initialized") ? WindowsCloudFiles.SyncRootPath : null;
+    }
+
+    private static bool ExtractLocalNhashResolverEnabled(JsonElement root)
+    {
+        if (Object(root, "settings") is { } settings &&
+            settings.TryGetProperty("local_nhash_resolver_enabled", out var enabled) &&
+            (enabled.ValueKind == JsonValueKind.True || enabled.ValueKind == JsonValueKind.False))
+        {
+            return enabled.GetBoolean();
+        }
+
+        if (Object(root, "hashtree") is { } hashtree &&
+            Object(hashtree, "local_gateway") is { } gateway &&
+            gateway.TryGetProperty("enabled", out var gatewayEnabled) &&
+            (gatewayEnabled.ValueKind == JsonValueKind.True ||
+                gatewayEnabled.ValueKind == JsonValueKind.False))
+        {
+            return gatewayEnabled.GetBoolean();
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string? mountPath)

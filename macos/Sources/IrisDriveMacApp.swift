@@ -412,6 +412,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mutateBackupConfig(arguments: ["backups", "sync"], success: "Backups synced")
     }
 
+    func setLocalNhashResolver(_ enabled: Bool) {
+        guard let paths = runtimePathsForMenu else {
+            NSSound.beep()
+            return
+        }
+        let idrive = idriveExecutableURL()
+        let shouldRestart = IrisDriveStatus.shared.daemonRunning && !externalDaemonMode
+        IrisDriveStatus.shared.localNhashResolverEnabled = enabled
+        updateStatus(enabled ? "Local resolver enabled" : "Local resolver disabled")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(
+                    idrive,
+                    arguments: ["nhash-resolver", enabled ? "enable" : "disable"],
+                    paths: paths
+                )
+                DispatchQueue.main.async {
+                    if shouldRestart {
+                        self.restartSync()
+                    } else {
+                        self.refreshStatus()
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive local resolver update failed: \(error)")
+                DispatchQueue.main.async {
+                    self.refreshStatus()
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
     func createProfile(label: String) {
         let args = setupArguments(command: "init", label: label, extra: ["--force"])
         finishSetup(arguments: args)
@@ -1265,6 +1298,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     Self.intValue(network["published_device_roots"]) ?? 0
             }
 
+            if let settings = json["settings"] as? [String: Any] {
+                status.localNhashResolverEnabled =
+                    settings["local_nhash_resolver_enabled"] as? Bool ?? true
+            } else if let hashtree = json["hashtree"] as? [String: Any],
+                      let gateway = hashtree["local_gateway"] as? [String: Any] {
+                status.localNhashResolverEnabled = gateway["enabled"] as? Bool ?? true
+            } else {
+                status.localNhashResolverEnabled = true
+            }
+
             if let peers = json["peers"] as? [[String: Any]] {
                 status.peers = peers.map(IrisDrivePeerStatus.init)
             }
@@ -1374,6 +1417,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let upload = json["blossom_upload"] as? [String: Any] {
                 status.lastUpload = IrisDriveUploadStatus(json: upload)
             }
+            if let gateway = json["browser_gateway"] as? [String: Any],
+               let enabled = gateway["enabled"] as? Bool {
+                status.localNhashResolverEnabled = enabled
+            }
 
             self.updateLinkMenuState()
         }
@@ -1468,6 +1515,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     relays: status.relays,
                     statuses: relayStatuses.map(IrisDriveRelayStatus.init)
                 )
+            }
+            if let gateway = json["browser_gateway"] as? [String: Any],
+               let enabled = gateway["enabled"] as? Bool {
+                status.localNhashResolverEnabled = enabled
             }
 
             let running = json["running"] as? Bool ?? false

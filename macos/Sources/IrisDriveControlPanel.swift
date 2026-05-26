@@ -466,6 +466,13 @@ struct IrisDriveControlPanel: View {
                         set: { controller.setCloseToMenuBarOnClose($0) }
                     )
                 )
+                Toggle(
+                    "nhash.iris.localhost resolver",
+                    isOn: Binding(
+                        get: { status.localNhashResolverEnabled },
+                        set: { controller.setLocalNhashResolver($0) }
+                    )
+                )
             }
 
             Section("Account") {

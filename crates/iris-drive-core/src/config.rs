@@ -55,6 +55,11 @@ pub struct AppConfig {
     /// installs and when loading older configs that lack this field.
     #[serde(default = "default_blossom_servers")]
     pub blossom_servers: Vec<String>,
+    /// Local loopback gateway/resolver for browser access through
+    /// `nhash.iris.localhost`. Defaults on so native shells are
+    /// interoperable with web Drive links without extra setup.
+    #[serde(default = "default_true")]
+    pub local_nhash_resolver_enabled: bool,
     /// Encrypted offsite backup endpoints. Blossom targets are usable
     /// today; FIPS targets are stored for the future direct-device
     /// backup transport.
@@ -81,6 +86,7 @@ impl Default for AppConfig {
             drives: Vec::new(),
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
+            local_nhash_resolver_enabled: true,
             backup_targets: Vec::new(),
         }
     }
@@ -398,6 +404,12 @@ mod tests {
     }
 
     #[test]
+    fn default_enables_local_nhash_resolver() {
+        let cfg = AppConfig::default();
+        assert!(cfg.local_nhash_resolver_enabled);
+    }
+
+    #[test]
     fn stale_drive_fields_are_rejected() {
         let raw = format!(
             r#"
@@ -425,6 +437,13 @@ working_dir = "/tmp/Iris Drive"
         let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
         let cfg: AppConfig = toml::from_str(&raw).unwrap();
         assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
+    }
+
+    #[test]
+    fn missing_local_nhash_resolver_field_loads_enabled() {
+        let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
+        let cfg: AppConfig = toml::from_str(&raw).unwrap();
+        assert!(cfg.local_nhash_resolver_enabled);
     }
 
     #[test]

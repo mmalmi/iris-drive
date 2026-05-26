@@ -235,6 +235,7 @@ pub(crate) fn nhash_from_split_host(host: &str, suffix: &str) -> Option<String> 
     nhash.starts_with("nhash1").then_some(nhash)
 }
 
+#[cfg(test)]
 pub(crate) fn split_dns_labels(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + value.len() / 63);
     for (index, chunk) in value.as_bytes().chunks(63).enumerate() {

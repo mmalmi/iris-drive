@@ -17,7 +17,8 @@ cd linux && cargo run
 ```
 
 The app manages the local `idrive` CLI/daemon, opens the working folder, and
-opens the loopback gateway at `http://main.drive.iris.localhost:17321/`.
+starts the loopback gateway/resolver for `*.iris.localhost` and
+`nhash.iris.localhost` by default.
 Installed packages register `iris-drive://` links through the desktop entry.
 
 The crate is excluded from the root workspace so GTK toolchains do not block

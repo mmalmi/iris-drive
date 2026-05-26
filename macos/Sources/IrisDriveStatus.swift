@@ -9,6 +9,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var daemonRunning = false
     @Published var closeToMenuBarOnClose =
         UserDefaults.standard.object(forKey: closeToMenuBarOnCloseKey) as? Bool ?? true
+    @Published var localNhashResolverEnabled = true
     @Published var initialized = false
     @Published var driveName = "My Drive"
     @Published var ownerNpub: String?

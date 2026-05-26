@@ -45,6 +45,7 @@ pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::P
                 "local_gateway": local_gateway_urls_for_root(
                     Some(&report.root_cid),
                     DEFAULT_GATEWAY_PORT,
+                    daemon.config().local_nhash_resolver_enabled,
                 ),
                 "file_count": report.file_count,
                 "top_level_entries": report.top_level_entries,

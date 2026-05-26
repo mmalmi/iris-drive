@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
     private bool quitRequested;
+    private bool settingsUpdating;
     private Forms.NotifyIcon? trayIcon;
 
     public MainWindow()
@@ -39,6 +40,9 @@ public partial class MainWindow : Window
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
+        settingsUpdating = true;
+        LocalNhashResolverCheckBox.IsChecked = true;
+        settingsUpdating = false;
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
         SelectPage("Drive");
@@ -170,6 +174,15 @@ public partial class MainWindow : Window
         RenderPeers(status);
         RenderBackups(status);
         RenderNetwork(status);
+        try
+        {
+            settingsUpdating = true;
+            LocalNhashResolverCheckBox.IsChecked = status.LocalNhashResolverEnabled;
+        }
+        finally
+        {
+            settingsUpdating = false;
+        }
         UpdateTrayText(syncRunning);
     }
 
@@ -968,6 +981,32 @@ public partial class MainWindow : Window
     private void CloseToTray_Changed(object sender, RoutedEventArgs e)
     {
         WriteCloseToTrayOnClose(CloseToTrayCheckBox.IsChecked == true);
+    }
+
+    private async void LocalNhashResolver_Changed(object sender, RoutedEventArgs e)
+    {
+        if (settingsUpdating)
+        {
+            return;
+        }
+
+        var enabled = LocalNhashResolverCheckBox.IsChecked == true;
+        try
+        {
+            await service.SetNhashResolverAsync(enabled);
+            StopDaemon();
+            if (currentStatus is not null)
+            {
+                EnsureDaemonRunning(currentStatus);
+            }
+            NoticeText.Text = enabled ? "Local resolver enabled" : "Local resolver disabled";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+            await RefreshAsync();
+        }
     }
 
     private bool ReadCloseToTrayOnClose()

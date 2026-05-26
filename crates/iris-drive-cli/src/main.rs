@@ -122,6 +122,7 @@ fn run_cli() -> ExitCode {
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
+        Command::NhashResolver { command } => cmd_nhash_resolver(&config_dir, command),
         Command::Conflicts(command) => cmd_conflicts(&config_dir, command),
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),

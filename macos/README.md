@@ -40,7 +40,8 @@ without requiring a local provisioning profile.
 
 The app-launched daemon uses the shared app-group container for its config and
 hashtree blocks and exposes the drive through the virtual provider/gateway
-surface. On macOS the app group is team-prefixed
+surface, including the default-on `nhash.iris.localhost` resolver. On macOS the
+app group is team-prefixed
 (`<TeamIdentifierPrefix>to.iris.drive`), and code must obtain the physical
 path with `FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`.
 The user-visible drive folder comes from the File Provider domain, not from a

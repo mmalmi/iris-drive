@@ -47,6 +47,22 @@ pub(crate) fn sync_backups(model: &AppRef) {
     }
 }
 
+pub(crate) fn set_local_nhash_resolver(model: &AppRef, enabled: bool) {
+    let command = if enabled { "enable" } else { "disable" };
+    match run_idrive(["nhash-resolver", command]) {
+        Ok(()) => {
+            restart_daemon(model);
+            model.ui.notice.set_text(if enabled {
+                "Local resolver enabled"
+            } else {
+                "Local resolver disabled"
+            });
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn reset_relays(model: &AppRef) {
     match run_idrive(["relays", "reset"]) {
         Ok(()) => refresh(model),

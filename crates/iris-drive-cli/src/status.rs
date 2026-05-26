@@ -16,8 +16,11 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let snapshot_url = current_root_cid
         .as_deref()
         .and_then(drive_iris_to_snapshot_url_for_root);
-    let browser_gateway_urls =
-        local_gateway_urls_for_root(current_root_cid.as_deref(), DEFAULT_GATEWAY_PORT);
+    let browser_gateway_urls = local_gateway_urls_for_root(
+        current_root_cid.as_deref(),
+        DEFAULT_GATEWAY_PORT,
+        config.local_nhash_resolver_enabled,
+    );
     let merged_counts = primary_drive_counts(config_dir, &config);
     let top_level_entries = merged_counts.map(|(_, top_level)| top_level).or_else(|| {
         current_root_cid
@@ -86,12 +89,67 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                     .unwrap_or_else(|| json!([])),
                 "fips": fips_diagnostics,
             },
+            "settings": settings_status(&config),
             "daemon": daemon_status,
             "conflicts": conflict_status,
             "peers": peers,
         })
     );
     Ok(())
+}
+
+pub(crate) fn cmd_nhash_resolver(
+    config_dir: &std::path::Path,
+    sub: Option<NhashResolverCmd>,
+) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let mut changed = false;
+    match sub.unwrap_or(NhashResolverCmd::Status) {
+        NhashResolverCmd::Status => {}
+        NhashResolverCmd::Enable => {
+            changed = !config.local_nhash_resolver_enabled;
+            config.local_nhash_resolver_enabled = true;
+        }
+        NhashResolverCmd::Disable => {
+            changed = config.local_nhash_resolver_enabled;
+            config.local_nhash_resolver_enabled = false;
+        }
+    }
+    if changed {
+        config.save(config_path_in(config_dir))?;
+    }
+    println!(
+        "{}",
+        local_nhash_resolver_status(&config, DEFAULT_GATEWAY_PORT, changed)
+    );
+    Ok(())
+}
+
+pub(crate) fn settings_status(config: &AppConfig) -> Value {
+    json!({
+        "local_nhash_resolver_enabled": config.local_nhash_resolver_enabled,
+    })
+}
+
+pub(crate) fn local_nhash_resolver_status(
+    config: &AppConfig,
+    port: u16,
+    restart_required: bool,
+) -> Value {
+    json!({
+        "enabled": config.local_nhash_resolver_enabled,
+        "host": iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+        "port": port,
+        "base_url": format!(
+            "http://{}:{port}/",
+            iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+        ),
+        "url_pattern": format!(
+            "http://{}:{port}/<nhash>/<filename>",
+            iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+        ),
+        "restart_required": restart_required,
+    })
 }
 
 pub(crate) fn status_account_block(config: &AppConfig) -> Option<Value> {
@@ -395,16 +453,43 @@ pub(crate) fn drive_iris_to_snapshot_url_for_root(root_cid: &str) -> Option<Stri
     Some(format!("{DRIVE_IRIS_TO_ORIGIN}/#/{nhash}"))
 }
 
-pub(crate) fn local_gateway_urls_for_root(root_cid: Option<&str>, port: u16) -> serde_json::Value {
+pub(crate) fn local_gateway_urls_for_root(
+    root_cid: Option<&str>,
+    port: u16,
+    enabled: bool,
+) -> serde_json::Value {
+    if !enabled {
+        return json!({
+            "enabled": false,
+            "host": iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+            "port": port,
+        });
+    }
     let immutable_url = root_cid
         .and_then(|root| Cid::parse(root).ok())
         .map(|cid| iris_drive_core::gateway::local_immutable_url(port, &cid));
+    let nhash_url = root_cid
+        .and_then(|root| Cid::parse(root).ok())
+        .and_then(|cid| {
+            nhash_encode_full(&NHashData {
+                hash: cid.hash,
+                decrypt_key: cid.key,
+            })
+            .ok()
+        })
+        .map(|nhash| iris_drive_core::gateway::local_nhash_url(port, &nhash, None));
     json!({
+        "enabled": true,
         "portal_url": format!("http://sites.iris.localhost:{port}/"),
         "primary_drive_url": iris_drive_core::gateway::local_drive_url(
             port,
             iris_drive_core::PRIMARY_DRIVE_ID,
         ),
+        "nhash_resolver_url": format!(
+            "http://{}:{port}/",
+            iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+        ),
+        "nhash_url": nhash_url,
         "immutable_url": immutable_url,
     })
 }
@@ -810,5 +895,23 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn local_gateway_status_includes_nhash_resolver_host_when_enabled() {
+        let status = local_gateway_urls_for_root(None, 17_321, true);
+        assert_eq!(status["enabled"], true);
+        assert_eq!(
+            status["nhash_resolver_url"],
+            "http://nhash.iris.localhost:17321/"
+        );
+    }
+
+    #[test]
+    fn local_gateway_status_reports_disabled_resolver() {
+        let status = local_gateway_urls_for_root(None, 17_321, false);
+        assert_eq!(status["enabled"], false);
+        assert_eq!(status["host"], "nhash.iris.localhost");
+        assert!(status.get("portal_url").is_none());
     }
 }

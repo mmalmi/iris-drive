@@ -67,6 +67,11 @@ pub(crate) enum Command {
     RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
+    /// View or toggle the local `nhash.iris.localhost` resolver service.
+    NhashResolver {
+        #[command(subcommand)]
+        command: Option<NhashResolverCmd>,
+    },
     /// Inspect or resolve durable conflict ledger records.
     #[command(subcommand)]
     Conflicts(ConflictsCmd),
@@ -188,6 +193,16 @@ pub(crate) enum ConflictsCmd {
         /// Conflict id from `idrive status`.
         conflict_id: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum NhashResolverCmd {
+    /// Print resolver settings as JSON.
+    Status,
+    /// Enable the local resolver service.
+    Enable,
+    /// Disable the local resolver service.
+    Disable,
 }
 
 #[derive(Debug, Subcommand)]

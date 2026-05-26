@@ -89,6 +89,17 @@ pub(crate) fn sidebar_online_value(json: &Value) -> String {
     format!("{online}/{expected} online")
 }
 
+pub(crate) fn local_nhash_resolver_enabled(json: &Value) -> bool {
+    json.get("settings")
+        .and_then(|settings| find_bool(settings, &["local_nhash_resolver_enabled"]))
+        .or_else(|| {
+            json.get("hashtree")
+                .and_then(|hashtree| hashtree.get("local_gateway"))
+                .and_then(|gateway| find_bool(gateway, &["enabled"]))
+        })
+        .unwrap_or(true)
+}
+
 pub(crate) fn find_string<'a>(json: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| json.get(*key).and_then(Value::as_str))

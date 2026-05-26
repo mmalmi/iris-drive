@@ -55,6 +55,12 @@ pub(crate) fn refresh(model: &AppRef) {
                 .ui
                 .sidebar_online
                 .set_text(&sidebar_online_value(&json));
+            model.settings_refreshing.set(true);
+            model
+                .ui
+                .local_nhash_resolver
+                .set_active(local_nhash_resolver_enabled(&json));
+            model.settings_refreshing.set(false);
             let has_snapshot = snapshot_link(&json).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);

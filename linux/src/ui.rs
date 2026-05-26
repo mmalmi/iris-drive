@@ -247,6 +247,10 @@ pub(crate) fn build_ui(app: &adw::Application) {
     tray_on_close.set_active(read_close_to_tray_on_close());
     tray_on_close.set_sensitive(false);
     settings_page.append(&tray_on_close);
+    let local_nhash_resolver = gtk::CheckButton::with_label("nhash.iris.localhost resolver");
+    local_nhash_resolver.add_css_class("iris-setting-check");
+    local_nhash_resolver.set_active(true);
+    settings_page.append(&local_nhash_resolver);
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
     stack.add_titled(&peers_page, Some("devices"), "Devices");
@@ -339,6 +343,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             relays,
             blossom,
             tray_on_close,
+            local_nhash_resolver,
             relay_entry,
             backup_entry,
             backup_label_entry,
@@ -354,6 +359,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
         setup_screen: RefCell::new(SetupScreen::Welcome),
         tray: RefCell::new(None),
         tray_available: Cell::new(false),
+        settings_refreshing: Cell::new(false),
         closed_to_tray: Cell::new(false),
         retired: Cell::new(false),
         quit_requested: Cell::new(false),
@@ -426,6 +432,16 @@ pub(crate) fn build_ui(app: &adw::Application) {
     model.ui.tray_on_close.connect_toggled(|button| {
         write_close_to_tray_on_close(button.is_active());
     });
+    {
+        let button = model.ui.local_nhash_resolver.clone();
+        let model = Rc::clone(&model);
+        button.connect_toggled(move |button| {
+            if model.settings_refreshing.get() {
+                return;
+            }
+            set_local_nhash_resolver(&model, button.is_active());
+        });
+    }
 
     connect_tray(&model, &window);
 

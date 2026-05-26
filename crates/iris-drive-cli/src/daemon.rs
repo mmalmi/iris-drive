@@ -95,7 +95,15 @@ pub(crate) fn cmd_daemon(
                     })))
                 }
             };
-        let gateway = if enable_gateway {
+        let gateway_enabled = enable_gateway && config.local_nhash_resolver_enabled;
+        let gateway_disabled_by = if !enable_gateway {
+            Some("cli")
+        } else if !config.local_nhash_resolver_enabled {
+            Some("settings")
+        } else {
+            None
+        };
+        let gateway = if gateway_enabled {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
                 GatewayServer::bind_with_tree_and_htree_daemon(
@@ -110,18 +118,32 @@ pub(crate) fn cmd_daemon(
         } else {
             None
         };
-        let gateway_status = gateway.as_ref().map(|server| {
+        let gateway_status = if let Some(server) = gateway.as_ref() {
             let port = server.local_addr().port();
             json!({
+                "enabled": true,
+                "running": true,
                 "bind": server.local_addr().to_string(),
                 "portal_url": format!("http://sites.iris.localhost:{port}/"),
                 "primary_drive_url": iris_drive_core::gateway::local_drive_url(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
+                "nhash_resolver_url": format!(
+                    "http://{}:{port}/",
+                    iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+                ),
                 "hashtree_base_url": embedded_hashtree.status().base_url.clone(),
             })
-        });
+        } else {
+            json!({
+                "enabled": config.local_nhash_resolver_enabled,
+                "running": false,
+                "disabled_by": gateway_disabled_by,
+                "host": iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
+                "port": gateway_port,
+            })
+        };
         let client = relay_sync::connect(&relays)
             .await
             .context("connecting to relays")?;
