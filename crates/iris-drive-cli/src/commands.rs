@@ -159,7 +159,7 @@ pub(crate) enum Command {
         /// Override config relays with these URLs.
         #[arg(long)]
         relay: Vec<String>,
-        /// Reserved for virtual-provider refresh cadence.
+        /// Deprecated compatibility flag. Provider changes are event-driven.
         #[arg(long, default_value_t = 60)]
         watch_interval: u64,
         /// Reserved for virtual-provider write coalescing.

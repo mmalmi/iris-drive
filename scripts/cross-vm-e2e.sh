@@ -492,7 +492,7 @@ if (Test-Path -LiteralPath \$pidFile) {
   \$old = Get-Content -LiteralPath \$pidFile -ErrorAction SilentlyContinue
   if (\$old) { Stop-Process -Id ([int]\$old) -Force -ErrorAction SilentlyContinue }
 }
-\$daemonArgs = @('--config-dir', \$config, 'daemon', '--watch-interval', '2', '--watch-debounce-ms', '100', '--gateway-port', '0')
+\$daemonArgs = @('--config-dir', \$config, 'daemon', '--watch-debounce-ms', '100', '--gateway-port', '0')
 $(daemon_relay_args_windows)
 Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
@@ -544,9 +544,9 @@ case \" \$mount_labels \" in
     ;;
 esac
 if (( mount_enabled )); then
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --gateway-port 0 --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0 --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 else
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-interval 2 --watch-debounce-ms 100 --gateway-port 0$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 fi
 echo \$! >\"\$pidfile\"
 "

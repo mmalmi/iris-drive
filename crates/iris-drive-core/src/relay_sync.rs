@@ -155,6 +155,13 @@ pub fn apply_remote_drive_root_event(
     } else {
         parse_drive_root_event(event)?
     };
+    if drive
+        .device_roots
+        .get(&device_hex)
+        .is_some_and(|existing| existing.root_cid == incoming_root.root_cid)
+    {
+        return Ok(DriveRootApply::StaleTimestamp);
+    }
     drive.device_roots.insert(device_hex, incoming_root);
     Ok(DriveRootApply::Applied)
 }
@@ -210,6 +217,9 @@ pub fn apply_remote_files_root_event(
         return Ok(FilesRootApply::UnknownDrive);
     };
     if let Some(existing) = drive.device_roots.get(&device_pubkey) {
+        if existing.root_cid == incoming_root.root_cid {
+            return Ok(FilesRootApply::StaleTimestamp);
+        }
         if existing.device_seq > 0 {
             return Ok(FilesRootApply::StaleTimestamp);
         }
@@ -696,6 +706,36 @@ mod tests {
     }
 
     #[test]
+    fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, acct) = config_with_owner_account(dir.path());
+        let mut root = encrypted_root(0x5d, 100, 0);
+        let owner_keys = acct.owner_key.as_ref().unwrap().keys();
+        let first = build_private_hashtree_root_event(owner_keys, "main", &root).unwrap();
+
+        assert_eq!(
+            apply_remote_files_root_event(&mut cfg, &first, Some(owner_keys)).unwrap(),
+            FilesRootApply::Applied
+        );
+
+        root.published_at = 200;
+        let republished = build_private_hashtree_root_event(owner_keys, "main", &root).unwrap();
+
+        assert_eq!(
+            apply_remote_files_root_event(&mut cfg, &republished, Some(owner_keys)).unwrap(),
+            FilesRootApply::StaleTimestamp
+        );
+        let entry = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&acct.state.device_pubkey)
+            .unwrap();
+        assert_eq!(entry.root_cid, root.root_cid);
+        assert_eq!(entry.published_at, 100);
+    }
+
+    #[test]
     fn apply_files_root_event_from_foreign_owner_ignored() {
         let dir = tempdir().unwrap();
         let (mut cfg, _) = config_with_owner_account(dir.path());
@@ -822,6 +862,54 @@ mod tests {
                 .published_at,
             first_published_at
         );
+    }
+
+    #[test]
+    fn apply_drive_root_event_ignores_same_legacy_root_with_newer_timestamp() {
+        let dir = tempdir().unwrap();
+        let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+        let device_b = Keys::generate();
+        let device_b_hex = device_b.public_key().to_hex();
+        acct.approve_device(device_b_hex.clone(), None).unwrap();
+        cfg.account = Some(acct.state.clone());
+
+        let mut root = encrypted_root(0x13, 100, 1);
+        let event_1 = build_drive_root_event(
+            &device_b,
+            &acct.state.owner_pubkey,
+            "main",
+            &root,
+            &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.device.keys())).unwrap(),
+            DriveRootApply::Applied
+        );
+
+        root.published_at = 200;
+        let republished = build_drive_root_event(
+            &device_b,
+            &acct.state.owner_pubkey,
+            "main",
+            &root,
+            &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            apply_remote_drive_root_event(&mut cfg, &republished, Some(acct.device.keys()))
+                .unwrap(),
+            DriveRootApply::StaleTimestamp
+        );
+        let entry = cfg
+            .drive("main")
+            .unwrap()
+            .device_roots
+            .get(&device_b_hex)
+            .unwrap();
+        assert_eq!(entry.root_cid, root.root_cid);
+        assert_eq!(entry.published_at, 100);
     }
 
     #[test]

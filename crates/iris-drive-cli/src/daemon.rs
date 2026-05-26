@@ -14,7 +14,7 @@ fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
 pub(crate) fn cmd_daemon(
     config_dir: &std::path::Path,
     relay_override: &[String],
-    watch_interval: u64,
+    _watch_interval: u64,
     watch_debounce_ms: u64,
     gateway_port: u16,
     enable_gateway: bool,
@@ -174,7 +174,7 @@ pub(crate) fn cmd_daemon(
                 "event": "subscribed",
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
-                "watch_interval_secs": watch_interval,
+                "provider_update_mode": "event_driven",
                 "watch_debounce_ms": watch_debounce_ms,
                 "root_update_throttle_ms": root_update_debounce.as_millis(),
                 "mount": mount_status,
@@ -233,12 +233,6 @@ pub(crate) fn cmd_daemon(
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let provider_root_period = std::time::Duration::from_secs(watch_interval.max(1));
-        let mut provider_root_timer = tokio::time::interval_at(
-            tokio::time::Instant::now() + provider_root_period,
-            provider_root_period,
-        );
-        provider_root_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last_provider_root_key = current_device_root_key(&config);
 
         loop {
@@ -486,50 +480,6 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
-                _ = provider_root_timer.tick() => {
-                    if let Some(root) = windows_cloud_root.as_ref() {
-                        match import_windows_cloud_root_changes_and_publish(
-                            &client,
-                            config_dir,
-                            root,
-                            vec![WindowsCloudRootChange::Rescan { full: false }],
-                            &mut direct_roots,
-                            fips_blocks.as_deref(),
-                        )
-                        .await
-                        {
-                            Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
-                                update_last_provider_root_key(config_dir, &mut last_provider_root_key);
-                                emit_daemon_status_event(config_dir, json!({
-                                    "event": "windows_cloud_root_published",
-                                    "root_cid": root_cid,
-                                    "paths": paths,
-                                }));
-                            }
-                            Ok(WindowsCloudImportOutcome::Unchanged) => {}
-                            Err(error) => println!(
-                                "{}",
-                                json!({"event": "windows_cloud_root_publish_error", "error": format!("{error:#}")})
-                            ),
-                        }
-                    }
-                    match publish_provider_root_if_changed(
-                        &client,
-                        config_dir,
-                        &mut last_provider_root_key,
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok(Some(_updated_config)) => {}
-                        Ok(None) => {}
-                        Err(error) => println!(
-                            "{}",
-                            json!({"event": "provider_root_publish_error", "error": format!("{error:#}")})
-                        ),
-                    }
-                }
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
                         && let Err(error) = direct_roots
@@ -688,8 +638,14 @@ fn paths_refer_to_same_file(path: &Path, target: &Path) -> bool {
 enum WindowsCloudRootChange {
     Upsert(String),
     Delete(String),
-    Rename { old_path: String, new_path: String },
-    Rescan { full: bool },
+    Rename {
+        old_path: String,
+        new_path: String,
+    },
+    Rescan {
+        full: bool,
+        recover_cached_deletes: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -733,7 +689,8 @@ fn start_windows_cloud_root_watch() -> Result<(
         .watch(&root, RecursiveMode::Recursive)
         .with_context(|| format!("watching Windows Cloud Files root {}", root.display()))?;
     let _ = tx.send(WindowsCloudRootChange::Rescan {
-        full: windows_cloud_full_rescan_enabled(),
+        full: true,
+        recover_cached_deletes: windows_cloud_cached_delete_recovery_enabled(),
     });
 
     Ok((
@@ -861,10 +818,15 @@ async fn import_windows_cloud_root_changes_and_publish(
                     tombstone_paths.insert(old_path);
                 }
             }
-            WindowsCloudRootChange::Rescan { full } => {
-                for path in
-                    windows_cloud_missing_cached_provider_paths(sync_root, &placeholder_paths)?
-                {
+            WindowsCloudRootChange::Rescan {
+                full,
+                recover_cached_deletes,
+            } => {
+                for path in windows_cloud_rescan_missing_cached_provider_paths(
+                    sync_root,
+                    &placeholder_paths,
+                    recover_cached_deletes,
+                )? {
                     if consume_windows_cloud_cleanup_delete_marker(config_dir, &path) {
                         continue;
                     }
@@ -1181,7 +1143,9 @@ fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
 const WINDOWS_CLOUD_RECENT_RESCAN_SECS: u64 = 300;
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn windows_cloud_full_rescan_enabled() -> bool {
+fn windows_cloud_cached_delete_recovery_enabled() -> bool {
+    // Cached placeholder delete recovery is opt-in because projection lag can
+    // make remote files appear locally missing during normal Cloud Files sync.
     std::env::var("IRIS_DRIVE_WINDOWS_CLOUD_FULL_RESCAN")
         .map(|value| value == "1")
         .unwrap_or(false)
@@ -1260,6 +1224,17 @@ fn windows_cloud_missing_cached_provider_paths(
             .then_with(|| a.cmp(b))
     });
     Ok(paths)
+}
+
+fn windows_cloud_rescan_missing_cached_provider_paths(
+    root: &Path,
+    cached_paths: &BTreeSet<String>,
+    full: bool,
+) -> Result<Vec<String>> {
+    if !full {
+        return Ok(Vec::new());
+    }
+    windows_cloud_missing_cached_provider_paths(root, cached_paths)
 }
 
 fn windows_cloud_missing_previous_local_state_paths(
@@ -2660,15 +2635,23 @@ mod tests {
     }
 
     #[test]
-    fn root_update_debounce_has_one_second_floor() {
+    fn root_update_debounce_has_fast_floor() {
         assert_eq!(
             root_update_debounce_duration(100),
-            std::time::Duration::from_millis(1_000)
+            std::time::Duration::from_millis(150)
         );
         assert_eq!(
             root_update_debounce_duration(2_500),
             std::time::Duration::from_millis(2_500)
         );
+    }
+
+    #[test]
+    fn event_block_pull_retry_budget_stays_short() {
+        let attempts = EVENT_BLOCK_PULL_RETRY_DELAYS.len() as u64;
+        let retry_sleep: u64 = EVENT_BLOCK_PULL_RETRY_DELAYS.iter().sum();
+
+        assert!(attempts * EVENT_BLOCK_PULL_TIMEOUT_SECS + retry_sleep <= 12);
     }
 
     #[test]
@@ -2710,6 +2693,30 @@ mod tests {
                 "gone/child.txt".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn windows_cloud_rescan_without_delete_recovery_ignores_cached_projection_misses() {
+        let sync_root = tempfile::tempdir().unwrap();
+        let cached = BTreeSet::from(["remote-lag.txt".to_string()]);
+
+        let missing =
+            windows_cloud_rescan_missing_cached_provider_paths(sync_root.path(), &cached, false)
+                .unwrap();
+
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn windows_cloud_cached_delete_recovery_detects_projection_misses() {
+        let sync_root = tempfile::tempdir().unwrap();
+        let cached = BTreeSet::from(["remote-gone.txt".to_string()]);
+
+        let missing =
+            windows_cloud_rescan_missing_cached_provider_paths(sync_root.path(), &cached, true)
+                .unwrap();
+
+        assert_eq!(missing, vec!["remote-gone.txt".to_string()]);
     }
 
     #[test]

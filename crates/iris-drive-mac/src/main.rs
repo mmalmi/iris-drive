@@ -218,8 +218,6 @@ fn spawn_daemon() -> std::io::Result<Child> {
     let cmd = same_dir.unwrap_or_else(|| "idrive".into());
     Command::new(cmd)
         .arg("daemon")
-        .arg("--watch-interval")
-        .arg("0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

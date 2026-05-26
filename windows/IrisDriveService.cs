@@ -108,8 +108,6 @@ public sealed class IrisDriveService
         {
             StartInfo = CreateStartInfo(
                 "daemon",
-                "--watch-interval",
-                "2",
                 "--watch-debounce-ms",
                 "100",
                 "--no-gateway"),

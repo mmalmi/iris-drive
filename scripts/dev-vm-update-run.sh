@@ -1096,7 +1096,6 @@ run_linux() {
     "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
-      --watch-interval 2 \
       --watch-debounce-ms 100 \
       --no-gateway \
       --mount \
@@ -1528,7 +1527,6 @@ run_macos() {
     "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
     "$idrive" --config-dir "$config_dir" daemon \
-      --watch-interval 2 \
       --watch-debounce-ms 100 \
       > "$daemon_log" 2>&1 < /dev/null &
   daemon_pid="$!"
@@ -2090,7 +2088,7 @@ set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=$env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC
 set IRIS_DRIVE_FIPS_STATIC_PEERS=$env:IRIS_DRIVE_FIPS_STATIC_PEERS
 set IRIS_DRIVE_WINDOWS_CLOUD_DEBUG=$env:IRIS_DRIVE_WINDOWS_CLOUD_DEBUG
 cd /d "$PublishDir"
-"$Idrive" --config-dir "$ConfigDir" daemon --watch-interval 2 --watch-debounce-ms 100 --no-gateway > "$DaemonOut" 2> "$DaemonErr"
+"$Idrive" --config-dir "$ConfigDir" daemon --watch-debounce-ms 100 --no-gateway > "$DaemonOut" 2> "$DaemonErr"
 "@ | Set-Content -Encoding ASCII $DaemonScript
 
   $TaskName = "IrisDriveDevDaemon"

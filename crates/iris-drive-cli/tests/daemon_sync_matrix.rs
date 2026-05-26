@@ -652,8 +652,6 @@ impl DaemonChild {
                 "daemon",
                 "--relay",
                 relay_url,
-                "--watch-interval",
-                "1",
                 "--watch-debounce-ms",
                 "100",
                 "--gateway-port",

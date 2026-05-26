@@ -211,7 +211,7 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) {
             "block_sync_by_root",
             "relays",
             "owner_npub",
-            "watch_interval_secs",
+            "provider_update_mode",
             "watch_debounce_ms",
             "mount",
             "relay_statuses",

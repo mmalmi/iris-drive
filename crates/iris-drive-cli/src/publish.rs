@@ -138,6 +138,7 @@ impl DirectRootExchange {
         let events = build_current_sync_events(config_dir, config, state).await?;
         let now = std::time::Instant::now();
         for event in events {
+            let event = self.event_for_publish(event);
             let should_publish = self.should_publish_key(&event.key, now);
             self.cache_event(event.clone());
             if !should_publish {
@@ -255,6 +256,10 @@ impl DirectRootExchange {
             self.cached_events.remove(&key);
             self.published_keys.remove(&key);
         }
+    }
+
+    fn event_for_publish(&self, event: DirectRootEvent) -> DirectRootEvent {
+        self.cached_events.get(&event.key).cloned().unwrap_or(event)
     }
 
     fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
@@ -1078,6 +1083,29 @@ mod tests {
         assert!(first > 0);
         assert_eq!(second, first + 1);
         assert_eq!(third, second + 1);
+    }
+
+    #[test]
+    fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
+        let mut exchange = DirectRootExchange::default();
+        let first = DirectRootEvent {
+            key: "drive-root:device:main:7:root".to_string(),
+            event_id: "first-event".to_string(),
+            kind: 30079,
+            json: "{\"id\":\"first\"}".to_string(),
+        };
+        let rebuilt = DirectRootEvent {
+            key: first.key.clone(),
+            event_id: "rebuilt-event".to_string(),
+            kind: 30079,
+            json: "{\"id\":\"rebuilt\"}".to_string(),
+        };
+
+        exchange.cache_event(first.clone());
+        let event = exchange.event_for_publish(rebuilt);
+
+        assert_eq!(event.event_id, first.event_id);
+        assert_eq!(event.json, first.json);
     }
 
     #[test]
