@@ -950,8 +950,10 @@ public static partial class WindowsCloudFiles
             var fullPath = Path.Combine(syncRootPath, FromVirtualPath(path));
             try
             {
-                if ((!File.Exists(fullPath) && !Directory.Exists(fullPath)) ||
-                    ExistingPlaceholder(fullPath))
+                // A dehydrated Cloud Files placeholder is still the correct visible
+                // projection for a provider file. Only treat the path as locally
+                // deleted when the item is actually absent from the sync root.
+                if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
                 {
                     missing.Add(path);
                 }

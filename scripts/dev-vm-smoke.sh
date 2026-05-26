@@ -37,6 +37,7 @@ WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_D
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
+WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
 
@@ -461,6 +462,57 @@ wait_windows_disk_missing() {
 wait_windows_disk_reparse() {
   local path="$1"
   [[ "$(windows_disk_state "$path")" == yes:reparse:* ]]
+}
+
+windows_projection_stays_visible_during_local_create() {
+  local local_path="$1"
+  shift
+  local expected_paths=("$@")
+  local expected_ps="@("
+  local separator=""
+  local expected
+  for expected in "${expected_paths[@]}"; do
+    expected_ps+="$separator$(ps_single_quote "$expected")"
+    separator=", "
+  done
+  expected_ps+=")"
+  local start
+  start="$(date +%s)"
+  if win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+function FullPath([string]\$Relative) {
+  \$Native = \$Relative.Replace("/", [IO.Path]::DirectorySeparatorChar)
+  return Join-Path (Join-Path \$HOME "Iris Drive") \$Native
+}
+\$Expected = $expected_ps
+\$LocalPath = FullPath $(ps_single_quote "$local_path")
+\$MissingBefore = @(\$Expected | Where-Object { -not (Test-Path -LiteralPath (FullPath \$_)) })
+if (\$MissingBefore.Count -gt 0) {
+  throw ("expected Windows projection paths missing before local create: " + (\$MissingBefore -join ", "))
+}
+New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName(\$LocalPath)) | Out-Null
+[System.IO.File]::WriteAllText(
+  \$LocalPath,
+  $(ps_single_quote "projection guard windows $RUN_ID") + [string][char]10,
+  [System.Text.Encoding]::ASCII)
+\$Deadline = (Get-Date).AddSeconds($WINDOWS_PROJECTION_STABILITY_SECONDS)
+while ((Get-Date) -lt \$Deadline) {
+  \$Missing = @(\$Expected | Where-Object { -not (Test-Path -LiteralPath (FullPath \$_)) })
+  if (\$Missing.Count -gt 0) {
+    throw ("Windows projection dropped expected paths during local create: " + (\$Missing -join ", "))
+  }
+  Start-Sleep -Milliseconds 250
+}
+REMOTE_PS
+  then
+    local elapsed=$(( $(date +%s) - start ))
+    record_timing "Windows projection stays visible during local create" "$elapsed" "ok"
+    log "ok in ${elapsed}s: Windows projection stays visible during local create"
+    return 0
+  fi
+  local elapsed=$(( $(date +%s) - start ))
+  record_timing "Windows projection stays visible during local create" "$elapsed" "failed"
+  die "Windows projection hid existing paths during local create"
 }
 
 wait_ubuntu_file_has() {
@@ -1057,6 +1109,9 @@ run_sync_smoke() {
   local windows_rename_dst="$SMOKE_DIR/windows-rename-dst.txt"
   local live_file="$SMOKE_DIR/live-from-windows.txt"
   local windows_live_file="$SMOKE_DIR/live-from-ubuntu-for-windows.txt"
+  local windows_projection_guard_ubuntu="$SMOKE_DIR/windows-projection-guard-ubuntu.txt"
+  local windows_projection_guard_macos="$SMOKE_DIR/windows-projection-guard-macos.txt"
+  local windows_projection_guard_local="$SMOKE_DIR/windows-projection-guard-local.txt"
   local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
   local ubuntu_delete_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-delete"
   local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
@@ -1105,6 +1160,26 @@ run_sync_smoke() {
   wait_for "Windows delete removes Ubuntu copy of macOS file" \
     "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_file"
+
+  log "checking Windows local create does not hide existing placeholders"
+  write_ubuntu_file "$windows_projection_guard_ubuntu" "projection guard ubuntu $RUN_ID"
+  write_macos_provider_file "$windows_projection_guard_macos" "projection guard macos $RUN_ID"
+  wait_for "Ubuntu projection guard reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_disk_has "$windows_projection_guard_ubuntu"
+  wait_for "Ubuntu projection guard is a Windows Cloud Files placeholder" \
+    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$windows_projection_guard_ubuntu"
+  wait_for "macOS projection guard reaches Windows disk" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_windows_disk_has "$windows_projection_guard_macos"
+  wait_for "macOS projection guard is a Windows Cloud Files placeholder" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$windows_projection_guard_macos"
+  windows_projection_stays_visible_during_local_create \
+    "$windows_projection_guard_local" \
+    "$windows_projection_guard_ubuntu" \
+    "$windows_projection_guard_macos"
+  wait_for "Windows projection guard local create reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_projection_guard_local"
+  wait_for "Windows projection guard local create reaches macOS provider" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$windows_projection_guard_local"
 
   log "checking Ubuntu-origin create then macOS-origin provider delete"
   write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
@@ -1168,6 +1243,9 @@ run_sync_smoke() {
     visible_smoke_dir_matches "$SMOKE_DIR" \
     "$(basename "$live_file")" "live from windows $RUN_ID" \
     "$(basename "$windows_live_file")" "live from ubuntu $RUN_ID" \
+    "$(basename "$windows_projection_guard_ubuntu")" "projection guard ubuntu $RUN_ID" \
+    "$(basename "$windows_projection_guard_macos")" "projection guard macos $RUN_ID" \
+    "$(basename "$windows_projection_guard_local")" "projection guard windows $RUN_ID" \
     "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
   check_native_status_summaries
 
