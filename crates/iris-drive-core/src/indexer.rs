@@ -182,13 +182,24 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
     root_meta: Option<&DriveRootMeta>,
     tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
+    let phase = std::time::Instant::now();
     root = filter_ignored_entries_from_root(tree, &root).await?;
+    tracing::debug!(
+        elapsed_ms = phase.elapsed().as_millis(),
+        "history layer filtered ignored entries"
+    );
     if previous_root.is_some() || tombstone_base_root.is_some() {
+        let phase = std::time::Instant::now();
         let (current_files, _) = walk_device_tree(tree, &root)
             .await
             .map_err(IndexError::Tree)?;
         let current_paths: BTreeSet<String> =
             current_files.into_iter().map(|file| file.path).collect();
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "history layer walked current root"
+        );
+        let phase = std::time::Instant::now();
         root = attach_history_for_current_paths(
             tree,
             root,
@@ -199,9 +210,18 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
             tombstone_paths,
         )
         .await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "history layer attached history"
+        );
     }
     if let Some(meta) = root_meta {
+        let phase = std::time::Instant::now();
         root = layer_root_meta(tree, root, meta).await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "history layer attached root metadata"
+        );
     }
     Ok(root)
 }
@@ -377,9 +397,15 @@ async fn attach_history_for_current_paths<S: Store>(
     // Files that were in the root being edited but are no longer visible get a
     // fresh tombstone stamped at import time.
     if let Some(base) = tombstone_base_root {
+        let phase = std::time::Instant::now();
         let (base_files, _base_tombstones) = walk_device_tree(tree, base)
             .await
             .map_err(IndexError::Tree)?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            file_count = base_files.len(),
+            "history attach walked tombstone base"
+        );
         for f in base_files {
             if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
             {
@@ -389,9 +415,16 @@ async fn attach_history_for_current_paths<S: Store>(
     }
 
     if let Some(prev) = previous_root {
+        let phase = std::time::Instant::now();
         let (prev_files, prev_tombstones) = walk_device_tree(tree, prev)
             .await
             .map_err(IndexError::Tree)?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            file_count = prev_files.len(),
+            tombstone_count = prev_tombstones.len(),
+            "history attach walked previous root"
+        );
         for f in prev_files {
             if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
             {
@@ -409,7 +442,13 @@ async fn attach_history_for_current_paths<S: Store>(
     }
 
     if !tombstones.is_empty() {
+        let phase = std::time::Instant::now();
         root = layer_tombstones(tree, root, &tombstones).await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            tombstone_count = tombstones.len(),
+            "history attach layered tombstones"
+        );
     }
 
     // Add the revision back-link: a `._prev` entry at the root pointing
@@ -417,7 +456,12 @@ async fn attach_history_for_current_paths<S: Store>(
     // automatically when readers decrypt the new TreeNode — the prior
     // TreeNode is now navigable from the current one.
     if let Some(prev) = previous_root {
+        let phase = std::time::Instant::now();
         root = layer_prev_link(tree, root, prev).await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "history attach layered previous link"
+        );
     }
 
     Ok(root)
