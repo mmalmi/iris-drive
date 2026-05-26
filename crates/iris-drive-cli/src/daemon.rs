@@ -2526,10 +2526,10 @@ pub(crate) async fn pull_blocks_for_root(
 
 fn should_try_blossom_download(
     config: &AppConfig,
-    fips_attempted: bool,
-    fips_had_peers: bool,
+    _fips_attempted: bool,
+    _fips_had_peers: bool,
 ) -> bool {
-    !config.blossom_servers.is_empty() && !(fips_attempted && fips_had_peers)
+    !config.blossom_servers.is_empty()
 }
 
 pub(crate) async fn pull_blocks_for_root_bounded(
@@ -2622,13 +2622,13 @@ mod tests {
     }
 
     #[test]
-    fn live_block_pull_skips_blossom_when_fips_peers_exist() {
+    fn live_block_pull_tries_blossom_after_fips_failure() {
         let mut config = AppConfig {
             blossom_servers: vec!["https://upload.example".to_string()],
             ..AppConfig::default()
         };
 
-        assert!(!should_try_blossom_download(&config, true, true));
+        assert!(should_try_blossom_download(&config, true, true));
         assert!(should_try_blossom_download(&config, true, false));
         assert!(should_try_blossom_download(&config, false, false));
 

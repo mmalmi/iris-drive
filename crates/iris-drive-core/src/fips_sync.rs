@@ -27,8 +27,8 @@ use crate::config::AppConfig;
 use crate::identity::DeviceIdentity;
 
 const IRIS_DRIVE_FIPS_SCOPE_PREFIX: &str = "iris-drive-v1";
-const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5_500);
-const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(750);
+const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
+const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 64;
