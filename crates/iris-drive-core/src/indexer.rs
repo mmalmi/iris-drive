@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, to_hex};
+use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, TreeEntry, to_hex};
 use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
@@ -206,6 +206,83 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
     Ok(root)
 }
 
+#[derive(Debug, Clone)]
+pub struct VisibleImportDelta {
+    pub root: Cid,
+    pub tombstone_paths: BTreeSet<String>,
+}
+
+/// Build this device's local contribution from an edited merged-visible root.
+///
+/// Virtual mounts expose a merged view, but publishing that entire view as the
+/// current device's root would re-author unchanged remote files locally. Instead
+/// this keeps only the previous local files that were still visible in the base
+/// view, then applies changed files from the edited view.
+pub async fn local_visible_root_for_mount_import<S: Store>(
+    tree: &HashTree<S>,
+    edited_root: &Cid,
+    previous_root: Option<&Cid>,
+    base_root: &Cid,
+    tombstone_paths: Option<&BTreeSet<String>>,
+) -> Result<VisibleImportDelta, IndexError> {
+    let edited_root = filter_ignored_entries_from_root(tree, edited_root).await?;
+    let base_root = filter_ignored_entries_from_root(tree, base_root).await?;
+
+    let mut edited_files = BTreeMap::new();
+    collect_visible_files(tree, &edited_root, "", &mut edited_files).await?;
+    let mut base_files = BTreeMap::new();
+    collect_visible_files(tree, &base_root, "", &mut base_files).await?;
+
+    let previous_visible_root = match previous_root {
+        Some(previous_root) => filter_ignored_entries_from_root(tree, previous_root).await?,
+        None => tree.put_directory(Vec::new()).await?,
+    };
+    let mut previous_files = BTreeMap::new();
+    collect_visible_files(tree, &previous_visible_root, "", &mut previous_files).await?;
+
+    let mut root = tree.put_directory(Vec::new()).await?;
+    for (path, previous) in &previous_files {
+        if base_files
+            .get(path)
+            .is_some_and(|base| visible_entry_matches(base, previous))
+        {
+            root = set_visible_file_entry(tree, &root, path, previous).await?;
+        }
+    }
+
+    let mut changed_paths = base_files
+        .keys()
+        .chain(edited_files.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut deleted_paths = BTreeSet::new();
+    for path in std::mem::take(&mut changed_paths) {
+        let base = base_files.get(&path);
+        let edited = edited_files.get(&path);
+        if base
+            .zip(edited)
+            .is_some_and(|(base, edited)| visible_entry_matches(base, edited))
+        {
+            continue;
+        }
+        match edited {
+            Some(entry) => {
+                root = set_visible_file_entry(tree, &root, &path, entry).await?;
+            }
+            None if tombstone_path_allowed(tombstone_paths, &path) => {
+                deleted_paths.insert(path.clone());
+                root = remove_visible_path_if_present(tree, &root, &path).await?;
+            }
+            None => {}
+        }
+    }
+
+    Ok(VisibleImportDelta {
+        root,
+        tombstone_paths: deleted_paths,
+    })
+}
+
 pub async fn filter_ignored_entries_from_root<S: Store>(
     tree: &HashTree<S>,
     root: &Cid,
@@ -326,6 +403,137 @@ fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str
         Some(paths) => paths.contains(path),
         None => true,
     }
+}
+
+fn collect_visible_files<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    root: &'a Cid,
+    prefix: &'a str,
+    out: &'a mut BTreeMap<String, TreeEntry>,
+) -> futures::future::BoxFuture<'a, Result<(), IndexError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(root).await?;
+        for entry in entries {
+            if should_ignore_name(&entry.name) {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            if entry.link_type == LinkType::Dir {
+                let cid = Cid {
+                    hash: entry.hash,
+                    key: entry.key,
+                };
+                collect_visible_files(tree, &cid, &path, out).await?;
+            } else {
+                out.insert(path, entry);
+            }
+        }
+        Ok(())
+    })
+}
+
+fn visible_entry_matches(left: &TreeEntry, right: &TreeEntry) -> bool {
+    left.hash == right.hash
+        && left.key == right.key
+        && left.size == right.size
+        && left.link_type == right.link_type
+        && left.meta == right.meta
+}
+
+async fn set_visible_file_entry<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &str,
+    entry: &TreeEntry,
+) -> Result<Cid, IndexError> {
+    let (parent, name) = split_visible_path(path)?;
+    let mut root = ensure_parent_dirs(tree, root.clone(), &parent).await?;
+    let parent_cid = resolve_dir(tree, &root, &parent).await?;
+    let mut entries = tree
+        .list_directory(&parent_cid)
+        .await?
+        .into_iter()
+        .filter(|existing| existing.name != name)
+        .map(|existing| DirEntry {
+            name: existing.name,
+            hash: existing.hash,
+            size: existing.size,
+            key: existing.key,
+            link_type: existing.link_type,
+            meta: existing.meta,
+        })
+        .collect::<Vec<_>>();
+    entries.push(DirEntry {
+        name: name.to_string(),
+        hash: entry.hash,
+        size: entry.size,
+        key: entry.key,
+        link_type: entry.link_type,
+        meta: entry.meta.clone(),
+    });
+    let parent_cid = tree.put_directory(entries).await?;
+    if parent.is_empty() {
+        return Ok(parent_cid);
+    }
+    root = tree
+        .set_entry(
+            &root,
+            &parent[..parent.len() - 1],
+            parent[parent.len() - 1],
+            &parent_cid,
+            0,
+            LinkType::Dir,
+        )
+        .await?;
+    Ok(root)
+}
+
+async fn ensure_parent_dirs<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    parent: &[&str],
+) -> Result<Cid, IndexError> {
+    let mut current = Vec::new();
+    for segment in parent {
+        current.push((*segment).to_string());
+        root = ensure_dir(tree, &root, &current).await?;
+    }
+    Ok(root)
+}
+
+async fn remove_visible_path_if_present<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &str,
+) -> Result<Cid, IndexError> {
+    let (parent, name) = split_visible_path(path)?;
+    let parent_cid = match resolve_dir(tree, root, &parent).await {
+        Ok(parent_cid) => parent_cid,
+        Err(IndexError::Tree(HashTreeError::PathNotFound(_))) => return Ok(root.clone()),
+        Err(error) => return Err(error),
+    };
+    let entries = tree.list_directory(&parent_cid).await?;
+    if entries.iter().all(|entry| entry.name != name) {
+        return Ok(root.clone());
+    }
+    tree.remove_entry(root, &parent, name)
+        .await
+        .map_err(Into::into)
+}
+
+fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), IndexError> {
+    let mut segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let Some(name) = segments.pop() else {
+        return Err(IndexError::Tree(HashTreeError::PathNotFound(path.into())));
+    };
+    Ok((segments, name))
 }
 
 pub async fn layer_root_meta<S: Store>(

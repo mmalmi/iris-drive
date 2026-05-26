@@ -22,7 +22,7 @@ use crate::conflict::ConflictState;
 use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
     layer_history_and_meta_on_root, layer_history_and_meta_on_root_with_tombstone_base_and_paths,
-    layer_prev_link, layer_root_meta, read_conflict_records,
+    layer_prev_link, layer_root_meta, local_visible_root_for_mount_import, read_conflict_records,
 };
 use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
@@ -306,10 +306,28 @@ impl Daemon {
 
         let now = unix_now();
         let root_meta = self.root_meta_for_import(now);
+        let mut scoped_tombstone_paths = None;
+        let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
+            let delta = local_visible_root_for_mount_import(
+                &self.tree,
+                &root,
+                previous_root.as_ref(),
+                tombstone_base_root,
+                tombstone_paths,
+            )
+            .await?;
+            scoped_tombstone_paths = Some(delta.tombstone_paths);
+            delta.root
+        } else {
+            root
+        };
+        let tombstone_paths = scoped_tombstone_paths
+            .as_ref()
+            .map_or(tombstone_paths, |paths| Some(paths));
         let root_cid = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             layer_history_and_meta_on_root_with_tombstone_base_and_paths(
                 &self.tree,
-                root,
+                import_root,
                 previous_root.as_ref(),
                 Some(tombstone_base_root),
                 now,
@@ -320,7 +338,7 @@ impl Daemon {
         } else {
             layer_history_and_meta_on_root(
                 &self.tree,
-                root,
+                import_root,
                 previous_root.as_ref(),
                 now,
                 root_meta.as_ref(),
@@ -846,6 +864,115 @@ mod tests {
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>();
         assert_eq!(visible_paths, vec!["projection-gap.txt"]);
+    }
+
+    #[tokio::test]
+    async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = config.account.as_mut().unwrap();
+        state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
+            pubkey: remote.clone(),
+            added_at: 100,
+            label: Some("remote".into()),
+        });
+        state.app_keys.as_mut().unwrap().normalize();
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let remote_dir = tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+        let remote_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.into(),
+            device_id: remote.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 100,
+        };
+        let remote_root = crate::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            100,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap();
+        drop(daemon);
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            remote.clone(),
+            DeviceRootRef::from_meta(
+                remote_root.to_string(),
+                remote_meta.created_at,
+                &remote_meta,
+            ),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        assert!(
+            daemon
+                .tree()
+                .resolve(&visible.root_cid, "foreign.txt")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let (local_file, local_size) = daemon.tree().put(b"from local").await.unwrap();
+        let edited_visible_root = daemon
+            .tree()
+            .set_entry(
+                &visible.root_cid,
+                &[],
+                "local.txt",
+                &local_file,
+                local_size,
+                hashtree_core::LinkType::Blob,
+            )
+            .await
+            .unwrap();
+
+        daemon
+            .import_visible_root_with_tombstone_base(
+                edited_visible_root,
+                Some(visible.root_cid.clone()),
+            )
+            .await
+            .unwrap();
+
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+            .await
+            .unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local.txt"]
+        );
+        assert!(tombstones.is_empty());
     }
 
     #[tokio::test]
