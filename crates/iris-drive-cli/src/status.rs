@@ -748,7 +748,7 @@ pub(crate) fn peer_statuses(
             let fips_direct_online = connected_fips.contains(&device_npub);
             let fips_mesh_online = mesh_fips.contains(&device_npub);
             let fips_online = if is_current_device {
-                daemon_running && fips_status.is_some()
+                daemon_running
             } else {
                 fips_direct_online || fips_mesh_online
             };

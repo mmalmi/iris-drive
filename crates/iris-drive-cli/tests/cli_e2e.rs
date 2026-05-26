@@ -485,6 +485,39 @@ fn status_marks_current_device_fips_online_when_daemon_is_running() {
 }
 
 #[test]
+fn status_marks_current_device_local_online_without_fips_transport_snapshot() {
+    let dir = tempdir().unwrap();
+    run_json(dir.path(), &["init", "--label", "macos"]);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        dir.path().join("daemon.lock"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": now,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = run_json(dir.path(), &["status"]);
+    let current_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["is_current_device"] == true)
+        .expect("current device peer");
+    assert_eq!(current_peer["fips_online"], true);
+    assert_eq!(current_peer["fips_online_via"], "local");
+}
+
+#[test]
 fn conflicts_resolve_marks_record_resolved_in_current_root() {
     let cfg = tempdir().unwrap();
     let work = tempdir().unwrap();
