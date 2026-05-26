@@ -90,6 +90,8 @@ pub(crate) struct DirectRootFrame {
     event_json: String,
 }
 
+pub(crate) const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
+
 #[derive(Default)]
 pub(crate) struct DirectRootExchange {
     cached_events: BTreeMap<String, DirectRootEvent>,
@@ -150,6 +152,23 @@ impl DirectRootExchange {
                 event_json: event.json.clone(),
             };
             let bytes = serde_json::to_vec(&frame)?;
+            let selected_app_peers = sync.authorized_peer_ids().await.len();
+            let sent_app_peers = sync
+                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                .await?;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_app_publish",
+                    "topic": DIRECT_ROOT_APP_TOPIC,
+                    "root_key": event.key.clone(),
+                    "root_event_id": event.event_id.clone(),
+                    "kind": event.kind,
+                    "selected_peers": selected_app_peers,
+                    "sent_peers": sent_app_peers,
+                    "sent_bytes": bytes.len(),
+                })
+            );
             let seq = self.next_mesh_publish_seq();
             let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
             println!(
@@ -168,6 +187,43 @@ impl DirectRootExchange {
             );
         }
         Ok(())
+    }
+
+    async fn apply_direct_root_frame(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        frame: DirectRootFrame,
+    ) -> Result<bool> {
+        if self.seen_keys.contains(&frame.key) {
+            return Ok(false);
+        }
+        let event: Event =
+            serde_json::from_str(&frame.event_json).context("parsing direct root event")?;
+        if event.id.to_hex() != frame.event_id {
+            return Err(anyhow::anyhow!("direct root event id mismatch"));
+        }
+        self.seen_keys.insert(frame.key.clone());
+        if let Err(error) = apply_one_event(
+            client,
+            config_dir,
+            &event,
+            Some(sync.clone()),
+            mount_refresh.clone(),
+        )
+        .await
+        {
+            self.seen_keys.remove(&frame.key);
+            return Err(error);
+        }
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        if let Some(state) = config.account.as_ref() {
+            self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
+                .await?;
+        }
+        Ok(true)
     }
 
     pub(crate) async fn request_roots_from_new_peers(
@@ -204,26 +260,19 @@ impl DirectRootExchange {
             }
             let frame: DirectRootFrame =
                 serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
-            if self.seen_keys.contains(&frame.key) {
-                continue;
-            }
-            let event: Event =
-                serde_json::from_str(&frame.event_json).context("parsing mesh root event")?;
-            if event.id.to_hex() != frame.event_id {
-                return Err(anyhow::anyhow!("direct mesh root event id mismatch"));
-            }
-            self.seen_keys.insert(frame.key.clone());
-            if let Err(error) = apply_one_event(
-                client,
-                config_dir,
-                &event,
-                Some(sync.clone()),
-                mount_refresh.clone(),
-            )
-            .await
+            let root_key = frame.key.clone();
+            let root_event_id = frame.event_id.clone();
+            if !self
+                .apply_direct_root_frame(
+                    client,
+                    config_dir,
+                    sync.clone(),
+                    mount_refresh.clone(),
+                    frame,
+                )
+                .await?
             {
-                self.seen_keys.remove(&frame.key);
-                return Err(error);
+                continue;
             }
             println!(
                 "{}",
@@ -233,16 +282,45 @@ impl DirectRootExchange {
                     "peer": message.from_peer_id,
                     "origin": message.origin_peer_id,
                     "seq": message.seq,
-                    "root_key": frame.key,
-                    "root_event_id": frame.event_id,
+                    "root_key": root_key,
+                    "root_event_id": root_event_id,
                 })
             );
-            let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-            if let Some(state) = config.account.as_ref() {
-                self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
-                    .await?;
-            }
         }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_app_message(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        message: iris_drive_core::FipsAppMessage,
+    ) -> Result<()> {
+        if message.topic != DIRECT_ROOT_APP_TOPIC {
+            return Ok(());
+        }
+        let frame: DirectRootFrame =
+            serde_json::from_slice(&message.data).context("parsing app root frame")?;
+        let root_key = frame.key.clone();
+        let root_event_id = frame.event_id.clone();
+        if !self
+            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, frame)
+            .await?
+        {
+            return Ok(());
+        }
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_app_event",
+                "topic": message.topic,
+                "peer": message.peer_id,
+                "root_key": root_key,
+                "root_event_id": root_event_id,
+            })
+        );
         Ok(())
     }
 

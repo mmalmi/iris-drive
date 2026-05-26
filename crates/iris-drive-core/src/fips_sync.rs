@@ -31,8 +31,8 @@ const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
 const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
-const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 64;
-const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
+const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 2;
 pub const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
@@ -274,6 +274,7 @@ pub struct FipsTransportSettings {
     pub udp_external_addr: Option<String>,
     pub static_peer_hints: Vec<(String, Vec<String>)>,
     pub bootstrap_peer_hints: Vec<(String, Vec<String>)>,
+    pub webrtc_max_connections: usize,
     pub open_discovery_max_pending: usize,
 }
 
@@ -287,6 +288,7 @@ impl Default for FipsTransportSettings {
             udp_external_addr: None,
             static_peer_hints: Vec::new(),
             bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
+            webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
             open_discovery_max_pending: FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         }
     }
@@ -317,6 +319,9 @@ impl FipsTransportSettings {
                 &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
             ),
             bootstrap_peer_hints,
+            webrtc_max_connections: usize_env("IRIS_DRIVE_FIPS_WEBRTC_MAX_CONNECTIONS")
+                .unwrap_or(FIPS_WEBRTC_MAX_CONNECTIONS)
+                .max(1),
             open_discovery_max_pending: usize_env("IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING")
                 .unwrap_or(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING),
         }
@@ -339,7 +344,7 @@ fn fips_endpoint_options(
         udp_public: settings.udp_public,
         udp_external_addr: settings.udp_external_addr.clone(),
         webrtc_auto_connect: true,
-        webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
+        webrtc_max_connections: settings.webrtc_max_connections,
         open_discovery_max_pending: settings.open_discovery_max_pending,
         packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
     }
@@ -1343,6 +1348,7 @@ mod tests {
             udp_external_addr: Some("10.44.94.98:2121".to_string()),
             static_peer_hints: Vec::new(),
             bootstrap_peer_hints: Vec::new(),
+            webrtc_max_connections: 12,
             open_discovery_max_pending: 8,
         };
 
@@ -1362,6 +1368,7 @@ mod tests {
             Some("10.44.94.98:2121")
         );
         assert!(options.webrtc_auto_connect);
+        assert_eq!(options.webrtc_max_connections, 12);
         assert_eq!(options.open_discovery_max_pending, 8);
     }
 
@@ -1369,7 +1376,8 @@ mod tests {
     fn default_transport_settings_seed_fips_bootstrap_transit() {
         let settings = FipsTransportSettings::default();
 
-        assert_eq!(settings.open_discovery_max_pending, 8);
+        assert_eq!(settings.webrtc_max_connections, 16);
+        assert_eq!(settings.open_discovery_max_pending, 2);
         assert_eq!(
             settings.bootstrap_peer_hints.len(),
             DEFAULT_FIPS_BOOTSTRAP_PEERS.len()

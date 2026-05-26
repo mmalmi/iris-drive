@@ -57,6 +57,9 @@ pub(crate) fn cmd_daemon(
                 Ok(sync) => (Some(Arc::new(sync)), None),
                 Err(error) => (None, Some(error.to_string())),
             };
+        let mut direct_app_message_rx = fips_blocks
+            .as_ref()
+            .map(|sync| sync.subscribe_app_messages());
         #[cfg(windows)]
         let (
             windows_cloud_root,
@@ -488,6 +491,41 @@ pub(crate) fn cmd_daemon(
                             "{}",
                             json!({"event": "provider_root_publish_error", "trigger": "config_root_poll", "error": format!("{error:#}")})
                         ),
+                    }
+                }
+                recv = async {
+                    if let Some(rx) = direct_app_message_rx.as_mut() {
+                        Some(rx.recv().await)
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    match recv {
+                        Some(Ok(message)) => {
+                            if let Some(sync) = fips_blocks.as_ref()
+                                && let Err(error) = direct_roots
+                                    .handle_app_message(
+                                        &client,
+                                        config_dir,
+                                        sync.clone(),
+                                        mount_refresh_tx.clone(),
+                                        message,
+                                    )
+                                    .await
+                            {
+                                println!(
+                                    "{}",
+                                    json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                );
+                            }
+                        }
+                        Some(Err(RecvError::Lagged(n))) => {
+                            println!("{}", json!({"event": "direct_root_app_lagged", "skipped": n}));
+                        }
+                        Some(Err(RecvError::Closed)) | None => {
+                            direct_app_message_rx = None;
+                            println!("{}", json!({"event": "direct_root_app_closed"}));
+                        }
                     }
                 }
                 _ = direct_mesh_timer.tick() => {
@@ -1960,6 +1998,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "udp_public": transport.udp_public,
         "udp_external_addr": transport.udp_external_addr.as_deref(),
         "webrtc_enabled": transport.enable_webrtc,
+        "webrtc_max_connections": transport.webrtc_max_connections,
         "mesh_peer_count": sync.mesh_peer_count().await,
         "mesh_peers": sync.mesh_peer_ids().await,
         "authorized_peers": sync.authorized_peer_ids().await,
