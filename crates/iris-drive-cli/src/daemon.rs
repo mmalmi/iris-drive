@@ -2464,6 +2464,8 @@ pub(crate) async fn pull_blocks_for_root(
                             "event": "fips_download_error",
                             "root_cid": root_cid_str,
                             "error": error,
+                            "connected_peers": connected_peers,
+                            "mesh_peers": mesh_peers,
                         })
                     );
                 }

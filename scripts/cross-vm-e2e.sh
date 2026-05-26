@@ -23,7 +23,7 @@ and waits until every host has the same visible SHA-256 snapshot.
 
 Environment:
   IRIS_DRIVE_E2E_RELAYS          Space-separated relay URLs passed to daemons.
-  IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 180).
+  IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 60).
   IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS
                                   Per SSH command timeout; 0 disables (default: 60).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
@@ -38,7 +38,7 @@ USAGE
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
-TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-180}"
+TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
 POLL_SECS="${IRIS_DRIVE_E2E_POLL_SECS:-3}"
 MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
