@@ -1262,6 +1262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.blocksDirectory = hashtree["blocks_dir"] as? String
                 status.localBlockCount = Self.intValue(hashtree["local_block_count"]) ?? 0
                 status.localBlockBytes = Self.int64Value(hashtree["local_block_bytes"]) ?? 0
+                status.visibleFileBytes = Self.int64Value(hashtree["visible_file_bytes"])
                 status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
                 status.rootIsPrivate = hashtree["current_root_private"] as? Bool
                 status.filesIrisURL =

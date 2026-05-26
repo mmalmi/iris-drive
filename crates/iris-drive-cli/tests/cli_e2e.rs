@@ -737,6 +737,7 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     assert_eq!(decoded.decrypt_key, cid.key);
     assert_eq!(v["hashtree"]["file_count"], 2);
     assert_eq!(v["hashtree"]["top_level_entries"], 1);
+    assert_eq!(v["hashtree"]["visible_file_bytes"], 18);
     assert!(v["hashtree"]["local_block_count"].as_u64().unwrap() > 0);
     assert!(v["hashtree"]["local_block_bytes"].as_u64().unwrap() > 0);
     assert_eq!(v["network"]["published_device_roots"], 1);

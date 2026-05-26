@@ -1013,6 +1013,41 @@ for name, manifest in manifests.items():
 PY
 }
 
+check_native_status_summaries() {
+  log "checking native status summaries report files, bytes, and devices"
+  local ubuntu_status
+  local macos_status
+  local windows_status
+  ubuntu_status="$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" status')"
+  macos_status="$(macos_idrive_json status)"
+  windows_status="$(win_idrive_json status)"
+  STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
+import json
+import os
+
+statuses = {
+    "ubuntu": json.loads(os.environ["STATUS_UBUNTU"]),
+    "macos": json.loads(os.environ["STATUS_MACOS"]),
+    "windows": json.loads(os.environ["STATUS_WINDOWS"]),
+}
+errors = []
+for name, status in statuses.items():
+    hashtree = status.get("hashtree", {})
+    network = status.get("network", {})
+    file_count = hashtree.get("file_count") or hashtree.get("top_level_entries") or 0
+    visible_file_bytes = hashtree.get("visible_file_bytes") or 0
+    authorized_devices = network.get("authorized_device_count") or 0
+    if file_count <= 0:
+        errors.append(f"{name} status file_count={file_count}")
+    if visible_file_bytes <= 0:
+        errors.append(f"{name} status visible_file_bytes={visible_file_bytes}")
+    if authorized_devices < 3:
+        errors.append(f"{name} status authorized_device_count={authorized_devices}")
+if errors:
+    raise SystemExit("; ".join(errors))
+PY
+}
+
 run_sync_smoke() {
   local windows_file="$SMOKE_DIR/from-windows.txt"
   local ubuntu_file="$SMOKE_DIR/from-ubuntu-placeholder.txt"
@@ -1134,6 +1169,7 @@ run_sync_smoke() {
     "$(basename "$live_file")" "live from windows $RUN_ID" \
     "$(basename "$windows_live_file")" "live from ubuntu $RUN_ID" \
     "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
+  check_native_status_summaries
 
   delete_ubuntu_path "$SMOKE_DIR" || true
 }

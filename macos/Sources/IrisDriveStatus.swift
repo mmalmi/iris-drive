@@ -28,6 +28,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var snapshotURL: String?
     @Published var fileCount: Int?
     @Published var topLevelEntries: Int?
+    @Published var visibleFileBytes: Int64?
     @Published var localBlockCount = 0
     @Published var localBlockBytes: Int64 = 0
     @Published var relays: [String] = []

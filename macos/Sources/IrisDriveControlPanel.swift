@@ -327,9 +327,10 @@ struct IrisDriveControlPanel: View {
 
     private var summaryLine: String {
         let files = status.fileCount ?? status.topLevelEntries ?? 0
+        let usedBytes = status.visibleFileBytes ?? status.localBlockBytes
         return [
             countLabel(files, "file"),
-            "\(byteString(status.localBlockBytes)) used",
+            "\(byteString(usedBytes)) used",
             countLabel(status.authorizedDeviceCount, "device"),
         ].joined(separator: "  ·  ")
     }
@@ -504,7 +505,10 @@ struct IrisDriveControlPanel: View {
                 Button("Open snapshot link") { controller.openDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
                 LabeledContent("Blocks", value: "\(status.localBlockCount)")
-                LabeledContent("Storage", value: byteString(status.localBlockBytes))
+                LabeledContent(
+                    "Storage",
+                    value: byteString(status.visibleFileBytes ?? status.localBlockBytes)
+                )
             }
 
             Section("About") {

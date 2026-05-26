@@ -5,9 +5,11 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let initialized = already_initialized(config_dir);
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .with_context(|| format!("reading config at {}", config_path_in(config_dir).display()))?;
+    let daemon_status = load_daemon_status(config_dir);
     let blocks_dir = config_dir.join("blocks");
-    let block_stats = collect_file_stats(&blocks_dir)
-        .with_context(|| format!("reading block store stats at {}", blocks_dir.display()))?;
+    let block_stats =
+        collect_file_stats_with_entry_limit(&blocks_dir, Some(STATUS_BLOCK_STATS_ENTRY_LIMIT))
+            .with_context(|| format!("reading block store stats at {}", blocks_dir.display()))?;
     let current_root_cid = current_primary_root_cid(&config);
     let current_root_private = current_root_cid.as_deref().and_then(root_is_private);
     let drive_iris_to_url = current_root_cid
@@ -21,22 +23,34 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         DEFAULT_GATEWAY_PORT,
         config.local_nhash_resolver_enabled,
     );
-    let merged_counts = primary_drive_counts(config_dir, &config);
-    let top_level_entries = merged_counts.map(|(_, top_level)| top_level).or_else(|| {
-        current_root_cid
-            .as_deref()
-            .and_then(|root| root_top_level_entries(config_dir, root))
-    });
-    let file_count = merged_counts.map(|(files, _)| files).or_else(|| {
-        current_root_cid
-            .as_deref()
-            .and_then(|root| root_file_count(config_dir, root))
-    });
+    let merged_stats = primary_drive_stats(config_dir, &config);
+    let root_file_stats = current_root_cid
+        .as_deref()
+        .and_then(|root| root_file_stats(config_dir, root));
+    let top_level_entries = merged_stats
+        .as_ref()
+        .map(|stats| stats.top_level_entries)
+        .or_else(|| {
+            current_root_cid
+                .as_deref()
+                .and_then(|root| root_top_level_entries(config_dir, root))
+        });
+    let file_count = merged_stats
+        .as_ref()
+        .map(|stats| stats.file_count)
+        .or_else(|| root_file_stats.as_ref().map(|stats| stats.file_count));
+    let visible_file_bytes = merged_stats
+        .as_ref()
+        .map(|stats| stats.visible_file_bytes)
+        .or_else(|| {
+            root_file_stats
+                .as_ref()
+                .map(|stats| stats.visible_file_bytes)
+        });
     let conflict_status = current_root_cid
         .as_deref()
         .and_then(|root| root_conflict_status(config_dir, root))
         .unwrap_or_else(|| conflict_status_payload(&[]));
-    let daemon_status = load_daemon_status(config_dir);
     let peers = peer_statuses(config_dir, &config, daemon_status.as_ref());
     let authorized_device_count = peers.len();
     let published_device_roots = config
@@ -65,6 +79,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "blocks_dir": blocks_dir.display().to_string(),
                 "local_block_count": block_stats.file_count,
                 "local_block_bytes": block_stats.total_bytes,
+                "local_block_stats_truncated": block_stats.truncated,
                 "current_root_cid": current_root_cid,
                 "current_root_private": current_root_private,
                 "drive_iris_to_url": drive_iris_to_url,
@@ -74,6 +89,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "local_gateway": browser_gateway_urls,
                 "file_count": file_count,
                 "top_level_entries": top_level_entries,
+                "visible_file_bytes": visible_file_bytes,
             },
             "network": {
                 "relays": config.relays,
@@ -367,6 +383,7 @@ pub(crate) fn cmd_conflict_resolve(config_dir: &std::path::Path, conflict_id: &s
 pub(crate) struct FileStats {
     file_count: u64,
     total_bytes: u64,
+    truncated: bool,
 }
 
 fn retry_interrupted_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
@@ -378,7 +395,10 @@ fn retry_interrupted_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::i
     }
 }
 
-pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
+pub(crate) fn collect_file_stats_with_entry_limit(
+    path: &Path,
+    entry_limit: Option<usize>,
+) -> Result<FileStats> {
     let metadata = match retry_interrupted_io(|| std::fs::metadata(path)) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -390,6 +410,7 @@ pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
         return Ok(FileStats {
             file_count: 1,
             total_bytes: metadata.len(),
+            truncated: false,
         });
     }
     if !metadata.is_dir() {
@@ -398,9 +419,18 @@ pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
 
     let mut stats = FileStats::default();
     let mut stack = vec![path.to_path_buf()];
+    let mut visited_entries = 0usize;
     while let Some(dir) = stack.pop() {
+        if entry_limit.is_some_and(|limit| visited_entries >= limit) {
+            stats.truncated = true;
+            break;
+        }
         let mut entries = retry_interrupted_io(|| std::fs::read_dir(&dir))?;
         loop {
+            if entry_limit.is_some_and(|limit| visited_entries >= limit) {
+                stats.truncated = true;
+                break;
+            }
             let Some(entry) = retry_interrupted_io(|| match entries.next() {
                 Some(entry) => entry.map(Some),
                 None => Ok(None),
@@ -408,6 +438,7 @@ pub(crate) fn collect_file_stats(path: &Path) -> Result<FileStats> {
             else {
                 break;
             };
+            visited_entries += 1;
             let path = entry.path();
             let metadata = retry_interrupted_io(|| entry.metadata())?;
             if metadata.is_dir() {
@@ -510,6 +541,15 @@ pub(crate) fn percent_encode_path_segment(segment: &str) -> String {
     encoded
 }
 
+const STATUS_BLOCK_STATS_ENTRY_LIMIT: usize = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrimaryDriveStatusStats {
+    file_count: usize,
+    top_level_entries: usize,
+    visible_file_bytes: u64,
+}
+
 pub(crate) fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Option<usize> {
     let cid = Cid::parse(root_cid).ok()?;
     let daemon = Daemon::open(config_dir).ok()?;
@@ -532,22 +572,40 @@ pub(crate) fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Optio
     })
 }
 
-pub(crate) fn root_file_count(config_dir: &Path, root_cid: &str) -> Option<usize> {
+pub(crate) fn root_file_stats(
+    config_dir: &Path,
+    root_cid: &str,
+) -> Option<PrimaryDriveStatusStats> {
     let cid = Cid::parse(root_cid).ok()?;
     let daemon = Daemon::open(config_dir).ok()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .ok()?;
-    runtime
-        .block_on(async { walk_device_tree(daemon.tree(), &cid).await.ok() })
-        .map(|(files, _tombstones)| files.len())
+    let (files, _tombstones) =
+        runtime.block_on(async { walk_device_tree(daemon.tree(), &cid).await.ok() })?;
+    let top_level_entries = files
+        .iter()
+        .filter_map(|entry| entry.path.split('/').next())
+        .filter(|segment| !segment.is_empty())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let visible_file_bytes = files.iter().map(|entry| entry.size).sum();
+    Some(PrimaryDriveStatusStats {
+        file_count: files.len(),
+        top_level_entries,
+        visible_file_bytes,
+    })
 }
 
-pub(crate) fn primary_drive_counts(
+pub(crate) fn root_file_count(config_dir: &Path, root_cid: &str) -> Option<usize> {
+    root_file_stats(config_dir, root_cid).map(|stats| stats.file_count)
+}
+
+pub(crate) fn primary_drive_stats(
     config_dir: &Path,
     config: &AppConfig,
-) -> Option<(usize, usize)> {
+) -> Option<PrimaryDriveStatusStats> {
     let daemon = Daemon::open(config_dir).ok()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -559,7 +617,11 @@ pub(crate) fn primary_drive_counts(
                 .await
                 .ok()
         })
-        .map(|merged| (merged.file_count(), merged.top_level_entries()))
+        .map(|merged| PrimaryDriveStatusStats {
+            file_count: merged.file_count(),
+            top_level_entries: merged.top_level_entries(),
+            visible_file_bytes: merged.view.files.iter().map(|entry| entry.size).sum(),
+        })
 }
 
 pub(crate) fn root_conflict_status(config_dir: &Path, root_cid: &str) -> Option<serde_json::Value> {
@@ -895,6 +957,20 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn block_stats_entry_limit_marks_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..3 {
+            std::fs::write(dir.path().join(format!("block-{index}")), b"block").unwrap();
+        }
+
+        let stats = collect_file_stats_with_entry_limit(dir.path(), Some(2)).unwrap();
+
+        assert!(stats.truncated);
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.total_bytes, 10);
     }
 
     #[test]
