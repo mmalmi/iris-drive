@@ -63,6 +63,10 @@ pub enum SyncCacheError {
         root_cid: String,
         source: CidParseError,
     },
+    #[error("drive not found in config: {0}")]
+    DriveMissing(String),
+    #[error("device root not found in config for drive {drive_id} device {device_id}")]
+    DeviceRootMissing { drive_id: String, device_id: String },
     #[error("tree: {0}")]
     Tree(#[from] HashTreeError),
 }
@@ -196,6 +200,61 @@ impl SyncCache {
             });
         }
         self.sort_rows();
+    }
+
+    pub async fn replace_device_root_from_config<S: Store>(
+        &mut self,
+        tree: &HashTree<S>,
+        config: &AppConfig,
+        drive_id: &str,
+        device_id: &str,
+        seen_at: i64,
+    ) -> Result<(), SyncCacheError> {
+        let drive = config
+            .drive(drive_id)
+            .ok_or_else(|| SyncCacheError::DriveMissing(drive_id.to_string()))?;
+        let root = drive.device_roots.get(device_id).ok_or_else(|| {
+            SyncCacheError::DeviceRootMissing {
+                drive_id: drive_id.to_string(),
+                device_id: device_id.to_string(),
+            }
+        })?;
+        let root_cid = Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
+            drive_id: drive_id.to_string(),
+            device_id: device_id.to_string(),
+            root_cid: root.root_cid.clone(),
+            source,
+        })?;
+
+        self.roots
+            .retain(|row| row.drive_id != drive_id || row.device_id != device_id);
+        self.path_state
+            .retain(|row| row.drive_id != drive_id || row.device_id != device_id);
+
+        self.roots.push(CachedRoot {
+            drive_id: drive_id.to_string(),
+            device_id: device_id.to_string(),
+            device_seq: root.device_seq,
+            root_cid: root.root_cid.clone(),
+            dck_generation: root.dck_generation,
+            seen_at,
+            observed_json: serde_json::to_value(&root.observed)?,
+        });
+
+        let (files, _tombstones) = walk_device_tree(tree, &root_cid).await?;
+        self.path_state
+            .extend(files.into_iter().map(|file| CachedPathState {
+                drive_id: drive_id.to_string(),
+                device_id: device_id.to_string(),
+                path: file.path,
+                root_cid: root.root_cid.clone(),
+                whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
+                content_cid_hash: to_hex(&file.hash),
+                size: file.size,
+                metadata_json: json!({}),
+            }));
+        self.set_current_device_base(drive_id, device_id);
+        Ok(())
     }
 
     pub fn replace_base_state_for_drive(
@@ -529,7 +588,9 @@ fn roots_for_drive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hashtree_core::{sha256, to_hex};
+    use crate::config::Drive;
+    use hashtree_core::{HashTree, HashTreeConfig, MemoryStore, sha256, to_hex};
+    use std::sync::Arc;
 
     #[test]
     fn base_snapshots_for_drive_prefer_whole_file_hash() {
@@ -629,6 +690,57 @@ mod tests {
         assert!(cache.base_snapshots_for_drive("main").is_empty());
         assert_eq!(cache.base_anchor_for_drive("main"), Some("root-empty"));
         assert_eq!(cache.base_anchor_for_drive("other"), Some("root-other"));
+    }
+
+    #[tokio::test]
+    async fn replace_device_root_updates_one_device_without_walking_others() {
+        let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+        let source = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join("local.txt"), b"local").unwrap();
+        let local_root =
+            crate::indexer::index_dir_with_history_and_meta(&tree, source.path(), None, 10, None)
+                .await
+                .unwrap();
+        let local_root_string = local_root.to_string();
+
+        let mut config = AppConfig::default();
+        let mut drive = Drive::primary("owner");
+        drive.device_roots.insert(
+            "device-a".into(),
+            DeviceRootRef::legacy(local_root_string.clone(), 10, 1),
+        );
+        drive.device_roots.insert(
+            "device-b".into(),
+            DeviceRootRef::legacy("not-a-local-cid", 11, 1),
+        );
+        config.upsert_drive(drive);
+
+        let mut cache = SyncCache::empty();
+        cache.roots.push(CachedRoot {
+            drive_id: "main".into(),
+            device_id: "device-b".into(),
+            device_seq: 1,
+            root_cid: "not-a-local-cid".into(),
+            dck_generation: 0,
+            seen_at: 9,
+            observed_json: serde_json::json!({}),
+        });
+        cache
+            .replace_device_root_from_config(&tree, &config, "main", "device-a", 12)
+            .await
+            .unwrap();
+
+        assert!(cache.roots.iter().any(|row| row.device_id == "device-b"));
+        assert!(cache.roots.iter().any(|row| {
+            row.device_id == "device-a" && row.root_cid == local_root_string
+        }));
+        assert_eq!(cache.path_state.len(), 1);
+        assert_eq!(cache.path_state[0].device_id, "device-a");
+        assert_eq!(cache.path_state[0].path, "local.txt");
+        assert_eq!(
+            cache.base_anchor_for_drive("main"),
+            Some(local_root_string.as_str())
+        );
     }
 
     #[test]

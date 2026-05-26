@@ -470,9 +470,26 @@ impl Daemon {
     }
 
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
-        let mut cache =
-            SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
-        if let Some(account) = self.config.account.as_ref() {
+        let Some(account) = self.config.account.as_ref() else {
+            let cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
+            cache.save(sync_cache_path_in(&self.config_dir))?;
+            return Ok(());
+        };
+
+        let path = sync_cache_path_in(&self.config_dir);
+        let mut cache = SyncCache::load(&path).unwrap_or_else(|_| SyncCache::empty());
+        if cache
+            .replace_device_root_from_config(
+                &self.tree,
+                &self.config,
+                PRIMARY_DRIVE_ID,
+                &account.device_pubkey,
+                unix_now(),
+            )
+            .await
+            .is_err()
+        {
+            cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
             cache.set_current_device_base(PRIMARY_DRIVE_ID, &account.device_pubkey);
         }
         cache.save(sync_cache_path_in(&self.config_dir))?;
