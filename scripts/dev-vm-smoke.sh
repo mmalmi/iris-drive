@@ -827,7 +827,7 @@ import os
 import sys
 
 root = sys.argv[1]
-ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh"}
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
 if not os.path.isdir(root):
     raise SystemExit(1)
 entries = []
@@ -870,7 +870,7 @@ import sys
 
 cloud_root = sys.argv[1]
 relative = sys.argv[2]
-ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh"}
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
 roots = []
 if os.path.isdir(cloud_root):
     roots = [
@@ -920,7 +920,7 @@ if (-not (Test-Path -LiteralPath \$Root -PathType Container)) {
   exit 1
 }
 \$Ignored = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-@(".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh") | ForEach-Object { [void]\$Ignored.Add(\$_) }
+@(".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh") | ForEach-Object { [void]\$Ignored.Add(\$_) }
 \$Entries = @()
 Get-ChildItem -LiteralPath \$Root -Force -Recurse | Sort-Object FullName | ForEach-Object {
   if (\$Ignored.Contains(\$_.Name)) {
@@ -1149,7 +1149,7 @@ run_sync_smoke() {
   ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
   write_windows_file "$live_file" "live from windows $RUN_ID"
   wait_for "Ubuntu directory monitor wakes for Windows create" "$SYNC_WAIT_TIMEOUT" \
-    ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" ".iris-drive-refresh"
+    ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" "iris-drive-refresh" ".iris-drive-refresh"
   wait_for "Ubuntu live create is visible after monitor wake" 15 wait_ubuntu_file_has "$live_file"
   ubuntu_stop_directory_monitor "$monitor_token"
   wait_for "Windows live create reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$live_file"
