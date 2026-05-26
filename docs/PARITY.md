@@ -48,7 +48,7 @@ The minimum parity smoke for Linux is:
 4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
 5. Create, rename, edit, and delete files inside the mounted drive.
 6. Confirm authorized peers receive the new roots without falling back to a normal folder scan.
-7. Confirm native directory viewers/watchers wake after remote creates without reopening the folder.
+7. Confirm native directory viewers/watchers wake after remote creates and deletes without reopening the folder.
 8. Confirm the three native visible directories have matching path/content manifests and no unintended conflict copies.
 
 The same flow is valid for macOS once the visible app has the latest control

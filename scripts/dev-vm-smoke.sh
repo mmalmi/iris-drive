@@ -1023,6 +1023,7 @@ run_sync_smoke() {
   local live_file="$SMOKE_DIR/live-from-windows.txt"
   local windows_live_file="$SMOKE_DIR/live-from-ubuntu-for-windows.txt"
   local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
+  local ubuntu_delete_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-delete"
   local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
 
   log "checking Windows-origin create then Ubuntu-origin delete"
@@ -1076,9 +1077,13 @@ run_sync_smoke() {
     macos_provider_has "$macos_delete_file"
   wait_for "Ubuntu file reaches Windows disk before macOS delete" "$SYNC_WAIT_TIMEOUT" \
     wait_windows_disk_has "$macos_delete_file"
+  ubuntu_start_directory_monitor "$SMOKE_DIR" "$ubuntu_delete_monitor_token"
   delete_macos_provider_path "$macos_delete_file"
   wait_for "macOS provider delete removes Ubuntu file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_delete_file"
+  wait_for "Ubuntu directory monitor wakes for macOS delete" "$SYNC_WAIT_TIMEOUT" \
+    ubuntu_monitor_saw_any "$ubuntu_delete_monitor_token" "$(basename "$macos_delete_file")"
+  ubuntu_stop_directory_monitor "$ubuntu_delete_monitor_token"
   wait_for_quiet "macOS provider delete removes Windows disk file" \
     "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
     wait_windows_disk_missing "$macos_delete_file"

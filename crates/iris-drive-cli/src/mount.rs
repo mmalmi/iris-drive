@@ -97,6 +97,10 @@ impl IrisDriveMountHandle {
         let visible = primary_merged_root(daemon.tree(), daemon.config())
             .await
             .context("building visible mount root")?;
+        let removed_paths = self
+            .fs
+            .removed_known_entry_paths_for_root(&visible.root_cid);
+        wake_removed_directory_entries(&self.mountpoint, &self.fs, &removed_paths);
         self.fs
             .replace_root(visible.root_cid.clone())
             .map_err(|error| anyhow::anyhow!("refreshing mounted root: {error}"))?;
@@ -223,6 +227,29 @@ fn wait_for_mountpoint_ready(mountpoint: &Path) -> Result<()> {
         }
         std::thread::sleep(MOUNT_READY_POLL_INTERVAL);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn wake_removed_directory_entries(
+    root: &Path,
+    fs: &HashtreeFuse<FsBlobStore>,
+    removed_paths: &[Vec<String>],
+) {
+    if removed_paths.is_empty() {
+        return;
+    }
+
+    fs.begin_refresh_unlinks(removed_paths.iter().cloned());
+    for relative in removed_paths {
+        let mut path = root.to_path_buf();
+        for component in relative {
+            path.push(component);
+        }
+        if std::fs::remove_file(&path).is_err() {
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
+    fs.clear_refresh_unlinks();
 }
 
 #[cfg(target_os = "linux")]
