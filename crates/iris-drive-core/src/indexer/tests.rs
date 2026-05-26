@@ -349,6 +349,29 @@ async fn removed_file_emits_tombstone_in_next_import() {
 }
 
 #[tokio::test]
+async fn missing_tombstone_blob_errors_instead_of_ignoring_delete() {
+    let tree = new_tree();
+    let missing_hash = [42u8; 32];
+    let missing_cid = Cid::public(missing_hash);
+    let tombstone = DirEntry::from_cid("gone.txt".to_string(), &missing_cid).with_size(10);
+    let tombstones_cid = tree.put_directory(vec![tombstone]).await.unwrap();
+    let tombstones_dir =
+        DirEntry::from_cid("tombstones".to_string(), &tombstones_cid).with_link_type(LinkType::Dir);
+    let meta_cid = tree.put_directory(vec![tombstones_dir]).await.unwrap();
+    let meta_dir =
+        DirEntry::from_cid(META_DIR.to_string(), &meta_cid).with_link_type(LinkType::Dir);
+    let root = tree.put_directory(vec![meta_dir]).await.unwrap();
+
+    let err = crate::merge::walk_device_tree(&tree, &root)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, HashTreeError::MissingChunk(missing) if missing == hashtree_core::to_hex(&missing_hash))
+    );
+}
+
+#[tokio::test]
 async fn visible_root_history_emits_tombstone_without_plain_directory() {
     let first_dir = tempdir().unwrap();
     std::fs::write(first_dir.path().join("removed.txt"), b"bye").unwrap();

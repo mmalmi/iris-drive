@@ -623,7 +623,10 @@ fn walk_dir_recursive<'a, S: Store>(
             if entry.link_type == LinkType::Dir {
                 walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
             } else if let Some(orig_path) = original_path_from_tombstone(&path) {
-                let raw = tree.get(&child_cid, None).await?.unwrap_or_default();
+                let raw = tree
+                    .get(&child_cid, None)
+                    .await?
+                    .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
                 let ts_str = String::from_utf8_lossy(&raw);
                 if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
                     tombstones.push(DeviceTombstone {
