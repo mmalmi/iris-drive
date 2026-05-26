@@ -338,34 +338,6 @@ config=$(sh_quote "$config")
   remote_exec "$label" "$script" | tr -d '\r'
 }
 
-webdav_base_url() {
-  local label="$1"
-  local status url
-  status="$(idrive_cmd "$label" status)"
-  url="$(jq -r '.daemon.browser_gateway.webdav_url // empty' <<<"$status")"
-  if [[ -z "$url" ]]; then
-    echo "no WebDAV URL in daemon status for $label" >&2
-    exit 1
-  fi
-  printf "%s" "${url%/}"
-}
-
-webdav_path_url() {
-  local label="$1"
-  local rel="$2"
-  local base segment encoded out
-  local -a parts
-  base="$(webdav_base_url "$label")"
-  out="$base"
-  IFS='/' read -r -a parts <<<"$rel"
-  for segment in "${parts[@]}"; do
-    [[ -n "$segment" ]] || continue
-    encoded="$(jq -nr --arg value "$segment" '$value|@uri')"
-    out+="/$encoded"
-  done
-  printf "%s" "$out"
-}
-
 owner_app_keys_b64() {
   local label="$1"
   local kind
@@ -640,23 +612,34 @@ write_file() {
   local rel="$2"
   local content="$3"
   local kind
-  local url
+  local idrive
+  local config
+  local base
   local b64 script
   kind="$(host_value "$label" kind)"
-  url="$(webdav_path_url "$label" "$rel")"
+  idrive="$(host_value "$label" idrive)"
+  config="$(host_value "$label" config)"
+  base="$(host_value "$label" base)"
   b64="$(printf "%s" "$content" | base64 | tr -d '\n')"
   if [[ "$kind" == "windows" ]]; then
     script="
 \$ErrorActionPreference = 'Stop'
-\$url = $(ps_quote "$url")
+\$idrive = $(ps_quote "$idrive")
+\$config = $(ps_quote "$config")
+\$source = Join-Path $(ps_quote "$base") 'provider-source.bin'
 \$bytes = [Convert]::FromBase64String($(ps_quote "$b64"))
-Invoke-WebRequest -UseBasicParsing -Method Put -Uri \$url -Body \$bytes | Out-Null
+[IO.File]::WriteAllBytes(\$source, \$bytes)
+& \$idrive --config-dir \$config provider write $(ps_quote "$rel") \$source | Out-Null
+exit \$LASTEXITCODE
 "
   else
     script="
 set -Eeuo pipefail
-url=$(sh_quote "$url")
-printf '%s' $(sh_quote "$b64") | base64 -d | curl -fsS -X PUT --data-binary @- \"\$url\" >/dev/null
+idrive=$(sh_quote "$idrive")
+config=$(sh_quote "$config")
+source=$(sh_quote "$base/provider-source.bin")
+printf '%s' $(sh_quote "$b64") | base64 -d >\"\$source\"
+\"\$idrive\" --config-dir \"\$config\" provider write $(sh_quote "$rel") \"\$source\" >/dev/null
 "
   fi
   remote_exec "$label" "$script"
@@ -667,22 +650,33 @@ write_zero_file() {
   local rel="$2"
   local bytes="$3"
   local kind
-  local url
+  local idrive
+  local config
+  local base
   local script
   kind="$(host_value "$label" kind)"
-  url="$(webdav_path_url "$label" "$rel")"
+  idrive="$(host_value "$label" idrive)"
+  config="$(host_value "$label" config)"
+  base="$(host_value "$label" base)"
   if [[ "$kind" == "windows" ]]; then
     script="
 \$bytes = [int]$(ps_quote "$bytes")
-\$url = $(ps_quote "$url")
-Invoke-WebRequest -UseBasicParsing -Method Put -Uri \$url -Body ([byte[]]::new(\$bytes)) | Out-Null
+\$idrive = $(ps_quote "$idrive")
+\$config = $(ps_quote "$config")
+\$source = Join-Path $(ps_quote "$base") 'provider-source-zero.bin'
+[IO.File]::WriteAllBytes(\$source, [byte[]]::new(\$bytes))
+& \$idrive --config-dir \$config provider write $(ps_quote "$rel") \$source | Out-Null
+exit \$LASTEXITCODE
 "
   else
     script="
 set -Eeuo pipefail
 bytes=$(sh_quote "$bytes")
-url=$(sh_quote "$url")
-head -c \"\$bytes\" /dev/zero | curl -fsS -X PUT --data-binary @- \"\$url\" >/dev/null
+idrive=$(sh_quote "$idrive")
+config=$(sh_quote "$config")
+source=$(sh_quote "$base/provider-source-zero.bin")
+head -c \"\$bytes\" /dev/zero >\"\$source\"
+\"\$idrive\" --config-dir \"\$config\" provider write $(sh_quote "$rel") \"\$source\" >/dev/null
 "
   fi
   remote_exec "$label" "$script"
@@ -691,82 +685,46 @@ head -c \"\$bytes\" /dev/zero | curl -fsS -X PUT --data-binary @- \"\$url\" >/de
 mkdir_remote() {
   local label="$1"
   local rel="$2"
-  local kind
-  local url
-  local script
-  kind="$(host_value "$label" kind)"
-  url="$(webdav_path_url "$label" "$rel")"
-  if [[ "$kind" == "windows" ]]; then
-    script="
-\$url = $(ps_quote "$url")
-try {
-  Invoke-WebRequest -UseBasicParsing -CustomMethod MKCOL -Uri \$url | Out-Null
-} catch {
-  if (\$_.Exception.Response.StatusCode.value__ -ne 405) { throw }
-}
-"
-  else
-    script="
-set -Eeuo pipefail
-url=$(sh_quote "$url")
-status=\$(curl -sS -o /dev/null -w '%{http_code}' -X MKCOL \"\$url\")
-[[ \"\$status\" == 201 || \"\$status\" == 405 ]]
-"
-  fi
-  remote_exec "$label" "$script"
+  idrive_cmd "$label" provider mkdir "$rel" >/dev/null
 }
 
 rename_remote() {
   local label="$1"
   local from="$2"
   local to="$3"
-  local kind
-  local from_url
-  local to_url
-  local script
-  kind="$(host_value "$label" kind)"
-  from_url="$(webdav_path_url "$label" "$from")"
-  to_url="$(webdav_path_url "$label" "$to")"
-  if [[ "$kind" == "windows" ]]; then
-    script="
-\$from = $(ps_quote "$from_url")
-\$to = $(ps_quote "$to_url")
-Invoke-WebRequest -UseBasicParsing -CustomMethod MOVE -Uri \$from -Headers @{ Destination = \$to } | Out-Null
-"
-  else
-    script="
-set -Eeuo pipefail
-from=$(sh_quote "$from_url")
-to=$(sh_quote "$to_url")
-curl -fsS -X MOVE -H \"Destination: \$to\" \"\$from\" >/dev/null
-"
-  fi
-  remote_exec "$label" "$script"
+  idrive_cmd "$label" provider rename "$from" "$to" >/dev/null
 }
 
 remove_remote() {
   local label="$1"
   local rel="$2"
   local kind
-  local url
+  local idrive
+  local config
   local script
   kind="$(host_value "$label" kind)"
-  url="$(webdav_path_url "$label" "$rel")"
+  idrive="$(host_value "$label" idrive)"
+  config="$(host_value "$label" config)"
   if [[ "$kind" == "windows" ]]; then
     script="
-\$url = $(ps_quote "$url")
-try {
-  Invoke-WebRequest -UseBasicParsing -Method Delete -Uri \$url | Out-Null
-} catch {
-  if (\$_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+\$idrive = $(ps_quote "$idrive")
+\$config = $(ps_quote "$config")
+Set-Variable -Name output -Value (& \$idrive --config-dir \$config provider delete $(ps_quote "$rel") 2>&1)
+if (\$LASTEXITCODE -ne 0 -and (\$output -notmatch 'not found|NotFound')) {
+  throw \$output
 }
 "
   else
     script="
 set -Eeuo pipefail
-url=$(sh_quote "$url")
-status=\$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \"\$url\")
-[[ \"\$status\" == 204 || \"\$status\" == 404 ]]
+idrive=$(sh_quote "$idrive")
+config=$(sh_quote "$config")
+if ! output=\"\$(\"\$idrive\" --config-dir \"\$config\" provider delete $(sh_quote "$rel") 2>&1 >/dev/null)\"; then
+  [[ \"\$output\" == *\"not found\"* || \"\$output\" == *\"NotFound\"* ]] || {
+    printf '%s\n' \"\$output\" >&2
+    exit 1
+  }
+fi
 "
   fi
   remote_exec "$label" "$script"
@@ -828,7 +786,7 @@ all_fresh() {
   local label status
   for label in "${LABELS[@]}"; do
     status="$(idrive_cmd "$label" status 2>/dev/null || true)"
-    jq -e '.daemon.running == true and .daemon.fresh == true and (.daemon.browser_gateway.webdav_url | type == "string")' >/dev/null 2>&1 <<<"$status" || return 1
+    jq -e '.daemon.running == true and .daemon.fresh == true' >/dev/null 2>&1 <<<"$status" || return 1
   done
 }
 

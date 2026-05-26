@@ -57,8 +57,6 @@ pub(crate) fn cmd_daemon(
                 Ok(sync) => (Some(Arc::new(sync)), None),
                 Err(error) => (None, Some(error.to_string())),
             };
-        let (webdav_root_tx, mut webdav_root_rx) =
-            mpsc::unbounded_channel::<iris_drive_core::gateway::VirtualRootUpdate>();
         #[cfg(windows)]
         let (
             windows_cloud_root,
@@ -100,11 +98,10 @@ pub(crate) fn cmd_daemon(
         let gateway = if enable_gateway {
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
-                GatewayServer::bind_with_tree_htree_daemon_and_root_updates(
+                GatewayServer::bind_with_tree_and_htree_daemon(
                     config_dir,
                     daemon.tree_handle(),
                     embedded_hashtree.status().base_url.clone(),
-                    webdav_root_tx.clone(),
                     GatewayBind::loopback_v4(gateway_port),
                 )
                     .await
@@ -122,8 +119,6 @@ pub(crate) fn cmd_daemon(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
-                "webdav_url": format!("http://127.0.0.1:{port}/dav/"),
-                "webdav_unc": format!(r"\\127.0.0.1@{port}\dav"),
                 "hashtree_base_url": embedded_hashtree.status().base_url.clone(),
             })
         });
@@ -333,33 +328,6 @@ pub(crate) fn cmd_daemon(
                         Err(error) => println!(
                             "{}",
                             json!({"event": "mount_publish_error", "error": format!("{error:#}")})
-                        ),
-                    }
-                }
-                Some(mut update) = webdav_root_rx.recv() => {
-                    while let Ok(next) = webdav_root_rx.try_recv() {
-                        update.visible_root = next.visible_root;
-                    }
-                    tokio::time::sleep(root_update_debounce).await;
-                    while let Ok(next) = webdav_root_rx.try_recv() {
-                        update.visible_root = next.visible_root;
-                    }
-                    match import_mount_root_and_publish(
-                        &client,
-                        config_dir,
-                        update.visible_root,
-                        Some(update.base_root),
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok(()) => {
-                            update_last_provider_root_key(config_dir, &mut last_provider_root_key);
-                        }
-                        Err(error) => println!(
-                            "{}",
-                            json!({"event": "virtual_publish_error", "error": format!("{error:#}")})
                         ),
                     }
                 }

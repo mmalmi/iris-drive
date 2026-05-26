@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write as _;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -234,7 +234,7 @@ async fn live_daemons_initial_merge_existing_trees_from_both_peers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_three_vm_matrix_syncs_gateway_and_macos_provider_mutations() {
+async fn live_daemons_three_vm_matrix_syncs_provider_mutations() {
     let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start_three(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
@@ -573,15 +573,10 @@ impl SyncCluster {
     }
 
     async fn write(&self, client: Client, path: &str, bytes: &[u8]) {
-        self.write_local_only(client, path, bytes).await;
-        if !test_ignored_path(path) {
-            let response = self.webdav_request(client, "PUT", path, &[], bytes).await;
-            assert!(
-                response.starts_with("HTTP/1.1 201 Created")
-                    || response.starts_with("HTTP/1.1 204 No Content"),
-                "{response}\n{}",
-                self.debug_state()
-            );
+        if test_ignored_path(path) {
+            self.write_local_only(client, path, bytes).await;
+        } else {
+            self.provider_write(client, path, bytes).await;
         }
     }
 
@@ -606,7 +601,10 @@ impl SyncCluster {
             .arg(&source)
             .output()
             .unwrap();
-        assert_success(&output);
+        assert_command_success(
+            &output,
+            &format!("provider write {} {path}", client.label()),
+        );
         let value = json_output(&output);
         self.refresh_view(client).await;
         value["root_cid"].as_str().unwrap().to_string()
@@ -617,7 +615,10 @@ impl SyncCluster {
             .args(["provider", "rename", from, to])
             .output()
             .unwrap();
-        assert_success(&output);
+        assert_command_success(
+            &output,
+            &format!("provider rename {} {from} -> {to}", client.label()),
+        );
         let value = json_output(&output);
         self.refresh_view(client).await;
         value["root_cid"].as_str().unwrap().to_string()
@@ -628,50 +629,51 @@ impl SyncCluster {
             .args(["provider", "delete", path])
             .output()
             .unwrap();
-        assert_success(&output);
+        assert_command_success(
+            &output,
+            &format!("provider delete {} {path}", client.label()),
+        );
+        let value = json_output(&output);
+        self.refresh_view(client).await;
+        value["root_cid"].as_str().unwrap().to_string()
+    }
+
+    async fn provider_mkdir(&self, client: Client, path: &str) -> String {
+        let output = idrive(self.config_path(client))
+            .args(["provider", "mkdir", path])
+            .output()
+            .unwrap();
+        assert_command_success(
+            &output,
+            &format!("provider mkdir {} {path}", client.label()),
+        );
         let value = json_output(&output);
         self.refresh_view(client).await;
         value["root_cid"].as_str().unwrap().to_string()
     }
 
     async fn rename(&self, client: Client, from: &str, to: &str) {
-        let root = self.path(client);
-        let destination = root.join(to);
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        tokio::fs::rename(root.join(from), destination)
-            .await
-            .unwrap();
-        if !test_ignored_path(from) && !test_ignored_path(to) {
-            let destination = format!(
-                "http://127.0.0.1:{}{}",
-                self.gateway_port(client),
-                webdav_path(to)
-            );
-            let response = self
-                .webdav_request(client, "MOVE", from, &[("Destination", &destination)], b"")
-                .await;
-            assert!(
-                response.starts_with("HTTP/1.1 201 Created")
-                    || response.starts_with("HTTP/1.1 204 No Content"),
-                "{response}\n{}",
-                self.debug_state()
-            );
+        if test_ignored_path(from) || test_ignored_path(to) {
+            let root = self.path(client);
+            let destination = root.join(to);
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            tokio::fs::rename(root.join(from), destination)
+                .await
+                .unwrap();
+        } else {
+            self.provider_rename(client, from, to).await;
         }
     }
 
     async fn remove(&self, client: Client, path: &str) {
-        tokio::fs::remove_file(self.path(client).join(path))
-            .await
-            .unwrap();
-        if !test_ignored_path(path) {
-            let response = self.webdav_request(client, "DELETE", path, &[], b"").await;
-            assert!(
-                response.starts_with("HTTP/1.1 204 No Content"),
-                "{response}\n{}",
-                self.debug_state()
-            );
+        if test_ignored_path(path) {
+            tokio::fs::remove_file(self.path(client).join(path))
+                .await
+                .unwrap();
+        } else {
+            self.provider_delete(client, path).await;
         }
     }
 
@@ -683,35 +685,24 @@ impl SyncCluster {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => panic!("metadata failed for {}: {error}", local_path.display()),
         };
-        if metadata.is_dir() {
-            tokio::fs::remove_dir_all(local_path).await.unwrap();
+        if test_ignored_path(&relative) {
+            if metadata.is_dir() {
+                tokio::fs::remove_dir_all(local_path).await.unwrap();
+            } else {
+                tokio::fs::remove_file(local_path).await.unwrap();
+            }
         } else {
-            tokio::fs::remove_file(local_path).await.unwrap();
-        }
-        if !test_ignored_path(&relative) {
-            let response = self
-                .webdav_request(client, "DELETE", &relative, &[], b"")
-                .await;
-            assert!(
-                response.starts_with("HTTP/1.1 204 No Content"),
-                "{response}\n{}",
-                self.debug_state()
-            );
+            self.provider_delete(client, &relative).await;
         }
     }
 
     async fn mkdir(&self, client: Client, path: &str) {
-        tokio::fs::create_dir_all(self.path(client).join(path))
-            .await
-            .unwrap();
-        if !test_ignored_path(path) {
-            let response = self.webdav_request(client, "MKCOL", path, &[], b"").await;
-            assert!(
-                response.starts_with("HTTP/1.1 201 Created")
-                    || response.starts_with("HTTP/1.1 405 Method Not Allowed"),
-                "{response}\n{}",
-                self.debug_state()
-            );
+        if test_ignored_path(path) {
+            tokio::fs::create_dir_all(self.path(client).join(path))
+                .await
+                .unwrap();
+        } else {
+            self.provider_mkdir(client, path).await;
         }
     }
 
@@ -851,35 +842,8 @@ impl SyncCluster {
         }
     }
 
-    fn gateway_port(&self, client: Client) -> u16 {
-        match client {
-            Client::Windows => self.windows_gateway_port,
-            Client::Ubuntu => self.ubuntu_gateway_port,
-            Client::MacOS => self.macos_gateway_port.expect("macos client is not active"),
-        }
-    }
-
     fn clients(&self) -> Vec<Client> {
         self.clients.clone()
-    }
-
-    async fn webdav_request(
-        &self,
-        client: Client,
-        method: &str,
-        path: &str,
-        headers: &[(&str, &str)],
-        body: &[u8],
-    ) -> String {
-        http_request(
-            SocketAddr::from((Ipv4Addr::LOCALHOST, self.gateway_port(client))),
-            method,
-            "127.0.0.1",
-            &webdav_path(path),
-            headers,
-            body,
-        )
-        .await
     }
 
     async fn refresh_view(&self, client: Client) {
@@ -1060,9 +1024,13 @@ fn json_output(output: &Output) -> Value {
 }
 
 fn assert_success(output: &Output) {
+    assert_command_success(output, "command");
+}
+
+fn assert_command_success(output: &Output, context: &str) {
     assert!(
         output.status.success(),
-        "command failed\nstatus: {}\nstdout: {}\nstderr: {}",
+        "{context} failed\nstatus: {}\nstdout: {}\nstderr: {}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -1241,60 +1209,6 @@ fn collect_dir_snapshot(
 
 fn test_ignored_path(path: &str) -> bool {
     path.split('/').any(should_ignore_name)
-}
-
-async fn http_request(
-    addr: SocketAddr,
-    method: &str,
-    host: &str,
-    path: &str,
-    headers: &[(&str, &str)],
-    body: &[u8],
-) -> String {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let mut request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
-    );
-    for (name, value) in headers {
-        request.push_str(name);
-        request.push_str(": ");
-        request.push_str(value);
-        request.push_str("\r\n");
-    }
-    request.push_str("\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    stream.write_all(body).await.unwrap();
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).await.unwrap();
-    String::from_utf8_lossy(&response).into_owned()
-}
-
-fn webdav_path(path: &str) -> String {
-    let mut out = String::from("/dav");
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-        out.push('/');
-        out.push_str(&percent_encode_path_segment(segment));
-    }
-    out
-}
-
-fn percent_encode_path_segment(segment: &str) -> String {
-    let mut encoded = String::new();
-    for byte in segment.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                encoded.push(char::from(byte));
-            }
-            _ => {
-                use std::fmt::Write as _;
-                let _ = write!(&mut encoded, "%{byte:02X}");
-            }
-        }
-    }
-    encoded
 }
 
 fn path_hash_label(path: &str) -> String {

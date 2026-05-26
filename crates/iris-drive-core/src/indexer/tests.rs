@@ -444,6 +444,28 @@ async fn visible_root_history_filters_ignored_entries_before_diffing() {
 }
 
 #[tokio::test]
+async fn visible_root_import_preserves_created_empty_directory() {
+    let tree = new_tree();
+    let base_root = tree.put_directory(Vec::new()).await.unwrap();
+    let empty_dir = tree.put_directory(Vec::new()).await.unwrap();
+    let edited_root = tree
+        .set_entry(&base_root, &[], "folder", &empty_dir, 0, LinkType::Dir)
+        .await
+        .unwrap();
+
+    let delta = local_visible_root_for_mount_import(&tree, &edited_root, None, &base_root, None)
+        .await
+        .unwrap();
+
+    let folder = tree
+        .resolve(&delta.root, "folder")
+        .await
+        .unwrap()
+        .expect("folder should exist");
+    assert!(tree.is_dir(&folder).await.unwrap());
+}
+
+#[tokio::test]
 async fn tombstone_carries_forward_when_file_stays_absent() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("gone.txt"), b"x").unwrap();

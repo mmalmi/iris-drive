@@ -6,10 +6,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
 
 use axum::Router;
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{
     ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, COOKIE, ETAG, HOST,
@@ -19,30 +18,28 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use hashtree_core::{
-    Cid, DEFAULT_CHUNK_SIZE, Hash, HashTree, LinkType, NHashData, Store, TreeEntry, from_hex,
-    nhash_decode, nhash_encode_full, to_hex,
+    Cid, Hash, HashTree, LinkType, NHashData, Store, TreeEntry, from_hex, nhash_decode,
+    nhash_encode_full, to_hex,
 };
 use hashtree_fs::FsBlobStore;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::config::{AppConfig, ConfigError, DeviceRootRef};
+use crate::config::{AppConfig, ConfigError};
 use crate::daemon::DaemonError;
 use crate::paths::{config_path_in, key_path_in};
 use crate::{Daemon, PRIMARY_DRIVE_ID};
 
 mod paths;
 mod response;
-mod webdav;
 
 pub use self::paths::encode_immutable_host_label;
 #[allow(clippy::wildcard_imports)]
 use self::paths::*;
 #[allow(clippy::wildcard_imports)]
 use self::response::*;
-use self::webdav::handle_webdav_request;
 
 const LOCAL_PORTAL_HOST: &str = "sites.iris.localhost";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
@@ -96,12 +93,6 @@ pub struct GatewayServer {
     handle: Option<JoinHandle<Result<(), GatewayError>>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct VirtualRootUpdate {
-    pub base_root: Cid,
-    pub visible_root: Cid,
-}
-
 impl GatewayServer {
     pub async fn bind(
         config_dir: impl Into<PathBuf>,
@@ -117,7 +108,7 @@ impl GatewayServer {
         tree: Arc<HashTree<FsBlobStore>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
-        Self::bind_inner(config_dir, tree, None, None, bind).await
+        Self::bind_inner(config_dir, tree, None, bind).await
     }
 
     pub async fn bind_with_tree_and_htree_daemon(
@@ -130,24 +121,6 @@ impl GatewayServer {
             config_dir,
             tree,
             Some(normalize_daemon_addr(&htree_daemon_addr.into())),
-            None,
-            bind,
-        )
-        .await
-    }
-
-    pub async fn bind_with_tree_htree_daemon_and_root_updates(
-        config_dir: impl Into<PathBuf>,
-        tree: Arc<HashTree<FsBlobStore>>,
-        htree_daemon_addr: impl Into<String>,
-        root_update_tx: mpsc::UnboundedSender<VirtualRootUpdate>,
-        bind: GatewayBind,
-    ) -> Result<Self, GatewayError> {
-        Self::bind_inner(
-            config_dir,
-            tree,
-            Some(normalize_daemon_addr(&htree_daemon_addr.into())),
-            Some(root_update_tx),
             bind,
         )
         .await
@@ -157,7 +130,6 @@ impl GatewayServer {
         config_dir: impl Into<PathBuf>,
         tree: Arc<HashTree<FsBlobStore>>,
         htree_daemon_addr: Option<String>,
-        root_update_tx: Option<mpsc::UnboundedSender<VirtualRootUpdate>>,
         bind: GatewayBind,
     ) -> Result<Self, GatewayError> {
         let listener = TcpListener::bind(bind.addr).await?;
@@ -166,8 +138,6 @@ impl GatewayServer {
             config_dir: Arc::new(config_dir.into()),
             tree,
             htree_daemon_addr: htree_daemon_addr.map(Arc::new),
-            root_update_tx,
-            webdav_root: Arc::new(Mutex::new(WebDavRootCache::default())),
         };
         let app = Router::new()
             .fallback(any(gateway_handler))
@@ -221,18 +191,7 @@ struct GatewayState {
     config_dir: Arc<PathBuf>,
     tree: Arc<HashTree<FsBlobStore>>,
     htree_daemon_addr: Option<Arc<String>>,
-    root_update_tx: Option<mpsc::UnboundedSender<VirtualRootUpdate>>,
-    webdav_root: Arc<Mutex<WebDavRootCache>>,
 }
-
-#[derive(Debug, Default)]
-struct WebDavRootCache {
-    root: Option<Cid>,
-    config_mtime: Option<SystemTime>,
-    pinned_until: Option<Instant>,
-}
-
-const WEBDAV_WRITE_PIN: Duration = Duration::from_secs(5);
 
 fn normalize_daemon_addr(value: &str) -> String {
     let trimmed = value
@@ -265,7 +224,6 @@ fn socket_addr_authority(addr: SocketAddr) -> String {
 enum GatewayRequest {
     Local(LocalGatewayRequest),
     HtreeDaemon(HtreeProxyRequest),
-    WebDav(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -308,9 +266,8 @@ async fn gateway_handler(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
-    body: Bytes,
 ) -> Response {
-    match handle_gateway_request(state, method, uri, headers, body).await {
+    match handle_gateway_request(state, method, uri, headers).await {
         Ok(response) => response,
         Err((status, message)) => text_response(status, &message),
     }
@@ -321,7 +278,6 @@ async fn handle_gateway_request(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
-    body: Bytes,
 ) -> Result<Response, (StatusCode, String)> {
     let request = resolve_gateway_request(&state, &uri, &headers)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
@@ -330,9 +286,6 @@ async fn handle_gateway_request(
         GatewayRequest::Local(request) => request,
         GatewayRequest::HtreeDaemon(request) => {
             return proxy_htree_daemon_request(&state, &method, &headers, request).await;
-        }
-        GatewayRequest::WebDav(path_segments) => {
-            return handle_webdav_request(state, method, uri, headers, body, path_segments).await;
         }
     };
 
@@ -523,7 +476,6 @@ fn resolve_gateway_request(
 enum PathRoute {
     Drive(String),
     Nhash(String),
-    WebDav,
 }
 
 fn request_from_path_route(
@@ -536,7 +488,6 @@ fn request_from_path_route(
     match route {
         PathRoute::Drive(drive_id) => drive_host_request(state, &drive_id, path_segments),
         PathRoute::Nhash(nhash) => nhash_request(&nhash, uri, headers, path_segments),
-        PathRoute::WebDav => Ok(GatewayRequest::WebDav(path_segments)),
     }
 }
 

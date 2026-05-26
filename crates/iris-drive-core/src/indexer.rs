@@ -230,8 +230,12 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
 
     let mut edited_files = BTreeMap::new();
     collect_visible_files(tree, &edited_root, "", &mut edited_files).await?;
+    let mut edited_dirs = BTreeSet::new();
+    collect_visible_dirs(tree, &edited_root, "", &mut edited_dirs).await?;
     let mut base_files = BTreeMap::new();
     collect_visible_files(tree, &base_root, "", &mut base_files).await?;
+    let mut base_dirs = BTreeSet::new();
+    collect_visible_dirs(tree, &base_root, "", &mut base_dirs).await?;
 
     let previous_visible_root = match previous_root {
         Some(previous_root) => filter_ignored_entries_from_root(tree, previous_root).await?,
@@ -239,8 +243,13 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     };
     let mut previous_files = BTreeMap::new();
     collect_visible_files(tree, &previous_visible_root, "", &mut previous_files).await?;
+    let mut previous_dirs = BTreeSet::new();
+    collect_visible_dirs(tree, &previous_visible_root, "", &mut previous_dirs).await?;
 
     let mut root = tree.put_directory(Vec::new()).await?;
+    for path in previous_dirs.intersection(&base_dirs) {
+        root = set_visible_dir(tree, root, path).await?;
+    }
     for (path, previous) in &previous_files {
         if base_files
             .get(path)
@@ -274,6 +283,22 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
                 root = remove_visible_path_if_present(tree, &root, &path).await?;
             }
             None => {}
+        }
+    }
+
+    let changed_dirs = base_dirs
+        .union(&edited_dirs)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for path in changed_dirs {
+        match (base_dirs.contains(&path), edited_dirs.contains(&path)) {
+            (false, true) => {
+                root = set_visible_dir(tree, root, &path).await?;
+            }
+            (true, false) => {
+                root = remove_visible_path_if_present(tree, &root, &path).await?;
+            }
+            _ => {}
         }
     }
 
@@ -436,12 +461,56 @@ fn collect_visible_files<'a, S: Store>(
     })
 }
 
+fn collect_visible_dirs<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    root: &'a Cid,
+    prefix: &'a str,
+    out: &'a mut BTreeSet<String>,
+) -> futures::future::BoxFuture<'a, Result<(), IndexError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(root).await?;
+        for entry in entries {
+            if should_ignore_name(&entry.name) || entry.link_type != LinkType::Dir {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            out.insert(path.clone());
+            let cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            collect_visible_dirs(tree, &cid, &path, out).await?;
+        }
+        Ok(())
+    })
+}
+
 fn visible_entry_matches(left: &TreeEntry, right: &TreeEntry) -> bool {
     left.hash == right.hash
         && left.key == right.key
         && left.size == right.size
         && left.link_type == right.link_type
         && left.meta == right.meta
+}
+
+async fn set_visible_dir<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    path: &str,
+) -> Result<Cid, IndexError> {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    for depth in 1..=segments.len() {
+        root = ensure_dir(tree, &root, &segments[..depth]).await?;
+    }
+    Ok(root)
 }
 
 async fn set_visible_file_entry<S: Store>(

@@ -47,10 +47,6 @@ pub(crate) fn parse_gateway_path(
         segments.remove(0);
         return Ok((segments, Some(PathRoute::Nhash(nhash))));
     }
-    if segments.first().is_some_and(|segment| segment == "dav") {
-        segments.remove(0);
-        return Ok((segments, Some(PathRoute::WebDav)));
-    }
     Ok((segments, None))
 }
 

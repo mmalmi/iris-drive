@@ -314,7 +314,8 @@ pub(crate) async fn write_provider_file(
     ensure_provider_dirs(provider, &parent).await?;
     match provider.item(&path.to_string()).await {
         Ok(item) if item.kind == ItemKind::Directory => {
-            anyhow::bail!("cannot replace directory with file: {path}");
+            delete_provider_path(provider, path).await?;
+            provider.create_file(&parent, &name).await?;
         }
         Ok(_) => {
             provider.truncate(&path.to_string(), 0).await?;
@@ -337,7 +338,11 @@ pub(crate) async fn create_provider_dir(
     ensure_provider_dirs(provider, &parent).await?;
     match provider.item(&path.to_string()).await {
         Ok(item) if item.kind == ItemKind::Directory => Ok(()),
-        Ok(_) => anyhow::bail!("cannot replace file with directory: {path}"),
+        Ok(_) => {
+            provider.remove(&parent, &name).await?;
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
         Err(_) => {
             provider.create_dir(&parent, &name).await?;
             Ok(())
@@ -358,7 +363,10 @@ async fn ensure_provider_dirs(
         };
         match provider.item(&next).await {
             Ok(item) if item.kind == ItemKind::Directory => {}
-            Ok(_) => anyhow::bail!("parent component is not a directory: {next}"),
+            Ok(_) => {
+                provider.remove(&current, segment).await?;
+                provider.create_dir(&current, segment).await?;
+            }
             Err(_) => {
                 provider.create_dir(&current, segment).await?;
             }
@@ -401,9 +409,15 @@ pub(crate) async fn rename_provider_path(
     old_path: &str,
     new_path: &str,
 ) -> Result<()> {
+    if old_path == new_path {
+        return Ok(());
+    }
     let (old_parent, old_name) = split_provider_path(old_path)?;
     let (new_parent, new_name) = split_provider_path(new_path)?;
     ensure_provider_dirs(provider, &new_parent).await?;
+    if provider.item(&new_path.to_string()).await.is_ok() {
+        delete_provider_path(provider, new_path).await?;
+    }
     provider
         .rename(&old_parent, &old_name, &new_parent, &new_name)
         .await?;
