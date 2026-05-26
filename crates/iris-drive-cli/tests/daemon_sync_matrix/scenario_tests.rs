@@ -540,6 +540,7 @@ async fn bench_live_daemon_same_files_already_present() {
     let cluster = SyncCluster::start_with_options(SyncClusterOptions {
         blossom_upload_delay: Duration::ZERO,
         seed_files,
+        ..SyncClusterOptions::default()
     })
     .await;
     cluster.wait_until_authorized().await;

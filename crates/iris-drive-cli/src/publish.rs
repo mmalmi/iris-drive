@@ -818,7 +818,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
         config_dir.to_path_buf(),
         updated_config,
         updated_state,
-        false,
+        true,
         "mounted_root_publish_finished",
         json!({"root_cid": import.root_cid.clone()}),
     );
@@ -832,7 +832,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
                 "top_level_entries": import.top_level_entries,
             },
             "direct_root_mesh_error": direct_root_mesh_error,
-            "publish": {"queued": true, "upload_blossom": false},
+            "publish": {"queued": true, "upload_blossom": true},
         })
     );
     Ok(())

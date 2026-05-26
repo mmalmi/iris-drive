@@ -14,7 +14,7 @@ pub fn blossom_sync_client(
     keys: nostr_sdk::Keys,
     servers: &[String],
 ) -> hashtree_blossom::BlossomClient {
-    let client = hashtree_blossom::BlossomClient::new(keys);
+    let client = hashtree_blossom::BlossomClient::new_empty(keys);
     let mut read_servers = client.read_servers().to_vec();
     for server in servers {
         if !read_servers.iter().any(|candidate| candidate == server) {
@@ -100,11 +100,6 @@ mod tests {
             super::blossom_sync_client(Keys::generate(), std::slice::from_ref(&write_server));
 
         assert_eq!(client.write_servers(), std::slice::from_ref(&write_server));
-        assert!(
-            client
-                .read_servers()
-                .iter()
-                .any(|server| server == &write_server)
-        );
+        assert_eq!(client.read_servers(), std::slice::from_ref(&write_server));
     }
 }

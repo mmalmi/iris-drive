@@ -77,10 +77,20 @@ impl SeedFile {
     }
 }
 
-#[derive(Default)]
 struct SyncClusterOptions {
     blossom_upload_delay: Duration,
     seed_files: Vec<SeedFile>,
+    clients: Vec<Client>,
+}
+
+impl Default for SyncClusterOptions {
+    fn default() -> Self {
+        Self {
+            blossom_upload_delay: Duration::ZERO,
+            seed_files: Vec::new(),
+            clients: vec![Client::Windows, Client::Ubuntu],
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -201,6 +211,7 @@ async fn live_daemons_initial_merge_existing_trees_from_both_peers() {
     let cluster = SyncCluster::start_with_options(SyncClusterOptions {
         blossom_upload_delay: Duration::ZERO,
         seed_files,
+        ..SyncClusterOptions::default()
     })
     .await;
     cluster.wait_until_authorized().await;
@@ -222,26 +233,181 @@ async fn live_daemons_initial_merge_existing_trees_from_both_peers() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_matrix_syncs_gateway_and_macos_provider_mutations() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start_three(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+
+    cluster
+        .write(Client::Windows, "three-vm/windows.txt", b"from windows")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "three vm windows create")
+        .await;
+    cluster.assert_file(Client::Ubuntu, "three-vm/windows.txt", b"from windows");
+    cluster.assert_file(Client::MacOS, "three-vm/windows.txt", b"from windows");
+
+    cluster
+        .write(Client::Ubuntu, "three-vm/ubuntu.txt", b"from ubuntu")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "three vm ubuntu create")
+        .await;
+    cluster.assert_file(Client::Windows, "three-vm/ubuntu.txt", b"from ubuntu");
+    cluster.assert_file(Client::MacOS, "three-vm/ubuntu.txt", b"from ubuntu");
+
+    let root = cluster
+        .provider_write(Client::MacOS, "three-vm/macos.txt", b"from macos provider")
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos provider create published")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::MacOS, "three vm macos provider create")
+        .await;
+    cluster.assert_file(Client::Ubuntu, "three-vm/macos.txt", b"from macos provider");
+    cluster.assert_file(
+        Client::Windows,
+        "three-vm/macos.txt",
+        b"from macos provider",
+    );
+
+    let root = cluster
+        .provider_rename(
+            Client::MacOS,
+            "three-vm/macos.txt",
+            "three-vm/macos-renamed.txt",
+        )
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos provider rename published")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::MacOS, "three vm macos provider rename")
+        .await;
+    for client in Client::THREE_VM {
+        cluster.assert_missing(client, "three-vm/macos.txt");
+        cluster.assert_file(client, "three-vm/macos-renamed.txt", b"from macos provider");
+    }
+
+    let root = cluster
+        .provider_delete(Client::MacOS, "three-vm/macos-renamed.txt")
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos provider delete published")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::MacOS, "three vm macos provider delete")
+        .await;
+    for client in Client::THREE_VM {
+        cluster.assert_missing(client, "three-vm/macos-renamed.txt");
+        cluster.assert_status_counts(client, 2, 3);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_online() {
+    let _guard = live_daemon_test_guard().await;
+    let mut cluster = SyncCluster::start_three(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+
+    cluster.stop_daemon(Client::Windows);
+    cluster.stop_daemon(Client::Ubuntu);
+
+    let root = cluster
+        .provider_write(
+            Client::MacOS,
+            "offline-receivers/original.txt",
+            b"macos original",
+        )
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos offline create published")
+        .await;
+
+    let root = cluster
+        .provider_rename(
+            Client::MacOS,
+            "offline-receivers/original.txt",
+            "offline-receivers/renamed.txt",
+        )
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos offline rename published")
+        .await;
+
+    let root = cluster
+        .provider_write(
+            Client::MacOS,
+            "offline-receivers/added.txt",
+            b"macos added while receivers were offline",
+        )
+        .await;
+    cluster
+        .wait_for_provider_publish(Client::MacOS, &root, "macos offline add published")
+        .await;
+
+    cluster.stop_daemon(Client::MacOS);
+    cluster.start_daemon(Client::Windows);
+    cluster.start_daemon(Client::Ubuntu);
+
+    cluster
+        .wait_for_convergence_from(
+            Client::MacOS,
+            "offline receivers catch up from macos provider",
+        )
+        .await;
+    for client in [Client::Windows, Client::Ubuntu] {
+        cluster.assert_missing(client, "offline-receivers/original.txt");
+        cluster.assert_file(client, "offline-receivers/renamed.txt", b"macos original");
+        cluster.assert_file(
+            client,
+            "offline-receivers/added.txt",
+            b"macos added while receivers were offline",
+        );
+        cluster.assert_status_counts(client, 2, 3);
+    }
+}
+
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Client {
     Windows,
     Ubuntu,
+    MacOS,
+}
+
+impl Client {
+    const THREE_VM: [Self; 3] = [Self::Windows, Self::Ubuntu, Self::MacOS];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Ubuntu => "ubuntu",
+            Self::MacOS => "macos",
+        }
+    }
 }
 
 struct SyncCluster {
     relay: LocalNostrRelay,
     _blossom: LocalBlossomServer,
+    clients: Vec<Client>,
     windows_cfg: TempDir,
     ubuntu_cfg: TempDir,
+    macos_cfg: Option<TempDir>,
     windows_work: TempDir,
     ubuntu_work: TempDir,
+    macos_work: Option<TempDir>,
     windows_gateway_port: u16,
     ubuntu_gateway_port: u16,
+    macos_gateway_port: Option<u16>,
     windows_daemon: Option<DaemonChild>,
     ubuntu_daemon: Option<DaemonChild>,
+    macos_daemon: Option<DaemonChild>,
 }
 
 impl SyncCluster {
@@ -253,20 +419,40 @@ impl SyncCluster {
         .await
     }
 
+    async fn start_three(blossom_upload_delay: Duration) -> Self {
+        Self::start_with_options(SyncClusterOptions {
+            blossom_upload_delay,
+            clients: Client::THREE_VM.to_vec(),
+            ..SyncClusterOptions::default()
+        })
+        .await
+    }
+
     async fn start_with_options(options: SyncClusterOptions) -> Self {
+        assert!(
+            options.clients.contains(&Client::Windows) && options.clients.contains(&Client::Ubuntu),
+            "live daemon matrix expects at least windows + ubuntu clients"
+        );
+        let include_macos = options.clients.contains(&Client::MacOS);
         let relay = LocalNostrRelay::spawn().await;
         let blossom =
             LocalBlossomServer::spawn_with_upload_delay(options.blossom_upload_delay).await;
 
         let windows_cfg = tempdir().unwrap();
         let ubuntu_cfg = tempdir().unwrap();
+        let macos_cfg = include_macos.then(|| tempdir().unwrap());
         let windows_work = tempdir().unwrap();
         let ubuntu_work = tempdir().unwrap();
+        let macos_work = include_macos.then(|| tempdir().unwrap());
         let windows_gateway_port = unused_loopback_port();
         let ubuntu_gateway_port = unused_loopback_port();
+        let macos_gateway_port = include_macos.then(unused_loopback_port);
 
         configure_local_blossom(windows_cfg.path(), &blossom.url);
         configure_local_blossom(ubuntu_cfg.path(), &blossom.url);
+        if let Some(config) = macos_cfg.as_ref() {
+            configure_local_blossom(config.path(), &blossom.url);
+        }
 
         let init = run_json(windows_cfg.path(), &["init", "--label", "windows-peer"]);
         let owner_npub = init["owner_npub"].as_str().unwrap();
@@ -276,11 +462,23 @@ impl SyncCluster {
         );
         let request = linked["device_link_request"]["url"].as_str().unwrap();
         run_json(windows_cfg.path(), &["approve", request]);
+        if let Some(config) = macos_cfg.as_ref() {
+            let linked = run_json(
+                config.path(),
+                &["link", owner_npub, "--label", "macos-peer"],
+            );
+            let request = linked["device_link_request"]["url"].as_str().unwrap();
+            run_json(windows_cfg.path(), &["approve", request]);
+        }
 
         for seed in &options.seed_files {
             let root = match seed.client {
                 Client::Windows => windows_work.path(),
                 Client::Ubuntu => ubuntu_work.path(),
+                Client::MacOS => macos_work
+                    .as_ref()
+                    .expect("macos seed requires macos client")
+                    .path(),
             };
             let path = root.join(&seed.path);
             if let Some(parent) = path.parent() {
@@ -297,6 +495,9 @@ impl SyncCluster {
             ubuntu_cfg.path(),
             &["import", ubuntu_work.path().to_str().unwrap()],
         );
+        if let (Some(config), Some(work)) = (macos_cfg.as_ref(), macos_work.as_ref()) {
+            run_json(config.path(), &["import", work.path().to_str().unwrap()]);
+        }
 
         let windows_daemon = Some(DaemonChild::spawn(
             windows_cfg.path(),
@@ -310,41 +511,59 @@ impl SyncCluster {
             ubuntu_cfg.path().join("ubuntu.log"),
             ubuntu_gateway_port,
         ));
+        let macos_daemon =
+            if let (Some(config), Some(gateway_port)) = (macos_cfg.as_ref(), macos_gateway_port) {
+                Some(DaemonChild::spawn(
+                    config.path(),
+                    &relay.url,
+                    config.path().join("macos.log"),
+                    gateway_port,
+                ))
+            } else {
+                None
+            };
 
         Self {
             relay,
             _blossom: blossom,
+            clients: options.clients,
             windows_cfg,
             ubuntu_cfg,
+            macos_cfg,
             windows_work,
             ubuntu_work,
+            macos_work,
             windows_gateway_port,
             ubuntu_gateway_port,
+            macos_gateway_port,
             windows_daemon,
             ubuntu_daemon,
+            macos_daemon,
         }
     }
 
     async fn wait_until_authorized(&self) {
-        self.wait_until("ubuntu authorized", || {
-            let status = run_json(self.ubuntu_cfg.path(), &["status"]);
-            status["account"]["authorization_state"] == "authorized"
+        self.wait_until("linked peers authorized", || {
+            self.clients()
+                .into_iter()
+                .filter(|client| *client != Client::Windows)
+                .all(|client| {
+                    let status = run_json(self.config_path(client), &["status"]);
+                    status["account"]["authorization_state"] == "authorized"
+                })
         })
         .await;
     }
 
     async fn wait_until_direct_peers_connected(&self) {
         self.wait_until("direct fips peers connected", || {
-            let windows = run_json(self.windows_cfg.path(), &["status"]);
-            let ubuntu = run_json(self.ubuntu_cfg.path(), &["status"]);
-            windows["network"]["fips"]["connected_peer_count"]
-                .as_u64()
-                .unwrap_or(0)
-                > 0
-                && ubuntu["network"]["fips"]["connected_peer_count"]
+            self.clients().into_iter().all(|client| {
+                let status = run_json(self.config_path(client), &["status"]);
+                status["network"]["fips"]["connected_peer_count"]
                     .as_u64()
                     .unwrap_or(0)
                     > 0
+            })
         })
         .await;
     }
@@ -372,6 +591,47 @@ impl SyncCluster {
             std::fs::create_dir_all(parent).unwrap();
         }
         tokio::fs::write(local_path, bytes).await.unwrap();
+    }
+
+    async fn provider_write(&self, client: Client, path: &str, bytes: &[u8]) -> String {
+        let source = self
+            .config_path(client)
+            .join(format!("provider-source-{}.bin", path_hash_label(path)));
+        if let Some(parent) = source.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(&source, bytes).await.unwrap();
+        let output = idrive(self.config_path(client))
+            .args(["provider", "write", path])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let value = json_output(&output);
+        self.refresh_view(client).await;
+        value["root_cid"].as_str().unwrap().to_string()
+    }
+
+    async fn provider_rename(&self, client: Client, from: &str, to: &str) -> String {
+        let output = idrive(self.config_path(client))
+            .args(["provider", "rename", from, to])
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let value = json_output(&output);
+        self.refresh_view(client).await;
+        value["root_cid"].as_str().unwrap().to_string()
+    }
+
+    async fn provider_delete(&self, client: Client, path: &str) -> String {
+        let output = idrive(self.config_path(client))
+            .args(["provider", "delete", path])
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let value = json_output(&output);
+        self.refresh_view(client).await;
+        value["root_cid"].as_str().unwrap().to_string()
     }
 
     async fn rename(&self, client: Client, from: &str, to: &str) {
@@ -469,18 +729,54 @@ impl SyncCluster {
         );
     }
 
+    fn assert_status_counts(&self, client: Client, expected_files: u64, expected_devices: u64) {
+        let status = run_json(self.config_path(client), &["status"]);
+        assert_eq!(
+            status["hashtree"]["file_count"].as_u64(),
+            Some(expected_files),
+            "{} status should report {expected_files} files\n{}",
+            client.label(),
+            self.debug_state()
+        );
+        assert_eq!(
+            status["network"]["authorized_device_count"].as_u64(),
+            Some(expected_devices),
+            "{} status should report {expected_devices} authorized devices\n{}",
+            client.label(),
+            self.debug_state()
+        );
+    }
+
     async fn wait_for_convergence_from(&self, client: Client, label: &str) {
         let expected = visible_dir_snapshot(self.path(client));
         self.wait_for_visible_snapshot(&expected, label).await;
     }
 
+    async fn wait_for_provider_publish(&self, client: Client, root_cid: &str, label: &str) {
+        self.wait_until(label, || {
+            let status = run_json(self.config_path(client), &["status"]);
+            let daemon = &status["daemon"];
+            daemon["event"] == "provider_root_publish_finished"
+                && daemon["context"]["root_key"]
+                    .as_str()
+                    .is_some_and(|key| key.ends_with(root_cid))
+                && daemon["publish"]["published_drive_root"]
+                    .as_bool()
+                    .unwrap_or(false)
+        })
+        .await;
+    }
+
     async fn wait_for_snapshot(&self, expected: &DirSnapshot, label: &str) {
         let start = Instant::now();
         while start.elapsed() < WAIT_TIMEOUT {
-            self.refresh_view(Client::Windows).await;
-            self.refresh_view(Client::Ubuntu).await;
-            if dir_snapshot(self.windows_work.path()) == *expected
-                && dir_snapshot(self.ubuntu_work.path()) == *expected
+            for client in self.clients() {
+                self.refresh_view(client).await;
+            }
+            if self
+                .clients()
+                .into_iter()
+                .all(|client| dir_snapshot(self.path(client)) == *expected)
             {
                 return;
             }
@@ -492,24 +788,30 @@ impl SyncCluster {
     async fn wait_for_visible_snapshot(&self, expected: &DirSnapshot, label: &str) {
         let start = Instant::now();
         while start.elapsed() < WAIT_TIMEOUT {
-            self.refresh_view(Client::Windows).await;
-            self.refresh_view(Client::Ubuntu).await;
-            let windows = visible_dir_snapshot(self.windows_work.path());
-            let ubuntu = visible_dir_snapshot(self.ubuntu_work.path());
-            if windows == *expected && ubuntu == *expected {
+            for client in self.clients() {
+                self.refresh_view(client).await;
+            }
+            if self
+                .clients()
+                .into_iter()
+                .all(|client| visible_dir_snapshot(self.path(client)) == *expected)
+            {
                 return;
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        self.refresh_view(Client::Windows).await;
-        self.refresh_view(Client::Ubuntu).await;
-        let windows = visible_dir_snapshot(self.windows_work.path());
-        let ubuntu = visible_dir_snapshot(self.ubuntu_work.path());
-        if windows == *expected && ubuntu == *expected {
+        for client in self.clients() {
+            self.refresh_view(client).await;
+        }
+        if self
+            .clients()
+            .into_iter()
+            .all(|client| visible_dir_snapshot(self.path(client)) == *expected)
+        {
             return;
         }
         panic!(
-            "timed out waiting for {label}\nexpected visible: {expected:#?}\nwindows visible: {windows:#?}\nubuntu visible: {ubuntu:#?}\n{}",
+            "timed out waiting for {label}\nexpected visible: {expected:#?}\n{}",
             self.debug_state()
         );
     }
@@ -529,6 +831,11 @@ impl SyncCluster {
         match client {
             Client::Windows => self.windows_work.path(),
             Client::Ubuntu => self.ubuntu_work.path(),
+            Client::MacOS => self
+                .macos_work
+                .as_ref()
+                .expect("macos client is not active")
+                .path(),
         }
     }
 
@@ -536,6 +843,11 @@ impl SyncCluster {
         match client {
             Client::Windows => self.windows_cfg.path(),
             Client::Ubuntu => self.ubuntu_cfg.path(),
+            Client::MacOS => self
+                .macos_cfg
+                .as_ref()
+                .expect("macos client is not active")
+                .path(),
         }
     }
 
@@ -543,7 +855,12 @@ impl SyncCluster {
         match client {
             Client::Windows => self.windows_gateway_port,
             Client::Ubuntu => self.ubuntu_gateway_port,
+            Client::MacOS => self.macos_gateway_port.expect("macos client is not active"),
         }
+    }
+
+    fn clients(&self) -> Vec<Client> {
+        self.clients.clone()
     }
 
     async fn webdav_request(
@@ -576,6 +893,7 @@ impl SyncCluster {
         let daemon = match client {
             Client::Windows => &mut self.windows_daemon,
             Client::Ubuntu => &mut self.ubuntu_daemon,
+            Client::MacOS => &mut self.macos_daemon,
         };
         drop(daemon.take());
     }
@@ -594,6 +912,19 @@ impl SyncCluster {
                 self.ubuntu_cfg.path().join("ubuntu.log"),
                 self.ubuntu_gateway_port,
             ),
+            Client::MacOS => (
+                &mut self.macos_daemon,
+                self.macos_cfg
+                    .as_ref()
+                    .expect("macos client is not active")
+                    .path(),
+                self.macos_cfg
+                    .as_ref()
+                    .expect("macos client is not active")
+                    .path()
+                    .join("macos.log"),
+                self.macos_gateway_port.expect("macos client is not active"),
+            ),
         };
         assert!(slot.is_none(), "daemon is already running");
         *slot = Some(DaemonChild::spawn(
@@ -608,26 +939,52 @@ impl SyncCluster {
         let (config_dir, work_dir) = match client {
             Client::Windows => (self.windows_cfg.path(), self.windows_work.path()),
             Client::Ubuntu => (self.ubuntu_cfg.path(), self.ubuntu_work.path()),
+            Client::MacOS => (
+                self.macos_cfg
+                    .as_ref()
+                    .expect("macos client is not active")
+                    .path(),
+                self.macos_work
+                    .as_ref()
+                    .expect("macos client is not active")
+                    .path(),
+            ),
         };
         run_json(config_dir, &["import", work_dir.to_str().unwrap()]);
     }
 
     fn debug_state(&self) -> String {
-        format!(
-            "windows: {:#?}\nubuntu: {:#?}\nwindows status: {}\nubuntu status: {}\nwindows log:\n{}\nubuntu log:\n{}",
-            dir_snapshot(self.windows_work.path()),
-            dir_snapshot(self.ubuntu_work.path()),
-            serde_json::to_string_pretty(&run_json(self.windows_cfg.path(), &["status"]))
-                .unwrap_or_default(),
-            serde_json::to_string_pretty(&run_json(self.ubuntu_cfg.path(), &["status"]))
-                .unwrap_or_default(),
-            self.windows_daemon
-                .as_ref()
-                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
-            self.ubuntu_daemon
-                .as_ref()
-                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
-        )
+        use std::fmt::Write as _;
+
+        let mut out = String::new();
+        for client in self.clients() {
+            let _ = writeln!(
+                out,
+                "{}: {:#?}",
+                client.label(),
+                dir_snapshot(self.path(client))
+            );
+            let status =
+                serde_json::to_string_pretty(&run_json(self.config_path(client), &["status"]))
+                    .unwrap_or_default();
+            let _ = writeln!(out, "{} status: {status}", client.label());
+            let log = match client {
+                Client::Windows => self
+                    .windows_daemon
+                    .as_ref()
+                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+                Client::Ubuntu => self
+                    .ubuntu_daemon
+                    .as_ref()
+                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+                Client::MacOS => self
+                    .macos_daemon
+                    .as_ref()
+                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+            };
+            let _ = writeln!(out, "{} log:\n{log}", client.label());
+        }
+        out
     }
 }
 
@@ -689,6 +1046,10 @@ fn idrive(config_dir: &Path) -> Command {
 fn run_json(config_dir: &Path, args: &[&str]) -> Value {
     let output = idrive(config_dir).args(args).output().unwrap();
     assert_success(&output);
+    json_output(&output)
+}
+
+fn json_output(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
             "invalid json: {error}\nstdout: {}\nstderr: {}",
@@ -934,6 +1295,10 @@ fn percent_encode_path_segment(segment: &str) -> String {
         }
     }
     encoded
+}
+
+fn path_hash_label(path: &str) -> String {
+    to_hex(&sha256(path.as_bytes()))[..16].to_string()
 }
 
 fn should_ignore_name(name: &str) -> bool {

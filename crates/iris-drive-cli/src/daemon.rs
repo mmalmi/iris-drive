@@ -231,6 +231,8 @@ pub(crate) fn cmd_daemon(
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut provider_root_poll_timer = tokio::time::interval(std::time::Duration::from_secs(1));
+        provider_root_poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last_provider_root_key = current_device_root_key(&config);
@@ -480,6 +482,24 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
+                _ = provider_root_poll_timer.tick() => {
+                    match publish_provider_root_if_changed(
+                        &client,
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(Some(_updated_config)) => {}
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "trigger": "config_root_poll", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
                 _ = direct_mesh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_ref()
                         && let Err(error) = direct_roots
@@ -534,7 +554,7 @@ async fn publish_provider_root_if_changed(
         config_dir.to_path_buf(),
         updated_config,
         updated_state,
-        false,
+        true,
         "provider_root_publish_finished",
         json!({"root_key": current_key.clone()}),
     );
@@ -544,7 +564,7 @@ async fn publish_provider_root_if_changed(
             "event": "provider_root_published",
             "root_key": current_key,
             "direct_root_mesh_error": direct_root_mesh_error,
-            "publish": {"queued": true, "upload_blossom": false},
+            "publish": {"queued": true, "upload_blossom": true},
         }),
     );
 
@@ -2298,7 +2318,7 @@ pub(crate) fn spawn_root_apply_followup(
     tokio::spawn(async move {
         if let Some(root_cid) = root_cid_to_pull {
             let mut last_error = None;
-            for delay_secs in EVENT_BLOCK_PULL_RETRY_DELAYS {
+            for delay_secs in event_block_pull_retry_delays(&config) {
                 if *delay_secs > 0 {
                     tokio::time::sleep(std::time::Duration::from_secs(*delay_secs)).await;
                 }
@@ -2513,15 +2533,34 @@ pub(crate) async fn pull_blocks_for_root_bounded(
     root_cid_str: &str,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> std::result::Result<(), String> {
+    let timeout_secs = event_block_pull_timeout_secs(config);
     match tokio::time::timeout(
-        std::time::Duration::from_secs(EVENT_BLOCK_PULL_TIMEOUT_SECS),
+        std::time::Duration::from_secs(timeout_secs),
         pull_blocks_for_root(config_dir, config, root_cid_str, fips_blocks),
     )
     .await
     {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(error.to_string()),
-        Err(_) => Err(format!("timed out after {EVENT_BLOCK_PULL_TIMEOUT_SECS}s")),
+        Err(_) => Err(format!("timed out after {timeout_secs}s")),
+    }
+}
+
+fn event_block_pull_retry_delays(config: &AppConfig) -> &'static [u64] {
+    if config.blossom_servers.is_empty() {
+        EVENT_BLOCK_PULL_RETRY_DELAYS
+    } else {
+        EVENT_BLOCK_PULL_WITH_BLOSSOM_RETRY_DELAYS
+    }
+}
+
+fn event_block_pull_timeout_secs(config: &AppConfig) -> u64 {
+    if config.blossom_servers.is_empty() {
+        EVENT_BLOCK_PULL_TIMEOUT_SECS
+    } else {
+        FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
+            + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
+            + EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS
     }
 }
 
@@ -2647,11 +2686,30 @@ mod tests {
     }
 
     #[test]
-    fn event_block_pull_retry_budget_stays_short() {
-        let attempts = EVENT_BLOCK_PULL_RETRY_DELAYS.len() as u64;
-        let retry_sleep: u64 = EVENT_BLOCK_PULL_RETRY_DELAYS.iter().sum();
+    fn event_block_pull_retry_budget_stays_short_without_blossom() {
+        let config = AppConfig {
+            blossom_servers: Vec::new(),
+            ..AppConfig::default()
+        };
+        let attempts = event_block_pull_retry_delays(&config).len() as u64;
+        let retry_sleep: u64 = event_block_pull_retry_delays(&config).iter().sum();
 
-        assert!(attempts * EVENT_BLOCK_PULL_TIMEOUT_SECS + retry_sleep <= 12);
+        assert!(attempts * event_block_pull_timeout_secs(&config) + retry_sleep <= 12);
+    }
+
+    #[test]
+    fn event_block_pull_timeout_allows_blossom_fallback_window() {
+        let config = AppConfig {
+            blossom_servers: vec!["http://127.0.0.1:12345".to_string()],
+            ..AppConfig::default()
+        };
+
+        assert_eq!(event_block_pull_retry_delays(&config), &[0]);
+        assert!(
+            event_block_pull_timeout_secs(&config)
+                > FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
+                    + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
+        );
     }
 
     #[test]
