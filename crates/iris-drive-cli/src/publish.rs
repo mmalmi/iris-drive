@@ -999,14 +999,6 @@ pub(crate) async fn publish_current_state(
             .context("loading device key")?;
         report.root_cid = Some(root.root_cid.clone());
 
-        if upload_blossom {
-            let (blossom_upload, blossom_upload_error) =
-                maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
-                    .await?;
-            report.blossom_upload = blossom_upload;
-            report.blossom_upload_error = blossom_upload_error;
-        }
-
         match relay_publish_with_timeout(relay_sync::publish_drive_root(
             client,
             device.keys(),
@@ -1041,6 +1033,14 @@ pub(crate) async fn publish_current_state(
                     report.files_root_publish_error = Some(error);
                 }
             }
+        }
+
+        if upload_blossom {
+            let (blossom_upload, blossom_upload_error) =
+                maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                    .await?;
+            report.blossom_upload = blossom_upload;
+            report.blossom_upload_error = blossom_upload_error;
         }
     }
 
