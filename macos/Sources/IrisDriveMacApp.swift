@@ -1102,16 +1102,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func runtimePaths() -> IrisDriveRuntimePaths {
-        let baseDirectory: URL
         if let override = ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"],
            !override.isEmpty {
-            baseDirectory = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            baseDirectory = fileProviderApplicationSupportFallbackDirectory()
+            return IrisDriveRuntimePaths(
+                configDirectory: URL(fileURLWithPath: override, isDirectory: true)
+                    .appendingPathComponent("Config", isDirectory: true)
+            )
+        }
+
+        if let runtime = persistedFileProviderRuntime(),
+           !runtime.configDirectory.isEmpty {
+            return IrisDriveRuntimePaths(
+                configDirectory: URL(fileURLWithPath: runtime.configDirectory, isDirectory: true)
+            )
         }
 
         return IrisDriveRuntimePaths(
-            configDirectory: baseDirectory.appendingPathComponent("Config", isDirectory: true)
+            configDirectory: fileProviderApplicationSupportFallbackDirectory()
+                .appendingPathComponent("Config", isDirectory: true)
         )
     }
 
@@ -1166,6 +1174,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return base.appendingPathComponent("Iris Drive", isDirectory: true)
+    }
+
+    private func persistedFileProviderRuntime() -> FileProviderRuntimeConfig? {
+        let url = fileProviderApplicationSupportFallbackDirectory()
+            .appendingPathComponent(irisDriveFileProviderRuntimeFileName)
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(FileProviderRuntimeConfig.self, from: data)
+        } catch {
+            NSLog("Iris Drive runtime config decode failed at \(url.path): \(error)")
+            return nil
+        }
     }
 
     private func statusJSON(from data: Data) -> [String: Any] {
@@ -1863,7 +1885,7 @@ private struct IrisDriveRuntimePaths {
     let configDirectory: URL
 }
 
-private struct FileProviderRuntimeConfig: Encodable {
+private struct FileProviderRuntimeConfig: Codable {
     let configDirectory: String
     let idriveExecutable: String?
 
