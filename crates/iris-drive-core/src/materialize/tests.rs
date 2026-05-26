@@ -244,6 +244,123 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
 }
 
 #[tokio::test]
+async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let peer_device =
+        "4444444444444444444444444444444444444444444444444444444444444444".to_string();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let owner_edit_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: account.state.device_pubkey.clone(),
+        device_seq: 2,
+        dck_generation: 1,
+        materialized_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 10,
+    };
+    let owner_edit_root =
+        index_device_note_root_with_meta(&tree, b"owner edit", 10, owner_edit_meta.clone()).await;
+    let peer_base =
+        index_device_note_root(&tree, &peer_device, b"baseline before delete", 1, 9).await;
+    let peer_delete_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: peer_device.clone(),
+        device_seq: 2,
+        dck_generation: 1,
+        materialized_only: false,
+        parents: vec![RootParent {
+            device_id: peer_device.clone(),
+            device_seq: 1,
+            root_cid: peer_base.0.to_string(),
+        }],
+        observed: BTreeMap::new(),
+        created_at: 11,
+    };
+    let empty = tempdir().unwrap();
+    let peer_delete_root = index_dir_with_history_and_meta(
+        &tree,
+        empty.path(),
+        Some(&peer_base.0),
+        11,
+        Some(&peer_delete_meta),
+    )
+    .await
+    .unwrap();
+
+    let mut account_state = account.state.clone();
+    account_state
+        .app_keys
+        .as_mut()
+        .expect("created account has app keys")
+        .devices
+        .push(DeviceEntry {
+            pubkey: peer_device.clone(),
+            added_at: 1,
+            label: Some("peer".into()),
+        });
+
+    let mut config = AppConfig {
+        account: Some(account_state),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(owner_edit_root.to_string(), 10, &owner_edit_meta),
+    );
+    drive.device_roots.insert(
+        peer_device,
+        DeviceRootRef::from_meta(peer_delete_root.to_string(), 11, &peer_delete_meta),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    assert_eq!(view.view.conflicts, vec!["docs/note.txt"]);
+    assert_eq!(view.file_count(), 1);
+    assert!(
+        view.view
+            .files
+            .iter()
+            .all(|entry| entry.path != "docs/note.txt")
+    );
+    assert!(view.view.files.iter().any(|entry| {
+        entry.path.starts_with("docs/note (conflict from ")
+            && entry.path.ends_with(").txt")
+            && entry.source_path.as_deref() == Some("docs/note.txt")
+    }));
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    assert_eq!(merged.file_count, 1);
+    let docs_cid = tree
+        .resolve(&merged.root_cid, "docs")
+        .await
+        .unwrap()
+        .expect("docs exists");
+    let names = tree
+        .list_directory(&docs_cid)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 1);
+    assert!(names[0].starts_with("note (conflict from "));
+    assert!(names[0].ends_with(").txt"));
+    let cid = tree
+        .resolve(&merged.root_cid, &format!("docs/{}", names[0]))
+        .await
+        .unwrap()
+        .expect("visible conflict copy exists");
+    let bytes = tree.get(&cid, None).await.unwrap().unwrap();
+    assert_eq!(bytes, b"owner edit");
+}
+
+#[tokio::test]
 async fn primary_merged_view_ignores_materialized_root_publish_time() {
     let cfg_dir = tempdir().unwrap();
     let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();

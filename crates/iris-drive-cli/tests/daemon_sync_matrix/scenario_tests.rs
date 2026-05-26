@@ -4,182 +4,532 @@ use super::*;
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_match_seafile_release_operation_sequence() {
+async fn live_daemons_three_vm_initial_merge_from_all_peers_and_conflicts() {
     let _guard = live_daemon_test_guard().await;
-    let cluster = SyncCluster::start(Duration::from_millis(100)).await;
+    let conflict_path = "initial/conflict.txt";
+    let seed_files = vec![
+        SeedFile::new(Client::Windows, "initial/windows-only.txt", b"windows only"),
+        SeedFile::new(Client::Ubuntu, "initial/ubuntu-only.txt", b"ubuntu only"),
+        SeedFile::new(Client::MacOS, "initial/macos-only.txt", b"macos only"),
+        SeedFile::new(Client::Windows, "initial/same.txt", b"same bytes"),
+        SeedFile::new(Client::Ubuntu, "initial/same.txt", b"same bytes"),
+        SeedFile::new(Client::MacOS, "initial/same.txt", b"same bytes"),
+        SeedFile::new(
+            Client::MacOS,
+            "initial/unicode/Raksmorgas-动作-Адрес.txt",
+            b"unicode path bytes",
+        ),
+        SeedFile::new(Client::Windows, conflict_path, b"windows conflict"),
+        SeedFile::new(Client::Ubuntu, conflict_path, b"ubuntu conflict"),
+        SeedFile::new(Client::MacOS, conflict_path, b"macos conflict"),
+    ];
+    let cluster = SyncCluster::start_with_options(SyncClusterOptions {
+        blossom_upload_delay: Duration::ZERO,
+        seed_files,
+        clients: Client::THREE_VM.to_vec(),
+    })
+    .await;
     cluster.wait_until_authorized().await;
 
-    seafile_add_delete_add_sequence(&cluster).await;
-    seafile_create_update_sequence(&cluster).await;
-    seafile_rename_sequence(&cluster).await;
-    seafile_download_side_sequence(&cluster).await;
+    let expected_hashes = [
+        to_hex(&sha256(b"windows conflict")),
+        to_hex(&sha256(b"ubuntu conflict")),
+        to_hex(&sha256(b"macos conflict")),
+    ];
+    wait_for_hashes_with_prefix_all(
+        &cluster,
+        "initial/conflict",
+        &expected_hashes,
+        "three-device initial conflict copies",
+    )
+    .await;
+
+    for client in Client::THREE_VM {
+        cluster.assert_file(client, "initial/windows-only.txt", b"windows only");
+        cluster.assert_file(client, "initial/ubuntu-only.txt", b"ubuntu only");
+        cluster.assert_file(client, "initial/macos-only.txt", b"macos only");
+        cluster.assert_file(client, "initial/same.txt", b"same bytes");
+        cluster.assert_file(
+            client,
+            "initial/unicode/Raksmorgas-动作-Адрес.txt",
+            b"unicode path bytes",
+        );
+    }
+    let expected = dir_snapshot(cluster.path(Client::Windows));
+    cluster
+        .wait_for_snapshot(&expected, "three-device initial merge")
+        .await;
 }
 
-async fn seafile_add_delete_add_sequence(cluster: &SyncCluster) {
-    cluster
-        .write(Client::Windows, "release/add-delete-add/1.txt", b"aaaaaaaa")
-        .await;
-    cluster
-        .remove_all(Client::Windows, "release/add-delete-add")
-        .await;
-    cluster
-        .write(Client::Windows, "release/add-delete-add/1.txt", b"aaaaaaaa")
-        .await;
-    cluster
-        .wait_for_convergence_from(Client::Windows, "add-delete-add")
-        .await;
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_match_seafile_release_operation_permutations() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start_three(Duration::from_millis(100)).await;
+    cluster.wait_until_authorized().await;
+
+    for source in Client::THREE_VM {
+        let prefix = format!("release/{}", source.label());
+        seafile_add_delete_add_sequence(&cluster, source, &prefix).await;
+        seafile_create_update_sequence(&cluster, source, &prefix).await;
+        seafile_rename_sequence(&cluster, source, &prefix).await;
+        seafile_delete_sequence(&cluster, source, &prefix).await;
+        seafile_case_rename_sequence(&cluster, source, &prefix).await;
+        seafile_empty_directory_sequence(&cluster, source, &prefix).await;
+        seafile_single_operation_sequence(&cluster, source, &prefix).await;
+    }
 }
 
-async fn seafile_create_update_sequence(cluster: &SyncCluster) {
+async fn seafile_add_delete_add_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let path = scoped(prefix, "add-delete-add/1.txt");
+    let dir = scoped(prefix, "add-delete-add");
+    let bytes = format!("aaaaaaaa from {}", source.label()).into_bytes();
+    cluster.write(source, &path, &bytes).await;
+    cluster.remove_all(source, &dir).await;
+    cluster.write(source, &path, &bytes).await;
     cluster
-        .write(Client::Windows, "release/test/1.txt", b"111")
+        .wait_for_convergence_from(source, &format!("{} add-delete-add", source.label()))
         .await;
-    cluster
-        .write(Client::Windows, "release/test/1.txt", b"222")
-        .await;
-    cluster
-        .write(Client::Windows, "release/copy-source/1.txt", b"111")
-        .await;
-    cluster
-        .write(Client::Windows, "release/copy-source/2/2.txt", b"222")
-        .await;
-    cluster
-        .write(Client::Windows, "release/test/copied/1.txt", b"111")
-        .await;
-    cluster
-        .write(Client::Windows, "release/test/copied/2/2.txt", b"222")
-        .await;
-    cluster.mkdir(Client::Windows, "release/empty").await;
+    assert_file_all(cluster, &path, &bytes);
+}
+
+async fn seafile_create_update_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let file = scoped(prefix, "create-update/test/1.txt");
+    let first = format!("111 from {}", source.label()).into_bytes();
+    let second = format!("222 from {}", source.label()).into_bytes();
+    cluster.write(source, &file, &first).await;
+    cluster.write(source, &file, &second).await;
     cluster
         .write(
-            Client::Windows,
-            "release/empty/test.md",
+            source,
+            &scoped(prefix, "create-update/copy-source/1.txt"),
+            b"111",
+        )
+        .await;
+    cluster
+        .write(
+            source,
+            &scoped(prefix, "create-update/copy-source/2/2.txt"),
+            b"222",
+        )
+        .await;
+    cluster
+        .write(
+            source,
+            &scoped(prefix, "create-update/test/copied/1.txt"),
+            b"111",
+        )
+        .await;
+    cluster
+        .write(
+            source,
+            &scoped(prefix, "create-update/test/copied/2/2.txt"),
+            b"222",
+        )
+        .await;
+    cluster
+        .mkdir(source, &scoped(prefix, "create-update/empty"))
+        .await;
+    cluster
+        .write(
+            source,
+            &scoped(prefix, "create-update/empty/test.md"),
             b"dddddddddddddddddddddd",
         )
         .await;
     cluster
-        .wait_for_convergence_from(Client::Windows, "create-update-deep-copy")
+        .wait_for_convergence_from(
+            source,
+            &format!("{} create-update-deep-copy", source.label()),
+        )
         .await;
+    assert_file_all(cluster, &file, &second);
 }
 
-async fn seafile_rename_sequence(cluster: &SyncCluster) {
+async fn seafile_rename_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let base = scoped(prefix, "rename");
     cluster
-        .write(Client::Windows, "release/rename/1.txt", b"111")
+        .write(source, &format!("{base}/1.txt"), b"111")
+        .await;
+    cluster
+        .rename(source, &format!("{base}/1.txt"), &format!("{base}/2.txt"))
+        .await;
+    cluster
+        .write(source, &format!("{base}/3.txt"), b"222")
+        .await;
+    cluster
+        .rename(source, &format!("{base}/2.txt"), &format!("{base}/3.txt"))
+        .await;
+    cluster
+        .write(source, &format!("{base}/test.txt"), b"test")
+        .await;
+    cluster.mkdir(source, &format!("{base}/test")).await;
+    cluster
+        .write(source, &format!("{base}/4.txt"), b"444")
         .await;
     cluster
         .rename(
-            Client::Windows,
-            "release/rename/1.txt",
-            "release/rename/2.txt",
-        )
-        .await;
-    cluster
-        .write(Client::Windows, "release/rename/3.txt", b"222")
-        .await;
-    cluster
-        .rename(
-            Client::Windows,
-            "release/rename/2.txt",
-            "release/rename/3.txt",
-        )
-        .await;
-    cluster
-        .write(Client::Windows, "release/rename/test.txt", b"test")
-        .await;
-    cluster.mkdir(Client::Windows, "release/rename/test").await;
-    cluster
-        .write(Client::Windows, "release/rename/4.txt", b"444")
-        .await;
-    cluster
-        .rename(
-            Client::Windows,
-            "release/rename/test.txt",
-            "release/rename/test/test.txt",
+            source,
+            &format!("{base}/test.txt"),
+            &format!("{base}/test/test.txt"),
         )
         .await;
     cluster
         .rename(
-            Client::Windows,
-            "release/rename/3.txt",
-            "release/rename/test/3.txt",
+            source,
+            &format!("{base}/3.txt"),
+            &format!("{base}/test/3.txt"),
         )
         .await;
     cluster
         .rename(
-            Client::Windows,
-            "release/rename/4.txt",
-            "release/rename/test/4.txt",
+            source,
+            &format!("{base}/4.txt"),
+            &format!("{base}/test/4.txt"),
         )
         .await;
-    cluster.mkdir(Client::Windows, "release/rename/test2").await;
+    cluster.mkdir(source, &format!("{base}/test2")).await;
     cluster
         .rename(
-            Client::Windows,
-            "release/rename/test",
-            "release/rename/test2/test",
-        )
-        .await;
-    cluster
-        .rename(
-            Client::Windows,
-            "release/rename/test2/test",
-            "release/rename/test",
-        )
-        .await;
-    cluster
-        .write(Client::Windows, "release/rename/test/4.txt", b"444555")
-        .await;
-    cluster
-        .rename(
-            Client::Windows,
-            "release/rename/test",
-            "release/rename/test2/test",
+            source,
+            &format!("{base}/test"),
+            &format!("{base}/test2/test"),
         )
         .await;
     cluster
         .rename(
-            Client::Windows,
-            "release/rename/test2",
-            "release/rename/test3",
+            source,
+            &format!("{base}/test2/test"),
+            &format!("{base}/test"),
         )
         .await;
     cluster
-        .wait_for_convergence_from(Client::Windows, "rename chain")
+        .write(source, &format!("{base}/test/4.txt"), b"444555")
         .await;
+    cluster
+        .rename(
+            source,
+            &format!("{base}/test"),
+            &format!("{base}/test2/test"),
+        )
+        .await;
+    cluster
+        .rename(source, &format!("{base}/test2"), &format!("{base}/test3"))
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} rename chain", source.label()))
+        .await;
+    assert_missing_all(cluster, &format!("{base}/test/4.txt"));
+    assert_file_all(cluster, &format!("{base}/test3/test/4.txt"), b"444555");
 }
 
-async fn seafile_download_side_sequence(cluster: &SyncCluster) {
+async fn seafile_delete_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let base = scoped(prefix, "delete");
     cluster
-        .write(Client::Ubuntu, "download/1.txt", b"11111")
+        .write(source, &format!("{base}/2.txt"), b"2222")
         .await;
     cluster
-        .write(Client::Ubuntu, "download/1.txt", b"22222")
-        .await;
-    cluster.mkdir(Client::Ubuntu, "download/dir1").await;
-    cluster
-        .rename(Client::Ubuntu, "download/1.txt", "download/2.txt")
+        .write(source, &format!("{base}/1/1.txt"), b"111")
         .await;
     cluster
-        .rename(Client::Ubuntu, "download/dir1", "download/dir2")
+        .write(source, &format!("{base}/1/2/2.txt"), b"222")
         .await;
     cluster
-        .write(Client::Ubuntu, "download/dir2/1.txt", b"1111111")
+        .write(source, &format!("{base}/test/1/1.txt"), b"111")
         .await;
     cluster
-        .rename(Client::Ubuntu, "download/dir2", "download/dir3")
-        .await;
-    cluster.remove(Client::Ubuntu, "download/dir3/1.txt").await;
-    cluster
-        .write(Client::Ubuntu, "download/dir4/2.txt", b"2222222")
+        .write(source, &format!("{base}/test/1/2/2.txt"), b"222")
         .await;
     cluster
-        .rename(Client::Ubuntu, "download/dir4", "download/dir3/dir4")
+        .wait_for_convergence_from(source, &format!("{} delete baseline", source.label()))
         .await;
-    cluster.remove(Client::Ubuntu, "download/2.txt").await;
-    cluster.remove_all(Client::Ubuntu, "download/dir3").await;
+
+    cluster.remove(source, &format!("{base}/2.txt")).await;
+    cluster.remove_all(source, &format!("{base}/1")).await;
+    cluster.remove_all(source, &format!("{base}/test/1")).await;
+    cluster.remove_all(source, &format!("{base}/test")).await;
     cluster
-        .wait_for_convergence_from(Client::Ubuntu, "download-side sequence")
+        .wait_for_convergence_from(source, &format!("{} delete file and dirs", source.label()))
         .await;
+    assert_missing_all(cluster, &format!("{base}/2.txt"));
+    assert_missing_all(cluster, &format!("{base}/1/1.txt"));
+    assert_missing_all(cluster, &format!("{base}/test/1/2/2.txt"));
+}
+
+async fn seafile_case_rename_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let lower = scoped(prefix, "case/test/a.txt");
+    let upper = scoped(prefix, "case/TEST/a.txt");
+    cluster.write(source, &lower, b"case bytes").await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} case baseline", source.label()))
+        .await;
+    cluster
+        .rename(
+            source,
+            &scoped(prefix, "case/test"),
+            &scoped(prefix, "case/TEST"),
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} case upper rename", source.label()))
+        .await;
+    assert_visible_missing_all(cluster, &lower);
+    assert_file_all(cluster, &upper, b"case bytes");
+
+    cluster
+        .rename(
+            source,
+            &scoped(prefix, "case/TEST"),
+            &scoped(prefix, "case/test"),
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} case lower rename", source.label()))
+        .await;
+    assert_file_all(cluster, &lower, b"case bytes");
+    assert_visible_missing_all(cluster, &upper);
+}
+
+async fn seafile_empty_directory_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let empty = scoped(prefix, "empty-dir");
+    let renamed = scoped(prefix, "empty-dir-renamed");
+    cluster.mkdir(source, &empty).await;
+    cluster
+        .wait_for_provider_entry(
+            &empty,
+            "directory",
+            &format!("{} empty dir create", source.label()),
+        )
+        .await;
+    for client in Client::THREE_VM {
+        cluster.assert_provider_entry(client, &empty, "directory");
+    }
+
+    cluster.rename(source, &empty, &renamed).await;
+    cluster
+        .wait_for_provider_missing(&empty, &format!("{} empty dir source gone", source.label()))
+        .await;
+    for client in Client::THREE_VM {
+        cluster.assert_provider_missing(client, &empty);
+    }
+    cluster
+        .wait_for_provider_entry(
+            &renamed,
+            "directory",
+            &format!("{} empty dir rename", source.label()),
+        )
+        .await;
+
+    cluster.remove_all(source, &renamed).await;
+    cluster
+        .wait_for_provider_missing(&renamed, &format!("{} empty dir delete", source.label()))
+        .await;
+    for client in Client::THREE_VM {
+        cluster.assert_provider_missing(client, &renamed);
+    }
+}
+
+async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
+    let base = scoped(prefix, "single");
+    cluster
+        .write(source, &format!("{base}/1.txt"), b"11111")
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} single create file", source.label()))
+        .await;
+    cluster
+        .write(source, &format!("{base}/1.txt"), b"22222")
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} single update file", source.label()))
+        .await;
+    cluster.mkdir(source, &format!("{base}/dir1")).await;
+    cluster
+        .wait_for_provider_entry(
+            &format!("{base}/dir1"),
+            "directory",
+            &format!("{} single create empty dir", source.label()),
+        )
+        .await;
+    cluster
+        .rename(source, &format!("{base}/1.txt"), &format!("{base}/2.txt"))
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} single rename file", source.label()))
+        .await;
+    cluster
+        .rename(source, &format!("{base}/dir1"), &format!("{base}/dir2"))
+        .await;
+    cluster
+        .wait_for_provider_entry(
+            &format!("{base}/dir2"),
+            "directory",
+            &format!("{} single rename empty dir", source.label()),
+        )
+        .await;
+    cluster
+        .write(source, &format!("{base}/dir2/1.txt"), b"1111111")
+        .await;
+    cluster
+        .wait_for_convergence_from(source, &format!("{} single file in dir", source.label()))
+        .await;
+    cluster
+        .rename(source, &format!("{base}/dir2"), &format!("{base}/dir3"))
+        .await;
+    cluster
+        .wait_for_convergence_from(
+            source,
+            &format!("{} single rename full dir", source.label()),
+        )
+        .await;
+    cluster.remove(source, &format!("{base}/dir3/1.txt")).await;
+    cluster
+        .wait_for_convergence_from(
+            source,
+            &format!("{} single remove nested file", source.label()),
+        )
+        .await;
+    cluster
+        .write(source, &format!("{base}/dir4/2.txt"), b"2222222")
+        .await;
+    cluster
+        .wait_for_convergence_from(
+            source,
+            &format!("{} single create move source", source.label()),
+        )
+        .await;
+    cluster
+        .rename(
+            source,
+            &format!("{base}/dir4"),
+            &format!("{base}/dir3/dir4"),
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(
+            source,
+            &format!("{} single move non-empty dir", source.label()),
+        )
+        .await;
+    cluster.remove(source, &format!("{base}/2.txt")).await;
+    cluster.remove_all(source, &format!("{base}/dir3")).await;
+    cluster
+        .wait_for_convergence_from(
+            source,
+            &format!("{} single delete leftovers", source.label()),
+        )
+        .await;
+    assert_missing_all(cluster, &format!("{base}/2.txt"));
+    assert_missing_all(cluster, &format!("{base}/dir3/dir4/2.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_preserve_concurrent_edit_delete_as_conflict_copy() {
+    let _guard = live_daemon_test_guard().await;
+    let mut cluster = SyncCluster::start_three(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
+
+    let path = "conflicts/edit-delete.txt";
+    cluster
+        .write(Client::Windows, path, b"baseline before edit-delete")
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "edit-delete baseline")
+        .await;
+
+    for client in Client::THREE_VM {
+        cluster.stop_daemon(client);
+    }
+    cluster
+        .provider_write(
+            Client::Windows,
+            path,
+            b"windows edited while ubuntu deleted",
+        )
+        .await;
+    let write_second = unix_seconds();
+    wait_for_next_unix_second(write_second).await;
+    cluster.provider_delete(Client::Ubuntu, path).await;
+    for client in Client::THREE_VM {
+        cluster.start_daemon(client);
+    }
+    cluster.wait_until_direct_peers_connected().await;
+
+    let expected_hashes = [to_hex(&sha256(b"windows edited while ubuntu deleted"))];
+    wait_for_hashes_with_prefix_all(
+        &cluster,
+        "conflicts/edit-delete (conflict from ",
+        &expected_hashes,
+        "edit-delete conflict copy",
+    )
+    .await;
+    assert_visible_missing_all(&cluster, path);
+}
+
+fn scoped(prefix: &str, path: &str) -> String {
+    format!("{prefix}/{path}")
+}
+
+fn assert_file_all(cluster: &SyncCluster, path: &str, expected: &[u8]) {
+    for client in Client::THREE_VM {
+        cluster.assert_file(client, path, expected);
+    }
+}
+
+fn assert_missing_all(cluster: &SyncCluster, path: &str) {
+    for client in Client::THREE_VM {
+        cluster.assert_missing(client, path);
+    }
+}
+
+fn assert_visible_missing_all(cluster: &SyncCluster, path: &str) {
+    for client in Client::THREE_VM {
+        assert!(
+            !visible_dir_snapshot(cluster.path(client)).contains_key(path),
+            "{} visible snapshot should not contain {path}\n{}",
+            client.label(),
+            cluster.debug_state()
+        );
+        cluster.assert_provider_missing(client, path);
+    }
+}
+
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+async fn wait_for_next_unix_second(previous: u64) {
+    while unix_seconds() <= previous {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_for_hashes_with_prefix_all(
+    cluster: &SyncCluster,
+    prefix: &str,
+    expected_hashes: &[String],
+    label: &str,
+) {
+    let start = Instant::now();
+    while start.elapsed() < WAIT_TIMEOUT {
+        for client in Client::THREE_VM {
+            cluster.refresh_view(client).await;
+        }
+        if Client::THREE_VM.into_iter().all(|client| {
+            snapshot_has_hashes_with_prefix(
+                &dir_snapshot(cluster.path(client)),
+                prefix,
+                expected_hashes,
+            )
+        }) {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!("timed out waiting for {label}\n{}", cluster.debug_state());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

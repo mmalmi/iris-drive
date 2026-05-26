@@ -679,13 +679,13 @@ impl SyncCluster {
 
     async fn remove_all(&self, client: Client, path: &str) {
         let relative = path.to_string();
-        let local_path = self.path(client).join(path);
-        let metadata = match tokio::fs::symlink_metadata(&local_path).await {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => panic!("metadata failed for {}: {error}", local_path.display()),
-        };
         if test_ignored_path(&relative) {
+            let local_path = self.path(client).join(path);
+            let metadata = match tokio::fs::symlink_metadata(&local_path).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("metadata failed for {}: {error}", local_path.display()),
+            };
             if metadata.is_dir() {
                 tokio::fs::remove_dir_all(local_path).await.unwrap();
             } else {
@@ -738,9 +738,54 @@ impl SyncCluster {
         );
     }
 
+    fn provider_entry_kind(&self, client: Client, path: &str) -> Option<String> {
+        let list = run_json(self.config_path(client), &["provider", "list"]);
+        list["entries"].as_array()?.iter().find_map(|entry| {
+            (entry["path"].as_str() == Some(path))
+                .then(|| entry["kind"].as_str().unwrap_or_default().to_string())
+        })
+    }
+
+    fn assert_provider_entry(&self, client: Client, path: &str, kind: &str) {
+        assert_eq!(
+            self.provider_entry_kind(client, path).as_deref(),
+            Some(kind),
+            "{} provider should contain {kind} {path}\n{}",
+            client.label(),
+            self.debug_state()
+        );
+    }
+
+    fn assert_provider_missing(&self, client: Client, path: &str) {
+        assert!(
+            self.provider_entry_kind(client, path).is_none(),
+            "{} provider should not contain {path}\n{}",
+            client.label(),
+            self.debug_state()
+        );
+    }
+
     async fn wait_for_convergence_from(&self, client: Client, label: &str) {
         let expected = visible_dir_snapshot(self.path(client));
         self.wait_for_visible_snapshot(&expected, label).await;
+    }
+
+    async fn wait_for_provider_entry(&self, path: &str, kind: &str, label: &str) {
+        self.wait_until(label, || {
+            self.clients()
+                .into_iter()
+                .all(|client| self.provider_entry_kind(client, path).as_deref() == Some(kind))
+        })
+        .await;
+    }
+
+    async fn wait_for_provider_missing(&self, path: &str, label: &str) {
+        self.wait_until(label, || {
+            self.clients()
+                .into_iter()
+                .all(|client| self.provider_entry_kind(client, path).is_none())
+        })
+        .await;
     }
 
     async fn wait_for_provider_publish(&self, client: Client, root_cid: &str, label: &str) {

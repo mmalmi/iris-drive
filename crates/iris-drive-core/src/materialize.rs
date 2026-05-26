@@ -159,28 +159,38 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), Materialize
     let mut conflict_entries = Vec::new();
 
     for conflict in &view.conflict_details {
-        if conflict.kind != MergedConflictKind::WriteWrite {
-            continue;
-        }
-        let Some(winner) = winners_by_path.get(&conflict.path) else {
-            continue;
-        };
+        match conflict.kind {
+            MergedConflictKind::WriteWrite => {
+                let Some(winner) = winners_by_path.get(&conflict.path) else {
+                    continue;
+                };
 
-        for file in &conflict.files {
-            if conflict_file_matches_entry(file, winner) {
-                continue;
+                for file in &conflict.files {
+                    if conflict_file_matches_entry(file, winner) {
+                        continue;
+                    }
+                    conflict_entries.push(visible_conflict_entry(
+                        &conflict.path,
+                        file,
+                        winner.published_at,
+                        &mut occupied_paths,
+                    )?);
+                }
             }
-            let path =
-                next_visible_conflict_path(&conflict.path, &file.device_id, &mut occupied_paths);
-            conflict_entries.push(MergedEntry {
-                path,
-                source_path: Some(conflict.path.clone()),
-                hash: parse_conflict_hash(&file.content_cid_hash, &conflict.path)?,
-                size: file.size,
-                whole_file_hash: parse_conflict_whole_file_hash(file, &conflict.path)?,
-                source_device: file.device_id.clone(),
-                published_at: winner.published_at,
-            });
+            MergedConflictKind::WriteDelete => {
+                if winners_by_path.contains_key(&conflict.path) {
+                    continue;
+                }
+                let published_at = conflict.tombstone.as_ref().map_or(0, |t| t.tombstoned_at);
+                for file in &conflict.files {
+                    conflict_entries.push(visible_conflict_entry(
+                        &conflict.path,
+                        file,
+                        published_at,
+                        &mut occupied_paths,
+                    )?);
+                }
+            }
         }
     }
 
@@ -190,6 +200,24 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), Materialize
     }
 
     Ok(())
+}
+
+fn visible_conflict_entry(
+    original_path: &str,
+    file: &MergedConflictFile,
+    published_at: i64,
+    occupied_paths: &mut BTreeSet<String>,
+) -> Result<MergedEntry, MaterializeError> {
+    let path = next_visible_conflict_path(original_path, &file.device_id, occupied_paths);
+    Ok(MergedEntry {
+        path,
+        source_path: Some(original_path.to_string()),
+        hash: parse_conflict_hash(&file.content_cid_hash, original_path)?,
+        size: file.size,
+        whole_file_hash: parse_conflict_whole_file_hash(file, original_path)?,
+        source_device: file.device_id.clone(),
+        published_at,
+    })
 }
 
 fn conflict_file_matches_entry(file: &MergedConflictFile, entry: &MergedEntry) -> bool {
