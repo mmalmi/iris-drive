@@ -757,6 +757,27 @@ pub(crate) async fn import_mount_root_and_publish(
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
+    import_mount_root_and_publish_with_tombstone_paths(
+        client,
+        config_dir,
+        visible_root,
+        tombstone_base_root,
+        None,
+        direct_roots,
+        fips_blocks,
+    )
+    .await
+}
+
+pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    visible_root: Cid,
+    tombstone_base_root: Option<Cid>,
+    tombstone_paths: Option<&BTreeSet<String>>,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
     if !mount_visible_root_has_changed(&visible_root, tombstone_base_root.as_ref()) {
         let payload = json!({
             "event": "mounted_root_unchanged",
@@ -771,7 +792,11 @@ pub(crate) async fn import_mount_root_and_publish(
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
     let import = daemon
-        .import_visible_root_with_tombstone_base(visible_root, tombstone_base_root)
+        .import_visible_root_with_tombstone_base_and_paths(
+            visible_root,
+            tombstone_base_root,
+            tombstone_paths,
+        )
         .await
         .context("importing mounted root")?;
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;

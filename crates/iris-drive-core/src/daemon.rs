@@ -21,7 +21,7 @@ use crate::config::{AppConfig, ConfigError, DeviceRootRef};
 use crate::conflict::ConflictState;
 use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
-    layer_history_and_meta_on_root, layer_history_and_meta_on_root_with_tombstone_base,
+    layer_history_and_meta_on_root, layer_history_and_meta_on_root_with_tombstone_base_and_paths,
     layer_prev_link, layer_root_meta, read_conflict_records,
 };
 use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
@@ -279,6 +279,16 @@ impl Daemon {
         root: Cid,
         tombstone_base_root: Option<Cid>,
     ) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base_and_paths(root, tombstone_base_root, None)
+            .await
+    }
+
+    pub async fn import_visible_root_with_tombstone_base_and_paths(
+        &mut self,
+        root: Cid,
+        tombstone_base_root: Option<Cid>,
+        tombstone_paths: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<ImportReport, DaemonError> {
         let previous_root_cid = self
             .config
             .account
@@ -297,13 +307,14 @@ impl Daemon {
         let now = unix_now();
         let root_meta = self.root_meta_for_import(now);
         let root_cid = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
-            layer_history_and_meta_on_root_with_tombstone_base(
+            layer_history_and_meta_on_root_with_tombstone_base_and_paths(
                 &self.tree,
                 root,
                 previous_root.as_ref(),
                 Some(tombstone_base_root),
                 now,
                 root_meta.as_ref(),
+                tombstone_paths,
             )
             .await?
         } else {
@@ -541,7 +552,7 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use crate::app_keys::DeviceEntry;
     use crate::config::Drive;
@@ -738,6 +749,103 @@ mod tests {
                 .all(|entry| entry.path != "foreign.txt"),
             "foreign file should be suppressed by the local tombstone"
         );
+    }
+
+    #[tokio::test]
+    async fn scoped_visible_root_import_only_tombstones_changed_paths() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = config.account.as_mut().unwrap();
+        state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
+            pubkey: remote.clone(),
+            added_at: 100,
+            label: Some("remote".into()),
+        });
+        state.app_keys.as_mut().unwrap().normalize();
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let remote_dir = tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("explicit-delete.txt"), b"delete me").unwrap();
+        std::fs::write(remote_dir.path().join("projection-gap.txt"), b"keep me").unwrap();
+        let remote_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.into(),
+            device_id: remote.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 100,
+        };
+        let remote_root = crate::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            100,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap();
+        drop(daemon);
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            remote.clone(),
+            DeviceRootRef::from_meta(
+                remote_root.to_string(),
+                remote_meta.created_at,
+                &remote_meta,
+            ),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let edited_visible_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+        let tombstone_paths = BTreeSet::from(["explicit-delete.txt".to_string()]);
+        daemon
+            .import_visible_root_with_tombstone_base_and_paths(
+                edited_visible_root,
+                Some(visible.root_cid.clone()),
+                Some(&tombstone_paths),
+            )
+            .await
+            .unwrap();
+
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+            .await
+            .unwrap();
+        assert!(files.is_empty());
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].path, "explicit-delete.txt");
+
+        let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let visible_paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(visible_paths, vec!["projection-gap.txt"]);
     }
 
     #[tokio::test]

@@ -810,6 +810,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     let previous_local_state = load_windows_cloud_local_state(config_dir);
     let protected_local_mutations = windows_cloud_protected_local_mutation_paths(&changes);
     let mut changed_paths = BTreeSet::new();
+    let mut tombstone_paths = BTreeSet::new();
     for path in prune_ignored_provider_paths(&provider).await? {
         changed_paths.insert(path);
     }
@@ -841,7 +842,8 @@ async fn import_windows_cloud_root_changes_and_publish(
                     continue;
                 }
                 if apply_windows_cloud_delete_if_local_missing(&provider, sync_root, &path).await? {
-                    changed_paths.insert(path);
+                    changed_paths.insert(path.clone());
+                    tombstone_paths.insert(path);
                 }
             }
             WindowsCloudRootChange::Rename { old_path, new_path } => {
@@ -854,8 +856,9 @@ async fn import_windows_cloud_root_changes_and_publish(
                 )
                 .await?
                 {
-                    changed_paths.insert(old_path);
+                    changed_paths.insert(old_path.clone());
                     changed_paths.insert(new_path);
+                    tombstone_paths.insert(old_path);
                 }
             }
             WindowsCloudRootChange::Rescan { full } => {
@@ -866,7 +869,8 @@ async fn import_windows_cloud_root_changes_and_publish(
                         continue;
                     }
                     if apply_windows_cloud_delete(&provider, &path).await? {
-                        changed_paths.insert(path);
+                        changed_paths.insert(path.clone());
+                        tombstone_paths.insert(path);
                     }
                 }
                 let local_paths = if full {
@@ -890,7 +894,8 @@ async fn import_windows_cloud_root_changes_and_publish(
         &protected_local_mutations,
     )? {
         if apply_windows_cloud_delete(&provider, &path).await? {
-            changed_paths.insert(path);
+            changed_paths.insert(path.clone());
+            tombstone_paths.insert(path);
         }
     }
 
@@ -910,11 +915,12 @@ async fn import_windows_cloud_root_changes_and_publish(
         return Ok(WindowsCloudImportOutcome::Unchanged);
     }
 
-    import_mount_root_and_publish(
+    import_mount_root_and_publish_with_tombstone_paths(
         client,
         config_dir,
         root.clone(),
         Some(before),
+        Some(&tombstone_paths),
         direct_roots,
         fips_blocks,
     )

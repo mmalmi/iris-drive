@@ -115,6 +115,7 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
             Some(prev),
             now_unix_seconds,
             &current_paths,
+            None,
         )
         .await?;
     }
@@ -150,11 +151,36 @@ pub async fn layer_history_and_meta_on_root<S: Store>(
 /// merged root that was actually displayed to the user as the deletion base.
 pub async fn layer_history_and_meta_on_root_with_tombstone_base<S: Store>(
     tree: &HashTree<S>,
+    root: Cid,
+    previous_root: Option<&Cid>,
+    tombstone_base_root: Option<&Cid>,
+    now_unix_seconds: i64,
+    root_meta: Option<&DriveRootMeta>,
+) -> Result<Cid, IndexError> {
+    layer_history_and_meta_on_root_with_tombstone_base_and_paths(
+        tree,
+        root,
+        previous_root,
+        tombstone_base_root,
+        now_unix_seconds,
+        root_meta,
+        None,
+    )
+    .await
+}
+
+/// Like [`layer_history_and_meta_on_root_with_tombstone_base`], but limits new
+/// tombstones to the supplied paths. This is for event-driven providers that
+/// know which paths were explicitly deleted, while their projected root may be
+/// temporarily missing unrelated remote files.
+pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Store>(
+    tree: &HashTree<S>,
     mut root: Cid,
     previous_root: Option<&Cid>,
     tombstone_base_root: Option<&Cid>,
     now_unix_seconds: i64,
     root_meta: Option<&DriveRootMeta>,
+    tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
     root = filter_ignored_entries_from_root(tree, &root).await?;
     if previous_root.is_some() || tombstone_base_root.is_some() {
@@ -170,6 +196,7 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base<S: Store>(
             tombstone_base_root,
             now_unix_seconds,
             &current_paths,
+            tombstone_paths,
         )
         .await?;
     }
@@ -241,6 +268,7 @@ async fn attach_history_for_current_paths<S: Store>(
     tombstone_base_root: Option<&Cid>,
     now_unix_seconds: i64,
     current_paths: &BTreeSet<String>,
+    tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
     let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
 
@@ -251,7 +279,8 @@ async fn attach_history_for_current_paths<S: Store>(
             .await
             .map_err(IndexError::Tree)?;
         for f in base_files {
-            if !current_paths.contains(&f.path) {
+            if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
+            {
                 tombstones.insert(f.path, now_unix_seconds);
             }
         }
@@ -262,7 +291,8 @@ async fn attach_history_for_current_paths<S: Store>(
             .await
             .map_err(IndexError::Tree)?;
         for f in prev_files {
-            if !current_paths.contains(&f.path) {
+            if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
+            {
                 tombstones.entry(f.path).or_insert(now_unix_seconds);
             }
         }
@@ -289,6 +319,13 @@ async fn attach_history_for_current_paths<S: Store>(
     }
 
     Ok(root)
+}
+
+fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str) -> bool {
+    match tombstone_paths {
+        Some(paths) => paths.contains(path),
+        None => true,
+    }
 }
 
 pub async fn layer_root_meta<S: Store>(
