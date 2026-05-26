@@ -451,14 +451,32 @@ enum FileProviderStorage {
         _ item: NSFileProviderItem,
         changedFields: NSFileProviderItemFields,
         contents: URL?
-    ) throws -> FileProviderItem {
+    ) throws -> FileProviderItem? {
         guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         NSLog("Iris Drive FileProvider modify path=\(original)")
-        var destination = original
-        if changedFields.contains(.filename), item.filename != fileName(for: original) {
-            destination = joinedPath(parent: parentPath(for: original), name: item.filename)
+        if changedFields.contains(.parentItemIdentifier),
+           item.parentItemIdentifier == .trashContainer {
+            try deleteItem(identifier: item.itemIdentifier)
+            NSLog("Iris Drive FileProvider moved to trash path=\(original)")
+            return nil
+        }
+
+        let parent: String
+        if changedFields.contains(.parentItemIdentifier) {
+            guard let resolvedParent = path(for: item.parentItemIdentifier) else {
+                throw NSError.fileProviderErrorForNonExistentItem(
+                    withIdentifier: item.parentItemIdentifier
+                )
+            }
+            parent = resolvedParent
+        } else {
+            parent = parentPath(for: original)
+        }
+        let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
+        let destination = joinedPath(parent: parent, name: name)
+        if destination != original {
             _ = try runIDrive(arguments: ["provider", "rename", original, destination])
         }
         if let contents, !(item.contentType ?? .data).conforms(to: .folder) {

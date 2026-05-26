@@ -385,7 +385,11 @@ pub(crate) async fn delete_provider_path(
     let mut stack = vec![root.clone()];
     let mut directories = Vec::new();
     while let Some(current) = stack.pop() {
-        let item = provider.item(&current).await?;
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(hashtree_provider::ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
         if item.kind == ItemKind::Directory {
             directories.push(current.clone());
             for child in provider.read_dir(&current).await? {
@@ -393,12 +397,18 @@ pub(crate) async fn delete_provider_path(
             }
         } else {
             let (parent, name) = split_provider_path(&current)?;
-            provider.remove(&parent, &name).await?;
+            match provider.remove(&parent, &name).await {
+                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
     }
     for directory in directories.into_iter().rev() {
         let (parent, name) = split_provider_path(&directory)?;
-        provider.remove(&parent, &name).await?;
+        match provider.remove(&parent, &name).await {
+            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(())
 }
@@ -513,15 +523,22 @@ mod tests {
     use super::*;
     use iris_drive_core::root_meta::DriveRootMeta;
 
-    fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveRootMeta) {
+    fn init_config(config_dir: &Path) -> Account {
         let account = Account::create(config_dir, Some("local".into())).unwrap();
-        let remote = iris_drive_core::identity::Identity::generate(config_dir.join("remote.key"))
-            .pubkey_hex();
         let mut config = AppConfig {
             account: Some(account.state.clone()),
             ..AppConfig::default()
         };
         config.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
+        config.save(config_path_in(config_dir)).unwrap();
+        account
+    }
+
+    fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveRootMeta) {
+        let account = init_config(config_dir);
+        let remote = iris_drive_core::identity::Identity::generate(config_dir.join("remote.key"))
+            .pubkey_hex();
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
         let state = config.account.as_mut().unwrap();
         state
             .app_keys
@@ -548,6 +565,90 @@ mod tests {
             created_at: 100,
         };
         (account, remote, remote_meta)
+    }
+
+    #[test]
+    fn provider_delete_local_file_is_idempotent() {
+        let config_dir = tempfile::tempdir().unwrap();
+        init_config(config_dir.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        std::fs::write(source_dir.path().join("juuh.txt"), b"delete me").unwrap();
+        cmd_import(config_dir.path(), source_dir.path()).unwrap();
+
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Delete {
+                path: "juuh.txt".into(),
+            },
+        )
+        .unwrap();
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Delete {
+                path: "juuh.txt".into(),
+            },
+        )
+        .unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let daemon = Daemon::open(config_dir.path()).unwrap();
+            let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                .await
+                .unwrap();
+            assert!(
+                merged
+                    .view
+                    .files
+                    .iter()
+                    .all(|entry| entry.path != "juuh.txt"),
+                "deleted file should not reappear in the merged view"
+            );
+        });
+    }
+
+    #[test]
+    fn provider_delete_directory_removes_tree() {
+        let config_dir = tempfile::tempdir().unwrap();
+        init_config(config_dir.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source_dir.path().join("folder")).unwrap();
+        std::fs::write(
+            source_dir.path().join("folder").join("child.txt"),
+            b"delete me",
+        )
+        .unwrap();
+        cmd_import(config_dir.path(), source_dir.path()).unwrap();
+
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Delete {
+                path: "folder".into(),
+            },
+        )
+        .unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let daemon = Daemon::open(config_dir.path()).unwrap();
+            let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                .await
+                .unwrap();
+            assert!(
+                merged
+                    .view
+                    .files
+                    .iter()
+                    .all(|entry| !entry.path.starts_with("folder/")),
+                "deleted directory children should not remain in the merged view"
+            );
+        });
     }
 
     #[test]
