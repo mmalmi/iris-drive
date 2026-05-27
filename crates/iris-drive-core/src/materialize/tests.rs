@@ -4,7 +4,7 @@ use crate::account::Account;
 use crate::app_keys::DeviceEntry;
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
-use crate::root_meta::{DriveRootMeta, RootParent};
+use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use hashtree_core::{HashTreeConfig, MemoryStore};
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -92,6 +92,111 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
     assert_eq!(note_entry.whole_file_hash, Some(sha256(b"mounted")));
     assert!(
         tree.resolve(&merged.root_cid, ".hashtree")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn primary_merged_root_hides_tombstoned_foreign_directory() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let remote_device =
+        "5555555555555555555555555555555555555555555555555555555555555555".to_string();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let remote_source = tempdir().unwrap();
+    std::fs::create_dir_all(remote_source.path().join("codex-lab").join("empty")).unwrap();
+    std::fs::write(
+        remote_source.path().join("codex-lab").join("note.txt"),
+        b"remote",
+    )
+    .unwrap();
+    let remote_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: remote_device.clone(),
+        device_seq: 1,
+        dck_generation: 1,
+        materialized_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 100,
+    };
+    let remote_root =
+        index_dir_with_history_and_meta(&tree, remote_source.path(), None, 100, Some(&remote_meta))
+            .await
+            .unwrap();
+
+    let local_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: account.state.device_pubkey.clone(),
+        device_seq: 1,
+        dck_generation: 1,
+        materialized_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::from([(
+            remote_device.clone(),
+            RootObservation {
+                device_seq: 1,
+                root_cid: remote_root.to_string(),
+            },
+        )]),
+        created_at: 101,
+    };
+    let empty_root = tree.put_directory(Vec::new()).await.unwrap();
+    let tombstone_paths = BTreeSet::from(["codex-lab".to_string()]);
+    let local_root = crate::indexer::layer_history_and_meta_on_root_with_tombstone_base_and_paths(
+        &tree,
+        empty_root,
+        None,
+        Some(&remote_root),
+        101,
+        Some(&local_meta),
+        Some(&tombstone_paths),
+    )
+    .await
+    .unwrap();
+
+    let mut account_state = account.state.clone();
+    account_state
+        .app_keys
+        .as_mut()
+        .expect("created account has app keys")
+        .devices
+        .push(DeviceEntry {
+            pubkey: remote_device.clone(),
+            added_at: 1,
+            label: Some("remote".into()),
+        });
+
+    let mut config = AppConfig {
+        account: Some(account_state),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(local_root.to_string(), 101, &local_meta),
+    );
+    drive.device_roots.insert(
+        remote_device,
+        DeviceRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    assert!(view.view.files.is_empty());
+    assert_eq!(
+        view.view.suppressed_by_tombstone,
+        vec!["codex-lab".to_string(), "codex-lab/note.txt".to_string()]
+    );
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    assert!(
+        tree.resolve(&merged.root_cid, "codex-lab")
             .await
             .unwrap()
             .is_none()

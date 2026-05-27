@@ -316,6 +316,9 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
                 root = set_visible_dir(tree, root, &path).await?;
             }
             (true, false) => {
+                if tombstone_path_allowed(tombstone_paths, &path) {
+                    deleted_paths.insert(path.clone());
+                }
                 root = remove_visible_path_if_present(tree, &root, &path).await?;
             }
             _ => {}
@@ -393,6 +396,13 @@ async fn attach_history_for_current_paths<S: Store>(
     tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
     let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
+    if let Some(paths) = tombstone_paths {
+        for path in paths {
+            if !current_paths.contains(path) {
+                tombstones.insert(path.clone(), now_unix_seconds);
+            }
+        }
+    }
 
     // Files that were in the root being edited but are no longer visible get a
     // fresh tombstone stamped at import time.
@@ -469,7 +479,12 @@ async fn attach_history_for_current_paths<S: Store>(
 
 fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str) -> bool {
     match tombstone_paths {
-        Some(paths) => paths.contains(path),
+        Some(paths) => paths.iter().any(|allowed| {
+            path == allowed
+                || path
+                    .strip_prefix(allowed)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        }),
         None => true,
     }
 }

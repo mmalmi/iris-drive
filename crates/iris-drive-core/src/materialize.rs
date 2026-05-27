@@ -291,7 +291,13 @@ pub async fn primary_merged_root<S: Store>(
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
-    let target_dirs = merged_user_directory_paths(tree, drive, &authorized).await?;
+    let target_dirs = merged_user_directory_paths(
+        tree,
+        drive,
+        &authorized,
+        &merged.view.suppressed_by_tombstone,
+    )
+    .await?;
     for dir in &target_dirs {
         root = ensure_visible_dir(tree, root, dir).await?;
     }
@@ -341,12 +347,16 @@ where
         .collect();
     let local_entries =
         current_device_entries(tree.as_ref(), drive, &account.device_pubkey).await?;
-    let target_dirs =
-        merged_user_directory_paths(tree.as_ref(), drive, &authorized_device_pubkeys(account))
-            .await?
-            .into_iter()
-            .filter(|path| !target_by_path.contains_key(path))
-            .collect::<BTreeSet<_>>();
+    let target_dirs = merged_user_directory_paths(
+        tree.as_ref(),
+        drive,
+        &authorized_device_pubkeys(account),
+        &merged.view.suppressed_by_tombstone,
+    )
+    .await?
+    .into_iter()
+    .filter(|path| !target_by_path.contains_key(path))
+    .collect::<BTreeSet<_>>();
     let mut report = MaterializeReport::default();
     materialize_target_dirs(target_dir, &target_dirs, &local_entries, &mut report)?;
     materialize_target_files(
@@ -645,6 +655,7 @@ async fn merged_user_directory_paths<S: Store>(
     tree: &HashTree<S>,
     drive: &crate::config::Drive,
     authorized_devices: &[String],
+    suppressed_paths: &[String],
 ) -> Result<BTreeSet<String>, MaterializeError> {
     let mut dirs = BTreeSet::new();
     for device_pubkey in authorized_devices {
@@ -661,7 +672,17 @@ async fn merged_user_directory_paths<S: Store>(
         })?;
         collect_user_directory_paths(tree, &cid, "", &mut dirs).await?;
     }
+    dirs.retain(|path| !path_is_suppressed_by_tombstone(path, suppressed_paths));
     Ok(dirs)
+}
+
+fn path_is_suppressed_by_tombstone(path: &str, suppressed_paths: &[String]) -> bool {
+    suppressed_paths.iter().any(|suppressed| {
+        path == suppressed
+            || path
+                .strip_prefix(suppressed)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 async fn merge_root_for_device<S: Store>(

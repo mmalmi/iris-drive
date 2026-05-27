@@ -3,7 +3,7 @@ use super::*;
 use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use hashtree_core::{DEFAULT_CHUNK_SIZE, HashTreeConfig, MemoryStore, sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -463,6 +463,54 @@ async fn visible_root_import_preserves_created_empty_directory() {
         .unwrap()
         .expect("folder should exist");
     assert!(tree.is_dir(&folder).await.unwrap());
+}
+
+#[tokio::test]
+async fn visible_root_import_tombstones_deleted_scoped_directory_tree() {
+    let tree = new_tree();
+    let base_dir = tempdir().unwrap();
+    std::fs::create_dir_all(base_dir.path().join("folder")).unwrap();
+    std::fs::write(base_dir.path().join("folder").join("note.txt"), b"note").unwrap();
+    let base_root = index_dir(&tree, base_dir.path()).await.unwrap();
+    let edited_root = tree.put_directory(Vec::new()).await.unwrap();
+    let scoped_paths = BTreeSet::from(["folder".to_string()]);
+
+    let delta = local_visible_root_for_mount_import(
+        &tree,
+        &edited_root,
+        None,
+        &base_root,
+        Some(&scoped_paths),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        delta.tombstone_paths,
+        BTreeSet::from(["folder".to_string(), "folder/note.txt".to_string()])
+    );
+    let layered = layer_history_and_meta_on_root_with_tombstone_base_and_paths(
+        &tree,
+        delta.root,
+        None,
+        Some(&base_root),
+        1234,
+        None,
+        Some(&delta.tombstone_paths),
+    )
+    .await
+    .unwrap();
+    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &layered)
+        .await
+        .unwrap();
+    assert!(files.is_empty());
+    assert_eq!(
+        tombstones
+            .iter()
+            .map(|tombstone| tombstone.path.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["folder", "folder/note.txt"])
+    );
 }
 
 #[tokio::test]
