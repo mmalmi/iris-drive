@@ -20,6 +20,7 @@ info:
     @echo "  just release"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
+    @echo "  just icons"
     @echo "  just lab"
     @echo "  just lab-smoke"
     @echo "  just lab-test"
@@ -94,6 +95,9 @@ macos-xcodeproj:
 
 macos-build:
     xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData CODE_SIGNING_ALLOWED=NO build
+
+icons:
+    ./scripts/regen_app_icons.py
 
 dev-vms *args:
     ./scripts/dev-vm-update-run.sh {{args}}
