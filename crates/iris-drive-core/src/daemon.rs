@@ -242,7 +242,7 @@ impl Daemon {
             None => None,
         };
 
-        let now = unix_now();
+        let now = self.next_import_timestamp();
         let root_meta = self.root_meta_for_import(now);
         let root_cid = index_dir_with_history_and_meta(
             &self.tree,
@@ -304,7 +304,7 @@ impl Daemon {
             None => None,
         };
 
-        let now = unix_now();
+        let now = self.next_import_timestamp();
         let root_meta = self.root_meta_for_import(now);
         let mut scoped_tombstone_paths = None;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
@@ -447,7 +447,7 @@ impl Daemon {
         }
 
         record.state = ConflictState::Resolved;
-        let now = unix_now();
+        let now = self.next_import_timestamp();
         let root_meta = self.root_meta_for_import(now);
         let mut root = layer_conflict_records(
             &self.tree,
@@ -568,6 +568,16 @@ impl Daemon {
         self.config.upsert_drive(updated);
         self.config.save(config_path_in(&self.config_dir))?;
         Ok(())
+    }
+
+    fn next_import_timestamp(&self) -> i64 {
+        let now = unix_now();
+        let previous = self.config.account.as_ref().and_then(|account| {
+            self.config
+                .drive(PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
+        });
+        previous.map_or(now, |root| now.max(root.published_at.saturating_add(1)))
     }
 
     fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
@@ -1159,6 +1169,52 @@ mod tests {
         assert_eq!(entry.root_cid, second.root_cid);
         assert_eq!(entry.device_seq, 2);
         assert_eq!(entry.parents, second_meta.parents);
+    }
+
+    #[tokio::test]
+    async fn import_publish_timestamps_advance_past_previous_root() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+        let work = tempdir().unwrap();
+        std::fs::write(work.path().join("note.txt"), b"one").unwrap();
+        daemon.import_source_dir(work.path()).await.unwrap();
+
+        let future_published_at = unix_now() + 120;
+        let drive = daemon
+            .config
+            .drives
+            .iter_mut()
+            .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
+            .unwrap();
+        drive
+            .device_roots
+            .get_mut(&account.state.device_pubkey)
+            .unwrap()
+            .published_at = future_published_at;
+
+        std::fs::write(work.path().join("note.txt"), b"two").unwrap();
+        let visible_root = crate::indexer::index_dir(daemon.tree(), work.path())
+            .await
+            .unwrap();
+        let second = daemon.import_visible_root(visible_root).await.unwrap();
+
+        let entry = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        assert_eq!(entry.published_at, future_published_at + 1);
+
+        let second_cid = Cid::parse(&second.root_cid).unwrap();
+        let second_meta = crate::indexer::read_root_meta(daemon.tree(), &second_cid)
+            .await
+            .unwrap()
+            .expect("second root metadata");
+        assert_eq!(second_meta.created_at, future_published_at + 1);
     }
 
     #[tokio::test]
