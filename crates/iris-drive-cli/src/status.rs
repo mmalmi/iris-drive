@@ -269,6 +269,7 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
             .and_then(Value::as_object_mut)
     {
         fips.insert("connected_peers".to_string(), json!([]));
+        fips.insert("mesh_peers".to_string(), json!([]));
     }
     Some(value)
 }

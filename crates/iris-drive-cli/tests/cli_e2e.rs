@@ -449,6 +449,49 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
 }
 
 #[test]
+fn status_drops_stale_fips_mesh_peers() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_npub, "--label", "linux-peer"],
+    );
+    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+
+    std::fs::write(
+        owner_dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": 1,
+            "fips_block_sync": {
+                "endpoint_npub": "npub1local",
+                "authorized_peers": [linked_device_npub.clone()],
+                "connected_peers": [linked_device_npub.clone()],
+                "mesh_peers": [linked_device_npub.clone()],
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = run_json(owner_dir.path(), &["status"]);
+    let fips = &status["network"]["fips"];
+    assert_eq!(fips["fresh"], false);
+    assert_eq!(fips["connected_peers"], serde_json::json!([]));
+    assert_eq!(fips["mesh_peers"], serde_json::json!([]));
+    let linked_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["device_npub"] == linked_device_npub)
+        .expect("linked device peer");
+    assert_eq!(linked_peer["fips_online"], false);
+    assert_eq!(linked_peer["fips_online_via"], serde_json::Value::Null);
+}
+
+#[test]
 fn status_marks_current_device_fips_online_when_daemon_is_running() {
     let dir = tempdir().unwrap();
     let init = run_json(dir.path(), &["init", "--label", "macos"]);
