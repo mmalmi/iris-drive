@@ -272,31 +272,15 @@ public static partial class WindowsCloudFiles
 
     public static bool MarkProviderDeletePending(string path)
     {
-        var normalized = NormalizeVirtualPath(path);
-        if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
-        {
-            return false;
-        }
-
-        lock (PendingProviderMutationLock)
-        {
-            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
-            if (PendingProviderDeletes.Keys.Any(existing =>
-                    PathContainsOrEquals(existing, normalized) ||
-                    PathContainsOrEquals(normalized, existing)) ||
-                PendingProviderPreserves.ContainsKey(normalized))
-            {
-                return false;
-            }
-
-            PendingProviderDeletes[normalized] = DateTimeOffset.UtcNow;
-        }
-
-        DebugLog($"provider delete pending path={normalized}");
-        return true;
+        return MarkProviderDeletePendingCore(path);
     }
 
     public static bool TryMarkProviderDeletePending(string path)
+    {
+        return MarkProviderDeletePendingCore(path);
+    }
+
+    private static bool MarkProviderDeletePendingCore(string path)
     {
         var normalized = NormalizeVirtualPath(path);
         if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
@@ -307,12 +291,19 @@ public static partial class WindowsCloudFiles
         lock (PendingProviderMutationLock)
         {
             PrunePendingProviderMutations(DateTimeOffset.UtcNow);
-            if (PendingProviderDeletes.Keys.Any(existing =>
+            if (PendingProviderPreserves.Keys.Any(existing =>
                     PathContainsOrEquals(existing, normalized) ||
                     PathContainsOrEquals(normalized, existing)) ||
-                PendingProviderPreserves.ContainsKey(normalized))
+                PendingProviderDeletes.Keys.Any(existing => PathContainsOrEquals(existing, normalized)))
             {
                 return false;
+            }
+
+            foreach (var existing in PendingProviderDeletes.Keys
+                .Where(existing => PathContainsOrEquals(normalized, existing))
+                .ToArray())
+            {
+                PendingProviderDeletes.Remove(existing);
             }
 
             PendingProviderDeletes[normalized] = DateTimeOffset.UtcNow;
@@ -524,7 +515,7 @@ public static partial class WindowsCloudFiles
             var path = NormalizeVirtualPath(previous.Path);
             if (string.IsNullOrEmpty(path) ||
                 PathHasIgnoredComponent(path) ||
-                pendingDeletes.Contains(path) ||
+                PathCoveredByPendingProviderDelete(path, pendingDeletes) ||
                 pendingPreserves.Contains(path) ||
                 !providerEntries.TryGetValue(path, out var providerEntry) ||
                 previous.IsDirectory != providerEntry.IsDirectory)
@@ -895,7 +886,7 @@ public static partial class WindowsCloudFiles
 
         foreach (var entry in placeholderEntries)
         {
-            if (pendingDeletes.Contains(entry.Path))
+            if (PathCoveredByPendingProviderDelete(entry.Path, pendingDeletes))
             {
                 DebugLogPath(entry.Path, "skip pending provider mutation");
                 continue;
@@ -1059,6 +1050,13 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    private static bool PathCoveredByPendingProviderDelete(
+        string path,
+        IEnumerable<string> pendingDeletes)
+    {
+        return pendingDeletes.Any(pending => PathContainsOrEquals(pending, path));
+    }
+
     private static void CollectRecentLocalFileUpserts(
         string startPath,
         IReadOnlyDictionary<string, WindowsCloudFileEntry> providerEntries,
@@ -1079,7 +1077,8 @@ public static partial class WindowsCloudFiles
                 continue;
             }
 
-            if (pendingDeletes.Contains(relative) || pendingPreserves.Contains(relative))
+            if (PathCoveredByPendingProviderDelete(relative, pendingDeletes) ||
+                pendingPreserves.Contains(relative))
             {
                 continue;
             }
