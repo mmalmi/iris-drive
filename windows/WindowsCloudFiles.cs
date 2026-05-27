@@ -390,6 +390,46 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    public static string PromoteProviderDeleteToMissingAncestor(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized) || PathHasIgnoredComponent(normalized))
+        {
+            return normalized;
+        }
+
+        var promoted = ShallowestMissingAncestorPath(normalized);
+        if (string.Equals(promoted, normalized, StringComparison.Ordinal))
+        {
+            return normalized;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            if (PendingProviderPreserves.Keys.Any(existing =>
+                    PathContainsOrEquals(existing, promoted) ||
+                    PathContainsOrEquals(promoted, existing)))
+            {
+                return normalized;
+            }
+
+            foreach (var existing in PendingProviderDeletes.Keys
+                .Where(existing =>
+                    PathContainsOrEquals(existing, promoted) ||
+                    PathContainsOrEquals(promoted, existing))
+                .ToArray())
+            {
+                PendingProviderDeletes.Remove(existing);
+            }
+
+            PendingProviderDeletes[promoted] = DateTimeOffset.UtcNow;
+        }
+
+        DebugLog($"provider delete promoted original={normalized} ancestor={promoted}");
+        return promoted;
+    }
+
     public static void ReconcilePendingProviderMutations(
         IReadOnlyCollection<WindowsCloudFileEntry> entries)
     {
@@ -1692,6 +1732,27 @@ public static partial class WindowsCloudFiles
         var normalizedPath = NormalizeVirtualPath(path);
         return string.Equals(normalizedAncestor, normalizedPath, StringComparison.Ordinal) ||
             normalizedPath.StartsWith(normalizedAncestor + "/", StringComparison.Ordinal);
+    }
+
+    private static string ShallowestMissingAncestorPath(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        var components = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (components.Length <= 1)
+        {
+            return normalized;
+        }
+
+        for (var length = 1; length < components.Length; length++)
+        {
+            var ancestor = string.Join('/', components.Take(length));
+            if (!SyncRootEntryExists(ancestor))
+            {
+                return ancestor;
+            }
+        }
+
+        return normalized;
     }
 
     private static bool PathHasIgnoredComponent(string path)

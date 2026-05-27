@@ -393,6 +393,7 @@ public sealed class IrisDriveService
         WindowsCloudFiles.DebugLog($"provider delete queued from Cloud Files notify path={path}");
         _ = Task.Run(async () =>
         {
+            var deletePath = path;
             try
             {
                 for (var attempt = 0; attempt < 50 && WindowsCloudFiles.SyncRootEntryExists(path); attempt++)
@@ -406,19 +407,27 @@ public sealed class IrisDriveService
                     return;
                 }
 
-                if (WindowsCloudFiles.SyncRootEntryExists(path))
+                deletePath = WindowsCloudFiles.PromoteProviderDeleteToMissingAncestor(path);
+                if (!WindowsCloudFiles.ProviderDeleteIsPending(deletePath))
                 {
                     WindowsCloudFiles.DebugLog(
-                        $"provider delete continuing even though local path still exists path={path}");
+                        $"provider delete skipped because promoted marker was coalesced path={deletePath}");
+                    return;
                 }
 
-                WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={path}");
-                await RunProviderMutationAsync("provider", "delete", path);
-                WindowsCloudFiles.DebugLog($"provider delete published from Cloud Files notify path={path}");
+                if (WindowsCloudFiles.SyncRootEntryExists(deletePath))
+                {
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete continuing even though local path still exists path={deletePath}");
+                }
+
+                WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={deletePath}");
+                await RunProviderMutationAsync("provider", "delete", deletePath);
+                WindowsCloudFiles.DebugLog($"provider delete published from Cloud Files notify path={deletePath}");
             }
             catch (Exception error)
             {
-                WindowsCloudFiles.ClearProviderMutationPending(path);
+                WindowsCloudFiles.ClearProviderMutationPending(path, deletePath);
                 WindowsCloudFiles.DebugLog($"provider delete notify failed path={path} error={error.Message}");
             }
         });
