@@ -38,6 +38,8 @@ SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
+PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
+PROJECTION_STRESS_LARGE_BYTES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_LARGE_BYTES:-262144}"
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
 
@@ -464,6 +466,25 @@ wait_windows_disk_reparse() {
   [[ "$(windows_disk_state "$path")" == yes:reparse:* ]]
 }
 
+wait_windows_file_has_content() {
+  local path="$1"
+  local expected="$2"
+  local expected_b64
+  expected_b64="$(base64_arg "$expected")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+if (-not (Test-Path -LiteralPath \$Path -PathType Leaf)) {
+  exit 1
+}
+\$Expected = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$expected_b64")) + [string][char]10
+\$Actual = [System.IO.File]::ReadAllText(\$Path)
+if (\$Actual -ne \$Expected) {
+  exit 1
+}
+REMOTE_PS
+}
+
 windows_projection_stays_visible_during_local_create() {
   local local_path="$1"
   shift
@@ -561,6 +582,12 @@ if bad:
 }
 
 check_revisions() {
+  case "${IRIS_DRIVE_DEV_VM_SKIP_REVISION_CHECK:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      log "skipping VM revision check"
+      return 0
+      ;;
+  esac
   local local_head
   local_head="$(git -C "$ROOT" rev-parse --short HEAD)"
   log "checking VM revisions against $local_head"
@@ -678,6 +705,19 @@ fi
 REMOTE_SH
 }
 
+write_ubuntu_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+target="$HOME/Iris Drive/$path"
+mkdir -p "$(dirname "$target")"
+head -c "$bytes" /dev/zero >"$target"
+REMOTE_SH
+}
+
 delete_ubuntu_path() {
   local path="$1"
   ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
@@ -758,6 +798,18 @@ cleanup_previous_smoke_root() {
   log "warning after ${elapsed}s: smoke root still has local remnants: $remnant_text"
 }
 
+write_windows_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+\$Parent = Split-Path -Parent \$Path
+New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
+[System.IO.File]::WriteAllBytes(\$Path, [byte[]]::new($bytes))
+REMOTE_PS
+}
+
 write_macos_provider_file() {
   local path="$1"
   local content="$2"
@@ -791,6 +843,65 @@ tmp="$(mktemp -t iris-drive-macos-provider-write)"
 trap 'rm -f "$tmp"' EXIT
 printf '%s\n' "$content" > "$tmp"
 "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
+REMOTE_SH
+}
+
+write_macos_visible_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+content_b64="$2"
+cloud_root="$HOME/Library/CloudStorage"
+drive_root=""
+if [[ -d "$cloud_root" ]]; then
+  while IFS= read -r candidate; do
+    drive_root="$candidate"
+    break
+  done < <(find "$cloud_root" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null | sort)
+fi
+[[ -n "$drive_root" ]] || {
+  echo "macOS visible IrisDrive root not found" >&2
+  exit 1
+}
+target="$drive_root/$path"
+mkdir -p "$(dirname "$target")"
+python3 - "$content_b64" "$target" <<'PY'
+import base64
+import sys
+
+content = base64.b64decode(sys.argv[1]).decode("utf-8")
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write(content + "\n")
+PY
+REMOTE_SH
+}
+
+write_macos_visible_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+cloud_root="$HOME/Library/CloudStorage"
+drive_root=""
+if [[ -d "$cloud_root" ]]; then
+  while IFS= read -r candidate; do
+    drive_root="$candidate"
+    break
+  done < <(find "$cloud_root" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null | sort)
+fi
+[[ -n "$drive_root" ]] || {
+  echo "macOS visible IrisDrive root not found" >&2
+  exit 1
+}
+target="$drive_root/$path"
+mkdir -p "$(dirname "$target")"
+head -c "$bytes" /dev/zero >"$target"
 REMOTE_SH
 }
 
@@ -1065,6 +1176,60 @@ for name, manifest in manifests.items():
 PY
 }
 
+visible_smoke_dir_converges_with_paths() {
+  local dir="$1"
+  shift
+  local expected_paths_json
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  expected_paths_json="$(python3 - "$@" <<'PY'
+import json
+import sys
+
+print(json.dumps(sorted(sys.argv[1:])))
+PY
+)"
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  EXPECTED_PATHS_JSON="$expected_paths_json" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import json
+import os
+
+expected_paths = set(json.loads(os.environ["EXPECTED_PATHS_JSON"]))
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+    "macos": json.loads(os.environ["MACOS_JSON"]),
+    "windows": json.loads(os.environ["WINDOWS_JSON"]),
+}
+
+baseline_name = "ubuntu"
+baseline = manifests[baseline_name]
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != baseline:
+        raise SystemExit(
+            f"{name} visible manifest differs from {baseline_name}: baseline={baseline} actual={manifest}"
+        )
+
+actual_paths = {entry["path"] for entry in baseline.get("entries", [])}
+missing = sorted(expected_paths - actual_paths)
+if missing:
+    raise SystemExit(f"visible manifest is missing expected stress paths: {missing}")
+PY
+}
+
 check_native_status_summaries() {
   log "checking native status summaries report files, bytes, and devices"
   local ubuntu_status
@@ -1112,6 +1277,7 @@ run_sync_smoke() {
   local windows_projection_guard_ubuntu="$SMOKE_DIR/windows-projection-guard-ubuntu.txt"
   local windows_projection_guard_macos="$SMOKE_DIR/windows-projection-guard-macos.txt"
   local windows_projection_guard_local="$SMOKE_DIR/windows-projection-guard-local.txt"
+  local ubuntu_edit_windows_hydrated="$SMOKE_DIR/ubuntu-edit-windows-hydrated.txt"
   local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
   local ubuntu_delete_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-delete"
   local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
@@ -1181,6 +1347,14 @@ run_sync_smoke() {
   wait_for "Windows projection guard local create reaches macOS provider" \
     "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$windows_projection_guard_local"
 
+  log "checking Ubuntu edit replaces hydrated Windows projection bytes"
+  write_ubuntu_file "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
+  wait_for "Ubuntu edit baseline reaches Windows bytes" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_file_has_content "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
+  write_ubuntu_file "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
+  wait_for "Ubuntu edit updates hydrated Windows bytes" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_file_has_content "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
+
   log "checking Ubuntu-origin create then macOS-origin provider delete"
   write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
   wait_for "Ubuntu file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
@@ -1246,8 +1420,28 @@ run_sync_smoke() {
     "$(basename "$windows_projection_guard_ubuntu")" "projection guard ubuntu $RUN_ID" \
     "$(basename "$windows_projection_guard_macos")" "projection guard macos $RUN_ID" \
     "$(basename "$windows_projection_guard_local")" "projection guard windows $RUN_ID" \
+    "$(basename "$ubuntu_edit_windows_hydrated")" "new ubuntu bytes $RUN_ID" \
     "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
   check_native_status_summaries
+
+  log "checking heavy native projection stress converges on all OS surfaces"
+  local stress_dir="$SMOKE_DIR/heavy-projection"
+  local -a stress_paths=()
+  local i
+  for i in $(seq 1 "$PROJECTION_STRESS_FILES"); do
+    local suffix
+    suffix="$(printf "%03d" "$i")"
+    write_ubuntu_file "$stress_dir/ubuntu/$suffix.txt" "stress ubuntu $suffix $RUN_ID"
+    write_windows_file "$stress_dir/windows/$suffix.txt" "stress windows $suffix $RUN_ID"
+    write_macos_visible_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    stress_paths+=("ubuntu/$suffix.txt" "windows/$suffix.txt" "macos/$suffix.txt")
+  done
+  write_ubuntu_zero_file "$stress_dir/large/ubuntu-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  write_windows_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  stress_paths+=("large/ubuntu-zero.bin" "large/windows-zero.bin" "large/macos-zero.bin")
+  wait_for "heavy native projection manifests converge" "$SYNC_WAIT_TIMEOUT" \
+    visible_smoke_dir_converges_with_paths "$stress_dir" "${stress_paths[@]}"
 
   delete_ubuntu_path "$SMOKE_DIR" || true
 }

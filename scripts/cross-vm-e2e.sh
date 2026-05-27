@@ -888,12 +888,28 @@ projection_snapshot() {
   local label="$1"
   local kind
   kind="$(host_value "$label" kind)"
-  if [[ "$kind" != "posix" ]] || ! projection_enabled "$label"; then
+  if ! projection_enabled "$label"; then
     return 0
+  fi
+  local prefix="e2e/$RUN_ID"
+  if [[ "$kind" == "windows" ]]; then
+    local script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$prefix = $(ps_quote "$prefix")
+\$base = Join-Path \$root (\$prefix -replace '/', [IO.Path]::DirectorySeparatorChar)
+if (-not (Test-Path -LiteralPath \$base -PathType Container)) { exit 0 }
+Get-ChildItem -LiteralPath \$base -File -Recurse -Force | ForEach-Object {
+  \$relative = \$_.FullName.Substring(\$root.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace('\\', '/')
+  \$hash = (Get-FileHash -LiteralPath \$_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  Write-Output (\"\$hash`t\$([string]\$_.Length)`t\$relative\")
+} | Sort-Object
+"
+    remote_exec "$label" "$script" | tr -d '\r'
+    return
   fi
   local root
   root="$(host_value "$label" work)"
-  local prefix="e2e/$RUN_ID"
   local script="
 set -Eeuo pipefail
 root=$(sh_quote "$root")
@@ -1027,7 +1043,6 @@ projection_snapshots_match_expected() {
     return 0
   fi
   for host_label in "${LABELS[@]}"; do
-    [[ "$(host_value "$host_label" kind)" == "posix" ]] || continue
     projection_enabled "$host_label" || continue
     current="$(projection_snapshot "$host_label")"
     if [[ "$current" != "$EXPECTED_SNAPSHOT" ]]; then

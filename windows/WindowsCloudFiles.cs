@@ -919,7 +919,39 @@ public static partial class WindowsCloudFiles
             var itemFullPath = Path.Combine(parentFullPath, FileName(entry.Path));
             if (ExistingPlaceholder(itemFullPath))
             {
-                DebugLogPath(entry.Path, $"skip existing placeholder {itemFullPath}");
+                if (entry.IsDirectory)
+                {
+                    DebugLogPath(entry.Path, $"skip existing directory placeholder {itemFullPath}");
+                    continue;
+                }
+
+                try
+                {
+                    CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
+                    DebugLogPath(entry.Path, $"superseded existing file placeholder {itemFullPath}");
+                    placeholderCount++;
+                }
+                catch (COMException error)
+                {
+                    failedPlaceholderCount++;
+                    DebugLog($"skip unsupported placeholder refresh path={entry.Path} hresult={FormatHResult(error.HResult)} message={error.Message}");
+                }
+                catch (ArgumentException error)
+                {
+                    failedPlaceholderCount++;
+                    DebugLog($"skip invalid placeholder refresh path={entry.Path} message={error.Message}");
+                }
+                catch (NotSupportedException error)
+                {
+                    failedPlaceholderCount++;
+                    DebugLog($"skip unsupported placeholder refresh path={entry.Path} message={error.Message}");
+                }
+                catch (PathTooLongException error)
+                {
+                    failedPlaceholderCount++;
+                    DebugLog($"skip too-long placeholder refresh path={entry.Path} message={error.Message}");
+                }
+
                 continue;
             }
 
