@@ -327,29 +327,25 @@ pub(crate) fn cmd_daemon(
                     }
                 } => {
                     if let Some(rx) = mount_root_updates.as_mut() {
-                        while let Ok(next) = rx.try_recv() {
-                            visible_root = next;
-                        }
-                        tokio::time::sleep(root_update_debounce).await;
-                        while let Ok(next) = rx.try_recv() {
-                            visible_root = next;
-                        }
+                        visible_root = drain_latest_mount_root_update(
+                            rx,
+                            root_update_debounce,
+                            Some(visible_root),
+                        )
+                        .await
+                        .expect("mount update branch always has an initial root");
                     }
-                    let imported_visible_root = visible_root.clone();
-                    match import_mount_root_and_publish(
+                    match import_mount_visible_root_update(
                         &client,
                         config_dir,
                         visible_root,
-                        mount_tombstone_base.clone(),
+                        &mut mount_tombstone_base,
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                     )
                     .await
                     {
-                        Ok(()) => {
-                            mount_tombstone_base = Some(imported_visible_root);
-                            update_last_provider_root_key(config_dir, &mut last_provider_root_key);
-                        }
+                        Ok(()) => update_last_provider_root_key(config_dir, &mut last_provider_root_key),
                         Err(error) => println!(
                             "{}",
                             json!({"event": "mount_publish_error", "error": format!("{error:#}")})
@@ -436,6 +432,36 @@ pub(crate) fn cmd_daemon(
                         std::future::pending::<Option<&'static str>>().await
                     }
                 } => {
+                    if let Some(rx) = mount_root_updates.as_mut()
+                        && let Some(visible_root) =
+                            drain_latest_mount_root_update(rx, root_update_debounce, None).await
+                    {
+                        match import_mount_visible_root_update(
+                            &client,
+                            config_dir,
+                            visible_root,
+                            &mut mount_tombstone_base,
+                            &mut direct_roots,
+                            fips_blocks.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                update_last_provider_root_key(config_dir, &mut last_provider_root_key);
+                                emit_daemon_status_event(config_dir, json!({
+                                    "event": "mount_pending_root_imported_before_refresh",
+                                    "trigger": reason,
+                                }));
+                            }
+                            Err(error) => {
+                                println!(
+                                    "{}",
+                                    json!({"event": "mount_publish_error", "trigger": reason, "error": format!("{error:#}")})
+                                );
+                                continue;
+                            }
+                        }
+                    }
                     if let Some(handle) = mount_refresh.as_ref() {
                         match handle.refresh_from_config(config_dir).await {
                             Ok(visible) => {
@@ -619,6 +645,47 @@ fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<S
 
 fn root_update_debounce_duration(watch_debounce_ms: u64) -> std::time::Duration {
     std::time::Duration::from_millis(watch_debounce_ms.max(ROOT_UPDATE_THROTTLE_MS))
+}
+
+async fn drain_latest_mount_root_update(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Cid>,
+    debounce: std::time::Duration,
+    first: Option<Cid>,
+) -> Option<Cid> {
+    let mut latest = first;
+    while let Ok(next) = rx.try_recv() {
+        latest = Some(next);
+    }
+    if latest.is_some() {
+        tokio::time::sleep(debounce).await;
+        while let Ok(next) = rx.try_recv() {
+            latest = Some(next);
+        }
+    }
+    latest
+}
+
+async fn import_mount_visible_root_update(
+    client: &nostr_sdk::Client,
+    config_dir: &Path,
+    visible_root: Cid,
+    mount_tombstone_base: &mut Option<Cid>,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
+    let imported_visible_root = visible_root.clone();
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    import_mount_root_and_publish(
+        client,
+        config_dir,
+        visible_root,
+        mount_tombstone_base.clone(),
+        direct_roots,
+        fips_blocks,
+    )
+    .await?;
+    *mount_tombstone_base = Some(imported_visible_root);
+    Ok(())
 }
 
 fn start_config_root_watch(
@@ -805,6 +872,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<WindowsCloudImportOutcome> {
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
     let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
         .await
@@ -1554,6 +1622,7 @@ async fn refresh_windows_cloud_local_projection(
     config_dir: &Path,
     sync_root: &Path,
 ) -> Result<WindowsCloudProjectionRefresh> {
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon =
         Daemon::open(config_dir).context("opening daemon for Windows Cloud Files projection")?;
     let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
@@ -2193,6 +2262,82 @@ impl Drop for DaemonProcessLock {
     }
 }
 
+pub(crate) struct ConfigMutationLock {
+    path: PathBuf,
+}
+
+impl ConfigMutationLock {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+    const WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(120);
+
+    pub(crate) async fn acquire(config_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(config_dir)
+            .with_context(|| format!("creating config dir {}", config_dir.display()))?;
+        let path = config_dir.join("config-mutation.lock");
+        let started = std::time::Instant::now();
+
+        loop {
+            match Self::try_create(&path) {
+                Ok(lock) => return Ok(lock),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    Self::remove_stale_lock(&path);
+                    if started.elapsed() >= Self::WAIT_TIMEOUT {
+                        return Err(anyhow::anyhow!(
+                            "timed out waiting for config mutation lock {}",
+                            path.display()
+                        ));
+                    }
+                    tokio::time::sleep(Self::POLL_INTERVAL).await;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("creating config mutation lock {}", path.display())
+                    });
+                }
+            }
+        }
+    }
+
+    fn try_create(path: &Path) -> std::io::Result<Self> {
+        use std::io::Write;
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        writeln!(file, "{}", std::process::id())?;
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn remove_stale_lock(path: &Path) {
+        if let Ok(contents) = std::fs::read_to_string(path)
+            && let Ok(pid) = contents.trim().parse::<u32>()
+            && !process_is_running(pid)
+        {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+
+        if let Ok(metadata) = std::fs::metadata(path)
+            && let Ok(modified) = metadata.modified()
+            && modified
+                .elapsed()
+                .is_ok_and(|elapsed| elapsed >= Self::STALE_AFTER)
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl Drop for ConfigMutationLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn process_is_running(pid: u32) -> bool {
     if pid == std::process::id() {
@@ -2263,6 +2408,7 @@ pub(crate) async fn apply_one_event(
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
     if kind == iris_drive_core::nostr_events::KIND_APP_KEYS
@@ -2837,6 +2983,48 @@ mod tests {
             root_update_debounce_duration(2_500),
             std::time::Duration::from_millis(2_500)
         );
+    }
+
+    #[tokio::test]
+    async fn pending_mount_update_drain_keeps_latest_after_debounce() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let first = Cid::public([1; 32]);
+        let second = Cid::public([2; 32]);
+        let third = Cid::public([3; 32]);
+        tx.send(second.clone()).unwrap();
+        let delayed = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            delayed.send(third.clone()).unwrap();
+        });
+
+        let drained = drain_latest_mount_root_update(
+            &mut rx,
+            std::time::Duration::from_millis(25),
+            Some(first),
+        )
+        .await;
+
+        assert_eq!(drained, Some(Cid::public([3; 32])));
+    }
+
+    #[tokio::test]
+    async fn config_mutation_lock_serializes_same_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ConfigMutationLock::acquire(dir.path()).await.unwrap();
+        let contender_dir = dir.path().to_path_buf();
+        let contender =
+            tokio::spawn(async move { ConfigMutationLock::acquire(&contender_dir).await });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!contender.is_finished());
+        drop(first);
+
+        let second = tokio::time::timeout(std::time::Duration::from_secs(2), contender)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        drop(second);
     }
 
     #[test]

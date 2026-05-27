@@ -182,6 +182,17 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         .context("building tokio runtime")?;
     runtime.block_on(async {
         let started = std::time::Instant::now();
+        let _config_lock = if matches!(
+            &command,
+            ProviderCmd::Write { .. }
+                | ProviderCmd::Mkdir { .. }
+                | ProviderCmd::Delete { .. }
+                | ProviderCmd::Rename { .. }
+        ) {
+            Some(ConfigMutationLock::acquire(config_dir).await?)
+        } else {
+            None
+        };
         let mut daemon = Daemon::open(config_dir)
             .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
         tracing::debug!(
