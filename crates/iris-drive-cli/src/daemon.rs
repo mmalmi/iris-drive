@@ -1430,6 +1430,37 @@ fn write_windows_cloud_cleanup_delete_markers(
     }
 }
 
+fn append_windows_cloud_cleanup_delete_markers(
+    config_dir: &Path,
+    markers: &[WindowsCloudCleanupDeleteMarker],
+) {
+    if markers.is_empty() {
+        return;
+    }
+
+    let marker_path = config_dir.join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE);
+    let mut retained = Vec::new();
+    if let Ok(raw) = std::fs::read_to_string(&marker_path)
+        && let Ok(value) = serde_json::from_str::<Value>(&raw)
+        && let Some(entries) = value.get("entries").and_then(Value::as_array)
+    {
+        let now_ms = windows_cloud_cleanup_marker_now_ms();
+        let min_created_at_ms =
+            now_ms.saturating_sub(WINDOWS_CLOUD_CLEANUP_DELETE_MARKER_SECS * 1_000);
+        retained.extend(
+            entries
+                .iter()
+                .filter_map(windows_cloud_cleanup_delete_marker_from_json)
+                .filter(|marker| marker.created_at_unix_ms >= min_created_at_ms),
+        );
+    }
+
+    retained.extend_from_slice(markers);
+    retained.sort_by(|a, b| a.path.cmp(&b.path));
+    retained.dedup_by(|a, b| a.path == b.path);
+    write_windows_cloud_cleanup_delete_markers(config_dir, &retained);
+}
+
 fn windows_cloud_cleanup_marker_now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1500,6 +1531,7 @@ async fn windows_cloud_provider_expected_entries(
 struct WindowsCloudProjectionRefresh {
     entry_count: usize,
     removed_paths: Vec<String>,
+    changed_paths: Vec<String>,
 }
 
 #[cfg(windows)]
@@ -1530,6 +1562,15 @@ async fn refresh_windows_cloud_local_projection(
         .map(|entry| entry.path.clone())
         .collect();
     let previous_local_state = load_windows_cloud_local_state(config_dir);
+    let changed_paths = windows_cloud_remove_changed_synced_local_files(
+        config_dir,
+        sync_root,
+        &provider,
+        &current_entries,
+        &previous_local_state,
+        &BTreeSet::new(),
+    )
+    .await?;
     let removed_paths = windows_cloud_remove_stale_synced_local_items(
         sync_root,
         &expected_paths,
@@ -1546,6 +1587,7 @@ async fn refresh_windows_cloud_local_projection(
     Ok(WindowsCloudProjectionRefresh {
         entry_count: current_entries.len(),
         removed_paths,
+        changed_paths,
     })
 }
 
@@ -1660,6 +1702,85 @@ fn windows_cloud_remove_stale_synced_local_items(
     }
 
     removed
+}
+
+async fn windows_cloud_remove_changed_synced_local_files(
+    config_dir: &Path,
+    sync_root: &Path,
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    entries: &[WindowsCloudExpectedEntry],
+    previous_state: &[WindowsCloudLocalStateEntry],
+    protected_paths: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    if previous_state.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let current_files = entries
+        .iter()
+        .filter(|entry| entry.kind == "file")
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let mut removed = Vec::new();
+    let mut cleanup_markers = Vec::new();
+
+    for previous in previous_state {
+        let Ok(path) = normalize_provider_path(&previous.path) else {
+            continue;
+        };
+        if previous.is_directory()
+            || previous.sha256.is_none()
+            || iris_drive_core::path_has_ignored_component(&path)
+            || windows_cloud_path_is_protected_local_mutation(&path, protected_paths)
+        {
+            continue;
+        }
+        let Some(current) = current_files.get(path.as_str()) else {
+            continue;
+        };
+        let full_path = windows_cloud_full_path(sync_root, &path);
+        let local = match windows_cloud_snapshot_local_file(&full_path) {
+            Ok(Some(local)) if local.size == previous.size => local,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) if windows_cloud_file_read_should_skip(&error) => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", full_path.display()));
+            }
+        };
+        if previous.sha256.as_deref() != Some(local.sha256.as_str()) {
+            continue;
+        }
+
+        let provider_changed = if current.size != local.size {
+            true
+        } else {
+            let bytes = match std::fs::read(&full_path) {
+                Ok(bytes) => bytes,
+                Err(error) if windows_cloud_file_read_should_skip(&error) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("reading {}", full_path.display()));
+                }
+            };
+            !provider_file_matches(provider, &path, &bytes).await?
+        };
+        if !provider_changed {
+            continue;
+        }
+
+        let _ = windows_cloud_clear_readonly(&full_path);
+        if windows_cloud_remove_file_with_retry(&full_path) {
+            cleanup_markers.push(WindowsCloudCleanupDeleteMarker {
+                path: path.clone(),
+                created_at_unix_ms: windows_cloud_cleanup_marker_now_ms(),
+            });
+            removed.push(path);
+        }
+    }
+
+    append_windows_cloud_cleanup_delete_markers(config_dir, &cleanup_markers);
+    Ok(removed)
 }
 
 fn windows_cloud_remove_file_with_retry(path: &Path) -> bool {
@@ -2406,6 +2527,7 @@ pub(crate) fn spawn_root_apply_followup(
                                 "root": sync_root.display().to_string(),
                                 "entry_count": report.entry_count,
                                 "removed_paths": report.removed_paths,
+                                "changed_paths": report.changed_paths,
                             })
                         );
                     }
@@ -3160,6 +3282,85 @@ mod tests {
         );
 
         assert!(retained.is_empty());
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_projection_removes_changed_synced_file() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let sync_root = tempfile::tempdir().unwrap();
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "remote.txt", b"new bytes")
+            .await
+            .unwrap();
+        std::fs::write(sync_root.path().join("remote.txt"), b"old bytes").unwrap();
+        let previous = vec![WindowsCloudLocalStateEntry {
+            path: "remote.txt".to_string(),
+            kind: "file".to_string(),
+            size: 9,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"old bytes"))),
+        }];
+        let entries = vec![WindowsCloudExpectedEntry {
+            path: "remote.txt".to_string(),
+            kind: "file",
+            size: 9,
+        }];
+
+        let removed = windows_cloud_remove_changed_synced_local_files(
+            config_dir.path(),
+            sync_root.path(),
+            &provider,
+            &entries,
+            &previous,
+            &BTreeSet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(removed, vec!["remote.txt".to_string()]);
+        assert!(!sync_root.path().join("remote.txt").exists());
+        assert!(consume_windows_cloud_cleanup_delete_marker(
+            config_dir.path(),
+            "remote.txt",
+        ));
+    }
+
+    #[tokio::test]
+    async fn windows_cloud_projection_preserves_local_edit_over_remote_change() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let sync_root = tempfile::tempdir().unwrap();
+        let (_blocks, provider) = fresh_test_provider().await;
+        write_provider_file(&provider, "remote.txt", b"new bytes")
+            .await
+            .unwrap();
+        std::fs::write(sync_root.path().join("remote.txt"), b"local edit").unwrap();
+        let previous = vec![WindowsCloudLocalStateEntry {
+            path: "remote.txt".to_string(),
+            kind: "file".to_string(),
+            size: 9,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"old bytes"))),
+        }];
+        let entries = vec![WindowsCloudExpectedEntry {
+            path: "remote.txt".to_string(),
+            kind: "file",
+            size: 9,
+        }];
+
+        let removed = windows_cloud_remove_changed_synced_local_files(
+            config_dir.path(),
+            sync_root.path(),
+            &provider,
+            &entries,
+            &previous,
+            &BTreeSet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(removed.is_empty());
+        assert_eq!(
+            std::fs::read(sync_root.path().join("remote.txt")).unwrap(),
+            b"local edit"
+        );
     }
 
     #[tokio::test]

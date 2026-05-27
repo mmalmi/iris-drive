@@ -689,6 +689,11 @@ public static partial class WindowsCloudFiles
         try
         {
             RegisterSyncRoot(path);
+            RemoveChangedSyncedLocalItems(
+                path,
+                entries,
+                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>(),
+                readFile);
             var population = PopulatePlaceholders(
                 path,
                 entries,
@@ -1014,6 +1019,82 @@ public static partial class WindowsCloudFiles
     private static void NotifyShellDirectoryChanged(string path)
     {
         NotifyShellPathChanged(ShcneUpdateDir, path);
+    }
+
+    private static void RemoveChangedSyncedLocalItems(
+        string syncRootPath,
+        IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState,
+        Func<string, byte[]> readFile)
+    {
+        if (previousState.Count == 0)
+        {
+            return;
+        }
+
+        var providerFiles = PlaceholderEntries(entries)
+            .Where(entry => !entry.IsDirectory)
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var removedAny = false;
+
+        foreach (var previous in previousState)
+        {
+            var path = NormalizeVirtualPath(previous.Path);
+            if (string.IsNullOrEmpty(path) ||
+                previous.IsDirectory ||
+                string.IsNullOrWhiteSpace(previous.Sha256) ||
+                PathHasIgnoredComponent(path) ||
+                !providerFiles.TryGetValue(path, out var providerEntry))
+            {
+                continue;
+            }
+
+            var fullPath = Path.Combine(syncRootPath, FromVirtualPath(path));
+            try
+            {
+                if (!File.Exists(fullPath) || ExistingPlaceholder(fullPath))
+                {
+                    continue;
+                }
+
+                var snapshot = SnapshotLocalFile(fullPath);
+                if (snapshot is null ||
+                    snapshot.Value.Size != previous.Size ||
+                    !string.Equals(snapshot.Value.Sha256, previous.Sha256, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var providerChanged = providerEntry.Size != snapshot.Value.Size;
+                if (!providerChanged)
+                {
+                    var providerHash = Convert.ToHexString(SHA256.HashData(readFile(path)))
+                        .ToLowerInvariant();
+                    providerChanged = !string.Equals(
+                        providerHash,
+                        snapshot.Value.Sha256,
+                        StringComparison.Ordinal);
+                }
+
+                if (!providerChanged)
+                {
+                    continue;
+                }
+
+                ClearReadOnlyAttribute(fullPath);
+                MarkProviderCleanupDelete(path);
+                removedAny |= TryDeleteFile(fullPath);
+            }
+            catch
+            {
+                // Preserve files we cannot prove are unchanged synced materializations.
+            }
+        }
+
+        if (removedAny)
+        {
+            NotifyShellDirectoryChanged(syncRootPath);
+        }
     }
 
     private static void NotifyShellPathChanged(uint eventId, string path)
