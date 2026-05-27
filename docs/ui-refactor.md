@@ -111,6 +111,6 @@ Advanced.
   sections (app-window screenshots, not fullscreen). Confirm: no Network tab; "Open in Finder" works;
   expanding a device/backup row reveals technical detail; Start/Stop/Restart and snapshot tools live in
   Settings and still function; relay add/edit/remove still works inside Settings → Network.
-- **Windows:** build the WPF app (on `win11-dev` if needed), verify the same checklist with screenshots.
-- **Linux:** `cargo build` in `linux/` (offload to `ubuntu-dev` if the mini is busy), run and screenshot.
+- **Windows:** build the WPF app on the configured Windows VM if needed, verify the same checklist with screenshots.
+- **Linux:** `cargo build` in `linux/` (offload to the configured Linux VM if the mini is busy), run and screenshot.
 - Commit to `master` and push to htree after each platform builds and looks right.

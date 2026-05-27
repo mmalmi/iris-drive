@@ -275,10 +275,14 @@ if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -F
 \$config = Join-Path \$base 'config'
 \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
-\$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
+\$repoIdrive = Join-Path \$HOME 'src\iris-drive\target\debug\idrive.exe'
+\$idrive = \$repoIdrive
 if (-not (Test-Path -LiteralPath \$idrive)) {
-  \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
-  if (\$cmd) { \$idrive = \$cmd.Source }
+  \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
+  if (-not (Test-Path -LiteralPath \$idrive)) {
+    \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
+    if (\$cmd) { \$idrive = \$cmd.Source }
+  }
 }
 if (-not (Test-Path -LiteralPath \$idrive)) { throw \"idrive.exe not found for \$label\" }
 Write-Output \"base=\$base\"
@@ -297,7 +301,10 @@ run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
-idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\$HOME/.cargo/bin/idrive}\"
+idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\$HOME/src/iris-drive/target/debug/idrive}\"
+if [[ ! -x \"\$idrive\" ]]; then
+  idrive=\"\$HOME/.cargo/bin/idrive\"
+fi
 if [[ ! -x \"\$idrive\" ]]; then
   idrive=\"\$(command -v idrive || true)\"
 fi
@@ -343,6 +350,11 @@ idrive_cmd() {
 \$ErrorActionPreference = 'Stop'
 \$idrive = $(ps_quote "$idrive")
 \$config = $(ps_quote "$config")
+if ([string]::IsNullOrWhiteSpace(\$idrive) -or -not (Test-Path -LiteralPath \$idrive)) {
+  \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
+  if (-not \$cmd) { throw 'idrive.exe not found' }
+  \$idrive = \$cmd.Source
+}
 \$idriveArgs = @('--config-dir', \$config$args)
 & \$idrive @idriveArgs
 exit \$LASTEXITCODE
