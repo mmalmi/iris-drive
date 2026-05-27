@@ -751,6 +751,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CheckBackups_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await service.CheckBackupsAsync();
+            NoticeText.Text = "Backups checked";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
     private void CopyText(string? value, string message)
     {
         if (string.IsNullOrWhiteSpace(value))

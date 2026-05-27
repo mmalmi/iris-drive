@@ -412,6 +412,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mutateBackupConfig(arguments: ["backups", "sync"], success: "Backups synced")
     }
 
+    func checkBackups() {
+        mutateBackupConfig(arguments: ["backups", "check"], success: "Backups checked")
+    }
+
     func setLocalNhashResolver(_ enabled: Bool) {
         guard let paths = runtimePathsForMenu else {
             NSSound.beep()

@@ -126,9 +126,13 @@ impl AppConfig {
             .find(|existing| existing.id == target.id)
         {
             let last_sync = existing.last_sync.clone();
+            let last_check = existing.last_check.clone();
             *existing = target;
             if existing.last_sync.is_none() {
                 existing.last_sync = last_sync;
+            }
+            if existing.last_check.is_none() {
+                existing.last_check = last_check;
             }
             false
         } else {
@@ -236,6 +240,8 @@ pub struct BackupTarget {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_sync: Option<BackupTargetSync>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<BackupTargetCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +253,30 @@ pub struct BackupTargetSync {
     pub total_hashes: usize,
     pub uploaded: usize,
     pub already_present: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupTargetCheck {
+    pub state: String,
+    pub root_cid: String,
+    pub checked_at: i64,
+    pub total_hashes: usize,
+    pub sample_size: usize,
+    pub sampled_hashes: usize,
+    pub present: usize,
+    pub missing: usize,
+    pub unknown: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_bytes_per_second: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn default_true() -> bool {

@@ -402,6 +402,12 @@ struct IrisDriveControlPanel: View {
                 SectionTitle("Backups")
                 Spacer()
                 Button {
+                    controller.checkBackups()
+                } label: {
+                    Label("Check", systemImage: "checkmark.shield")
+                }
+                .disabled(status.backupTargets.isEmpty)
+                Button {
                     controller.syncBackups()
                 } label: {
                     Label("Sync Now", systemImage: "arrow.up.circle")
@@ -926,6 +932,24 @@ private struct BackupTargetRow: View {
                     if let uploaded = target.uploaded, let total = target.totalHashes {
                         DetailRow(label: "Progress", value: "\(uploaded)/\(total)")
                     }
+                    if let checkState = target.checkState {
+                        DetailRow(label: "Check", value: checkState)
+                    }
+                    if let latencyMs = target.latencyMs {
+                        DetailRow(label: "Latency", value: "\(latencyMs) ms")
+                    }
+                    if let bandwidth = target.downloadBytesPerSecond {
+                        DetailRow(
+                            label: "Bandwidth",
+                            value: "\(ByteCountFormatter.string(fromByteCount: Int64(bandwidth), countStyle: .file))/s"
+                        )
+                    }
+                    if let sampled = target.sampledHashes {
+                        DetailRow(
+                            label: "Sample",
+                            value: "\(sampled) checked, \(target.missing ?? 0) missing, \(target.unknown ?? 0) unknown"
+                        )
+                    }
                 }
                 .padding(.top, 12)
             }
@@ -944,6 +968,9 @@ private struct BackupTargetRow: View {
         }
         switch target.state.lowercased() {
         case "synced":
+            if target.checkState?.lowercased() == "verified" {
+                return "Up to date | verified"
+            }
             return "Up to date"
         default:
             return target.state

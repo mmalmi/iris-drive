@@ -102,6 +102,11 @@ public sealed class IrisDriveService
         return RunAsync("backups", "sync");
     }
 
+    public Task CheckBackupsAsync()
+    {
+        return RunAsync("backups", "check");
+    }
+
     public Task SetNhashResolverAsync(bool enabled)
     {
         return RunAsync("nhash-resolver", enabled ? "enable" : "disable");

@@ -233,6 +233,15 @@ pub(crate) enum BackupsCmd {
         #[arg(long)]
         target: Option<String>,
     },
+    /// Sample backup targets and record storage, latency, and bandwidth status.
+    Check {
+        /// Restrict check to one configured target.
+        #[arg(long)]
+        target: Option<String>,
+        /// Number of live blocks to sample per target.
+        #[arg(long, default_value_t = 16)]
+        sample_size: usize,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -202,11 +202,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);
     let add_backup_button = icon_button("list-add-symbolic", "Add backup");
+    let check_backups_button =
+        action_button("emblem-default-symbolic", "Check", "Check backups");
     let sync_backups_button =
         action_button("emblem-synchronizing-symbolic", "Sync", "Sync backups");
     backup_controls.append(&backup_entry);
     backup_controls.append(&backup_label_entry);
     backup_controls.append(&add_backup_button);
+    backup_controls.append(&check_backups_button);
     backup_controls.append(&sync_backups_button);
     backups_page.append(&backup_controls);
 
@@ -424,6 +427,10 @@ pub(crate) fn build_ui(app: &adw::Application) {
     {
         let model = Rc::clone(&model);
         add_backup_button.connect_clicked(move |_| add_backup_target(&model));
+    }
+    {
+        let model = Rc::clone(&model);
+        check_backups_button.connect_clicked(move |_| check_backups(&model));
     }
     {
         let model = Rc::clone(&model);

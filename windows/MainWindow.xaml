@@ -325,6 +325,12 @@
                     <TextBlock Text="Sync" />
                   </StackPanel>
                 </Button>
+                <Button DockPanel.Dock="Right" Click="CheckBackups_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE73E;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Check" />
+                  </StackPanel>
+                </Button>
                 <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" Margin="8,0,0,0">
                   <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
                 </Button>

@@ -308,6 +308,26 @@ public sealed class IrisDriveStatusData
                 var total = Int(lastSync.Value, "total_hashes");
                 detail = $"{detail} | {uploaded}/{total}";
             }
+            if (Object(target, "last_check") is { } lastCheck)
+            {
+                var checkState = String(lastCheck, "state");
+                if (!string.IsNullOrWhiteSpace(checkState))
+                {
+                    detail = $"{detail} | check {checkState}";
+                }
+
+                var latency = Int(lastCheck, "latency_ms");
+                if (latency > 0)
+                {
+                    detail = $"{detail} | {latency} ms";
+                }
+
+                var bytesPerSecond = Long(lastCheck, "download_bytes_per_second");
+                if (bytesPerSecond > 0)
+                {
+                    detail = $"{detail} | {FormatBytes(bytesPerSecond)}/s";
+                }
+            }
 
             rows.Add(new BackupTargetRow(
                 String(target, "id") ?? value,
@@ -406,6 +426,20 @@ public sealed class IrisDriveStatusData
         }
 
         return $"{value[..14]}...{value[^10..]}";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit += 1;
+        }
+
+        return unit == 0 ? $"{bytes} B" : $"{value:0.0} {units[unit]}";
     }
 }
 

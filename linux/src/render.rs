@@ -120,6 +120,20 @@ pub(crate) fn render_backups(list: &gtk::ListBox, json: &Value) {
             ) {
                 detail = format!("{detail} | {uploaded}/{total}");
             }
+            if let Some(check) = target.get("last_check").and_then(Value::as_object) {
+                let check = Value::Object(check.clone());
+                if let Some(check_state) = find_string(&check, &["state"]) {
+                    detail = format!("{detail} | check {check_state}");
+                }
+                if let Some(latency) = find_number(&check, &["latency_ms"]) {
+                    detail = format!("{detail} | {latency} ms");
+                }
+                if let Some(bytes_per_second) =
+                    find_number(&check, &["download_bytes_per_second"])
+                {
+                    detail = format!("{detail} | {}/s", format_bytes(bytes_per_second));
+                }
+            }
             list.append(&simple_row(&title, &format!("{state} | {detail}")));
         }
     }

@@ -19,9 +19,10 @@
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hashtree_blossom::BlossomClient;
+use hashtree_blossom::{BlobAvailability, BlossomClient};
 use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
@@ -51,6 +52,36 @@ pub struct UploadReport {
     pub total_hashes: usize,
     pub uploaded: usize,
     pub already_present: usize,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BackupCheckReport {
+    pub total_hashes: usize,
+    pub sample_size: usize,
+    pub sampled_hashes: usize,
+    pub present: usize,
+    pub missing: usize,
+    pub unknown: usize,
+    pub latency_ms: Option<u64>,
+    pub download_bytes: Option<usize>,
+    pub download_ms: Option<u64>,
+    pub download_bytes_per_second: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl BackupCheckReport {
+    #[must_use]
+    pub fn state(&self) -> &'static str {
+        if self.missing > 0 {
+            "missing"
+        } else if self.unknown > 0 || self.error.is_some() {
+            "unknown"
+        } else if self.sampled_hashes > 0 {
+            "verified"
+        } else {
+            "unknown"
+        }
+    }
 }
 
 /// Walk the local tree rooted at `root` and upload every live-sync block to the
@@ -90,6 +121,111 @@ where
         }
     }
     Ok(report)
+}
+
+/// Check one Blossom server for a deterministic sample of live-sync blocks.
+///
+/// The storage check uses sampled `HEAD` requests for coverage. If a sampled
+/// block is present, the function downloads one present block to measure the
+/// real read path and estimate transfer bandwidth.
+pub async fn check_tree_on_server<S>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    client: &BlossomClient,
+    server: &str,
+    sample_size: usize,
+) -> Result<BackupCheckReport, BlossomSyncError>
+where
+    S: Store + Send + Sync + 'static,
+{
+    let hashes: HashSet<Hash> = collect_live_sync_hashes(tree, root, 4).await?;
+    let sample_size = sample_size.max(1);
+    let mut sorted = hashes.into_iter().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    let samples = spread_hash_samples(&sorted, sample_size);
+    let mut report = BackupCheckReport {
+        total_hashes: sorted.len(),
+        sample_size,
+        sampled_hashes: samples.len(),
+        ..BackupCheckReport::default()
+    };
+    let mut present_probe: Option<Hash> = None;
+    let mut latency_total = Duration::ZERO;
+    let mut latency_count = 0u64;
+    let checks = samples.into_iter().map(|hash| async move {
+        let hex = to_hex(&hash);
+        let started = Instant::now();
+        let availability = client.check_on_server(&hex, server).await;
+        (hash, availability, started.elapsed())
+    });
+
+    for (hash, availability, latency) in futures::future::join_all(checks).await {
+        latency_total += latency;
+        latency_count = latency_count.saturating_add(1);
+        match availability {
+            BlobAvailability::Present => {
+                report.present += 1;
+                present_probe.get_or_insert(hash);
+            }
+            BlobAvailability::Missing => {
+                report.missing += 1;
+            }
+            BlobAvailability::Unknown => {
+                report.unknown += 1;
+            }
+        }
+    }
+
+    if latency_count > 0 {
+        let average = latency_total / u32::try_from(latency_count).unwrap_or(u32::MAX);
+        report.latency_ms = Some(duration_millis_u64(average));
+    }
+
+    if let Some(hash) = present_probe {
+        measure_download_probe(client, &hash, &mut report).await;
+    }
+
+    Ok(report)
+}
+
+fn spread_hash_samples(hashes: &[Hash], sample_size: usize) -> Vec<Hash> {
+    if hashes.is_empty() {
+        return Vec::new();
+    }
+    let wanted = sample_size.min(hashes.len());
+    let step = (hashes.len() / wanted).max(1);
+    hashes.iter().step_by(step).take(wanted).copied().collect()
+}
+
+async fn measure_download_probe(
+    client: &BlossomClient,
+    hash: &Hash,
+    report: &mut BackupCheckReport,
+) {
+    let hex = to_hex(hash);
+    let started = Instant::now();
+    match client.download(&hex).await {
+        Ok(bytes) => {
+            let elapsed = started.elapsed();
+            let elapsed_ms = duration_millis_u64(elapsed).max(1);
+            report.download_bytes = Some(bytes.len());
+            report.download_ms = Some(elapsed_ms);
+            report.download_bytes_per_second = Some(bytes_per_second(bytes.len(), elapsed_ms));
+        }
+        Err(error) => {
+            report.error = Some(format!("download probe failed: {error}"));
+        }
+    }
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn bytes_per_second(bytes: usize, elapsed_ms: u64) -> u64 {
+    let bytes = u128::try_from(bytes).unwrap_or(u128::MAX);
+    let elapsed = u128::from(elapsed_ms.max(1));
+    u64::try_from(bytes.saturating_mul(1_000) / elapsed).unwrap_or(u64::MAX)
 }
 
 #[derive(Debug, Default, Clone, Copy)]

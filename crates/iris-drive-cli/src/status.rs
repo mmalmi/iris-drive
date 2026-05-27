@@ -57,8 +57,8 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .map_or(0, |drive| drive.device_roots.len());
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
-    let backup_target_count = config.backup_targets.len();
     let backup_targets = backup_targets_status(&config);
+    let backup_target_count = backup_targets.len();
     let account_block = status_account_block(&config);
     println!(
         "{}",
@@ -199,8 +199,7 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
 }
 
 pub(crate) fn backup_targets_status(config: &AppConfig) -> Vec<Value> {
-    config
-        .backup_targets
+    effective_backup_targets(config)
         .iter()
         .map(backup_target_status)
         .collect()
@@ -214,6 +213,7 @@ pub(crate) fn backup_target_status(target: &BackupTarget) -> Value {
         "label": target.label.as_deref(),
         "enabled": target.enabled,
         "last_sync": target.last_sync.as_ref().map(backup_target_sync_status),
+        "last_check": target.last_check.as_ref().map(backup_target_check_status),
     })
 }
 
@@ -225,6 +225,25 @@ pub(crate) fn backup_target_sync_status(sync: &BackupTargetSync) -> Value {
         "total_hashes": sync.total_hashes,
         "uploaded": sync.uploaded,
         "already_present": sync.already_present,
+    })
+}
+
+pub(crate) fn backup_target_check_status(check: &BackupTargetCheck) -> Value {
+    json!({
+        "state": check.state.as_str(),
+        "root_cid": check.root_cid.as_str(),
+        "checked_at": check.checked_at,
+        "total_hashes": check.total_hashes,
+        "sample_size": check.sample_size,
+        "sampled_hashes": check.sampled_hashes,
+        "present": check.present,
+        "missing": check.missing,
+        "unknown": check.unknown,
+        "latency_ms": check.latency_ms,
+        "download_bytes": check.download_bytes,
+        "download_ms": check.download_ms,
+        "download_bytes_per_second": check.download_bytes_per_second,
+        "error": check.error.as_deref(),
     })
 }
 

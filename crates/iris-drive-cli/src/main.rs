@@ -12,8 +12,8 @@ use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::{
-    AccountState, BackupTarget, BackupTargetKind, BackupTargetSync, DeviceRootRef, Drive,
-    DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    AccountState, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync,
+    DeviceRootRef, Drive, DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,

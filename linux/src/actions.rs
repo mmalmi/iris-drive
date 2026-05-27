@@ -47,6 +47,16 @@ pub(crate) fn sync_backups(model: &AppRef) {
     }
 }
 
+pub(crate) fn check_backups(model: &AppRef) {
+    match run_idrive(["backups", "check"]) {
+        Ok(()) => {
+            model.ui.notice.set_text("Backups checked");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn set_local_nhash_resolver(model: &AppRef, enabled: bool) {
     let command = if enabled { "enable" } else { "disable" };
     match run_idrive(["nhash-resolver", command]) {

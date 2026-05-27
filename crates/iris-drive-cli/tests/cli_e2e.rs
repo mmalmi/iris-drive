@@ -212,6 +212,23 @@ fn backup_targets_can_be_added_listed_and_removed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn configured_blossom_servers_are_listed_as_backup_targets() {
+    let blossom = LocalBlossomServer::spawn().await;
+    let cfg = tempdir().unwrap();
+
+    run_json(cfg.path(), &["init", "--label", "owner"]);
+    run_json(cfg.path(), &["blossom-servers", "add", &blossom.url]);
+
+    let status = run_json(cfg.path(), &["status"]);
+    let targets = status["network"]["backup_targets"].as_array().unwrap();
+    let target = targets
+        .iter()
+        .find(|target| target["kind"] == "blossom" && target["target"] == blossom.url)
+        .expect("configured Blossom server should be visible in backup targets");
+    assert_eq!(target["enabled"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn backup_sync_uploads_private_root_to_blossom_target() {
     let blossom = LocalBlossomServer::spawn().await;
     let cfg = tempdir().unwrap();
@@ -246,6 +263,54 @@ async fn backup_sync_uploads_private_root_to_blossom_target() {
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0]["last_sync"]["state"], "synced");
     assert_eq!(targets[0]["last_sync"]["root_cid"], reports[0]["root_cid"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn backup_check_records_sample_latency_and_bandwidth_for_blossom_target() {
+    let blossom = LocalBlossomServer::spawn().await;
+    let cfg = tempdir().unwrap();
+
+    run_json(cfg.path(), &["init", "--label", "owner"]);
+    let _work = import_one_file(
+        cfg.path(),
+        "backup.txt",
+        b"encrypted backup material large enough for a transfer probe",
+    );
+    run_json(cfg.path(), &["backups", "add", &blossom.url]);
+    run_json(cfg.path(), &["backups", "sync"]);
+
+    let checked = run_json(cfg.path(), &["backups", "check", "--sample-size", "8"]);
+    let reports = checked["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["kind"], "blossom");
+    assert_eq!(reports[0]["state"], "verified");
+    assert!(reports[0]["check"]["sampled_hashes"].as_u64().unwrap() > 0);
+    assert_eq!(reports[0]["check"]["missing"], 0);
+    assert_eq!(reports[0]["check"]["unknown"], 0);
+    assert!(reports[0]["check"]["latency_ms"].as_u64().is_some());
+    assert!(reports[0]["check"]["download_bytes"].as_u64().unwrap() > 0);
+    assert!(
+        reports[0]["check"]["download_bytes_per_second"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+
+    let status = run_json(cfg.path(), &["status"]);
+    let target = status["network"]["backup_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|target| target["kind"] == "blossom" && target["target"] == blossom.url)
+        .expect("checked Blossom backup target");
+    assert_eq!(target["last_check"]["state"], "verified");
+    assert!(target["last_check"]["latency_ms"].as_u64().is_some());
+    assert!(
+        target["last_check"]["download_bytes_per_second"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -144,6 +144,12 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
     let state: String
     let uploaded: Int?
     let totalHashes: Int?
+    let checkState: String?
+    let latencyMs: Int?
+    let downloadBytesPerSecond: Int?
+    let sampledHashes: Int?
+    let missing: Int?
+    let unknown: Int?
 
     init(json: [String: Any]) {
         id = json["id"] as? String ?? json["target"] as? String ?? UUID().uuidString
@@ -159,6 +165,22 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
             uploaded = nil
             totalHashes = nil
         }
+        if let lastCheck = json["last_check"] as? [String: Any] {
+            checkState = lastCheck["state"] as? String
+            latencyMs = (lastCheck["latency_ms"] as? NSNumber)?.intValue
+            downloadBytesPerSecond =
+                (lastCheck["download_bytes_per_second"] as? NSNumber)?.intValue
+            sampledHashes = (lastCheck["sampled_hashes"] as? NSNumber)?.intValue
+            missing = (lastCheck["missing"] as? NSNumber)?.intValue
+            unknown = (lastCheck["unknown"] as? NSNumber)?.intValue
+        } else {
+            checkState = nil
+            latencyMs = nil
+            downloadBytesPerSecond = nil
+            sampledHashes = nil
+            missing = nil
+            unknown = nil
+        }
     }
 
     var title: String {
@@ -172,6 +194,15 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         var parts = [kind == "fips" ? shortValue(target) : target]
         if let uploaded, let totalHashes {
             parts.append("\(uploaded)/\(totalHashes)")
+        }
+        if let checkState {
+            parts.append("check \(checkState)")
+        }
+        if let latencyMs {
+            parts.append("\(latencyMs) ms")
+        }
+        if let downloadBytesPerSecond {
+            parts.append("\(Self.byteString(downloadBytesPerSecond))/s")
         }
         return parts.joined(separator: " | ")
     }
@@ -187,6 +218,10 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         default:
             return "cloud.fill"
         }
+    }
+
+    private static func byteString(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }
 
