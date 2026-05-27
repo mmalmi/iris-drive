@@ -463,22 +463,75 @@ pub(crate) fn cmd_daemon(
                         }
                     }
                     if let Some(handle) = mount_refresh.as_ref() {
-                        match handle.refresh_from_config(config_dir).await {
-                            Ok(visible) => {
-                                mount_tombstone_base = Some(visible.root_cid.clone());
-                                emit_daemon_status_event(config_dir, json!({
-                                    "event": "mount_refreshed",
-                                    "trigger": reason,
-                                    "mountpoint": handle.mountpoint().display().to_string(),
-                                    "root_cid": visible.root_cid.to_string(),
-                                    "file_count": visible.file_count,
-                                    "top_level_entries": visible.top_level_entries,
-                                }));
+                        let mut attempts = 0;
+                        loop {
+                            let expected = mount_tombstone_base
+                                .clone()
+                                .unwrap_or_else(|| handle.current_visible_root());
+                            match handle
+                                .refresh_from_config_if_current(config_dir, &expected)
+                                .await
+                            {
+                                Ok(mount::MountRefreshOutcome::Refreshed(visible)) => {
+                                    mount_tombstone_base = Some(visible.root_cid.clone());
+                                    emit_daemon_status_event(config_dir, json!({
+                                        "event": "mount_refreshed",
+                                        "trigger": reason,
+                                        "mountpoint": handle.mountpoint().display().to_string(),
+                                        "root_cid": visible.root_cid.to_string(),
+                                        "file_count": visible.file_count,
+                                        "top_level_entries": visible.top_level_entries,
+                                    }));
+                                    break;
+                                }
+                                Ok(mount::MountRefreshOutcome::Dirty(visible_root)) => {
+                                    attempts += 1;
+                                    match import_mount_visible_root_update(
+                                        &client,
+                                        config_dir,
+                                        visible_root,
+                                        &mut mount_tombstone_base,
+                                        &mut direct_roots,
+                                        fips_blocks.as_deref(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            update_last_provider_root_key(
+                                                config_dir,
+                                                &mut last_provider_root_key,
+                                            );
+                                            emit_daemon_status_event(config_dir, json!({
+                                                "event": "mount_dirty_root_imported_before_refresh",
+                                                "trigger": reason,
+                                                "attempt": attempts,
+                                            }));
+                                        }
+                                        Err(error) => {
+                                            println!(
+                                                "{}",
+                                                json!({"event": "mount_publish_error", "trigger": reason, "error": format!("{error:#}")})
+                                            );
+                                            break;
+                                        }
+                                    }
+                                    if attempts >= 4 {
+                                        emit_daemon_status_event(config_dir, json!({
+                                            "event": "mount_refresh_deferred_dirty",
+                                            "trigger": reason,
+                                            "attempts": attempts,
+                                        }));
+                                        break;
+                                    }
+                                }
+                                Err(error) => {
+                                    println!(
+                                        "{}",
+                                        json!({"event": "mount_refresh_error", "trigger": reason, "error": format!("{error:#}")})
+                                    );
+                                    break;
+                                }
                             }
-                            Err(error) => println!(
-                                "{}",
-                                json!({"event": "mount_refresh_error", "trigger": reason, "error": format!("{error:#}")})
-                            ),
                         }
                     }
                 }

@@ -200,7 +200,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             "provider command opened daemon"
         );
         let phase = std::time::Instant::now();
-        let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+        let visible = primary_merged_root_with_retry(&daemon)
             .await
             .context("building virtual provider root")?;
         tracing::debug!(
@@ -465,6 +465,31 @@ pub(crate) async fn delete_provider_path(
 }
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
+
+async fn primary_merged_root_with_retry(
+    daemon: &Daemon,
+) -> Result<iris_drive_core::PrimaryMergedRoot> {
+    let mut attempt = 0;
+    loop {
+        match iris_drive_core::primary_merged_root(daemon.tree(), daemon.config()).await {
+            Ok(root) => return Ok(root),
+            Err(error)
+                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
+                    && provider_import_error_message_is_retryable(&error.to_string()) =>
+            {
+                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                tracing::warn!(
+                    error = %error,
+                    delay_ms,
+                    "provider command hit a transient store read; retrying merged root build"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
 
 pub(crate) async fn rename_provider_path(
     provider: &HashTreeProviderFs<FsBlobStore>,

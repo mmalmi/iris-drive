@@ -101,6 +101,7 @@ enum FileProviderStorage {
     private static let legacyAppGroupIdentifier = "group.to.iris.drive"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
+    private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
     private static var configuredRuntime: Runtime?
 
     struct Runtime: Decodable {
@@ -438,12 +439,8 @@ enum FileProviderStorage {
             let empty = try emptyTemporaryFile()
             _ = try runIDrive(arguments: ["provider", "write", destination, empty.path])
         }
-        guard let item = item(for: identifier(for: destination)) else {
-            throw NSError.fileProviderErrorForNonExistentItem(
-                withIdentifier: template.itemIdentifier
-            )
-        }
-        NSLog("Iris Drive FileProvider created path=\(destination)")
+        let item = optimisticItem(for: destination, template: template, contents: contents)
+        NSLog("Iris Drive FileProvider created path=\(destination) optimistic=true")
         return item
     }
 
@@ -482,10 +479,8 @@ enum FileProviderStorage {
         if let contents, !(item.contentType ?? .data).conforms(to: .folder) {
             _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
         }
-        guard let updated = self.item(for: identifier(for: destination)) else {
-            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
-        }
-        NSLog("Iris Drive FileProvider modified path=\(destination)")
+        let updated = optimisticItem(for: destination, template: item, contents: contents)
+        NSLog("Iris Drive FileProvider modified path=\(destination) optimistic=true")
         return updated
     }
 
@@ -527,16 +522,58 @@ enum FileProviderStorage {
         )
     }
 
+    private static func optimisticItem(
+        for path: String,
+        template: NSFileProviderItem,
+        contents: URL?
+    ) -> FileProviderItem {
+        let isDirectory = (template.contentType ?? .data).conforms(to: .folder)
+        let size = isDirectory ? nil : NSNumber(value: fileSize(at: contents))
+        let contentType = isDirectory
+            ? UTType.folder
+            : UTType(filenameExtension: (path as NSString).pathExtension) ?? .data
+        return FileProviderItem(
+            itemIdentifier: identifier(for: path),
+            parentItemIdentifier: identifier(for: parentPath(for: path)),
+            filename: fileName(for: path),
+            contentType: contentType,
+            itemSize: size,
+            created: Date(),
+            modified: Date(),
+            versionIdentifier: "optimistic:\(path):\(size?.stringValue ?? "dir")"
+        )
+    }
+
     private static func providerList() -> ProviderList {
-        do {
-            let data = try runIDrive(arguments: ["provider", "list"])
-            let list = try JSONDecoder().decode(ProviderList.self, from: data)
-            debugLog("provider list ok anchor=\(list.anchor ?? "nil") entries=\(list.entries.count)")
-            return list
-        } catch {
-            debugLog("provider list failed: \(error)")
-            return ProviderList(anchor: nil, entries: [])
+        var lastError: Error?
+        for (attempt, delay) in ([0.0] + providerListRetryDelays).enumerated() {
+            if delay > 0 {
+                Thread.sleep(forTimeInterval: delay)
+            }
+            do {
+                let data = try runIDrive(arguments: ["provider", "list"])
+                let list = try JSONDecoder().decode(ProviderList.self, from: data)
+                debugLog("provider list ok anchor=\(list.anchor ?? "nil") entries=\(list.entries.count)")
+                return list
+            } catch {
+                lastError = error
+                debugLog("provider list attempt \(attempt + 1) failed: \(error)")
+            }
         }
+        if let lastError {
+            debugLog("provider list failed after retries: \(lastError)")
+        }
+        return ProviderList(anchor: nil, entries: [])
+    }
+
+    private static func fileSize(at url: URL?) -> Int {
+        guard let url,
+              let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize
+        else {
+            return 0
+        }
+        return size
     }
 
     private static func syncAnchor(for anchor: String?) -> NSFileProviderSyncAnchor {

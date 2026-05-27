@@ -92,7 +92,15 @@ impl IrisDriveMountHandle {
         &self.mountpoint
     }
 
-    pub(crate) async fn refresh_from_config(&self, config_dir: &Path) -> Result<PrimaryMergedRoot> {
+    pub(crate) fn current_visible_root(&self) -> Cid {
+        self.fs.current_root()
+    }
+
+    pub(crate) async fn refresh_from_config_if_current(
+        &self,
+        config_dir: &Path,
+        expected_current: &Cid,
+    ) -> Result<MountRefreshOutcome> {
         let daemon = Daemon::open(config_dir).context("opening daemon for mount refresh")?;
         let visible = primary_merged_root(daemon.tree(), daemon.config())
             .await
@@ -100,13 +108,23 @@ impl IrisDriveMountHandle {
         let removed_paths = self
             .fs
             .removed_known_entry_paths_for_root(&visible.root_cid);
-        wake_removed_directory_entries(&self.mountpoint, &self.fs, &removed_paths);
-        self.fs
-            .replace_root(visible.root_cid.clone())
+        let replaced = self
+            .fs
+            .replace_root_if_current(expected_current, visible.root_cid.clone())
             .map_err(|error| anyhow::anyhow!("refreshing mounted root: {error}"))?;
+        if !replaced {
+            return Ok(MountRefreshOutcome::Dirty(self.current_visible_root()));
+        }
+        wake_removed_directory_entries(&self.mountpoint, &self.fs, &removed_paths);
         wake_directory_monitors(&self.mountpoint);
-        Ok(visible)
+        Ok(MountRefreshOutcome::Refreshed(visible))
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) enum MountRefreshOutcome {
+    Refreshed(PrimaryMergedRoot),
+    Dirty(Cid),
 }
 
 #[cfg(target_os = "linux")]
@@ -355,13 +373,28 @@ impl IrisDriveMountHandle {
         std::path::Path::new("")
     }
 
+    pub(crate) fn current_visible_root(&self) -> hashtree_core::Cid {
+        hashtree_core::Cid {
+            hash: [0; 32],
+            key: None,
+        }
+    }
+
     #[allow(clippy::unused_async)]
-    pub(crate) async fn refresh_from_config(
+    pub(crate) async fn refresh_from_config_if_current(
         &self,
         _config_dir: &std::path::Path,
-    ) -> anyhow::Result<iris_drive_core::PrimaryMergedRoot> {
+        _expected_current: &hashtree_core::Cid,
+    ) -> anyhow::Result<MountRefreshOutcome> {
         anyhow::bail!("Iris Drive mount mode is not supported on this platform yet")
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+pub(crate) enum MountRefreshOutcome {
+    Refreshed(iris_drive_core::PrimaryMergedRoot),
+    Dirty(hashtree_core::Cid),
 }
 
 #[cfg(not(target_os = "linux"))]
