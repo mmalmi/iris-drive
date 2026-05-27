@@ -213,12 +213,14 @@ impl SyncCache {
         let drive = config
             .drive(drive_id)
             .ok_or_else(|| SyncCacheError::DriveMissing(drive_id.to_string()))?;
-        let root = drive.device_roots.get(device_id).ok_or_else(|| {
-            SyncCacheError::DeviceRootMissing {
-                drive_id: drive_id.to_string(),
-                device_id: device_id.to_string(),
-            }
-        })?;
+        let root =
+            drive
+                .device_roots
+                .get(device_id)
+                .ok_or_else(|| SyncCacheError::DeviceRootMissing {
+                    drive_id: drive_id.to_string(),
+                    device_id: device_id.to_string(),
+                })?;
         let root_cid = Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
             drive_id: drive_id.to_string(),
             device_id: device_id.to_string(),
@@ -731,9 +733,12 @@ mod tests {
             .unwrap();
 
         assert!(cache.roots.iter().any(|row| row.device_id == "device-b"));
-        assert!(cache.roots.iter().any(|row| {
-            row.device_id == "device-a" && row.root_cid == local_root_string
-        }));
+        assert!(
+            cache
+                .roots
+                .iter()
+                .any(|row| { row.device_id == "device-a" && row.root_cid == local_root_string })
+        );
         assert_eq!(cache.path_state.len(), 1);
         assert_eq!(cache.path_state[0].device_id, "device-a");
         assert_eq!(cache.path_state[0].path, "local.txt");

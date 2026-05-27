@@ -2157,19 +2157,7 @@ pub(crate) async fn apply_one_event(
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
-    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
-        let Some(account_state) = config.account.clone() else {
-            return Ok(());
-        };
-        return apply_files_root_event(
-            config_dir,
-            event,
-            fips_blocks,
-            mount_refresh,
-            &mut config,
-            account_state,
-        );
-    } else if kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT {
+    } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;
         let parsed =
@@ -2224,6 +2212,18 @@ pub(crate) async fn apply_one_event(
             mount_refresh,
         );
         return Ok(());
+    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
+        let Some(account_state) = config.account.clone() else {
+            return Ok(());
+        };
+        return apply_files_root_event(
+            config_dir,
+            event,
+            fips_blocks,
+            mount_refresh,
+            &mut config,
+            account_state,
+        );
     } else {
         // Unknown kind; ignore.
         return Ok(());

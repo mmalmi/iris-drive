@@ -1,17 +1,19 @@
 //! Nostr wire format for Iris Drive events.
 //!
-//! Two replaceable event kinds (NIP-78 parameterized-replaceable range):
+//! One replaceable event kind (NIP-78 parameterized-replaceable range),
+//! separated by Iris-specific `d` tags:
 //!
 //! - **`KIND_APP_KEYS = 30078`** — owner-signed `AppKeys` roster.
 //!   d-tag: `"iris-drive/app-keys"`. Pubkey = owner pubkey. Content = JSON
 //!   `{ devices, dck_generation, wrapped_dck }`. The event's `created_at`
 //!   doubles as the snapshot's `created_at`.
 //!
-//! - **`KIND_DRIVE_ROOT = 30079`** — device-signed drive-root reference.
+//! - **`KIND_DRIVE_ROOT = 30078`** — device-signed drive-root reference.
 //!   d-tag: `"iris-drive/<owner_pubkey_hex>/<drive_id>/root"`.
 //!   Pubkey = device pubkey. Content = JSON root hash/key-wrap metadata,
 //!   DCK generation, and optional causal fields. The event's `created_at`
 //!   doubles as `DeviceRootRef::published_at`.
+//!   Legacy kind `30079` events are still accepted while old installs drain.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -32,13 +34,29 @@ use crate::root_meta::{RootObservation, RootParent};
 pub const KIND_APP_KEYS: u16 = 30078;
 
 /// NIP-78 parameterized-replaceable kind for device-signed drive roots.
-pub const KIND_DRIVE_ROOT: u16 = 30079;
+pub const KIND_DRIVE_ROOT: u16 = 30078;
+
+/// Legacy transition kind accepted by readers but no longer published.
+pub const KIND_LEGACY_DRIVE_ROOT: u16 = 30079;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
 pub const KIND_HASHTREE_ROOT: u16 = 30_078;
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
+
+#[must_use]
+pub fn is_drive_root_event_kind(kind: u16) -> bool {
+    kind == KIND_DRIVE_ROOT || kind == KIND_LEGACY_DRIVE_ROOT
+}
+
+#[must_use]
+pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
+    is_drive_root_event_kind(event.kind.as_u16())
+        && event
+            .identifier()
+            .is_some_and(|d_tag| parse_drive_root_d_tag(d_tag).is_ok())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriveRootEventPreview {
@@ -327,7 +345,7 @@ fn parse_drive_root_event_parts(
     event: &Event,
 ) -> Result<(String, String, String, DriveRootWireContent, i64), WireError> {
     let kind = event.kind.as_u16();
-    if kind != KIND_DRIVE_ROOT {
+    if !is_drive_root_event_kind(kind) {
         return Err(WireError::WrongKind {
             expected: KIND_DRIVE_ROOT,
             got: kind,
@@ -521,6 +539,7 @@ mod tests {
         );
         let event = build_drive_root_event(&device, &owner_hex, "main", &root, &authorized_devices)
             .unwrap();
+        assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
         let (device_pk, parsed_owner, drive_id, parsed_root) =
             parse_drive_root_event_for_device(&event, &device).unwrap();
         assert_eq!(device_pk, device.public_key().to_hex());
@@ -599,6 +618,79 @@ mod tests {
 
         let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
         assert_eq!(parsed_root.root_cid, root.root_cid);
+    }
+
+    #[test]
+    fn legacy_drive_root_kind_still_parses() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root_key = [0x44; 32];
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x33; 32], root_key).to_string(),
+            1_700_000_000,
+            1,
+        );
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let root_key_hex = hex::encode(root_cid.key.unwrap());
+        let ciphertext = nip44::encrypt(
+            device.secret_key(),
+            &device.public_key(),
+            root_key_hex,
+            Nip44Version::V2,
+        )
+        .unwrap();
+        let content = DriveRootWireContent {
+            root_cid: None,
+            root_hash: Some(to_hex(&root_cid.hash)),
+            root_key_wraps: BTreeMap::from([(device.public_key().to_hex(), ciphertext)]),
+            dck_generation: 1,
+            device_seq: 0,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+        };
+        let event = EventBuilder::new(
+            Kind::from(KIND_LEGACY_DRIVE_ROOT),
+            serde_json::to_string(&content).unwrap(),
+            [Tag::identifier(drive_root_d_tag(&owner, "main"))],
+        )
+        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
+        .to_event(&device)
+        .unwrap();
+
+        let (_, parsed_owner, drive_id, parsed_root) =
+            parse_drive_root_event_for_device(&event, &device).unwrap();
+
+        assert_eq!(parsed_owner, owner);
+        assert_eq!(drive_id, "main");
+        assert_eq!(parsed_root.root_cid, root.root_cid);
+    }
+
+    #[test]
+    fn drive_root_coordinate_does_not_match_other_30078_records() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x33; 32], [0x44; 32]).to_string(),
+            1_700_000_000,
+            1,
+        );
+
+        let drive_event = build_drive_root_event(
+            &device,
+            &owner_hex,
+            "main",
+            &root,
+            &[device.public_key().to_hex()],
+        )
+        .unwrap();
+        assert!(is_drive_root_event_coordinate(&drive_event));
+
+        let files_event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
+        assert!(!is_drive_root_event_coordinate(&files_event));
+
+        let app_keys_event = build_app_keys_event(&owner, &fake_snapshot(&owner_hex)).unwrap();
+        assert!(!is_drive_root_event_coordinate(&app_keys_event));
     }
 
     #[test]

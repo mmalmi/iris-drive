@@ -291,7 +291,7 @@ pub(crate) enum EventCmd {
     /// Owner-signed `AppKeys` roster event (kind 30078).
     /// Requires owner-signing authority on this install.
     AppKeys,
-    /// Device-signed drive-root event (kind 30079) for the primary
+    /// Device-signed drive-root event (kind 30078) for the primary
     /// drive. Requires a previous `idrive import` so there's a CID
     /// to publish.
     DriveRoot,

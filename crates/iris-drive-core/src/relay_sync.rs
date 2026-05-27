@@ -22,10 +22,10 @@ use crate::AppKeysSnapshot;
 use crate::app_keys::ApplyDecision;
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
-    D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_app_keys_event,
-    build_drive_root_event, build_private_hashtree_root_event, drive_root_d_tag,
-    parse_app_keys_event, parse_drive_root_event, parse_drive_root_event_for_device,
-    parse_drive_root_event_preview,
+    D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT,
+    build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
+    drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
+    parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 
 #[derive(Debug, Error)]
@@ -393,6 +393,14 @@ pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filte
     filters.push(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
+            .custom_tag(
+                SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+                [d_tag.clone()],
+            ),
+    );
+    filters.push(
+        Filter::new()
+            .kind(nostr_sdk::Kind::from(KIND_LEGACY_DRIVE_ROOT))
             .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
     );
     if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
@@ -429,12 +437,27 @@ pub async fn fetch_drive_roots(
             .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
     }
     let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
-    let filter = Filter::new()
+    let new_filter = Filter::new()
         .authors(authors)
         .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+            [d_tag.clone()],
+        );
+    let mut legacy_authors = Vec::with_capacity(authorized_devices.len());
+    for hex in authorized_devices {
+        legacy_authors
+            .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
+    }
+    let legacy_filter = Filter::new()
+        .authors(legacy_authors)
+        .kind(nostr_sdk::Kind::from(KIND_LEGACY_DRIVE_ROOT))
         .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]);
     let events = client
-        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
+        .get_events_of(
+            vec![new_filter, legacy_filter],
+            nostr_sdk::EventSource::relays(Some(timeout)),
+        )
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     // Pick the latest root per author. Device roots carry a monotonic

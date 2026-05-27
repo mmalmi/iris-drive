@@ -508,7 +508,8 @@ impl Daemon {
 
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
         let Some(account) = self.config.account.as_ref() else {
-            let cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
+            let cache =
+                SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
             cache.save(sync_cache_path_in(&self.config_dir))?;
             return Ok(());
         };
