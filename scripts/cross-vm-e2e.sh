@@ -28,7 +28,10 @@ Environment:
                                   Per SSH command timeout; 0 disables (default: 60).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
-  IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should also expose FUSE mounts.
+  IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should expose FUSE mounts.
+                                  Defaults to every POSIX host in this run.
+  IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
+                                  Use provider commands instead of projection surfaces when set to 1.
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner AppKeys snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
@@ -46,6 +49,7 @@ LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
 KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
 MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
+PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -118,6 +122,27 @@ set_host_value() {
     pid) PIDS[$idx]="$value" ;;
     daemon_ssh_pid) DAEMON_SSH_PIDS[$idx]="$value" ;;
     *) echo "unknown mutable host field: $field" >&2; exit 1 ;;
+  esac
+}
+
+vpath() {
+  local rel="${1#/}"
+  printf "e2e/%s/%s" "$RUN_ID" "$rel"
+}
+
+projection_enabled() {
+  local label="$1"
+  local kind
+  kind="$(host_value "$label" kind)"
+  if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
+    return 1
+  fi
+  if [[ "$kind" == "windows" ]]; then
+    return 0
+  fi
+  case " $MOUNT_LABELS " in
+    *" $label "*) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -598,7 +623,12 @@ cleanup() {
     [[ -n "$base" ]] || continue
     kind="$(host_value "$label" kind)"
     if [[ "$kind" == "windows" ]]; then
-      script="\$base = $(ps_quote "$base"); if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force -ErrorAction SilentlyContinue }"
+      script="
+\$base = $(ps_quote "$base")
+\$projectionScope = Join-Path (Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e') $(ps_quote "$RUN_ID")
+if (Test-Path -LiteralPath \$projectionScope) { Remove-Item -LiteralPath \$projectionScope -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force -ErrorAction SilentlyContinue }
+"
     else
       script="rm -rf $(sh_quote "$base")"
     fi
@@ -609,7 +639,8 @@ trap cleanup EXIT
 
 write_file() {
   local label="$1"
-  local rel="$2"
+  local rel
+  rel="$(vpath "$2")"
   local content="$3"
   local kind
   local idrive
@@ -621,7 +652,27 @@ write_file() {
   config="$(host_value "$label" config)"
   base="$(host_value "$label" base)"
   b64="$(printf "%s" "$content" | base64 | tr -d '\n')"
-  if [[ "$kind" == "windows" ]]; then
+  if projection_enabled "$label"; then
+    if [[ "$kind" == "windows" ]]; then
+      script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$path = Join-Path \$root ($(ps_quote "$rel") -replace '/', [IO.Path]::DirectorySeparatorChar)
+\$parent = Split-Path -Parent \$path
+New-Item -ItemType Directory -Force -Path \$parent | Out-Null
+\$bytes = [Convert]::FromBase64String($(ps_quote "$b64"))
+[IO.File]::WriteAllBytes(\$path, \$bytes)
+"
+    else
+      script="
+set -Eeuo pipefail
+root=$(sh_quote "$(host_value "$label" work)")
+path=\"\$root/$(printf "%s" "$rel" | sed "s/'/'\\\\''/g")\"
+mkdir -p \"\$(dirname \"\$path\")\"
+printf '%s' $(sh_quote "$b64") | base64 -d >\"\$path\"
+"
+    fi
+  elif [[ "$kind" == "windows" ]]; then
     script="
 \$ErrorActionPreference = 'Stop'
 \$idrive = $(ps_quote "$idrive")
@@ -647,7 +698,8 @@ printf '%s' $(sh_quote "$b64") | base64 -d >\"\$source\"
 
 write_zero_file() {
   local label="$1"
-  local rel="$2"
+  local rel
+  rel="$(vpath "$2")"
   local bytes="$3"
   local kind
   local idrive
@@ -658,7 +710,28 @@ write_zero_file() {
   idrive="$(host_value "$label" idrive)"
   config="$(host_value "$label" config)"
   base="$(host_value "$label" base)"
-  if [[ "$kind" == "windows" ]]; then
+  if projection_enabled "$label"; then
+    if [[ "$kind" == "windows" ]]; then
+      script="
+\$ErrorActionPreference = 'Stop'
+\$bytes = [int]$(ps_quote "$bytes")
+\$root = Join-Path \$HOME 'Iris Drive'
+\$path = Join-Path \$root ($(ps_quote "$rel") -replace '/', [IO.Path]::DirectorySeparatorChar)
+\$parent = Split-Path -Parent \$path
+New-Item -ItemType Directory -Force -Path \$parent | Out-Null
+[IO.File]::WriteAllBytes(\$path, [byte[]]::new(\$bytes))
+"
+    else
+      script="
+set -Eeuo pipefail
+bytes=$(sh_quote "$bytes")
+root=$(sh_quote "$(host_value "$label" work)")
+path=\"\$root/$rel\"
+mkdir -p \"\$(dirname \"\$path\")\"
+head -c \"\$bytes\" /dev/zero >\"\$path\"
+"
+    fi
+  elif [[ "$kind" == "windows" ]]; then
     script="
 \$bytes = [int]$(ps_quote "$bytes")
 \$idrive = $(ps_quote "$idrive")
@@ -684,20 +757,66 @@ head -c \"\$bytes\" /dev/zero >\"\$source\"
 
 mkdir_remote() {
   local label="$1"
-  local rel="$2"
-  idrive_cmd "$label" provider mkdir "$rel" >/dev/null
+  local rel
+  rel="$(vpath "$2")"
+  local kind script
+  kind="$(host_value "$label" kind)"
+  if projection_enabled "$label"; then
+    if [[ "$kind" == "windows" ]]; then
+      script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$path = Join-Path \$root ($(ps_quote "$rel") -replace '/', [IO.Path]::DirectorySeparatorChar)
+New-Item -ItemType Directory -Force -Path \$path | Out-Null
+"
+    else
+      script="
+set -Eeuo pipefail
+root=$(sh_quote "$(host_value "$label" work)")
+mkdir -p \"\$root/$rel\"
+"
+    fi
+    remote_exec "$label" "$script"
+  else
+    idrive_cmd "$label" provider mkdir "$rel" >/dev/null
+  fi
 }
 
 rename_remote() {
   local label="$1"
-  local from="$2"
-  local to="$3"
-  idrive_cmd "$label" provider rename "$from" "$to" >/dev/null
+  local from to kind script
+  from="$(vpath "$2")"
+  to="$(vpath "$3")"
+  kind="$(host_value "$label" kind)"
+  if projection_enabled "$label"; then
+    if [[ "$kind" == "windows" ]]; then
+      script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$from = Join-Path \$root ($(ps_quote "$from") -replace '/', [IO.Path]::DirectorySeparatorChar)
+\$to = Join-Path \$root ($(ps_quote "$to") -replace '/', [IO.Path]::DirectorySeparatorChar)
+\$parent = Split-Path -Parent \$to
+New-Item -ItemType Directory -Force -Path \$parent | Out-Null
+Move-Item -LiteralPath \$from -Destination \$to -Force
+"
+    else
+      script="
+set -Eeuo pipefail
+root=$(sh_quote "$(host_value "$label" work)")
+mkdir -p \"\$(dirname \"\$root/$to\")\"
+mv -f \"\$root/$from\" \"\$root/$to\"
+"
+    fi
+    remote_exec "$label" "$script"
+  else
+    idrive_cmd "$label" provider rename "$from" "$to" >/dev/null
+  fi
 }
 
 remove_remote() {
   local label="$1"
-  local rel="$2"
+  local rel
+  rel="$(vpath "$2")"
   local kind
   local idrive
   local config
@@ -705,7 +824,23 @@ remove_remote() {
   kind="$(host_value "$label" kind)"
   idrive="$(host_value "$label" idrive)"
   config="$(host_value "$label" config)"
-  if [[ "$kind" == "windows" ]]; then
+  if projection_enabled "$label"; then
+    if [[ "$kind" == "windows" ]]; then
+      script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$path = Join-Path \$root ($(ps_quote "$rel") -replace '/', [IO.Path]::DirectorySeparatorChar)
+if (Test-Path -LiteralPath \$path) { Remove-Item -LiteralPath \$path -Recurse -Force }
+"
+    else
+      script="
+set -Eeuo pipefail
+root=$(sh_quote "$(host_value "$label" work)")
+rm -rf \"\$root/$rel\"
+"
+    fi
+    remote_exec "$label" "$script"
+  elif [[ "$kind" == "windows" ]]; then
     script="
 \$idrive = $(ps_quote "$idrive")
 \$config = $(ps_quote "$config")
@@ -735,6 +870,38 @@ snapshot() {
   idrive_cmd "$label" list |
     jq -r '.files[] | [.sha256, (.size | tostring), .path] | @tsv' |
     LC_ALL=C sort
+}
+
+projection_snapshot() {
+  local label="$1"
+  local kind
+  kind="$(host_value "$label" kind)"
+  if [[ "$kind" != "posix" ]] || ! projection_enabled "$label"; then
+    return 0
+  fi
+  local root
+  root="$(host_value "$label" work)"
+  local prefix="e2e/$RUN_ID"
+  local script="
+set -Eeuo pipefail
+root=$(sh_quote "$root")
+prefix=$(sh_quote "$prefix")
+python3 - \"\$root\" \"\$prefix\" <<'PY' | LC_ALL=C sort
+import hashlib, os, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+prefix = sys.argv[2].strip('/')
+base = root / prefix
+if not base.exists():
+    raise SystemExit(0)
+for path in sorted(p for p in base.rglob('*') if p.is_file()):
+    data = path.read_bytes()
+    rel = path.relative_to(root).as_posix()
+    print(f\"{hashlib.sha256(data).hexdigest()}\\t{len(data)}\\t{rel}\")
+PY
+"
+  remote_exec "$label" "$script" | tr -d '\r'
 }
 
 union_snapshots() {
@@ -842,6 +1009,22 @@ snapshots_match_current_union() {
   return 0
 }
 
+projection_snapshots_match_expected() {
+  local host_label current
+  if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
+    return 0
+  fi
+  for host_label in "${LABELS[@]}"; do
+    [[ "$(host_value "$host_label" kind)" == "posix" ]] || continue
+    projection_enabled "$host_label" || continue
+    current="$(projection_snapshot "$host_label")"
+    if [[ "$current" != "$EXPECTED_SNAPSHOT" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 wait_for_source_snapshot() {
   local label="$1"
   local step="$2"
@@ -862,7 +1045,9 @@ source_root_matches_expected_count() {
 }
 
 source_and_snapshots_match_expected() {
-  snapshots_match_expected && source_root_matches_expected_count
+  snapshots_match_expected &&
+    source_root_matches_expected_count &&
+    projection_snapshots_match_expected
 }
 
 run_step() {
@@ -891,6 +1076,47 @@ step_nested_create_delete() {
   remove_remote "$target_label" "download/dir2/one.txt"
   remove_remote "$target_label" "download/dir2"
   wait_for_source_snapshot "$target_label" "nested delete"
+}
+
+windows_projection_not_stale() {
+  local logical_path="$1"
+  local stale_content="$2"
+  local rel
+  rel="$(vpath "$logical_path")"
+  local b64
+  b64="$(printf "%s" "$stale_content" | base64 | tr -d '\n')"
+  local script="
+\$ErrorActionPreference = 'Stop'
+\$root = Join-Path \$HOME 'Iris Drive'
+\$path = Join-Path \$root ($(ps_quote "$rel") -replace '/', [IO.Path]::DirectorySeparatorChar)
+if (-not (Test-Path -LiteralPath \$path -PathType Leaf)) { exit 0 }
+\$actual = [IO.File]::ReadAllBytes(\$path)
+\$stale = [Convert]::FromBase64String($(ps_quote "$b64"))
+if (\$actual.Length -eq \$stale.Length) {
+  for (\$i = 0; \$i -lt \$actual.Length; \$i++) {
+    if (\$actual[\$i] -ne \$stale[\$i]) { exit 0 }
+  }
+  throw \"Windows projection still has stale bytes at $rel\"
+}
+"
+  remote_exec "$windows_label" "$script"
+}
+
+step_windows_projection_replaces_materialized_remote_edit() {
+  if [[ -z "$windows_label" || -z "$ubuntu_label" ]]; then
+    echo "skip: windows+ubuntu projection stale-edit check needs both labels"
+    return 0
+  fi
+  if ! projection_enabled "$windows_label" || ! projection_enabled "$ubuntu_label"; then
+    echo "skip: projection stale-edit check disabled"
+    return 0
+  fi
+
+  write_file "$windows_label" "projection/materialized-edit.txt" "old bytes"
+  wait_for_source_snapshot "$windows_label" "windows materialized edit baseline"
+  write_file "$ubuntu_label" "projection/materialized-edit.txt" "new bytes"
+  wait_for_source_snapshot "$ubuntu_label" "ubuntu remote edit over windows materialized file"
+  windows_projection_not_stale "projection/materialized-edit.txt" "old bytes"
 }
 
 step_file_type_replacements() {
@@ -1003,8 +1229,22 @@ done
 source_label="${windows_label:-${LABELS[0]}}"
 target_label="${ubuntu_label:-${LABELS[1]}}"
 
+if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
+  MOUNT_LABELS=""
+  for label in "${LABELS[@]}"; do
+    if [[ "$(host_value "$label" kind)" == "posix" ]]; then
+      MOUNT_LABELS+="${MOUNT_LABELS:+ }$label"
+    fi
+  done
+fi
+
 echo "run id: $RUN_ID"
 echo "hosts: ${LABELS[*]}"
+if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
+  echo "mutation surface: provider commands"
+else
+  echo "mutation surface: projections (windows Cloud Files root; POSIX mounts: ${MOUNT_LABELS:-none})"
+fi
 
 for label in "${LABELS[@]}"; do
   echo "setting up $label ($(host_value "$label" ssh))"
@@ -1056,6 +1296,7 @@ run_step "direct FIPS peer discovery" wait_until "every device has a direct peer
 
 run_step "create edit rename delete from $source_label" step_create_edit_rename_delete
 run_step "nested create/delete from $target_label" step_nested_create_delete
+run_step "windows projection materialized remote edit" step_windows_projection_replaces_materialized_remote_edit
 run_step "file type replacements" step_file_type_replacements
 run_step "seafile-style rename chain" step_rename_chain
 run_step "ignored desktop/editor noise" step_ignored_noise
