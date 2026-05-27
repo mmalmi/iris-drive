@@ -13,9 +13,8 @@ use hashtree_core::{
     Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use hashtree_fips_transport::{
-    DEFAULT_FIPS_DISCOVERY_SCOPE, FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub,
-    FipsMeshPubsubEvent, FipsPeerConfig, FipsRelayStatus, HashtreeFipsTransport,
-    PubsubPublishStats, bind_fips_endpoint,
+    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
+    FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -33,6 +32,7 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
+pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
 /// defaults so native Iris instances can join the same fallback overlay when
@@ -457,7 +457,7 @@ where
 #[must_use]
 pub fn discovery_scope(config: &AppConfig) -> String {
     let _ = config;
-    DEFAULT_FIPS_DISCOVERY_SCOPE.to_string()
+    IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string()
 }
 
 fn authorized_device_fips_peers(
@@ -1316,7 +1316,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_scope_uses_shared_hashtree_overlay() {
+    fn discovery_scope_uses_iris_drive_overlay() {
         let config = AppConfig {
             account: Some(crate::AccountState {
                 owner_pubkey: "aa".repeat(32),
@@ -1329,7 +1329,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(discovery_scope(&config), DEFAULT_FIPS_DISCOVERY_SCOPE);
+        assert_eq!(discovery_scope(&config), IRIS_DRIVE_FIPS_DISCOVERY_SCOPE);
     }
 
     #[test]
@@ -1348,7 +1348,7 @@ mod tests {
 
         let options = fips_endpoint_options(
             "nsec1example".to_string(),
-            DEFAULT_FIPS_DISCOVERY_SCOPE.to_string(),
+            IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
             vec!["wss://relay.example".to_string()],
             &settings,
         );
@@ -1443,7 +1443,7 @@ mod tests {
 
         let options = fips_endpoint_options(
             "nsec1example".to_string(),
-            DEFAULT_FIPS_DISCOVERY_SCOPE.to_string(),
+            IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
             Vec::new(),
             &settings,
         );

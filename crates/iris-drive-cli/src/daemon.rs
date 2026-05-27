@@ -911,12 +911,16 @@ async fn import_windows_cloud_root_changes_and_publish(
 
     let root = provider.current_root().await;
     let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let snapshot_protected_paths = BTreeSet::new();
+    // Protected paths prevent same-event cleanup from deleting a local edit
+    // before it is imported. Once the provider has absorbed the mutation, the
+    // local file is synced state and must be eligible for future remote deletes.
     write_windows_cloud_local_state(
         config_dir,
         sync_root,
         &current_entries,
         &previous_local_state,
-        &protected_local_mutations,
+        &snapshot_protected_paths,
     );
     drop(provider);
     drop(daemon);
@@ -1722,8 +1726,6 @@ async fn windows_cloud_remove_changed_synced_local_files(
         .map(|entry| (entry.path.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
     let mut removed = Vec::new();
-    let mut cleanup_markers = Vec::new();
-
     for previous in previous_state {
         let Ok(path) = normalize_provider_path(&previous.path) else {
             continue;
@@ -1769,17 +1771,17 @@ async fn windows_cloud_remove_changed_synced_local_files(
             continue;
         }
 
+        let cleanup_marker = WindowsCloudCleanupDeleteMarker {
+            path: path.clone(),
+            created_at_unix_ms: windows_cloud_cleanup_marker_now_ms(),
+        };
+        append_windows_cloud_cleanup_delete_markers(config_dir, &[cleanup_marker]);
         let _ = windows_cloud_clear_readonly(&full_path);
         if windows_cloud_remove_file_with_retry(&full_path) {
-            cleanup_markers.push(WindowsCloudCleanupDeleteMarker {
-                path: path.clone(),
-                created_at_unix_ms: windows_cloud_cleanup_marker_now_ms(),
-            });
             removed.push(path);
         }
     }
 
-    append_windows_cloud_cleanup_delete_markers(config_dir, &cleanup_markers);
     Ok(removed)
 }
 
@@ -3181,6 +3183,39 @@ mod tests {
         assert!(removed.is_empty());
         assert!(dir.exists());
         assert!(file.exists());
+    }
+
+    #[test]
+    fn windows_cloud_local_state_records_imported_local_mutation_after_apply() {
+        let sync_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(sync_root.path().join("smoke")).unwrap();
+        std::fs::write(
+            sync_root.path().join("smoke").join("from-windows.txt"),
+            b"same",
+        )
+        .unwrap();
+        let entries = vec![
+            WindowsCloudExpectedEntry {
+                path: "smoke".to_string(),
+                kind: "directory",
+                size: 0,
+            },
+            WindowsCloudExpectedEntry {
+                path: "smoke/from-windows.txt".to_string(),
+                kind: "file",
+                size: 4,
+            },
+        ];
+
+        let state =
+            snapshot_windows_cloud_local_state(sync_root.path(), &entries, &[], &BTreeSet::new());
+
+        assert!(state.contains(&WindowsCloudLocalStateEntry {
+            path: "smoke/from-windows.txt".to_string(),
+            kind: "file".to_string(),
+            size: 4,
+            sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+        }));
     }
 
     #[test]

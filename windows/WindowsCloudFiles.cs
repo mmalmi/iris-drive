@@ -253,6 +253,7 @@ public static partial class WindowsCloudFiles
     public static void WriteLocalState(
         string configDirectory,
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        Func<string, byte[]> readFile,
         IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null)
     {
         try
@@ -260,6 +261,7 @@ public static partial class WindowsCloudFiles
             Directory.CreateDirectory(configDirectory);
             var state = SnapshotLocalState(
                 entries,
+                readFile,
                 previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
             var json = JsonSerializer.Serialize(new { entries = state });
             File.WriteAllText(Path.Combine(configDirectory, LocalStateFileName), json);
@@ -697,6 +699,7 @@ public static partial class WindowsCloudFiles
             var population = PopulatePlaceholders(
                 path,
                 entries,
+                readFile,
                 previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
             NotifyShellDirectoryChanged(path);
 
@@ -739,6 +742,7 @@ public static partial class WindowsCloudFiles
 
     private static IReadOnlyList<WindowsCloudLocalStateEntry> SnapshotLocalState(
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        Func<string, byte[]> readFile,
         IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
         var state = new List<WindowsCloudLocalStateEntry>();
@@ -771,7 +775,7 @@ public static partial class WindowsCloudFiles
                         entry.Path,
                         "file",
                         entry.Size,
-                        null));
+                        TryProviderFileSha256(entry.Path, readFile)));
                     continue;
                 }
 
@@ -855,6 +859,67 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    private static bool ProviderFileChangedSincePreviousState(
+        WindowsCloudFileEntry entry,
+        IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath,
+        Func<string, byte[]> readFile)
+    {
+        if (!previousByPath.TryGetValue(entry.Path, out var previous) ||
+            previous.IsDirectory ||
+            previous.Size != entry.Size)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(previous.Sha256))
+        {
+            return false;
+        }
+
+        var providerSha256 = TryProviderFileSha256(entry.Path, readFile);
+        return providerSha256 is not null &&
+            !string.Equals(providerSha256, previous.Sha256, StringComparison.Ordinal);
+    }
+
+    private static string? TryProviderFileSha256(string path, Func<string, byte[]> readFile)
+    {
+        try
+        {
+            return Convert.ToHexString(SHA256.HashData(readFile(path))).ToLowerInvariant();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LocalPlaceholderContentDiffersFromProvider(
+        string fullPath,
+        WindowsCloudFileEntry entry,
+        Func<string, byte[]> readFile)
+    {
+        var providerSha256 = TryProviderFileSha256(entry.Path, readFile);
+        if (providerSha256 is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var snapshot = SnapshotLocalFile(fullPath);
+            return snapshot is not null &&
+                (snapshot.Value.Size != entry.Size ||
+                    !string.Equals(
+                        snapshot.Value.Sha256,
+                        providerSha256,
+                        StringComparison.Ordinal));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static LocalFileSnapshot? SnapshotLocalFile(string fullPath)
     {
         using var stream = File.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -867,6 +932,7 @@ public static partial class WindowsCloudFiles
     private static PlaceholderPopulationReport PopulatePlaceholders(
         string syncRootPath,
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
+        Func<string, byte[]> readFile,
         IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
         var placeholderCount = 0;
@@ -879,6 +945,9 @@ public static partial class WindowsCloudFiles
             syncRootPath,
             placeholderEntries,
             previousState);
+        var previousByPath = previousState
+            .GroupBy(entry => NormalizeVirtualPath(entry.Path), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var expectedPaths = new HashSet<string>(
             placeholderEntries.Select(entry => entry.Path)
                 .Concat(pendingDeletes)
@@ -925,10 +994,26 @@ public static partial class WindowsCloudFiles
                     continue;
                 }
 
+                if (!ProviderFileChangedSincePreviousState(entry, previousByPath, readFile) &&
+                    !LocalPlaceholderContentDiffersFromProvider(itemFullPath, entry, readFile))
+                {
+                    DebugLogPath(entry.Path, $"skip unchanged file placeholder {itemFullPath}");
+                    continue;
+                }
+
                 try
                 {
+                    MarkProviderCleanupDelete(entry.Path);
+                    ClearReadOnlyAttribute(itemFullPath);
+                    if (!TryDeleteFile(itemFullPath))
+                    {
+                        failedPlaceholderCount++;
+                        DebugLogPath(entry.Path, $"failed to delete existing file placeholder {itemFullPath}");
+                        continue;
+                    }
+
                     CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
-                    DebugLogPath(entry.Path, $"superseded existing file placeholder {itemFullPath}");
+                    DebugLogPath(entry.Path, $"recreated existing file placeholder {itemFullPath}");
                     placeholderCount++;
                 }
                 catch (COMException error)
@@ -1352,8 +1437,10 @@ public static partial class WindowsCloudFiles
         }
 
         string[] matches;
+        HashSet<string> loadedFromDisk;
         lock (PendingProviderMutationLock)
         {
+            loadedFromDisk = LoadProviderCleanupDeletesLocked();
             PrunePendingProviderMutations(DateTimeOffset.UtcNow);
             matches = PendingProviderCleanupDeletes.Keys
                 .Where(existing =>
@@ -1362,10 +1449,13 @@ public static partial class WindowsCloudFiles
                 .ToArray();
             foreach (var match in matches)
             {
-                PendingProviderCleanupDeletes.Remove(match);
+                if (!loadedFromDisk.Contains(match))
+                {
+                    PendingProviderCleanupDeletes.Remove(match);
+                }
             }
 
-            if (matches.Length > 0)
+            if (matches.Any(match => !loadedFromDisk.Contains(match)))
             {
                 PersistProviderCleanupDeletesLocked();
             }
@@ -1378,6 +1468,92 @@ public static partial class WindowsCloudFiles
 
         DebugLogPath(normalized, "ignored provider cleanup delete notify");
         return true;
+    }
+
+    private static HashSet<string> LoadProviderCleanupDeletesLocked()
+    {
+        var loaded = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var path = Path.Combine(ConfigDirectoryPath, CleanupDeleteFileName);
+            if (!File.Exists(path))
+            {
+                return loaded;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (!document.RootElement.TryGetProperty("entries", out var entries) ||
+                entries.ValueKind != JsonValueKind.Array)
+            {
+                return loaded;
+            }
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                var markerPath = TryGetJsonString(entry, "path", "Path") is { } rawPath
+                    ? NormalizeVirtualPath(rawPath)
+                    : "";
+                if (string.IsNullOrEmpty(markerPath) || PathHasIgnoredComponent(markerPath))
+                {
+                    continue;
+                }
+
+                var createdAtMs = TryGetJsonInt64(
+                    entry,
+                    "created_at_unix_ms",
+                    "CreatedAtUnixMs");
+                if (createdAtMs is null)
+                {
+                    continue;
+                }
+
+                PendingProviderCleanupDeletes[markerPath] =
+                    DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs.Value);
+                loaded.Add(markerPath);
+            }
+        }
+        catch
+        {
+            // The Rust daemon may update this best-effort marker concurrently.
+        }
+
+        return loaded;
+    }
+
+    private static string? TryGetJsonString(
+        JsonElement element,
+        string lowerName,
+        string upperName)
+    {
+        if (element.TryGetProperty(lowerName, out var lowerValue) &&
+            lowerValue.ValueKind == JsonValueKind.String)
+        {
+            return lowerValue.GetString();
+        }
+
+        return element.TryGetProperty(upperName, out var upperValue) &&
+            upperValue.ValueKind == JsonValueKind.String
+                ? upperValue.GetString()
+                : null;
+    }
+
+    private static long? TryGetJsonInt64(
+        JsonElement element,
+        string lowerName,
+        string upperName)
+    {
+        if (element.TryGetProperty(lowerName, out var lowerValue) &&
+            lowerValue.ValueKind == JsonValueKind.Number &&
+            lowerValue.TryGetInt64(out var lowerParsed))
+        {
+            return lowerParsed;
+        }
+
+        return element.TryGetProperty(upperName, out var upperValue) &&
+            upperValue.ValueKind == JsonValueKind.Number &&
+            upperValue.TryGetInt64(out var upperParsed)
+                ? upperParsed
+                : null;
     }
 
     private static void PersistProviderCleanupDeletesLocked()

@@ -2223,20 +2223,31 @@ remote_status_json() {
 
   case "$kind" in
     macos)
-      ssh "$host" 'bash -se' <<'REMOTE_SH'
+      local app_group="${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}"
+      local team="${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}"
+      local app_base="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}"
+      team="${team%.}"
+      if [[ -z "$app_group" && -n "$team" ]]; then
+        app_group="$team.to.iris.drive"
+      fi
+      ssh "$host" "IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER=$(sh_quote "$app_group") IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR=$(sh_quote "$app_base") bash -se" <<'REMOTE_SH'
 set -Eeuo pipefail
 idrive="$HOME/src/iris-drive/target/debug/idrive"
 app_group="${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}"
 if [[ -z "$app_group" ]]; then
   app="$HOME/Applications/Iris Drive.app"
   app_group="$(codesign -d --entitlements :- "$app" 2>/dev/null \
-    | plutil -extract com.apple.security.application-groups.0 raw -o - - 2>/dev/null \
+    | python3 -c 'import plistlib, sys; data=sys.stdin.buffer.read(); plist=plistlib.loads(data) if data.strip() else {}; groups=plist.get("com.apple.security.application-groups") or []; print(groups[0] if groups else "")' 2>/dev/null \
     || true)"
 fi
 if [[ -z "$app_group" ]]; then
   app_group="group.to.iris.drive"
 fi
-config_dir="${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-$HOME/Library/Group Containers/$app_group/Iris Drive Dev}/Config"
+if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+  config_dir="$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+else
+  config_dir="$HOME/Library/Group Containers/$app_group/Iris Drive Dev/Config"
+fi
 "$idrive" --config-dir "$config_dir" status
 REMOTE_SH
       ;;

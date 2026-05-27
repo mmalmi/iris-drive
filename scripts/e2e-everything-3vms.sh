@@ -10,7 +10,7 @@ Usage:
   scripts/e2e-everything-3vms.sh [dev-lab args]
 
 Runs the full development confidence battery:
-  1. cargo test --workspace
+  1. cargo test --workspace -- --test-threads=1
   2. update/build/run the configured macOS, Ubuntu, and Windows dev VMs
   3. run the native 3-VM sync smoke against the real OS file-provider surfaces
 
@@ -38,7 +38,7 @@ cd "$ROOT"
 
 if [[ "${IRIS_DRIVE_E2E_SKIP_CARGO:-0}" != "1" ]]; then
   log "running Rust workspace tests"
-  cargo test --workspace
+  cargo test --workspace -- --test-threads=1
 fi
 
 if [[ "${IRIS_DRIVE_E2E_SKIP_DEPLOY:-0}" != "1" ]]; then
