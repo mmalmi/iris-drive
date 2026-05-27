@@ -486,9 +486,8 @@ public static partial class WindowsCloudFiles
                 PathHasIgnoredComponent(path) ||
                 pendingDeletes.Contains(path) ||
                 pendingPreserves.Contains(path) ||
-                previous.IsDirectory ||
                 !providerEntries.TryGetValue(path, out var providerEntry) ||
-                providerEntry.IsDirectory)
+                previous.IsDirectory != providerEntry.IsDirectory)
             {
                 continue;
             }
@@ -503,7 +502,10 @@ public static partial class WindowsCloudFiles
 
             try
             {
-                if (!File.Exists(fullPath))
+                var exists = previous.IsDirectory
+                    ? Directory.Exists(fullPath)
+                    : File.Exists(fullPath);
+                if (!exists)
                 {
                     deletes.Add(new WindowsCloudLocalDelete(path));
                 }
@@ -516,7 +518,8 @@ public static partial class WindowsCloudFiles
         return deletes
             .GroupBy(delete => delete.Path, StringComparer.Ordinal)
             .Select(group => group.Last())
-            .OrderBy(delete => delete.Path, StringComparer.Ordinal)
+            .OrderBy(delete => delete.Path.Count(ch => ch == '/'))
+            .ThenBy(delete => delete.Path, StringComparer.Ordinal)
             .ToArray();
     }
 
@@ -930,19 +933,16 @@ public static partial class WindowsCloudFiles
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
-        var providerFiles = entries
-            .Where(entry => !entry.IsDirectory)
-            .Select(entry => entry.Path)
-            .ToHashSet(StringComparer.Ordinal);
+        var providerEntries = entries
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
         var missing = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var previous in previousState)
         {
             var path = NormalizeVirtualPath(previous.Path);
             if (string.IsNullOrEmpty(path) ||
-                previous.IsDirectory ||
-                string.IsNullOrWhiteSpace(previous.Sha256) ||
-                !providerFiles.Contains(path))
+                !providerEntries.TryGetValue(path, out var providerEntry) ||
+                previous.IsDirectory != providerEntry.IsDirectory)
             {
                 continue;
             }
@@ -950,6 +950,20 @@ public static partial class WindowsCloudFiles
             var fullPath = Path.Combine(syncRootPath, FromVirtualPath(path));
             try
             {
+                if (previous.IsDirectory)
+                {
+                    if (!Directory.Exists(fullPath))
+                    {
+                        missing.Add(path);
+                    }
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(previous.Sha256))
+                {
+                    continue;
+                }
+
                 // A dehydrated Cloud Files placeholder is still the correct visible
                 // projection for a provider file. Only treat the path as locally
                 // deleted when the item is actually absent from the sync root.

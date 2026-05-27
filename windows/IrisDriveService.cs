@@ -395,7 +395,10 @@ public sealed class IrisDriveService
         {
             try
             {
-                await Task.Delay(250);
+                for (var attempt = 0; attempt < 50 && WindowsCloudFiles.SyncRootEntryExists(path); attempt++)
+                {
+                    await Task.Delay(100);
+                }
                 if (!WindowsCloudFiles.ProviderDeleteIsPending(path))
                 {
                     WindowsCloudFiles.DebugLog(
@@ -405,10 +408,8 @@ public sealed class IrisDriveService
 
                 if (WindowsCloudFiles.SyncRootEntryExists(path))
                 {
-                    WindowsCloudFiles.ClearProviderMutationPending(path);
                     WindowsCloudFiles.DebugLog(
-                        $"provider delete skipped because local path exists again path={path}");
-                    return;
+                        $"provider delete continuing even though local path still exists path={path}");
                 }
 
                 WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={path}");
