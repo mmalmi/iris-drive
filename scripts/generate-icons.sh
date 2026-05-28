@@ -28,7 +28,7 @@ render_android_launcher_png() {
   {
     cat <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
-  <g transform="translate(192 192) scale(0.625)">
+  <g transform="translate(128 128) scale(0.75)">
 EOF
     sed '1d;$d' "$SVG"
     cat <<'EOF'
@@ -124,14 +124,15 @@ generate_android_icons() {
     "mipmap-xxhdpi 144"
     "mipmap-xxxhdpi 192"
   )
-  local spec density size dir
+  local spec density size dir foreground_size
   for spec in "${specs[@]}"; do
     read -r density size <<<"$spec"
     dir="$res_dir/$density"
+    foreground_size=$((size * 9 / 4))
     mkdir -p "$dir"
-    render_android_launcher_png "$size" "$dir/ic_launcher.png"
-    render_android_launcher_png "$size" "$dir/ic_launcher_round.png"
-    render_android_launcher_png "$size" "$dir/ic_launcher_foreground.png"
+    render_png "$size" "$dir/ic_launcher.png"
+    render_png "$size" "$dir/ic_launcher_round.png"
+    render_android_launcher_png "$foreground_size" "$dir/ic_launcher_foreground.png"
   done
 
   echo "generated Android launcher icons"
