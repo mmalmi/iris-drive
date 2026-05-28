@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
             val state = AppState.fromJson(NativeCore.refreshJson(handle))
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
+                writeDebugState()
             }
         }
     }
@@ -128,6 +130,7 @@ class MainActivity : ComponentActivity() {
             val state = AppState.fromJson(NativeCore.dispatchJson(handle, actionJson))
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
+                writeDebugState()
             }
         }
     }
@@ -196,6 +199,14 @@ class MainActivity : ComponentActivity() {
         }
         when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
+            "link-device" -> {
+                val owner = intent.getStringExtra(DEBUG_OWNER_EXTRA).orEmpty()
+                dispatch(NativeActions.linkDevice(owner, "Android smoke"))
+            }
+            "approve-device" -> {
+                val request = intent.getStringExtra(DEBUG_REQUEST_EXTRA).orEmpty()
+                dispatch(NativeActions.approveDevice(request, "Android smoke"))
+            }
             "add-root" -> dispatch(
                 NativeActions.addRoot(
                     "Android smoke",
@@ -203,6 +214,13 @@ class MainActivity : ComponentActivity() {
                 ),
             )
             "refresh" -> refresh()
+        }
+    }
+
+    private fun writeDebugState() {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            File(filesDir, DEBUG_STATE_FILE).writeText(NativeCore.stateJson(nativeHandle))
         }
     }
 
@@ -218,6 +236,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"
+        const val DEBUG_OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
+        const val DEBUG_REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
+        const val DEBUG_STATE_FILE = "debug-state.json"
         private const val DOCUMENTS_ROOT_ID = "iris-drive"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
     }
