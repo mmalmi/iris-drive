@@ -269,6 +269,12 @@ pub(crate) enum ProviderCmd {
         /// Output file path.
         output: PathBuf,
     },
+    /// Export the current virtual root into a provider-owned private cache.
+    #[command(name = "materialize-cache", hide = true)]
+    MaterializeCache {
+        /// Cache directory to update.
+        dir: PathBuf,
+    },
     /// Create or replace one virtual file from a provider-owned temporary file.
     Write {
         /// Virtual path inside the drive.

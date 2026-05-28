@@ -979,6 +979,21 @@ fn provider_commands_operate_on_virtual_root() {
         .success();
     assert_eq!(std::fs::read(&original).unwrap(), b"hello virtual");
 
+    let cache = tempdir().unwrap();
+    let cache_json = run_json(
+        cfg.path(),
+        &[
+            "provider",
+            "materialize-cache",
+            cache.path().to_str().unwrap(),
+        ],
+    );
+    assert_eq!(cache_json["file_count"], 1);
+    assert_eq!(
+        std::fs::read(cache.path().join("docs").join("note.txt")).unwrap(),
+        b"hello virtual"
+    );
+
     let source = scratch.path().join("new.txt");
     std::fs::write(&source, b"from provider").unwrap();
     idrive(cfg.path())

@@ -257,6 +257,28 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
+            ProviderCmd::MaterializeCache { dir } => {
+                let phase = std::time::Instant::now();
+                let entries = provider_entries(daemon.tree(), &visible.root_cid).await?;
+                let report = materialize_provider_cache(&provider, &entries, &dir).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command materialized private cache"
+                );
+                println!(
+                    "{}",
+                    json!({
+                        "target_dir": dir.display().to_string(),
+                        "file_count": report.file_count,
+                        "directory_count": report.directory_count,
+                        "written": report.written,
+                        "updated": report.updated,
+                        "unchanged": report.unchanged,
+                        "skipped": report.skipped,
+                        "changed": report.written + report.updated,
+                    })
+                );
+            }
             ProviderCmd::Write { path, source } => {
                 let path = normalize_provider_path(&path)?;
                 let bytes = std::fs::read(&source)
@@ -366,6 +388,107 @@ async fn provider_entries(
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+#[derive(Default)]
+struct ProviderCacheReport {
+    file_count: usize,
+    directory_count: usize,
+    written: usize,
+    updated: usize,
+    unchanged: usize,
+    skipped: usize,
+}
+
+async fn materialize_provider_cache(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    entries: &[ProviderListEntry],
+    target_dir: &Path,
+) -> Result<ProviderCacheReport> {
+    std::fs::create_dir_all(target_dir)
+        .with_context(|| format!("creating {}", target_dir.display()))?;
+    let mut report = ProviderCacheReport::default();
+    for entry in entries {
+        let Some(destination) = provider_cache_destination(target_dir, &entry.path) else {
+            report.skipped += 1;
+            continue;
+        };
+        if entry.kind == "directory" {
+            report.directory_count += 1;
+            if destination.is_dir() {
+                report.unchanged += 1;
+                continue;
+            }
+            let existed = destination.exists();
+            remove_provider_cache_destination(&destination)?;
+            std::fs::create_dir_all(&destination)
+                .with_context(|| format!("creating {}", destination.display()))?;
+            if existed {
+                report.updated += 1;
+            } else {
+                report.written += 1;
+            }
+            continue;
+        }
+
+        report.file_count += 1;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let bytes = provider.read(&entry.path, 0, entry.size).await?;
+        if destination.is_file() {
+            let existing = std::fs::read(&destination)
+                .with_context(|| format!("reading {}", destination.display()))?;
+            if existing == bytes {
+                report.unchanged += 1;
+                continue;
+            }
+            std::fs::write(&destination, bytes)
+                .with_context(|| format!("writing {}", destination.display()))?;
+            report.updated += 1;
+            continue;
+        }
+
+        let existed = destination.exists();
+        remove_provider_cache_destination(&destination)?;
+        std::fs::write(&destination, bytes)
+            .with_context(|| format!("writing {}", destination.display()))?;
+        if existed {
+            report.updated += 1;
+        } else {
+            report.written += 1;
+        }
+    }
+    Ok(report)
+}
+
+fn provider_cache_destination(
+    target_dir: &Path,
+    provider_path: &str,
+) -> Option<std::path::PathBuf> {
+    let mut destination = target_dir.to_path_buf();
+    for segment in provider_path.split('/') {
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('\\')
+            || segment.contains(':')
+        {
+            return None;
+        }
+        destination.push(segment);
+    }
+    Some(destination)
+}
+
+fn remove_provider_cache_destination(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
+    } else if path.exists() {
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn write_provider_file(

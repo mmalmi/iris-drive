@@ -642,7 +642,7 @@ enum FileProviderStorage {
             at: root,
             withIntermediateDirectories: true
         )
-        _ = try runIDrive(arguments: ["materialize", root.path], timeout: 60)
+        _ = try runIDrive(arguments: ["provider", "materialize-cache", root.path], timeout: 60)
         pruneContentCacheDirectories(keeping: root)
 
         let url = contentCacheURL(for: entry, anchor: anchor)
