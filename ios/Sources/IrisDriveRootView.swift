@@ -1,5 +1,7 @@
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
@@ -37,19 +39,26 @@ struct IrisDriveRootView: View {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
             }
+            .sheet(isPresented: $model.isDriveBrowserPresented) {
+                DriveFolderBrowser(initialDirectoryURL: model.driveBrowserInitialURL)
+            }
         }
     }
 }
 
+private enum SetupRoute: Hashable {
+    case create
+    case photo(String)
+    case signIn
+    case link
+}
+
 private struct SetupWelcomeView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var ownerPublicKey = ""
-    @State private var createUsername = ""
-    @State private var showCreatePhoto = false
-    @State private var selectedProfilePhoto: PhotosPickerItem?
+    @State private var path: [SetupRoute] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section {
                     VStack(spacing: 14) {
@@ -65,78 +74,149 @@ private struct SetupWelcomeView: View {
                 }
 
                 Section {
-                    TextField("Device label", text: $model.deviceLabel)
-                        .textInputAutocapitalization(.words)
-                    TextField("Username (optional)", text: $createUsername)
-                        .textInputAutocapitalization(.words)
-                    if showCreatePhoto {
-                        PhotosPicker(selection: $selectedProfilePhoto, matching: .images) {
-                            Label(
-                                selectedProfilePhoto == nil ? "Choose photo" : "Photo selected",
-                                systemImage: "photo"
-                            )
-                        }
-                        Button {
-                            model.createProfile(
-                                username: createUsername,
-                                profilePhotoName: selectedProfilePhoto == nil
-                                    ? ""
-                                    : "selected-profile-photo"
-                            )
-                        } label: {
-                            Label(
-                                selectedProfilePhoto == nil ? "Later" : "Create profile",
-                                systemImage: "plus"
-                            )
-                        }
-                    } else {
-                        Button {
-                            let username = createUsername.trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            )
-                            if username.isEmpty {
-                                model.createProfile(username: "", profilePhotoName: "")
-                            } else {
-                                showCreatePhoto = true
-                            }
-                        } label: {
-                            Label(
-                                createUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    ? "Create profile"
-                                    : "Continue",
-                                systemImage: "plus"
-                            )
-                        }
-                    }
-                }
-
-                Section {
-                    SecureField("Restore secret", text: $model.restoreSecret)
                     Button {
-                        model.restoreProfile()
+                        path.append(.create)
+                    } label: {
+                        Label("Create profile", systemImage: "plus")
+                    }
+                    Button {
+                        path.append(.signIn)
                     } label: {
                         Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                     }
-                    .disabled(
-                        model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
-
-                    TextField("Owner public key", text: $ownerPublicKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button {
-                        model.ownerPublicKey = ownerPublicKey
-                        model.linkDevice()
-                    } label: {
-                        Label("Link this device", systemImage: "link")
-                    }
-                    .disabled(
-                        ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
                 }
             }
             .navigationTitle("Setup")
+            .navigationDestination(for: SetupRoute.self) { route in
+                switch route {
+                case .create:
+                    CreateProfileSetupView(model: model) { username in
+                        if username.isEmpty {
+                            model.createProfile(username: "", profilePhotoName: "")
+                        } else {
+                            path.append(.photo(username))
+                        }
+                    }
+                case .photo(let username):
+                    ProfilePhotoSetupView(model: model, username: username)
+                case .signIn:
+                    SignInSetupView(model: model) {
+                        path.append(.link)
+                    }
+                case .link:
+                    LinkDeviceSetupView(model: model)
+                }
+            }
         }
+    }
+}
+
+private struct CreateProfileSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let continueWithUsername: (String) -> Void
+    @State private var username = ""
+
+    private var trimmedUsername: String {
+        username.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Username (optional)", text: $username)
+                    .textInputAutocapitalization(.words)
+                Button {
+                    continueWithUsername(trimmedUsername)
+                } label: {
+                    Label(
+                        trimmedUsername.isEmpty ? "Create profile" : "Continue",
+                        systemImage: "plus"
+                    )
+                }
+            }
+        }
+        .navigationTitle("Create profile")
+    }
+}
+
+private struct ProfilePhotoSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let username: String
+    @State private var selectedPhoto: PhotosPickerItem?
+
+    var body: some View {
+        Form {
+            Section {
+                PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                    Label(
+                        selectedPhoto == nil ? "Choose photo" : "Photo selected",
+                        systemImage: "photo"
+                    )
+                }
+                if selectedPhoto != nil {
+                    Button {
+                        selectedPhoto = nil
+                    } label: {
+                        Label("Remove photo", systemImage: "xmark")
+                    }
+                }
+                Button {
+                    model.createProfile(
+                        username: username,
+                        profilePhotoName: selectedPhoto == nil ? "" : "selected-profile-photo"
+                    )
+                } label: {
+                    Label(selectedPhoto == nil ? "Later" : "Create profile", systemImage: "plus")
+                }
+            }
+        }
+        .navigationTitle("Profile photo")
+    }
+}
+
+private struct SignInSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let openLinkDevice: () -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                SecureField("Secret key", text: $model.restoreSecret)
+                Button {
+                    model.restoreProfile()
+                } label: {
+                    Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(action: openLinkDevice) {
+                    Label("Link this device", systemImage: "link")
+                }
+            }
+        }
+        .navigationTitle("Sign in")
+    }
+}
+
+private struct LinkDeviceSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var ownerPublicKey = ""
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Owner public key", text: $ownerPublicKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    model.ownerPublicKey = ownerPublicKey
+                    model.linkDevice()
+                } label: {
+                    Label("Link device", systemImage: "link")
+                }
+                .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .navigationTitle("Link this device")
     }
 }
 
@@ -165,17 +245,20 @@ private struct DriveHomeView: View {
                 .padding(.vertical, 8)
             }
 
+            Section("Summary") {
+                LabeledContent("Files", value: "\(model.fileCount)")
+                LabeledContent("Top level", value: "\(model.topLevelEntries)")
+                LabeledContent("Storage", value: byteString(model.visibleFileBytes))
+                LabeledContent("Authorized devices", value: "\(model.authorizedDeviceCount)")
+                LabeledContent("Published roots", value: "\(model.publishedDeviceRoots)")
+            }
+
             Section("Files") {
-                LabeledContent("Provider", value: model.fileProviderStatus)
-                Button {
-                    model.ensureFileProviderDomain()
-                } label: {
-                    Label("Refresh Files provider", systemImage: "folder.badge.gearshape")
-                }
+                LabeledContent("Root", value: model.rootStatus)
                 Button {
                     model.openDriveFolder()
                 } label: {
-                    Label("Open drive folder", systemImage: "folder")
+                    Label("Open in Files", systemImage: "folder")
                 }
                 Button {
                     model.copySnapshotLink()
@@ -191,6 +274,7 @@ private struct DriveHomeView: View {
 
             Section("Sync") {
                 LabeledContent("State", value: model.syncStateTitle)
+                LabeledContent("Account", value: model.authorizationState)
                 Button {
                     model.startSync()
                 } label: {
@@ -200,29 +284,6 @@ private struct DriveHomeView: View {
                     model.stopSync()
                 } label: {
                     Label("Stop sync", systemImage: "stop.fill")
-                }
-                Button {
-                    model.restartSync()
-                } label: {
-                    Label("Restart sync", systemImage: "arrow.triangle.2.circlepath")
-                }
-            }
-
-            Section("Roots") {
-                ForEach(model.roots) { root in
-                    DisclosureGroup {
-                        Text(root.path)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(root.name)
-                            Text(root.status)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 }
             }
         }
@@ -237,6 +298,21 @@ private struct DriveHomeView: View {
                 .accessibilityLabel("Refresh")
             }
         }
+    }
+}
+
+private struct DriveFolderBrowser: UIViewControllerRepresentable {
+    let initialDirectoryURL: URL?
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let controller = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
+        controller.allowsMultipleSelection = false
+        controller.directoryURL = initialDirectoryURL
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {
+        controller.directoryURL = initialDirectoryURL
     }
 }
 
@@ -258,13 +334,27 @@ private struct DevicesView: View {
                                 .foregroundStyle(device.isOnline ? .green : .secondary)
                             VStack(alignment: .leading) {
                                 Text(device.label)
-                                Text(device.state)
+                                Text("\(device.role) | \(device.state)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
                     .swipeActions {
+                        if device.canAppointAdmin {
+                            Button {
+                                model.appointAdmin(id: device.id)
+                            } label: {
+                                Label("Make Admin", systemImage: "person.badge.key")
+                            }
+                        }
+                        if device.canDemoteAdmin {
+                            Button {
+                                model.demoteAdmin(id: device.id)
+                            } label: {
+                                Label("Remove Admin", systemImage: "person.badge.minus")
+                            }
+                        }
                         if device.canRevoke {
                             Button(role: .destructive) {
                                 model.revokeDevice(id: device.id)
@@ -416,4 +506,8 @@ private struct SettingsView: View {
         }
         .navigationTitle("Settings")
     }
+}
+
+private func byteString(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
 }

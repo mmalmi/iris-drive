@@ -85,7 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installStatusItem()
         installWindowObserver()
         observeWindows()
-        updateStatus("Starting sync")
         DispatchQueue.global(qos: .utility).async { [weak self] in
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
@@ -95,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "testing=\(currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode")) " +
             "team=\(currentProcessEntitlementValue("com.apple.developer.team-identifier") ?? "nil")"
         )
-        ensureFileProviderDomain()
+        ensureFileProviderDomainIfProfileExists()
     }
 
     func ensureFileProviderDomain() {
@@ -136,6 +135,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             irisDriveDebugLog("Iris Drive FileProvider disabled for this signing mode")
             fileProviderDomainState = .unavailable
         }
+    }
+
+    func ensureFileProviderDomainIfProfileExists() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        guard localProfileExists(paths: paths) else {
+            fileProviderDomainState = .unavailable
+            return
+        }
+        ensureFileProviderDomain()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -450,28 +458,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func createProfile(label: String) {
-        let args = setupArguments(command: "init", label: label, extra: ["--force"])
+    func createProfile(username: String, profilePhotoPath: String) {
+        var extra = ["--force"]
+        let username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !username.isEmpty {
+            extra += ["--username", username]
+            let profilePhotoPath = profilePhotoPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !profilePhotoPath.isEmpty {
+                extra += ["--profile-photo", profilePhotoPath]
+            }
+        }
+        let args = setupArguments(command: "init", label: "", extra: extra)
         finishSetup(arguments: args)
     }
 
-    func restoreProfile(secretKey: String, label: String) {
+    func restoreProfile(secretKey: String) {
         let secret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !secret.isEmpty else {
             updateStatus("Secret key required")
             return
         }
-        let args = setupArguments(command: "restore", label: label, extra: [secret])
+        let args = setupArguments(command: "restore", label: "", extra: [secret])
         finishSetup(arguments: args)
     }
 
-    func linkDevice(owner: String, label: String) {
+    func linkDevice(owner: String) {
         let owner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else {
             updateStatus("Owner key required")
             return
         }
-        let args = setupArguments(command: "link", label: label, extra: [owner])
+        let args = setupArguments(command: "link", label: "", extra: [owner])
         finishSetup(arguments: args)
     }
 
@@ -506,6 +523,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 NSLog("Iris Drive device approval failed: \(error)")
                 self.updateStatus("Approve failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
+    func appointAdmin(_ device: String) {
+        setDeviceAdminRole(device, makeAdmin: true)
+    }
+
+    func demoteAdmin(_ device: String) {
+        setDeviceAdminRole(device, makeAdmin: false)
+    }
+
+    private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
+        let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !device.isEmpty else {
+            updateStatus("Device key required")
+            return
+        }
+
+        let command = makeAdmin ? "appoint-admin" : "demote-admin"
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus(makeAdmin ? "Making admin" : "Removing admin")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(
+                    idrive,
+                    arguments: ["devices", command, device],
+                    paths: paths
+                )
+                DispatchQueue.main.async {
+                    self.updateStatus(makeAdmin ? "Device made admin" : "Admin removed")
+                    self.refreshStatus()
+                    if IrisDriveStatus.shared.daemonRunning {
+                        self.restartSync()
+                    } else {
+                        self.startSync()
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive admin role update failed: \(error)")
+                self.updateStatus("Admin update failed")
                 DispatchQueue.main.async {
                     NSSound.beep()
                 }
@@ -578,14 +641,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         stopItem.target = self
         menu.addItem(stopItem)
-
-        let restartItem = NSMenuItem(
-            title: "Restart Sync",
-            action: #selector(restartSync),
-            keyEquivalent: ""
-        )
-        restartItem.target = self
-        menu.addItem(restartItem)
 
         let configItem = NSMenuItem(
             title: "Show Config Folder",
@@ -725,6 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
+            updateStatus("Starting sync")
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
             startDaemon(idrive, paths: paths)
         } catch {
@@ -789,11 +845,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showMountedDriveFolder() {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        guard localProfileExists(paths: paths) else {
+            updateStatus("Setup needed")
+            return
+        }
         guard fileProviderIntegrationEnabled else {
             handleFileProviderOpenFailure("disabled for this signing mode")
             return
         }
-        let paths = runtimePathsForMenu ?? runtimePaths()
         prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
         let runtime = FileProviderRuntimeConfig(
             configDirectory: paths.configDirectory.path,
@@ -858,6 +918,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
         guard daemon == nil else { return }
+        guard localProfileExists(paths: paths) else {
+            updateStatus("Setup needed")
+            setDaemonRunning(false)
+            return
+        }
         daemonRestartWorkItem?.cancel()
         daemonRestartWorkItem = nil
 
@@ -999,6 +1064,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
         guard !userRequestedSyncStop, !externalDaemonMode else { return }
+        guard localProfileExists(paths: paths) else {
+            updateStatus("Setup needed")
+            setDaemonRunning(false)
+            return
+        }
         daemonRestartWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self,

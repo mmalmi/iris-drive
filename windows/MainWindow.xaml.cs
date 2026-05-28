@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 using WpfApplication = System.Windows.Application;
 using WpfBrush = System.Windows.Media.Brush;
@@ -88,7 +89,7 @@ public partial class MainWindow : Window
             {
                 SetupRoot.Visibility = Visibility.Visible;
                 MainRoot.Visibility = Visibility.Collapsed;
-                SetupNotice.Text = "Setup needed";
+                SetupNotice.Text = "";
                 return;
             }
 
@@ -124,7 +125,6 @@ public partial class MainWindow : Window
         DriveMessage.Text = "Starting sync";
         StatusPill.Text = "Starting";
         FilesValue.Text = "0";
-        BlocksValue.Text = "0";
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = "";
@@ -154,7 +154,6 @@ public partial class MainWindow : Window
         StatusPill.Text = syncRunning ? "Running" : "Stopped";
         FilesValue.Text = (status.FileCount > 0 ? status.FileCount : status.TopLevelEntries)
             .ToString(CultureInfo.InvariantCulture);
-        BlocksValue.Text = status.LocalBlockCount.ToString(CultureInfo.InvariantCulture);
         StorageValue.Text = FormatBytes(status.LocalBlockBytes);
         DevicesValue.Text = $"{status.PublishedDeviceRoots}/{status.AuthorizedDeviceCount}";
         NoticeText.Text = notice ?? "";
@@ -192,7 +191,6 @@ public partial class MainWindow : Window
         DriveMessage.Text = "Unavailable";
         StatusPill.Text = "Stopped";
         FilesValue.Text = "0";
-        BlocksValue.Text = "0";
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = message;
@@ -289,25 +287,55 @@ public partial class MainWindow : Window
         Grid.SetColumn(stack, 1);
         grid.Children.Add(stack);
 
+        var actions = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+
+        if (peer.CanAppointAdmin)
+        {
+            var appointAdmin = PeerActionButton("\uE8D7", "Make admin", peer.DeviceNpub);
+            appointAdmin.Click += AppointAdmin_Click;
+            actions.Children.Add(appointAdmin);
+        }
+
+        if (peer.CanDemoteAdmin)
+        {
+            var demoteAdmin = PeerActionButton("\uE711", "Remove admin", peer.DeviceNpub);
+            demoteAdmin.Click += DemoteAdmin_Click;
+            actions.Children.Add(demoteAdmin);
+        }
+
         if (peer.CanRevoke)
         {
-            var revoke = new WpfButton
-            {
-                Content = new TextBlock { Text = "\uE74D", Style = (Style)FindResource("IconGlyph") },
-                Style = (Style)FindResource("IconButton"),
-                Tag = peer.DeviceNpub,
-                Margin = new Thickness(8, 0, 0, 0),
-                ToolTip = "Revoke device",
-            };
+            var revoke = PeerActionButton("\uE74D", "Revoke device", peer.DeviceNpub);
             revoke.Click += RevokeDevice_Click;
-            Grid.SetColumn(revoke, 2);
-            grid.Children.Add(revoke);
+            actions.Children.Add(revoke);
+        }
+
+        if (actions.Children.Count > 0)
+        {
+            Grid.SetColumn(actions, 2);
+            grid.Children.Add(actions);
         }
 
         return new Border
         {
             Padding = new Thickness(12, 9, 12, 9),
             Child = grid,
+        };
+    }
+
+    private WpfButton PeerActionButton(string glyph, string toolTip, string deviceNpub)
+    {
+        return new WpfButton
+        {
+            Content = new TextBlock { Text = glyph, Style = (Style)FindResource("IconGlyph") },
+            Style = (Style)FindResource("IconButton"),
+            Tag = deviceNpub,
+            Margin = new Thickness(8, 0, 0, 0),
+            ToolTip = toolTip,
         };
     }
 
@@ -507,16 +535,6 @@ public partial class MainWindow : Window
         await RefreshAsync();
     }
 
-    private async void Restart_Click(object sender, RoutedEventArgs e)
-    {
-        StopDaemon();
-        if (currentStatus is not null)
-        {
-            EnsureDaemonRunning(currentStatus);
-        }
-        await RefreshAsync();
-    }
-
     private async void OpenDrive_Click(object sender, RoutedEventArgs e)
     {
         await OpenDriveMountAsync();
@@ -695,6 +713,54 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void AppointAdmin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: string deviceNpub })
+        {
+            return;
+        }
+
+        try
+        {
+            await service.AppointAdminAsync(deviceNpub);
+            StopDaemon();
+            if (currentStatus is not null)
+            {
+                EnsureDaemonRunning(currentStatus);
+            }
+            NoticeText.Text = "Device made admin";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void DemoteAdmin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: string deviceNpub })
+        {
+            return;
+        }
+
+        try
+        {
+            await service.DemoteAdminAsync(deviceNpub);
+            StopDaemon();
+            if (currentStatus is not null)
+            {
+                EnsureDaemonRunning(currentStatus);
+            }
+            NoticeText.Text = "Admin removed";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
     private async void AddRelay_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -791,14 +857,46 @@ public partial class MainWindow : Window
 
     private async void CreateSubmit_Click(object sender, RoutedEventArgs e)
     {
-        await RunSetupAsync(() => service.CreateProfileAsync(CreateLabelBox.Text));
+        if (string.IsNullOrWhiteSpace(CreateUsernameBox.Text))
+        {
+            await RunSetupAsync(() => service.CreateProfileAsync("", ""));
+            return;
+        }
+        ShowSetupPanel(CreatePhotoPanel);
+        CreatePhotoPathBox.Focus();
+    }
+
+    private void ChooseCreatePhoto_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*",
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            CreatePhotoPathBox.Text = dialog.FileName;
+            CreatePhotoSubmitText.Text = "Create profile";
+        }
+    }
+
+    private void CreateUsernameBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        CreateSubmitText.Text = string.IsNullOrWhiteSpace(CreateUsernameBox.Text)
+            ? "Create profile"
+            : "Continue";
+    }
+
+    private async void CreatePhotoSubmit_Click(object sender, RoutedEventArgs e)
+    {
+        await RunSetupAsync(() => service.CreateProfileAsync(
+            CreateUsernameBox.Text,
+            CreatePhotoPathBox.Text));
     }
 
     private async void RestoreSubmit_Click(object sender, RoutedEventArgs e)
     {
-        await RunSetupAsync(() => service.RestoreProfileAsync(
-            RestoreSecretBox.Password,
-            RestoreLabelBox.Text));
+        await RunSetupAsync(() => service.RestoreProfileAsync(RestoreSecretBox.Password));
     }
 
     private void RestoreSecretBox_PasswordChanged(object sender, RoutedEventArgs e)
@@ -810,7 +908,7 @@ public partial class MainWindow : Window
 
     private async void LinkSubmit_Click(object sender, RoutedEventArgs e)
     {
-        await RunSetupAsync(() => service.LinkDeviceAsync(LinkOwnerBox.Text, LinkLabelBox.Text));
+        await RunSetupAsync(() => service.LinkDeviceAsync(LinkOwnerBox.Text));
     }
 
     private async Task RunSetupAsync(Func<Task> operation)
@@ -836,6 +934,7 @@ public partial class MainWindow : Window
     private void SetSetupEnabled(bool enabled)
     {
         CreateSubmitButton.IsEnabled = enabled;
+        CreatePhotoSubmitButton.IsEnabled = enabled;
         RestoreSubmitButton.IsEnabled = enabled;
         LinkSubmitButton.IsEnabled = enabled;
     }
@@ -843,7 +942,10 @@ public partial class MainWindow : Window
     private void ShowCreate_Click(object sender, RoutedEventArgs e)
     {
         ShowSetupPanel(CreatePanel);
-        CreateLabelBox.Focus();
+        CreateSubmitText.Text = string.IsNullOrWhiteSpace(CreateUsernameBox.Text)
+            ? "Create profile"
+            : "Continue";
+        CreateUsernameBox.Focus();
     }
 
     private void ShowRestore_Click(object sender, RoutedEventArgs e)
@@ -872,6 +974,7 @@ public partial class MainWindow : Window
     {
         WelcomePanel.Visibility = Visibility.Collapsed;
         CreatePanel.Visibility = Visibility.Collapsed;
+        CreatePhotoPanel.Visibility = Visibility.Collapsed;
         RestorePanel.Visibility = Visibility.Collapsed;
         LinkPanel.Visibility = Visibility.Collapsed;
         AwaitingPanel.Visibility = Visibility.Collapsed;
@@ -929,15 +1032,6 @@ public partial class MainWindow : Window
         menu.Items.Add("Stop Sync", null, async (_, _) =>
         {
             StopDaemon();
-            await RefreshAsync();
-        });
-        menu.Items.Add("Restart Sync", null, async (_, _) =>
-        {
-            StopDaemon();
-            if (currentStatus is not null)
-            {
-                EnsureDaemonRunning(currentStatus);
-            }
             await RefreshAsync();
         });
         menu.Items.Add(new Forms.ToolStripSeparator());

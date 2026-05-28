@@ -385,6 +385,7 @@ fn discovery_scope_uses_iris_drive_overlay() {
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
             device_label: None,
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         }),
@@ -467,22 +468,24 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
             device_label: None,
             app_keys: Some(crate::app_keys::AppKeysSnapshot {
                 owner_pubkey: "aa".repeat(32),
+                signed_by_pubkey: Some("dd".repeat(32)),
                 created_at: 1,
                 devices: vec![
-                    crate::app_keys::DeviceEntry {
-                        pubkey: first_pubkey,
-                        added_at: 1,
-                        label: Some("macos-peer".into()),
-                    },
-                    crate::app_keys::DeviceEntry {
-                        pubkey: second_pubkey,
-                        added_at: 1,
-                        label: Some("linux-peer".into()),
-                    },
+                    crate::app_keys::DeviceEntry::member(
+                        first_pubkey,
+                        1,
+                        Some("macos-peer".into()),
+                    ),
+                    crate::app_keys::DeviceEntry::member(
+                        second_pubkey,
+                        1,
+                        Some("linux-peer".into()),
+                    ),
                 ],
                 dck_generation: 0,
                 wrapped_dck: std::collections::BTreeMap::default(),
             }),
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         }),
@@ -502,7 +505,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
 }
 
 #[test]
-fn pending_device_link_admin_is_routing_peer_not_authorized_peer() {
+fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
     let admin_keys = nostr_sdk::Keys::generate();
     let admin_pubkey = admin_keys.public_key().to_hex();
     let admin_npub = admin_keys.public_key().to_bech32().unwrap();
@@ -519,6 +522,7 @@ fn pending_device_link_admin_is_routing_peer_not_authorized_peer() {
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
             device_label: None,
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: Some(crate::account::PendingDeviceLinkRequest {
                 admin_device_pubkey: admin_pubkey,
                 requested_at: 42,
@@ -528,7 +532,10 @@ fn pending_device_link_admin_is_routing_peer_not_authorized_peer() {
         ..Default::default()
     };
 
-    assert!(authorized_device_fips_peers(&config, &settings).is_empty());
+    let authorized = authorized_device_fips_peers(&config, &settings);
+    assert_eq!(authorized.len(), 1);
+    assert_eq!(authorized[0].npub, admin_npub);
+    assert_eq!(authorized[0].udp_addresses, vec!["10.44.1.9:22121"]);
     let routing = routing_fips_peers(&config, &settings);
     assert_eq!(routing.len(), 1);
     assert_eq!(routing[0].npub, admin_npub);

@@ -3,10 +3,11 @@
 //! One replaceable event kind (NIP-78 parameterized-replaceable range),
 //! separated by Iris-specific `d` tags:
 //!
-//! - **`KIND_APP_KEYS = 30078`** — owner-signed `AppKeys` roster.
-//!   d-tag: `"iris-drive/app-keys"`. Pubkey = owner pubkey. Content = JSON
-//!   `{ devices, dck_generation, wrapped_dck }`. The event's `created_at`
-//!   doubles as the snapshot's `created_at`.
+//! - **`KIND_APP_KEYS = 30078`** — admin-device-signed `AppKeys` roster.
+//!   d-tag: `"iris-drive/<account_pubkey>/app-keys"`. Pubkey = signing
+//!   admin device. Content = JSON `{ owner_pubkey, devices, dck_generation,
+//!   wrapped_dck }`. The event's `created_at` doubles as the snapshot's
+//!   `created_at`. The legacy d-tag `"iris-drive/app-keys"` is still parsed.
 //!
 //! - **`KIND_DRIVE_ROOT = 30078`** — device-signed drive-root reference.
 //!   d-tag: `"iris-drive/<owner_pubkey_hex>/<drive_id>/root"`.
@@ -44,6 +45,20 @@ pub const KIND_HASHTREE_ROOT: u16 = 30_078;
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
+
+#[must_use]
+pub fn app_keys_d_tag(owner_pubkey_hex: &str) -> String {
+    format!("iris-drive/{owner_pubkey_hex}/app-keys")
+}
+
+#[must_use]
+pub fn is_app_keys_event_coordinate(event: &Event) -> bool {
+    event.kind.as_u16() == KIND_APP_KEYS
+        && event.identifier().is_some_and(|d_tag| {
+            d_tag == D_TAG_APP_KEYS
+                || (d_tag.starts_with("iris-drive/") && d_tag.ends_with("/app-keys"))
+        })
+}
 
 #[must_use]
 pub fn is_drive_root_event_kind(kind: u16) -> bool {
@@ -94,6 +109,12 @@ pub enum WireError {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AppKeysWireContent {
+    #[serde(
+        default,
+        alias = "account_pubkey",
+        skip_serializing_if = "Option::is_none"
+    )]
+    owner_pubkey: Option<String>,
     devices: Vec<DeviceEntry>,
     #[serde(default)]
     dck_generation: u64,
@@ -123,15 +144,15 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Build a signed `AppKeys` event from a snapshot. The owner key must
-/// match `snapshot.owner_pubkey`; passing a key for someone else
-/// produces an event the application layer will then ignore via the
-/// `AppKeys` allowlist check.
+/// Build a signed `AppKeys` event from a snapshot. The signing key is the
+/// current admin device; the stable account id lives in the event content and
+/// account-scoped d-tag.
 pub fn build_app_keys_event(
-    owner_keys: &Keys,
+    admin_keys: &Keys,
     snapshot: &AppKeysSnapshot,
 ) -> Result<Event, WireError> {
     let content = AppKeysWireContent {
+        owner_pubkey: Some(snapshot.owner_pubkey.clone()),
         devices: snapshot.devices.clone(),
         dck_generation: snapshot.dck_generation,
         wrapped_dck: snapshot.wrapped_dck.clone(),
@@ -145,18 +166,19 @@ pub fn build_app_keys_event(
     let builder = EventBuilder::new(
         Kind::from(KIND_APP_KEYS),
         content_json,
-        [Tag::identifier(D_TAG_APP_KEYS)],
+        [Tag::identifier(app_keys_d_tag(&snapshot.owner_pubkey))],
     )
     .custom_created_at(nostr_sdk::Timestamp::from(ts));
     let event = builder
-        .to_event(owner_keys)
+        .to_event(admin_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
     Ok(event)
 }
 
 /// Parse + verify an `AppKeys` event into a snapshot. The event must
-/// have the right kind, the `iris-drive/app-keys` d-tag, and a valid
-/// signature. The snapshot's `owner_pubkey` is the event's author.
+/// have the right kind, an Iris Drive app-keys d-tag, and a valid signature.
+/// The snapshot's `owner_pubkey` is the stable account id, while
+/// `signed_by_pubkey` is the admin device that authored the event.
 pub fn parse_app_keys_event(event: &Event) -> Result<AppKeysSnapshot, WireError> {
     let kind = event.kind.as_u16();
     if kind != KIND_APP_KEYS {
@@ -166,7 +188,12 @@ pub fn parse_app_keys_event(event: &Event) -> Result<AppKeysSnapshot, WireError>
         });
     }
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
-    if d_tag != D_TAG_APP_KEYS {
+    let d_tag_account = if d_tag == D_TAG_APP_KEYS {
+        None
+    } else {
+        Some(parse_app_keys_d_tag(d_tag)?)
+    };
+    if d_tag != D_TAG_APP_KEYS && d_tag_account.is_none() {
         return Err(WireError::DTagMalformed(format!(
             "expected {D_TAG_APP_KEYS}, got {d_tag}"
         )));
@@ -176,14 +203,42 @@ pub fn parse_app_keys_event(event: &Event) -> Result<AppKeysSnapshot, WireError>
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let content: AppKeysWireContent =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
+    let owner_pubkey = content
+        .owner_pubkey
+        .or(d_tag_account)
+        .unwrap_or_else(|| event.pubkey.to_hex());
+    if let Some(d_tag_account) = parse_app_keys_d_tag(d_tag).ok()
+        && d_tag_account != owner_pubkey
+    {
+        return Err(WireError::DTagMalformed(format!(
+            "app-keys d-tag account {d_tag_account} does not match content owner {owner_pubkey}"
+        )));
+    }
     let snapshot = AppKeysSnapshot {
-        owner_pubkey: event.pubkey.to_hex(),
+        owner_pubkey,
+        signed_by_pubkey: Some(event.pubkey.to_hex()),
         created_at: i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX),
         devices: content.devices,
         dck_generation: content.dck_generation,
         wrapped_dck: content.wrapped_dck,
     };
     Ok(snapshot)
+}
+
+fn parse_app_keys_d_tag(d_tag: &str) -> Result<String, WireError> {
+    let rest = d_tag
+        .strip_prefix("iris-drive/")
+        .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
+    let account = rest
+        .strip_suffix("/app-keys")
+        .ok_or_else(|| WireError::DTagMalformed(format!("no /app-keys suffix: {d_tag}")))?;
+    if account.is_empty() || account == "app-keys" {
+        return Err(WireError::DTagMalformed(format!(
+            "empty app-keys account: {d_tag}"
+        )));
+    }
+    PublicKey::from_hex(account).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    Ok(account.to_string())
 }
 
 /// Compute the d-tag for a drive-root event.
@@ -434,12 +489,13 @@ mod tests {
     fn fake_snapshot(owner_pubkey: &str) -> AppKeysSnapshot {
         AppKeysSnapshot {
             owner_pubkey: owner_pubkey.to_string(),
+            signed_by_pubkey: Some(owner_pubkey.to_string()),
             created_at: 1_700_000_000,
-            devices: vec![DeviceEntry {
-                pubkey: "ab".repeat(32),
-                added_at: 1_699_000_000,
-                label: Some("Mac mini".into()),
-            }],
+            devices: vec![DeviceEntry::admin(
+                "ab".repeat(32),
+                1_699_000_000,
+                Some("Mac mini".into()),
+            )],
             dck_generation: 5,
             wrapped_dck: BTreeMap::from([("ab".repeat(32), "base64ciphertext".into())]),
         }
@@ -458,13 +514,19 @@ mod tests {
 
     #[test]
     fn app_keys_event_roundtrip() {
-        let owner = Keys::generate();
-        let snap = fake_snapshot(&owner.public_key().to_hex());
-        let event = build_app_keys_event(&owner, &snap).unwrap();
+        let account = Keys::generate();
+        let admin = Keys::generate();
+        let snap = fake_snapshot(&account.public_key().to_hex());
+        let event = build_app_keys_event(&admin, &snap).unwrap();
         let parsed = parse_app_keys_event(&event).unwrap();
+        let account_hex = account.public_key().to_hex();
+        let admin_hex = admin.public_key().to_hex();
 
-        // owner_pubkey comes from the event author.
-        assert_eq!(parsed.owner_pubkey, owner.public_key().to_hex());
+        // owner_pubkey is the stable account id; signer is the admin event author.
+        assert_eq!(parsed.owner_pubkey, account_hex);
+        assert_eq!(parsed.signed_by_pubkey.as_deref(), Some(admin_hex.as_str()));
+        let expected_d_tag = app_keys_d_tag(&parsed.owner_pubkey);
+        assert_eq!(event.identifier(), Some(expected_d_tag.as_str()));
         // The snapshot's created_at IS the event's created_at — round-trip stable.
         assert_eq!(parsed.created_at, snap.created_at);
         assert_eq!(parsed.devices, snap.devices);
@@ -474,17 +536,17 @@ mod tests {
 
     #[test]
     fn event_author_attributes_to_actual_signer() {
-        // Confirm the wire-format accurately reports who signed an event.
-        // The application's AppKeys allowlist is what then rejects events
-        // from non-owners — the parse step doesn't filter; it just
-        // surfaces the signer faithfully.
-        let owner = Keys::generate();
-        let snap = fake_snapshot(&owner.public_key().to_hex());
-        let attacker = Keys::generate();
-        let attacker_event = build_app_keys_event(&attacker, &snap).unwrap();
-        let parsed = parse_app_keys_event(&attacker_event).unwrap();
-        assert_ne!(parsed.owner_pubkey, owner.public_key().to_hex());
-        assert_eq!(parsed.owner_pubkey, attacker.public_key().to_hex());
+        let account = Keys::generate();
+        let snap = fake_snapshot(&account.public_key().to_hex());
+        let signer = Keys::generate();
+        let event = build_app_keys_event(&signer, &snap).unwrap();
+        let parsed = parse_app_keys_event(&event).unwrap();
+        assert_eq!(parsed.owner_pubkey, account.public_key().to_hex());
+        let signer_hex = signer.public_key().to_hex();
+        assert_eq!(
+            parsed.signed_by_pubkey.as_deref(),
+            Some(signer_hex.as_str())
+        );
     }
 
     #[test]
@@ -511,6 +573,7 @@ mod tests {
         let owner = Keys::generate();
         let snap = fake_snapshot(&owner.public_key().to_hex());
         let content = serde_json::to_string(&AppKeysWireContent {
+            owner_pubkey: Some(snap.owner_pubkey.clone()),
             devices: snap.devices.clone(),
             dck_generation: snap.dck_generation,
             wrapped_dck: snap.wrapped_dck.clone(),

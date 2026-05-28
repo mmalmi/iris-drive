@@ -324,14 +324,13 @@ fn provider_commands_operate_on_virtual_root() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn linked_devices_sync_each_others_files_through_cli() {
+async fn relay_publish_does_not_send_roster_events() {
     let relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn().await;
 
     let cfg_a = tempdir().unwrap();
     let cfg_b = tempdir().unwrap();
     let work_a = tempdir().unwrap();
-    let work_b = tempdir().unwrap();
 
     configure_local_blossom(cfg_a.path(), &blossom.url);
     configure_local_blossom(cfg_b.path(), &blossom.url);
@@ -348,15 +347,13 @@ async fn linked_devices_sync_each_others_files_through_cli() {
     let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);
     assert_eq!(approved["roster_size"], 2);
 
-    run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
-
     std::fs::write(work_a.path().join("from-a.txt"), b"hello from a").unwrap();
     run_json(cfg_a.path(), &["import", work_a.path().to_str().unwrap()]);
     let publish_a = run_json(
         cfg_a.path(),
         &["publish", "--relay", &relay.url, "--timeout", "2"],
     );
-    assert_eq!(publish_a["published_app_keys"], true);
+    assert_eq!(publish_a["published_app_keys"], false);
     assert_eq!(publish_a["published_drive_root"], true);
     assert!(
         publish_a["blossom_upload"]["uploaded"]
@@ -369,30 +366,9 @@ async fn linked_devices_sync_each_others_files_through_cli() {
         cfg_b.path(),
         &["sync", "--relay", &relay.url, "--timeout", "2"],
     );
-    assert_eq!(sync_b["drive_root_events_applied"], 1);
-    assert!(
-        sync_b["blossom_download"]["fetched"]
-            .as_u64()
-            .unwrap_or_default()
-            > 0
-    );
-    assert_list_paths(cfg_b.path(), &["from-a.txt"]);
-
-    std::fs::write(work_b.path().join("from-b.txt"), b"hello from b").unwrap();
-    run_json(cfg_b.path(), &["import", work_b.path().to_str().unwrap()]);
-    let publish_b = run_json(
-        cfg_b.path(),
-        &["publish", "--relay", &relay.url, "--timeout", "2"],
-    );
-    assert_eq!(publish_b["published_app_keys"], false);
-    assert_eq!(publish_b["published_drive_root"], true);
-
-    let sync_a = run_json(
-        cfg_a.path(),
-        &["sync", "--relay", &relay.url, "--timeout", "2"],
-    );
-    assert_eq!(sync_a["drive_root_events_applied"], 1);
-    assert_list_paths(cfg_a.path(), &["from-a.txt", "from-b.txt"]);
+    assert_eq!(sync_b["app_keys_event_applied"], "none");
+    assert_eq!(sync_b["drive_root_events_applied"], 0);
+    assert_list_paths(cfg_b.path(), &[]);
 }
 
 fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {
@@ -510,7 +486,7 @@ fn restore_after_init_errors_without_force_path() {
     // For now restore refuses to overwrite an existing install.
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
-    let nsec = std::fs::read_to_string(dir.path().join("owner_key"))
+    let nsec = std::fs::read_to_string(dir.path().join("key"))
         .unwrap()
         .trim()
         .to_string();

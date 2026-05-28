@@ -39,6 +39,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
 private enum IrisDriveSetupMode {
     case welcome
     case create
+    case createPhoto
     case restore
     case link
 }
@@ -50,6 +51,9 @@ private enum IrisDriveSyncState {
     case attention
 }
 
+private let setupControlWidth: CGFloat = 340
+private let setupButtonMinHeight: CGFloat = 44
+
 struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
@@ -60,7 +64,8 @@ struct IrisDriveControlPanel: View {
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var setupMode = IrisDriveSetupMode.welcome
-    @State private var setupLabel = ""
+    @State private var setupUsername = ""
+    @State private var setupPhotoPath = ""
     @State private var setupSecret = ""
     @State private var setupOwner = ""
     @State private var approveDeviceKey = ""
@@ -77,7 +82,7 @@ struct IrisDriveControlPanel: View {
             }
         }
         .onAppear {
-            controller.ensureFileProviderDomain()
+            controller.ensureFileProviderDomainIfProfileExists()
         }
     }
 
@@ -117,17 +122,16 @@ struct IrisDriveControlPanel: View {
     private var setup: some View {
         VStack(spacing: 18) {
             Spacer()
-            Image(systemName: "externaldrive.fill")
-                .font(.system(size: 72, weight: .semibold))
-                .foregroundStyle(.primary)
+            Image("BrandIcon")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 96, height: 96)
             Text("Iris Drive")
                 .font(.title.weight(.semibold))
             setupContent
-                .frame(width: 340)
-            if status.message != "Setup needed" {
-                Text(status.message)
-                    .foregroundStyle(.secondary)
-            }
+                .frame(width: setupControlWidth)
+                .controlSize(.large)
+                .buttonBorderShape(.roundedRectangle(radius: 5))
             Spacer()
         }
         .padding(32)
@@ -142,45 +146,73 @@ struct IrisDriveControlPanel: View {
                 Button {
                     setupMode = .create
                 } label: {
-                    Label("Create profile", systemImage: "plus")
-                        .frame(maxWidth: .infinity)
+                    setupButtonLabel("Create profile", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 Button {
                     setupMode = .restore
                 } label: {
-                    Label("Restore profile", systemImage: "key.fill")
-                        .frame(maxWidth: .infinity)
+                    setupButtonLabel("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
-                Button {
-                    setupMode = .link
-                } label: {
-                    Label("Link this device", systemImage: "desktopcomputer")
-                        .frame(maxWidth: .infinity)
-                }
+                .buttonStyle(.bordered)
             }
         case .create:
             setupForm(title: "Create profile") {
-                TextField("Device label", text: $setupLabel)
+                TextField("Username (optional)", text: $setupUsername)
                 setupSubmit("Create profile") {
-                    controller.createProfile(label: setupLabel)
+                    let username = setupUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if username.isEmpty {
+                        controller.createProfile(username: "", profilePhotoPath: "")
+                    } else {
+                        setupMode = .createPhoto
+                    }
+                }
+            }
+        case .createPhoto:
+            setupForm(title: "Profile photo", backTarget: .create) {
+                Button {
+                    chooseProfilePhoto()
+                } label: {
+                    setupButtonLabel(
+                        setupPhotoPath.isEmpty ? "Choose photo" : profilePhotoName,
+                        systemImage: "photo"
+                    )
+                }
+                .buttonStyle(.bordered)
+                if !setupPhotoPath.isEmpty {
+                    Button {
+                        setupPhotoPath = ""
+                    } label: {
+                        setupButtonLabel("Remove photo", systemImage: "xmark")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                setupSubmit(setupPhotoPath.isEmpty ? "Later" : "Create profile") {
+                    controller.createProfile(
+                        username: setupUsername,
+                        profilePhotoPath: setupPhotoPath
+                    )
                 }
             }
         case .restore:
-            setupForm(title: "Restore profile") {
+            setupForm(title: "Sign in") {
                 SecureField("Secret key", text: $setupSecret)
-                TextField("Device label", text: $setupLabel)
-                setupSubmit("Restore profile") {
-                    controller.restoreProfile(secretKey: setupSecret, label: setupLabel)
+                setupSubmit("Sign in") {
+                    controller.restoreProfile(secretKey: setupSecret)
                 }
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    setupMode = .link
+                } label: {
+                    setupButtonLabel("Link this device", systemImage: "desktopcomputer")
+                }
+                .buttonStyle(.bordered)
             }
         case .link:
             setupForm(title: "Link this device") {
                 TextField("Owner public key", text: $setupOwner)
-                TextField("Device label", text: $setupLabel)
                 setupSubmit("Link device") {
-                    controller.linkDevice(owner: setupOwner, label: setupLabel)
+                    controller.linkDevice(owner: setupOwner)
                 }
                 .disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -189,13 +221,14 @@ struct IrisDriveControlPanel: View {
 
     private func setupForm<Content: View>(
         title: String,
+        backTarget: IrisDriveSetupMode = .welcome,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Button {
-                setupMode = .welcome
+                setupMode = backTarget
             } label: {
-                Image(systemName: "chevron.left")
+                Label("Back", systemImage: "chevron.left")
             }
             .buttonStyle(.borderless)
             Text(title)
@@ -205,12 +238,38 @@ struct IrisDriveControlPanel: View {
         .textFieldStyle(.roundedBorder)
     }
 
+    private var profilePhotoName: String {
+        URL(fileURLWithPath: setupPhotoPath).lastPathComponent
+    }
+
+    private func chooseProfilePhoto() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            setupPhotoPath = url.path
+        }
+    }
+
     private func setupSubmit(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .frame(maxWidth: .infinity)
+            setupButtonLabel(title)
         }
         .buttonStyle(.borderedProminent)
+    }
+
+    private func setupButtonLabel(_ title: String, systemImage: String? = nil) -> some View {
+        HStack(spacing: 8) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .frame(width: 18)
+            }
+            Text(title)
+        }
+        .frame(maxWidth: .infinity, minHeight: setupButtonMinHeight)
+        .contentShape(Rectangle())
     }
 
     private var sidebar: some View {
@@ -353,8 +412,14 @@ struct IrisDriveControlPanel: View {
             if status.peers.isEmpty {
                 emptyState("No devices yet")
             } else {
+                let adminCount = status.peers.filter { $0.role == "admin" }.count
                 ForEach(status.peers) { peer in
-                    PeerRow(peer: peer)
+                    PeerRow(
+                        peer: peer,
+                        canManageDevices: status.hasOwnerSigningAuthority,
+                        adminCount: adminCount,
+                        controller: controller
+                    )
                 }
             }
         }
@@ -504,13 +569,11 @@ struct IrisDriveControlPanel: View {
                         .disabled(status.daemonRunning)
                     Button("Stop") { controller.stopSync() }
                         .disabled(!status.daemonRunning)
-                    Button("Restart") { controller.restartSync() }
                 }
                 Button("Copy snapshot link") { controller.copyDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
                 Button("Open snapshot link") { controller.openDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
-                LabeledContent("Blocks", value: "\(status.localBlockCount)")
                 LabeledContent(
                     "Storage",
                     value: byteString(status.visibleFileBytes ?? status.localBlockBytes)
@@ -816,6 +879,9 @@ private struct DetailRow: View {
 
 private struct PeerRow: View {
     let peer: IrisDrivePeerStatus
+    let canManageDevices: Bool
+    let adminCount: Int
+    let controller: AppDelegate
     @State private var expanded = false
 
     var body: some View {
@@ -855,6 +921,7 @@ private struct PeerRow: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     DetailRow(label: "Public key", value: peer.npub, copyable: true)
+                    DetailRow(label: "Role", value: roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)
                     }
@@ -865,6 +932,26 @@ private struct PeerRow: View {
                         DetailRow(label: "Updated", value: irisDriveDateString(published))
                     }
                     DetailRow(label: "Visibility", value: privacy)
+                    if canManagePeer {
+                        HStack(spacing: 8) {
+                            if peer.role == "admin" {
+                                if adminCount > 1 {
+                                    Button {
+                                        controller.demoteAdmin(peer.npub)
+                                    } label: {
+                                        Label("Remove Admin", systemImage: "person.badge.minus")
+                                    }
+                                }
+                            } else {
+                                Button {
+                                    controller.appointAdmin(peer.npub)
+                                } label: {
+                                    Label("Make Admin", systemImage: "person.badge.key")
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
                 .padding(.top, 12)
             }
@@ -880,9 +967,9 @@ private struct PeerRow: View {
 
     private var subtitle: String {
         if peer.isCurrentDevice {
-            return "This device"
+            return "This device | \(roleLabel)"
         }
-        return peer.fipsOnline ? "Online" : "Offline"
+        return [roleLabel, peer.fipsOnline ? "Online" : "Offline"].joined(separator: " | ")
     }
 
     private var privacy: String {
@@ -890,6 +977,14 @@ private struct PeerRow: View {
             return "Pending"
         }
         return peer.rootIsPrivate == false ? "Public" : "Private"
+    }
+
+    private var canManagePeer: Bool {
+        canManageDevices && !peer.isCurrentDevice
+    }
+
+    private var roleLabel: String {
+        peer.role == "admin" ? "Admin" : "Member"
     }
 }
 

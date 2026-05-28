@@ -54,7 +54,6 @@ struct Ui {
     device: gtk::Label,
     snapshot: gtk::Label,
     files: gtk::Label,
-    blocks: gtk::Label,
     storage: gtk::Label,
     devices: gtk::Label,
     account_owner: gtk::Label,
@@ -80,7 +79,6 @@ struct Ui {
     folder_button: gtk::Button,
     copy_snapshot_button: gtk::Button,
     open_snapshot_button: gtk::Button,
-    restart_button: gtk::Button,
     start_button: gtk::Button,
     stop_button: gtk::Button,
 }
@@ -90,6 +88,7 @@ struct AppModel {
     ui: Ui,
     daemon: RefCell<Option<Child>>,
     setup_screen: RefCell<SetupScreen>,
+    setup_username: RefCell<String>,
     tray: RefCell<Option<TrayServiceHandle>>,
     tray_available: Cell<bool>,
     settings_refreshing: Cell<bool>,
@@ -110,6 +109,7 @@ type TrayServiceHandle = ();
 enum SetupScreen {
     Welcome,
     Create,
+    CreatePhoto,
     Restore,
     Link,
 }

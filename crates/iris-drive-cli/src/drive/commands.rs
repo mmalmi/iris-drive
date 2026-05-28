@@ -132,18 +132,13 @@ pub(crate) fn cmd_event_app_keys(config_dir: &std::path::Path) -> Result<()> {
         .app_keys
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no AppKeys snapshot yet (run `idrive init` first)"))?;
-    if !state.has_owner_signing_authority {
+    if !state.can_manage_devices() {
         return Err(anyhow::anyhow!(
-            "this device does not have owner-signing authority - only owner-capable installs can publish AppKeys"
+            "this device is not an admin - only admin devices can publish AppKeys"
         ));
     }
     let account = Account::load(state.clone(), config_dir).context("loading account")?;
-    let owner_keys = account
-        .owner_key
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-        .keys();
-    let event = iris_drive_core::nostr_events::build_app_keys_event(owner_keys, snap)
+    let event = iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), snap)
         .context("building AppKeys event")?;
     println!("{}", serde_json::to_string_pretty(&event)?);
     Ok(())

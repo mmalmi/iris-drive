@@ -6,6 +6,7 @@ pub(crate) fn render_setup(model: &AppRef) {
     match *model.setup_screen.borrow() {
         SetupScreen::Welcome => render_setup_welcome(model),
         SetupScreen::Create => render_create_profile(model),
+        SetupScreen::CreatePhoto => render_create_profile_photo(model),
         SetupScreen::Restore => render_restore_profile(model),
         SetupScreen::Link => render_link_device(model),
     }
@@ -77,13 +78,24 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     container.set_valign(gtk::Align::Center);
     container.set_width_request(340);
 
-    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    let back = gtk::Button::new();
+    back.add_css_class("flat");
     back.set_tooltip_text(Some("Back"));
     back.set_halign(gtk::Align::Start);
+    let back_content = adw::ButtonContent::builder()
+        .icon_name("go-previous-symbolic")
+        .label("Back")
+        .build();
+    back.set_child(Some(&back_content));
     {
         let model = Rc::clone(model);
         back.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+            let target = if *model.setup_screen.borrow() == SetupScreen::CreatePhoto {
+                SetupScreen::Create
+            } else {
+                SetupScreen::Welcome
+            };
+            *model.setup_screen.borrow_mut() = target;
             render_setup(&model);
         });
     }
@@ -123,7 +135,7 @@ pub(crate) fn render_setup_welcome(model: &AppRef) {
     }
     container.append(&create);
 
-    let restore = welcome_button("Restore profile", "dialog-password-symbolic", false);
+    let restore = welcome_button("Sign in", "system-log-in-symbolic", false);
     {
         let model = Rc::clone(model);
         restore.connect_clicked(move |_| {
@@ -132,16 +144,6 @@ pub(crate) fn render_setup_welcome(model: &AppRef) {
         });
     }
     container.append(&restore);
-
-    let link = welcome_button("Link this device", "computer-symbolic", false);
-    {
-        let model = Rc::clone(model);
-        link.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::Link;
-            render_setup(&model);
-        });
-    }
-    container.append(&link);
 
     append_centered_setup(model, &container);
 }
@@ -164,19 +166,28 @@ pub(crate) fn welcome_button(label: &str, icon_name: &str, primary: bool) -> gtk
 
 pub(crate) fn render_create_profile(model: &AppRef) {
     let container = setup_container(model, "Create profile");
-    let label = setup_entry("Device label");
-    container.append(&label);
+    let username = setup_entry("Username (optional)");
+    username.set_text(&model.setup_username.borrow());
+    container.append(&username);
 
     let notice = setup_notice();
     let submit = primary_button("Create profile");
     {
         let model = Rc::clone(model);
-        let label = label.clone();
+        let username = username.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
+            let username_value = username.text().trim().to_string();
+            if !username_value.is_empty() {
+                *model.setup_username.borrow_mut() = username_value;
+                *model.setup_screen.borrow_mut() = SetupScreen::CreatePhoto;
+                render_setup(&model);
+                return;
+            }
             button.set_sensitive(false);
-            match create_profile(label.text().trim()) {
+            match create_profile("", None) {
                 Ok(()) => {
+                    model.setup_username.borrow_mut().clear();
                     *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
                     refresh(&model);
                 }
@@ -191,25 +202,76 @@ pub(crate) fn render_create_profile(model: &AppRef) {
     container.append(&notice);
     append_centered_setup(model, &container);
 
-    label.grab_focus();
+    username.grab_focus();
+}
+
+pub(crate) fn render_create_profile_photo(model: &AppRef) {
+    let container = setup_container(model, "Profile photo");
+    let photo = setup_entry("Photo path (optional)");
+    container.append(&photo);
+
+    let notice = setup_notice();
+    let submit = primary_button("Create profile");
+    {
+        let model = Rc::clone(model);
+        let photo = photo.clone();
+        let notice = notice.clone();
+        submit.connect_clicked(move |button| {
+            button.set_sensitive(false);
+            let username = model.setup_username.borrow().clone();
+            let photo_value = photo.text().trim().to_string();
+            let photo_arg = (!photo_value.is_empty()).then_some(photo_value.as_str());
+            match create_profile(&username, photo_arg) {
+                Ok(()) => {
+                    model.setup_username.borrow_mut().clear();
+                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                    refresh(&model);
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&submit);
+    let later = pill_button("Later");
+    {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
+        later.connect_clicked(move |button| {
+            button.set_sensitive(false);
+            let username = model.setup_username.borrow().clone();
+            match create_profile(&username, None) {
+                Ok(()) => {
+                    model.setup_username.borrow_mut().clear();
+                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                    refresh(&model);
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&later);
+    container.append(&notice);
+    append_centered_setup(model, &container);
 }
 
 pub(crate) fn render_restore_profile(model: &AppRef) {
-    let container = setup_container(model, "Restore profile");
+    let container = setup_container(model, "Sign in");
     let nsec = setup_entry("Secret key");
     nsec.set_visibility(false);
     nsec.set_input_purpose(gtk::InputPurpose::Password);
     container.append(&nsec);
 
-    let label = setup_entry("Device label");
-    container.append(&label);
-
     let notice = setup_notice();
-    let submit = primary_button("Restore profile");
+    let submit = primary_button("Sign in");
     {
         let model = Rc::clone(model);
         let nsec = nsec.clone();
-        let label = label.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
             let secret = nsec.text().trim().to_string();
@@ -218,7 +280,7 @@ pub(crate) fn render_restore_profile(model: &AppRef) {
                 return;
             }
             button.set_sensitive(false);
-            match restore_profile(&secret, label.text().trim()) {
+            match restore_profile(&secret) {
                 Ok(()) => {
                     *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
                     refresh(&model);
@@ -231,6 +293,23 @@ pub(crate) fn render_restore_profile(model: &AppRef) {
         });
     }
     container.append(&submit);
+
+    let link = pill_button("Link this device");
+    link.set_width_request(340);
+    let link_content = adw::ButtonContent::builder()
+        .icon_name("computer-symbolic")
+        .label("Link this device")
+        .build();
+    link.set_child(Some(&link_content));
+    {
+        let model = Rc::clone(model);
+        link.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Link;
+            render_setup(&model);
+        });
+    }
+    container.append(&link);
+
     container.append(&notice);
     append_centered_setup(model, &container);
 
@@ -242,15 +321,11 @@ pub(crate) fn render_link_device(model: &AppRef) {
     let owner = setup_entry("Owner public key");
     container.append(&owner);
 
-    let label = setup_entry("Device label");
-    container.append(&label);
-
     let notice = setup_notice();
     let submit = primary_button("Link device");
     {
         let model = Rc::clone(model);
         let owner = owner.clone();
-        let label = label.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
             let owner_value = owner.text().trim().to_string();
@@ -259,7 +334,7 @@ pub(crate) fn render_link_device(model: &AppRef) {
                 return;
             }
             button.set_sensitive(false);
-            match link_device(&owner_value, label.text().trim()) {
+            match link_device(&owner_value) {
                 Ok(()) => {
                     *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
                     refresh(&model);
@@ -297,7 +372,7 @@ pub(crate) fn setup_notice() -> gtk::Label {
 }
 
 pub(crate) fn initialize_drive(model: &AppRef) {
-    match create_profile("") {
+    match create_profile("", None) {
         Ok(()) => {
             model.ui.notice.set_text("Initialized");
             refresh(model);
@@ -306,37 +381,36 @@ pub(crate) fn initialize_drive(model: &AppRef) {
     }
 }
 
-pub(crate) fn create_profile(label: &str) -> Result<(), String> {
-    let mut init_args = vec!["init".to_string(), "--force".to_string()];
-    let label = label.trim();
-    if !label.is_empty() {
-        init_args.push("--label".to_string());
-        init_args.push(label.to_string());
-    }
-
-    run_idrive_owned(&init_args)
-}
-
-pub(crate) fn restore_profile(secret: &str, label: &str) -> Result<(), String> {
-    let mut args = vec!["restore".to_string(), secret.to_string()];
-    let label = label.trim();
-    if !label.is_empty() {
-        args.push("--label".to_string());
-        args.push(label.to_string());
+pub(crate) fn create_profile(username: &str, photo_path: Option<&str>) -> Result<(), String> {
+    let mut args = vec!["init".to_string(), "--force".to_string()];
+    let username = username.trim();
+    if !username.is_empty() {
+        args.push("--username".to_string());
+        args.push(username.to_string());
+        if let Some(photo_path) = photo_path.map(str::trim).filter(|value| !value.is_empty()) {
+            args.push("--profile-photo".to_string());
+            args.push(photo_path.to_string());
+        }
     }
     run_idrive_owned(&args)
 }
 
-pub(crate) fn link_device(owner: &str, label: &str) -> Result<(), String> {
-    let mut args = vec!["link".to_string(), owner.to_string()];
-    let label = label.trim();
-    if !label.is_empty() {
-        args.push("--label".to_string());
-        args.push(label.to_string());
-    }
-    run_idrive_owned(&args)
+pub(crate) fn restore_profile(secret: &str) -> Result<(), String> {
+    run_idrive_owned(&["restore".to_string(), secret.to_string()])
+}
+
+pub(crate) fn link_device(owner: &str) -> Result<(), String> {
+    run_idrive_owned(&["link".to_string(), owner.to_string()])
 }
 
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {
     run_idrive(["revoke", device])
+}
+
+pub(crate) fn appoint_admin(device: &str) -> Result<(), String> {
+    run_idrive(["devices", "appoint-admin", device])
+}
+
+pub(crate) fn demote_admin(device: &str) -> Result<(), String> {
+    run_idrive(["devices", "demote-admin", device])
 }

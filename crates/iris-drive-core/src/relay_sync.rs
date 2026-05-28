@@ -15,14 +15,14 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use nostr_sdk::{Client, Event, Filter, Keys, Options, PublicKey, SingleLetterTag};
+use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
 use crate::AppKeysSnapshot;
-use crate::app_keys::ApplyDecision;
+use crate::app_keys::{AppKeysEventRecord, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
-    D_TAG_APP_KEYS, KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT,
+    KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag,
     build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
     drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
     parse_drive_root_event_for_device, parse_drive_root_event_preview,
@@ -36,7 +36,7 @@ pub enum RelayError {
     Client(String),
     #[error("config has no account; run `idrive init` first")]
     NoAccount,
-    #[error("not initialized as owner-capable; cannot sign AppKeys events")]
+    #[error("this device is not an admin; cannot sign AppKeys events")]
     NoOwnerAuthority,
     #[error("invalid pubkey: {0}")]
     InvalidPubkey(String),
@@ -49,29 +49,58 @@ pub enum RelayError {
 pub enum AppKeysApply {
     /// Event from someone other than our owner — silently ignored.
     NotOurOwner,
+    /// Event is for our account, but it was not signed by an accepted admin.
+    UnauthorizedSigner,
     /// Applied to the local state; carries the apply decision so callers
     /// can log "first snapshot adopted", "newer snapshot replaced", etc.
     Applied(ApplyDecision),
 }
 
-/// Apply a remote `AppKeys` event to `config`. If the event's author
-/// matches the local account's `owner_pubkey`, the snapshot is parsed
-/// and fed through the standard `apply_snapshot` rules. Foreign
-/// authors are silently ignored — protects against `Filter::author`
-/// not narrowing on the relay side.
+/// Apply a remote `AppKeys` event to `config`. The event may be signed by any
+/// current admin device. The parsed snapshot carries the stable account id;
+/// the event author becomes the roster signer and DCK wrapping key.
 pub fn apply_remote_app_keys_event(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<AppKeysApply, RelayError> {
     let snapshot = parse_app_keys_event(event)?;
+    let signer_pubkey = event.pubkey.to_hex();
     let Some(account) = config.account.as_mut() else {
         return Err(RelayError::NoAccount);
     };
     if snapshot.owner_pubkey != account.owner_pubkey {
         return Ok(AppKeysApply::NotOurOwner);
     }
-    let decision = account.apply_app_keys(snapshot);
+    if !can_accept_app_keys_from(account, &signer_pubkey, &snapshot) {
+        return Ok(AppKeysApply::UnauthorizedSigner);
+    }
+    let record = AppKeysEventRecord {
+        event_id: event.id.to_hex(),
+        signer_pubkey,
+        event_json: event.as_json(),
+    };
+    let decision = account.apply_signed_app_keys(snapshot, record);
     Ok(AppKeysApply::Applied(decision))
+}
+
+fn can_accept_app_keys_from(
+    account: &crate::account::AccountState,
+    signer_pubkey: &str,
+    snapshot: &AppKeysSnapshot,
+) -> bool {
+    if let Some(current) = account.app_keys.as_ref() {
+        return current.is_admin(signer_pubkey);
+    }
+    if account
+        .outbound_device_link_request
+        .as_ref()
+        .is_some_and(|pending| pending.admin_device_pubkey == signer_pubkey)
+    {
+        return snapshot.contains(&account.device_pubkey) && snapshot.is_admin(signer_pubkey);
+    }
+    signer_pubkey == account.owner_pubkey
+        && snapshot.contains(&account.device_pubkey)
+        && snapshot.is_admin(signer_pubkey)
 }
 
 /// Result of applying a remote drive-root event.
@@ -270,10 +299,10 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
 /// Publish a signed `AppKeys` event for the current snapshot.
 pub async fn publish_app_keys(
     client: &Client,
-    owner_keys: &Keys,
+    admin_keys: &Keys,
     snapshot: &AppKeysSnapshot,
 ) -> Result<nostr_sdk::EventId, RelayError> {
-    let event = build_app_keys_event(owner_keys, snapshot)?;
+    let event = build_app_keys_event(admin_keys, snapshot)?;
     let output = client
         .send_event(event)
         .await
@@ -320,26 +349,41 @@ pub async fn publish_files_root(
 }
 
 /// Fetch the latest `AppKeys` event for `owner_pubkey_hex` across all
-/// connected relays. Returns `Ok(None)` if no event found within the
-/// timeout. The returned event has been signature-verified by the
-/// apply step.
+/// connected relays. Kept for compatibility experiments; production CLI
+/// paths do not publish or fetch rosters over relays.
 pub async fn fetch_latest_app_keys(
     client: &Client,
     owner_pubkey_hex: &str,
     timeout: Duration,
 ) -> Result<Option<Event>, RelayError> {
-    let owner = PublicKey::from_hex(owner_pubkey_hex)
-        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
     let filter = Filter::new()
-        .author(owner)
         .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
-        .identifier(D_TAG_APP_KEYS);
+        .identifier(app_keys_d_tag(owner_pubkey_hex));
+    let legacy_filter = PublicKey::from_hex(owner_pubkey_hex)
+        .map(|owner| {
+            Filter::new()
+                .author(owner)
+                .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
+                .identifier(crate::nostr_events::D_TAG_APP_KEYS)
+        })
+        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
     let events = client
-        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
+        .get_events_of(
+            vec![filter, legacy_filter],
+            nostr_sdk::EventSource::relays(Some(timeout)),
+        )
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
-    // Among returned events, pick the one with the highest created_at.
-    let latest = events.into_iter().max_by_key(|e| e.created_at.as_u64());
+    // Among returned events, pick the newest one that actually claims this
+    // account id. Admin authorization is checked when applying because it
+    // depends on the local roster.
+    let latest = events
+        .into_iter()
+        .filter(|event| {
+            parse_app_keys_event(event)
+                .is_ok_and(|snapshot| snapshot.owner_pubkey == owner_pubkey_hex)
+        })
+        .max_by_key(|e| e.created_at.as_u64());
     Ok(latest)
 }
 
@@ -368,9 +412,9 @@ pub async fn fetch_latest_files_root(
     Ok(latest)
 }
 
-/// Build the filter set covering all events relevant to a single
-/// account's primary drive: the owner's `AppKeys` + any drive-root for
-/// `(owner, drive_id)`.
+/// Build the relay filter set covering drive-root events for a single
+/// account's primary drive. AppKeys rosters are intentionally excluded from
+/// relays; they travel over direct/FIPS channels.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
 /// the d-tag `iris-drive/<owner>/<drive>/root` already pins the drive,
@@ -381,14 +425,6 @@ pub async fn fetch_latest_files_root(
 #[must_use]
 pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filter> {
     let mut filters = Vec::new();
-    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
-        filters.push(
-            Filter::new()
-                .author(owner)
-                .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
-                .identifier(D_TAG_APP_KEYS),
-        );
-    }
     let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
     filters.push(
         Filter::new()

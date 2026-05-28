@@ -312,16 +312,11 @@ pub(crate) async fn build_current_sync_events(
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
-    if state.has_owner_signing_authority
+    if state.can_manage_devices()
         && let Some(snap) = state.app_keys.as_ref()
     {
         let account = Account::load(state.clone(), config_dir).context("loading account")?;
-        let owner_keys = account
-            .owner_key
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-            .keys();
-        let event = iris_drive_core::nostr_events::build_app_keys_event(owner_keys, snap)
+        let event = iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), snap)
             .context("building AppKeys event")?;
         events.push(direct_root_event(
             format!(
@@ -366,15 +361,10 @@ pub(crate) async fn build_current_sync_events(
             &event,
         )?);
 
-        if state.has_owner_signing_authority {
+        if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
             let account = Account::load(state.clone(), config_dir).context("loading account")?;
-            let owner_keys = account
-                .owner_key
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-                .keys();
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
-                owner_keys,
+                account.device.keys(),
                 &drive.drive_id,
                 &root,
             )

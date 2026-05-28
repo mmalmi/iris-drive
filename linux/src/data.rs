@@ -58,13 +58,6 @@ pub(crate) fn file_count_value(json: &Value) -> String {
         .unwrap_or_else(|| "0".to_string())
 }
 
-pub(crate) fn block_count_value(json: &Value) -> String {
-    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
-    find_number(hashtree, &["local_block_count"])
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "0".to_string())
-}
-
 pub(crate) fn storage_value(json: &Value) -> String {
     let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
     find_number(hashtree, &["local_block_bytes"])

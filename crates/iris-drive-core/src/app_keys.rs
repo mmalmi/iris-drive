@@ -1,11 +1,11 @@
-//! Owner-signed device roster.
+//! Admin-signed device roster.
 //!
-//! Iris Drive uses a small in-house variant of the `AppKeys` pattern from
-//! `~/src/nostr-double-ratchet`: one owner key, multiple device keys,
-//! and a replaceable, owner-signed snapshot listing the authorized
-//! devices. This module owns the snapshot **data model and timeline
-//! rules** — wire format (Nostr event kind, `d` tag, NIP-44 envelope)
-//! is the publishing layer's problem, not this module's.
+//! Iris Drive stores one account roster, signed by an authorized admin
+//! device. The historical field name `owner_pubkey` remains the stable
+//! account id, but it is no longer a separate owner secret. This module
+//! owns the snapshot **data model and timeline rules** — wire format
+//! (Nostr event kind, `d` tag, NIP-44 envelope) is the publishing
+//! layer's problem, not this module's.
 //!
 //! Timeline rules (from nostr-double-ratchet's published guidance):
 //!
@@ -22,6 +22,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Privilege level for a device in the roster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRole {
+    /// Can sign and publish future roster events.
+    Admin,
+    /// Can decrypt and publish its own drive roots, but cannot alter roster
+    /// membership or roles.
+    #[default]
+    Member,
+}
+
 /// One authorized device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +45,45 @@ pub struct DeviceEntry {
     /// Optional human-readable label (e.g. "Mac mini").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Whether this device may sign future roster updates.
+    #[serde(default)]
+    pub role: DeviceRole,
+}
+
+impl DeviceEntry {
+    #[must_use]
+    pub fn admin(pubkey: String, added_at: i64, label: Option<String>) -> Self {
+        Self {
+            pubkey,
+            added_at,
+            label,
+            role: DeviceRole::Admin,
+        }
+    }
+
+    #[must_use]
+    pub fn member(pubkey: String, added_at: i64, label: Option<String>) -> Self {
+        Self {
+            pubkey,
+            added_at,
+            label,
+            role: DeviceRole::Member,
+        }
+    }
+
+    #[must_use]
+    pub fn is_admin(&self) -> bool {
+        self.role == DeviceRole::Admin
+    }
+}
+
+/// The exact signed roster event that produced the currently parsed snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppKeysEventRecord {
+    pub event_id: String,
+    pub signer_pubkey: String,
+    pub event_json: String,
 }
 
 /// A complete, owner-signed roster snapshot. Replaceable by `created_at`.
@@ -45,7 +96,13 @@ pub struct DeviceEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppKeysSnapshot {
+    /// Stable account id. Historically this was a separate owner key; new
+    /// installs set it to the first admin device pubkey.
     pub owner_pubkey: String,
+    /// Pubkey of the admin device that signed this snapshot. Local snapshots
+    /// created before their Nostr event is built set this to the local device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_by_pubkey: Option<String>,
     pub created_at: i64,
     pub devices: Vec<DeviceEntry>,
     /// Monotonically-increasing counter. Bumped each time the DCK
@@ -53,9 +110,9 @@ pub struct AppKeysSnapshot {
     #[serde(default)]
     pub dck_generation: u64,
     /// NIP-44 wraps of the current DCK, keyed by device pubkey hex.
-    /// Encrypted by the owner secret to each device's pubkey. Devices
-    /// not present in the map are effectively revoked from the current
-    /// content.
+    /// Encrypted by the roster-signing admin device to each device's
+    /// pubkey. Devices not present in the map are effectively revoked from
+    /// the current content.
     #[serde(default)]
     pub wrapped_dck: BTreeMap<String, String>,
 }
@@ -76,6 +133,18 @@ impl AppKeysSnapshot {
     #[must_use]
     pub fn device(&self, pubkey: &str) -> Option<&DeviceEntry> {
         self.devices.iter().find(|d| d.pubkey == pubkey)
+    }
+
+    #[must_use]
+    pub fn is_admin(&self, pubkey: &str) -> bool {
+        self.device(pubkey).is_some_and(DeviceEntry::is_admin)
+    }
+
+    #[must_use]
+    pub fn signer_pubkey(&self) -> &str {
+        self.signed_by_pubkey
+            .as_deref()
+            .unwrap_or(&self.owner_pubkey)
     }
 }
 
@@ -142,11 +211,17 @@ fn merge_same_second(existing: &mut AppKeysSnapshot, incoming: &AppKeysSnapshot)
                 if cur.label.is_none() {
                     cur.label.clone_from(&d.label);
                 }
+                if d.role == DeviceRole::Admin {
+                    cur.role = DeviceRole::Admin;
+                }
             })
             .or_insert_with(|| d.clone());
     }
     existing.devices = by_pubkey.into_values().collect();
     existing.normalize();
+    if existing.signed_by_pubkey != incoming.signed_by_pubkey {
+        existing.signed_by_pubkey = None;
+    }
 }
 
 /// Convenience: select the latest snapshot from an iterator of
@@ -172,14 +247,11 @@ mod tests {
     fn snap(owner: &str, created_at: i64, devices: &[(&str, i64)]) -> AppKeysSnapshot {
         AppKeysSnapshot {
             owner_pubkey: owner.into(),
+            signed_by_pubkey: Some(owner.into()),
             created_at,
             devices: devices
                 .iter()
-                .map(|(pk, added)| DeviceEntry {
-                    pubkey: (*pk).into(),
-                    added_at: *added,
-                    label: None,
-                })
+                .map(|(pk, added)| DeviceEntry::member((*pk).into(), *added, None))
                 .collect(),
             dck_generation: 0,
             wrapped_dck: BTreeMap::new(),
@@ -311,17 +383,50 @@ mod tests {
     fn round_trip_through_toml() {
         let s = AppKeysSnapshot {
             owner_pubkey: "abc123".into(),
+            signed_by_pubkey: Some("admin".into()),
             created_at: 1_700_000_000,
             devices: vec![DeviceEntry {
                 pubkey: "dev1".into(),
                 added_at: 1_699_000_000,
                 label: Some("Mac mini".into()),
+                role: DeviceRole::Admin,
             }],
             dck_generation: 1,
             wrapped_dck: BTreeMap::from([("dev1".to_string(), "abcdef".to_string())]),
         };
         let serialized = toml::to_string(&s).unwrap();
+        assert!(serialized.contains("role = \"admin\""));
         let back: AppKeysSnapshot = toml::from_str(&serialized).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn device_role_defaults_to_member_for_legacy_configs() {
+        let entry: DeviceEntry = toml::from_str(
+            r#"
+pubkey = "dev"
+added_at = 1
+"#,
+        )
+        .unwrap();
+        assert_eq!(entry.role, DeviceRole::Member);
+        assert!(!entry.is_admin());
+    }
+
+    #[test]
+    fn snapshot_identifies_admin_devices() {
+        let snap = AppKeysSnapshot {
+            owner_pubkey: "acct".into(),
+            signed_by_pubkey: Some("admin".into()),
+            created_at: 1,
+            devices: vec![
+                DeviceEntry::admin("admin".into(), 1, None),
+                DeviceEntry::member("phone".into(), 1, None),
+            ],
+            dck_generation: 1,
+            wrapped_dck: BTreeMap::new(),
+        };
+        assert!(snap.is_admin("admin"));
+        assert!(!snap.is_admin("phone"));
     }
 }

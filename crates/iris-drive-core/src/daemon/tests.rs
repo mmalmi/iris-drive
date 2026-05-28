@@ -98,11 +98,16 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let state = config.account.as_mut().unwrap();
-    state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
-        pubkey: remote.clone(),
-        added_at: 100,
-        label: Some("remote".into()),
-    });
+    state
+        .app_keys
+        .as_mut()
+        .unwrap()
+        .devices
+        .push(DeviceEntry::member(
+            remote.clone(),
+            100,
+            Some("remote".into()),
+        ));
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(cfg_dir.path())).unwrap();
 
@@ -206,11 +211,16 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let state = config.account.as_mut().unwrap();
-    state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
-        pubkey: remote.clone(),
-        added_at: 100,
-        label: Some("remote".into()),
-    });
+    state
+        .app_keys
+        .as_mut()
+        .unwrap()
+        .devices
+        .push(DeviceEntry::member(
+            remote.clone(),
+            100,
+            Some("remote".into()),
+        ));
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(cfg_dir.path())).unwrap();
 
@@ -303,11 +313,16 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let state = config.account.as_mut().unwrap();
-    state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
-        pubkey: remote.clone(),
-        added_at: 100,
-        label: Some("remote".into()),
-    });
+    state
+        .app_keys
+        .as_mut()
+        .unwrap()
+        .devices
+        .push(DeviceEntry::member(
+            remote.clone(),
+            100,
+            Some("remote".into()),
+        ));
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(cfg_dir.path())).unwrap();
 
@@ -413,11 +428,16 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let state = config.account.as_mut().unwrap();
-    state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
-        pubkey: remote.clone(),
-        added_at: 100,
-        label: Some("remote".into()),
-    });
+    state
+        .app_keys
+        .as_mut()
+        .unwrap()
+        .devices
+        .push(DeviceEntry::member(
+            remote.clone(),
+            100,
+            Some("remote".into()),
+        ));
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(cfg_dir.path())).unwrap();
 

@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -58,7 +60,6 @@ import to.iris.drive.app.core.SyncRoot
 
 private const val DocumentsProviderAuthority = "to.iris.drive.documents"
 private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
-private const val DefaultSetupDeviceLabel = "Android device"
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
 private val IrisLightSurface = Color.White
@@ -98,6 +99,7 @@ private val Danger: Color
 private enum class SetupRoute {
     Welcome,
     CreateProfile,
+    CreatePhoto,
     SignIn,
     LinkDevice,
 }
@@ -113,6 +115,8 @@ internal fun IrisDriveAndroidApp(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
@@ -120,7 +124,6 @@ internal fun IrisDriveAndroidApp(
     onRemoveRoot: (String) -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onRestartSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsState()
     var addRootOpen by remember { mutableStateOf(false) }
@@ -139,16 +142,16 @@ internal fun IrisDriveAndroidApp(
                 SetupContent(
                     padding = padding,
                     error = state.error,
-                    onCreateProfile = { label ->
-                        onCreateProfile(label)
+                    onCreateProfile = {
+                        onCreateProfile("")
                         onAddRoot("My Drive", ProviderRoot)
                     },
-                    onRestoreProfile = { secret, label ->
-                        onRestoreProfile(secret, label)
+                    onRestoreProfile = { secret ->
+                        onRestoreProfile(secret, "")
                         onAddRoot("My Drive", ProviderRoot)
                     },
-                    onLinkDevice = { owner, label ->
-                        onLinkDevice(owner, label)
+                    onLinkDevice = { owner ->
+                        onLinkDevice(owner, "")
                         onAddRoot("My Drive", ProviderRoot)
                     },
                 )
@@ -158,7 +161,6 @@ internal fun IrisDriveAndroidApp(
                     state = state,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onRestartSync = onRestartSync,
                     onCopyOwnerKey = { onCopyText("Owner key", account.ownerPubkey) },
                     onCopyDeviceKey = { onCopyText("Device key", account.devicePubkey) },
                     onCopyLinkRequest = { onCopyText("Link request", account.deviceLinkRequest) },
@@ -167,6 +169,8 @@ internal fun IrisDriveAndroidApp(
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
                     onRevokeDevice = onRevokeDevice,
+                    onAppointAdmin = onAppointAdmin,
+                    onDemoteAdmin = onDemoteAdmin,
                     onAddRelay = onAddRelay,
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
@@ -260,13 +264,18 @@ private fun AppTopBar(onAddRoot: () -> Unit) {
 private fun SetupContent(
     padding: PaddingValues,
     error: String,
-    onCreateProfile: (String) -> Unit,
-    onRestoreProfile: (String, String) -> Unit,
-    onLinkDevice: (String, String) -> Unit,
+    onCreateProfile: () -> Unit,
+    onRestoreProfile: (String) -> Unit,
+    onLinkDevice: (String) -> Unit,
 ) {
+    var createUsername by remember { mutableStateOf("") }
+    var selectedPhoto by remember { mutableStateOf("") }
     var restoreSecret by remember { mutableStateOf("") }
     var linkOwner by remember { mutableStateOf("") }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        selectedPhoto = uri?.lastPathSegment.orEmpty()
+    }
 
     Box(
         modifier = Modifier
@@ -302,9 +311,41 @@ private fun SetupContent(
                 }
                 SetupRoute.CreateProfile -> {
                     SetupFormHeader(title = "Create profile", onBack = { route = SetupRoute.Welcome })
+                    OutlinedTextField(
+                        value = createUsername,
+                        onValueChange = { createUsername = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Username (optional)") },
+                    )
                     SetupPrimaryButton(
-                        text = "Create profile",
-                        onClick = { onCreateProfile(DefaultSetupDeviceLabel) },
+                        text = if (createUsername.isBlank()) "Create profile" else "Continue",
+                        onClick = {
+                            if (createUsername.isBlank()) {
+                                onCreateProfile()
+                            } else {
+                                route = SetupRoute.CreatePhoto
+                            }
+                        },
+                        icon = true,
+                    )
+                }
+                SetupRoute.CreatePhoto -> {
+                    SetupFormHeader(title = "Profile photo", onBack = { route = SetupRoute.CreateProfile })
+                    SetupSecondaryButton(
+                        text = if (selectedPhoto.isBlank()) "Choose photo" else "Photo selected",
+                        onClick = { photoPicker.launch("image/*") },
+                    )
+                    if (selectedPhoto.isNotBlank()) {
+                        Text(selectedPhoto, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        SetupSecondaryButton(
+                            text = "Remove photo",
+                            onClick = { selectedPhoto = "" },
+                        )
+                    }
+                    SetupPrimaryButton(
+                        text = if (selectedPhoto.isBlank()) "Later" else "Create profile",
+                        onClick = { onCreateProfile() },
                         icon = true,
                     )
                 }
@@ -319,7 +360,7 @@ private fun SetupContent(
                     )
                     SetupPrimaryButton(
                         text = "Sign in",
-                        onClick = { onRestoreProfile(restoreSecret, DefaultSetupDeviceLabel) },
+                        onClick = { onRestoreProfile(restoreSecret) },
                         enabled = restoreSecret.isNotBlank(),
                     )
                     SetupSecondaryButton(
@@ -338,7 +379,7 @@ private fun SetupContent(
                     )
                     SetupPrimaryButton(
                         text = "Link device",
-                        onClick = { onLinkDevice(linkOwner, DefaultSetupDeviceLabel) },
+                        onClick = { onLinkDevice(linkOwner) },
                         enabled = linkOwner.isNotBlank(),
                     )
                 }
@@ -410,7 +451,6 @@ private fun DriveContent(
     state: AppState,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onRestartSync: () -> Unit,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyLinkRequest: () -> Unit,
@@ -419,6 +459,8 @@ private fun DriveContent(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
@@ -439,19 +481,22 @@ private fun DriveContent(
             StatusPanel(state = state)
         }
         item {
-            SyncPanel(
-                isRunning = state.sync.running,
-                onStartSync = onStartSync,
-                onStopSync = onStopSync,
-                onRestartSync = onRestartSync,
-            )
+            SummaryPanel(state = state)
         }
         item {
             ProviderPanel(
+                state = state,
                 snapshotLink = state.snapshotLink.ifBlank { "https://drive.iris.to/snapshot/local" },
                 onOpenDriveFolder = onOpenDriveFolder,
                 onCopySnapshotLink = onCopySnapshotLink,
                 onOpenSnapshotLink = onOpenSnapshotLink,
+            )
+        }
+        item {
+            SyncPanel(
+                state = state,
+                onStartSync = onStartSync,
+                onStopSync = onStopSync,
             )
         }
         item {
@@ -460,6 +505,8 @@ private fun DriveContent(
                 canApprove = state.account?.hasOwnerSigningAuthority == true,
                 onApproveDevice = onApproveDevice,
                 onRevokeDevice = onRevokeDevice,
+                onAppointAdmin = onAppointAdmin,
+                onDemoteAdmin = onDemoteAdmin,
             )
         }
         item {
@@ -476,40 +523,55 @@ private fun DriveContent(
                 onResetRelays = onResetRelays,
             )
         }
-        item {
-            SectionHeader("Roots", "${state.roots.size}")
-        }
-        if (state.roots.isEmpty()) {
-            item { EmptyRoots(onAddRoot = onAddRoot) }
-        } else {
-            items(state.roots, key = { it.name }) { root ->
-                RootRow(root = root, onRemoveRoot = onRemoveRoot)
-            }
-        }
+        item { RootsPanel(roots = state.roots, onAddRoot = onAddRoot, onRemoveRoot = onRemoveRoot) }
     }
 }
 
 @Composable
 private fun StatusPanel(state: AppState) {
     val account = state.account
-    CardSection(title = "My Drive", trailing = state.sync.status.ifBlank { "paused" }) {
-        Text(account?.deviceLabel ?: "This device", fontWeight = FontWeight.SemiBold)
-        Text(account?.authorizationState ?: "not linked", color = Muted)
+    val statusText = if (state.sync.running) "Up to date" else "Paused"
+    CardSection(title = "My Drive", trailing = statusText.lowercase()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Image(
+                painter = painterResource(id = R.drawable.brand_icon),
+                contentDescription = "Iris Drive",
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.size(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Iris Drive", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
+                Text(statusText, color = if (state.sync.running) Teal else Muted, fontWeight = FontWeight.SemiBold)
+                Text(account?.authorizationState ?: "not linked", color = Muted)
+            }
+        }
         Text(
-            if (state.sync.running) "Foreground sync is active" else "Foreground sync is paused",
-            color = if (state.sync.running) Teal else Muted,
+            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.authorizedDeviceCount} devices",
+            color = Muted,
         )
     }
 }
 
 @Composable
+private fun SummaryPanel(state: AppState) {
+    CardSection(title = "Summary", trailing = "${state.fileCount} files") {
+        StatRow("Files", state.fileCount.toString())
+        StatRow("Top level", state.topLevelEntries.toString())
+        StatRow("Storage", byteString(state.visibleFileBytes))
+        StatRow("Authorized devices", state.authorizedDeviceCount.toString())
+        StatRow("Published roots", state.publishedDeviceRoots.toString())
+    }
+}
+
+@Composable
 private fun SyncPanel(
-    isRunning: Boolean,
+    state: AppState,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onRestartSync: () -> Unit,
 ) {
-    CardSection(title = "Sync", trailing = if (isRunning) "running" else "paused") {
+    CardSection(title = "Sync", trailing = if (state.sync.running) "running" else "paused") {
+        StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "running" else "paused" })
+        StatRow("Account", state.account?.authorizationState ?: "not linked")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onStartSync) {
                 Icon(painterResource(R.drawable.ic_play), contentDescription = null)
@@ -521,23 +583,22 @@ private fun SyncPanel(
                 Spacer(Modifier.size(8.dp))
                 Text("Stop")
             }
-            OutlinedButton(onClick = onRestartSync) {
-                Icon(painterResource(R.drawable.ic_refresh), contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text("Restart")
-            }
         }
     }
 }
 
 @Composable
 private fun ProviderPanel(
+    state: AppState,
     snapshotLink: String,
     onOpenDriveFolder: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
 ) {
+    val rootStatus = state.roots.firstOrNull()?.status ?: "SAF provider root"
     CardSection(title = "Files", trailing = "DocumentsProvider") {
+        StatRow("Provider", DocumentsProviderAuthority)
+        StatRow("Root", rootStatus)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -557,7 +618,7 @@ private fun ProviderPanel(
         Button(onClick = onOpenDriveFolder) {
             Icon(painterResource(R.drawable.ic_drive), contentDescription = null)
             Spacer(Modifier.size(8.dp))
-            Text("Open drive")
+            Text("Open in Files")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopySnapshotLink) {
@@ -576,6 +637,8 @@ private fun DevicesPanel(
     canApprove: Boolean,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
@@ -591,8 +654,18 @@ private fun DevicesPanel(
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(device.label, fontWeight = FontWeight.SemiBold)
-                    Text(device.state, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("${device.role.ifBlank { "member" }} | ${device.state}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (device.canAppointAdmin) {
+                    TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
+                        Text("Admin")
+                    }
+                }
+                if (device.canDemoteAdmin) {
+                    TextButton(onClick = { onDemoteAdmin(device.pubkey) }) {
+                        Text("Member")
+                    }
                 }
                 if (device.canRevoke) {
                     IconButton(onClick = { onRevokeDevice(device.pubkey) }) {
@@ -743,24 +816,38 @@ private fun RootRow(root: SyncRoot, onRemoveRoot: (String) -> Unit) {
 }
 
 @Composable
-private fun EmptyRoots(onAddRoot: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Image(
-            painter = painterResource(id = R.drawable.brand_icon),
-            contentDescription = "Iris Drive",
-            modifier = Modifier.size(96.dp),
-        )
-        Text("No roots", color = Muted)
+private fun RootsPanel(
+    roots: List<SyncRoot>,
+    onAddRoot: () -> Unit,
+    onRemoveRoot: (String) -> Unit,
+) {
+    CardSection(title = "Roots", trailing = "${roots.size}") {
+        if (roots.isEmpty()) {
+            Text("No roots", color = Muted)
+        } else {
+            roots.forEach { root ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
+                    Spacer(Modifier.size(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(root.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(root.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(root.localPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = { onRemoveRoot(root.name) }) {
+                        Icon(
+                            painterResource(R.drawable.ic_delete),
+                            contentDescription = "Remove ${root.name}",
+                            tint = Danger,
+                        )
+                    }
+                }
+            }
+        }
         OutlinedButton(onClick = onAddRoot) {
             Icon(painterResource(R.drawable.ic_add), contentDescription = null)
             Spacer(Modifier.size(8.dp))
-            Text("Add")
+            Text("Add root")
         }
     }
 }
@@ -808,6 +895,34 @@ private fun SectionHeader(title: String, trailing: String) {
     ) {
         Text(title, fontWeight = FontWeight.SemiBold)
         Text(trailing, color = Muted, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun StatRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = Muted)
+        Text(value.ifBlank { "-" }, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun byteString(bytes: Long): String {
+    if (bytes <= 0L) return "0 bytes"
+    val units = listOf("bytes", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var index = 0
+    while (value >= 1000.0 && index < units.lastIndex) {
+        value /= 1000.0
+        index += 1
+    }
+    return if (index == 0) {
+        "${bytes} bytes"
+    } else {
+        String.format("%.1f %s", value, units[index])
     }
 }
 

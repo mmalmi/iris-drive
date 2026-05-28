@@ -59,7 +59,10 @@ pub(crate) fn cmd_link_with_admin_device(
     let target = resolve_device_link_target_with_admin(owner, admin_device)?;
     let mut account =
         Account::link(config_dir, target.owner_hex, label).context("linking device")?;
-    if let Some(admin_device_hex) = target.admin_device_hex {
+    if let Some(admin_device_hex) = target
+        .admin_device_hex
+        .or_else(|| Some(account.state.owner_pubkey.clone()))
+    {
         account
             .state
             .queue_outbound_device_link_request(admin_device_hex, unix_now_seconds())
@@ -157,6 +160,52 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     Ok(())
 }
 
+pub(crate) fn cmd_appoint_admin(config_dir: &std::path::Path, device: &str) -> Result<()> {
+    set_device_admin_role(config_dir, device, true)
+}
+
+pub(crate) fn cmd_demote_admin(config_dir: &std::path::Path, device: &str) -> Result<()> {
+    set_device_admin_role(config_dir, device, false)
+}
+
+fn set_device_admin_role(
+    config_dir: &std::path::Path,
+    device: &str,
+    make_admin: bool,
+) -> Result<()> {
+    let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let snap = if make_admin {
+        account
+            .appoint_admin(&device_hex)
+            .context("promoting device to admin")?
+    } else {
+        account
+            .demote_admin(&device_hex)
+            .context("demoting device admin")?
+    };
+    let role = snap
+        .device(&device_hex)
+        .map_or(iris_drive_core::DeviceRole::Member, |device| device.role);
+    let dck_generation = snap.dck_generation;
+    config.account = Some(account.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "device_npub": account_npub(&device_hex),
+            "role": device_role_label(role),
+            "dck_generation": dck_generation,
+        })
+    );
+    Ok(())
+}
+
 pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
@@ -179,6 +228,7 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
                     "npub": account_npub(&d.pubkey),
                     "added_at": d.added_at,
                     "label": d.label,
+                    "role": device_role_label(d.role),
                     "is_current_device": d.pubkey == state.device_pubkey,
                     "has_dck_wrap": s.wrapped_dck.contains_key(&d.pubkey),
                 })).collect::<Vec<_>>(),
@@ -331,7 +381,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
 }
 
 pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
-    if state.has_owner_signing_authority
+    if state.can_manage_devices()
         || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
     {
         return Value::Null;
@@ -361,7 +411,7 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
 }
 
 pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
-    if !state.has_owner_signing_authority {
+    if !state.can_manage_devices() {
         return Value::Null;
     }
     let url = encode_device_link_invite(&state.owner_pubkey, &state.device_pubkey);
@@ -540,6 +590,10 @@ struct DeviceLinkRosterFrame {
     owner_pubkey: String,
     admin_device_pubkey: String,
     app_keys: iris_drive_core::AppKeysSnapshot,
+    #[serde(default)]
+    app_keys_event_id: String,
+    #[serde(default)]
+    app_keys_event_json: String,
     sent_at: u64,
 }
 
@@ -549,6 +603,8 @@ struct DeviceLinkRosterAckFrame {
     owner_pubkey: String,
     admin_device_pubkey: String,
     device_pubkey: String,
+    #[serde(default)]
+    app_keys_event_id: String,
     app_keys_created_at: i64,
     dck_generation: u64,
     acknowledged_at: u64,
@@ -566,7 +622,7 @@ pub(crate) async fn send_pending_device_link_request(
     let Some(state) = config.account.as_ref() else {
         return Ok(None);
     };
-    if state.has_owner_signing_authority
+    if state.can_manage_devices()
         || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
     {
         return Ok(None);
@@ -629,7 +685,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
     let Some(state) = config.account.as_ref() else {
         return Ok(None);
     };
-    if !state.has_owner_signing_authority {
+    if !state.can_manage_devices() {
         return Ok(None);
     }
     let Some(app_keys) = state.app_keys.as_ref() else {
@@ -661,11 +717,14 @@ pub(crate) async fn send_authorized_device_link_rosters(
     }
 
     sync.refresh_authorized_peers(&config).await;
+    let (event_id, event_json) = signed_roster_event_for_state(config_dir, state, app_keys)?;
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
         app_keys: app_keys.clone(),
+        app_keys_event_id: event_id.clone(),
+        app_keys_event_json: event_json,
         sent_at: unix_now_seconds(),
     };
     let bytes = serde_json::to_vec(&frame)?;
@@ -687,8 +746,31 @@ pub(crate) async fn send_authorized_device_link_rosters(
         "recipient_device_npubs": recipients,
         "dck_generation": app_keys.dck_generation,
         "created_at": app_keys.created_at,
+        "app_keys_event_id": event_id,
         "sent_bytes": bytes.len(),
     })))
+}
+
+fn signed_roster_event_for_state(
+    config_dir: &Path,
+    state: &AccountState,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> Result<(String, String)> {
+    if let Some(record) = state.app_keys_event.as_ref()
+        && record.signer_pubkey == app_keys.signer_pubkey()
+    {
+        return Ok((record.event_id.clone(), record.event_json.clone()));
+    }
+    if app_keys.signer_pubkey() != state.device_pubkey {
+        return Err(anyhow::anyhow!(
+            "cannot send roster: signed event is missing and this device was not the roster signer"
+        ));
+    }
+    let account = Account::load(state.clone(), config_dir).context("loading account")?;
+    let event =
+        iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), app_keys)
+            .context("building AppKeys roster event")?;
+    Ok((event.id.to_hex(), event.as_json()))
 }
 
 fn device_link_roster_fingerprint(
@@ -789,15 +871,26 @@ async fn handle_device_link_roster_app_message(
     let Some(state) = config.account.as_mut() else {
         return Ok(true);
     };
-    if state.has_owner_signing_authority || state.owner_pubkey != owner_hex {
+    if state.can_manage_devices() || state.owner_pubkey != owner_hex {
         return Ok(true);
     }
     if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
         return Ok(true);
     }
-    if frame.app_keys.owner_pubkey != state.owner_pubkey
-        || !frame.app_keys.contains(&state.device_pubkey)
-        || !frame.app_keys.contains(&admin_device_hex)
+    if frame.app_keys_event_json.is_empty() || frame.app_keys_event_id.is_empty() {
+        return Ok(true);
+    }
+    let roster_event = nostr_sdk::Event::from_json(&frame.app_keys_event_json)
+        .context("parsing signed roster event")?;
+    if roster_event.id.to_hex() != frame.app_keys_event_id {
+        return Ok(true);
+    }
+    let parsed = iris_drive_core::nostr_events::parse_app_keys_event(&roster_event)
+        .context("parsing signed roster AppKeys")?;
+    if roster_event.pubkey.to_hex() != admin_device_hex
+        || parsed.owner_pubkey != state.owner_pubkey
+        || !parsed.contains(&state.device_pubkey)
+        || !parsed.is_admin(&admin_device_hex)
     {
         return Ok(true);
     }
@@ -806,16 +899,25 @@ async fn handle_device_link_roster_app_message(
         .outbound_device_link_request
         .as_ref()
         .is_some_and(|pending| pending.admin_device_pubkey == admin_device_hex);
-    let already_current = state.app_keys.as_ref() == Some(&frame.app_keys);
+    let already_current = state.app_keys.as_ref() == Some(&parsed);
     if !should_apply && !already_current {
         return Ok(true);
     }
 
-    let decision = if should_apply {
-        state.apply_app_keys(frame.app_keys)
+    let outcome = if should_apply {
+        iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut config, &roster_event)
+            .context("applying signed roster event")?
     } else {
-        iris_drive_core::ApplyDecision::Rejected
+        iris_drive_core::relay_sync::AppKeysApply::Applied(iris_drive_core::ApplyDecision::Rejected)
     };
+    let decision = match outcome {
+        iris_drive_core::relay_sync::AppKeysApply::Applied(decision) => decision,
+        iris_drive_core::relay_sync::AppKeysApply::NotOurOwner
+        | iris_drive_core::relay_sync::AppKeysApply::UnauthorizedSigner => {
+            iris_drive_core::ApplyDecision::Rejected
+        }
+    };
+    let state = config.account.as_ref().expect("account still present");
     let accepted = should_apply && decision != iris_drive_core::ApplyDecision::Rejected;
     let ack_data = if accepted || already_current {
         Some((
@@ -825,6 +927,7 @@ async fn handle_device_link_roster_app_message(
                 .as_ref()
                 .expect("accepted/current app keys")
                 .clone(),
+            roster_event.id.to_hex(),
         ))
     } else {
         None
@@ -844,12 +947,13 @@ async fn handle_device_link_roster_app_message(
             })
         );
     }
-    if let Some((device_pubkey, app_keys)) = ack_data {
+    if let Some((device_pubkey, app_keys, app_keys_event_id)) = ack_data {
         send_device_link_roster_ack(
             fips_blocks,
             &admin_device_hex,
             &owner_hex,
             &device_pubkey,
+            &app_keys_event_id,
             &app_keys,
         )
         .await?;
@@ -885,7 +989,7 @@ fn handle_device_link_roster_ack_app_message(
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Ok(true);
     };
-    if !state.has_owner_signing_authority
+    if !state.can_manage_devices()
         || state.owner_pubkey != owner_hex
         || state.device_pubkey != admin_device_hex
         || !app_keys.contains(&device_hex)
@@ -901,11 +1005,12 @@ fn handle_device_link_roster_ack_app_message(
         println!(
             "{}",
             json!({
-                "event": "device_link_roster_ack_received",
-                "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
-                "device_npub": account_npub(&device_hex),
+                        "event": "device_link_roster_ack_received",
+                        "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+                        "device_npub": account_npub(&device_hex),
                 "dck_generation": app_keys.dck_generation,
                 "created_at": app_keys.created_at,
+                "app_keys_event_id": frame.app_keys_event_id,
             })
         );
     }
@@ -917,6 +1022,7 @@ async fn send_device_link_roster_ack(
     admin_device_hex: &str,
     owner_hex: &str,
     device_hex: &str,
+    app_keys_event_id: &str,
     app_keys: &iris_drive_core::AppKeysSnapshot,
 ) -> Result<()> {
     let Some(sync) = fips_blocks else {
@@ -927,6 +1033,7 @@ async fn send_device_link_roster_ack(
         owner_pubkey: owner_hex.to_string(),
         admin_device_pubkey: admin_device_hex.to_string(),
         device_pubkey: device_hex.to_string(),
+        app_keys_event_id: app_keys_event_id.to_string(),
         app_keys_created_at: app_keys.created_at,
         dck_generation: app_keys.dck_generation,
         acknowledged_at: unix_now_seconds(),
@@ -957,6 +1064,13 @@ pub(crate) fn authorization_state_label(state: &AccountState) -> &'static str {
         S::Authorized => "authorized",
         S::AwaitingApproval => "awaiting_approval",
         S::Revoked => "revoked",
+    }
+}
+
+pub(crate) fn device_role_label(role: iris_drive_core::DeviceRole) -> &'static str {
+    match role {
+        iris_drive_core::DeviceRole::Admin => "admin",
+        iris_drive_core::DeviceRole::Member => "member",
     }
 }
 

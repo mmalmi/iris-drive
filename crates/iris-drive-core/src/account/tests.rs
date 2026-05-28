@@ -2,19 +2,26 @@ use super::*;
 use tempfile::tempdir;
 
 #[test]
-fn create_yields_owner_capable_authorized_account() {
+fn create_yields_admin_authorized_account() {
     let dir = tempdir().unwrap();
     let acct = Account::create(dir.path(), Some("my-laptop".into())).unwrap();
     assert!(acct.state.has_owner_signing_authority);
+    assert!(acct.state.can_manage_devices());
     assert!(acct.state.is_authorized());
-    assert!(acct.owner_key.is_some());
-    // Both key files exist.
+    assert!(acct.owner_key.is_none());
+    assert_eq!(acct.state.owner_pubkey, acct.state.device_pubkey);
+    // Only the device key exists; roster admin authority is not a second key.
     assert!(dir.path().join("key").exists());
-    assert!(dir.path().join("owner_key").exists());
+    assert!(!dir.path().join("owner_key").exists());
     // AppKeys lists one device — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.devices.len(), 1);
     assert_eq!(snap.devices[0].pubkey, acct.state.device_pubkey);
+    assert!(snap.devices[0].is_admin());
+    assert_eq!(snap.signer_pubkey(), acct.state.device_pubkey);
+    let record = acct.state.app_keys_event.as_ref().unwrap();
+    assert_eq!(record.signer_pubkey, acct.state.device_pubkey);
+    assert!(!record.event_json.is_empty());
 }
 
 #[test]
@@ -40,26 +47,25 @@ fn empty_device_label_falls_back_to_pubkey_label() {
 }
 
 #[test]
-fn restore_uses_provided_owner_nsec() {
+fn restore_uses_provided_admin_device_nsec() {
     let dir_a = tempdir().unwrap();
     let original = Account::create(dir_a.path(), None).unwrap();
-    let original_owner_pubkey = original.state.owner_pubkey.clone();
-    let nsec = original
-        .owner_key
-        .as_ref()
-        .unwrap()
-        .keys()
-        .secret_key()
-        .to_secret_hex();
+    let nsec = original.device.keys().secret_key().to_secret_hex();
 
     let dir_b = tempdir().unwrap();
     let restored = Account::restore(dir_b.path(), &nsec, None).unwrap();
-    assert_eq!(restored.state.owner_pubkey, original_owner_pubkey);
-    // Device key should differ from the original.
-    assert_ne!(restored.state.device_pubkey, original.state.device_pubkey);
+    assert_eq!(restored.state.owner_pubkey, original.state.owner_pubkey);
+    assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
     assert!(restored.state.has_owner_signing_authority);
-    // No AppKeys yet on this device (network would seed it).
-    assert!(restored.state.app_keys.is_none());
+    assert!(
+        restored
+            .state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .is_admin(&restored.state.device_pubkey)
+    );
+    assert!(!dir_b.path().join("owner_key").exists());
 }
 
 #[test]
@@ -187,6 +193,34 @@ fn revoke_missing_device_errors() {
     match acct.revoke_device(&stranger) {
         Err(AccountError::DeviceNotInRoster) => {}
         _ => panic!("expected DeviceNotInRoster"),
+    }
+}
+
+#[test]
+fn appoint_and_demote_admin_updates_roster_roles() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    let current = acct.state.device_pubkey.clone();
+    let target = fresh_device_pubkey();
+    acct.approve_device(&target, None).unwrap();
+
+    let snap = acct.appoint_admin(&target).unwrap();
+    assert!(snap.is_admin(&target));
+    assert!(snap.dck_generation >= 3);
+
+    let snap = acct.demote_admin(&target).unwrap();
+    assert!(!snap.is_admin(&target));
+    assert!(snap.is_admin(&current));
+}
+
+#[test]
+fn cannot_demote_last_admin() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    let current = acct.state.device_pubkey.clone();
+    match acct.demote_admin(&current) {
+        Err(AccountError::CannotRemoveLastAdmin) => {}
+        other => panic!("expected CannotRemoveLastAdmin, got {:?}", other.is_ok()),
     }
 }
 
@@ -350,6 +384,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         authorization_state: DeviceAuthorizationState::Authorized,
         device_label: Some("phone".into()),
         app_keys: snapshot_for_linked,
+        app_keys_event: None,
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };
@@ -388,6 +423,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
         authorization_state: DeviceAuthorizationState::Revoked,
         device_label: None,
         app_keys: owner_acct.state.app_keys.clone(),
+        app_keys_event: None,
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };
@@ -410,12 +446,9 @@ fn external_revocation_marks_state_revoked() {
     // Pretend a new snapshot from owner removes this device.
     let new_snap = AppKeysSnapshot {
         owner_pubkey: acct.state.owner_pubkey.clone(),
+        signed_by_pubkey: Some(acct.state.device_pubkey.clone()),
         created_at: acct.state.app_keys.as_ref().unwrap().created_at + 1,
-        devices: vec![DeviceEntry {
-            pubkey: "ff".repeat(32),
-            added_at: 0,
-            label: None,
-        }],
+        devices: vec![DeviceEntry::member("ff".repeat(32), 0, None)],
         dck_generation: acct.state.app_keys.as_ref().unwrap().dck_generation + 1,
         wrapped_dck: BTreeMap::new(),
     };
@@ -434,7 +467,7 @@ fn load_round_trips_account_state() {
     let loaded = Account::load(state.clone(), dir.path()).unwrap();
     assert_eq!(loaded.state, state);
     assert_eq!(loaded.device.pubkey_hex(), created.device.pubkey_hex());
-    assert!(loaded.owner_key.is_some());
+    assert!(loaded.owner_key.is_none());
 }
 
 #[test]

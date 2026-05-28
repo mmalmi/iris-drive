@@ -120,6 +120,12 @@ impl NativeAppRuntime {
             NativeAppAction::RevokeDevice { device_pubkey } => {
                 self.revoke_device(&device_pubkey);
             }
+            NativeAppAction::AppointAdmin { device_pubkey } => {
+                self.set_device_admin_role(&device_pubkey, true);
+            }
+            NativeAppAction::DemoteAdmin { device_pubkey } => {
+                self.set_device_admin_role(&device_pubkey, false);
+            }
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
             NativeAppAction::ResetRelays => self.state.ui.relays = default_relays(),
@@ -147,7 +153,8 @@ impl NativeAppRuntime {
                 "iris-drive://device-link?owner={owner_pubkey}&device={device_pubkey}"
             ),
         });
-        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Authorized")];
+        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Admin", "admin")];
+        self.refresh_device_actions();
     }
 
     fn restore_profile(&mut self, secret: &str, device_label: &str) {
@@ -169,7 +176,8 @@ impl NativeAppRuntime {
                 "iris-drive://device-link?owner={owner_pubkey}&device={device_pubkey}"
             ),
         });
-        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Authorized")];
+        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Admin", "admin")];
+        self.refresh_device_actions();
     }
 
     fn link_device(&mut self, owner_pubkey: &str, device_label: &str) {
@@ -195,7 +203,9 @@ impl NativeAppRuntime {
             device_pubkey,
             device_label,
             "Awaiting approval",
+            "member",
         )];
+        self.refresh_device_actions();
     }
 
     fn approve_device(&mut self, request: &str, label: &str) {
@@ -215,10 +225,13 @@ impl NativeAppRuntime {
         let device = UiDevice {
             pubkey: device_pubkey.clone(),
             label,
+            role: "member".to_owned(),
             state: "Authorized".to_owned(),
             detail: request.to_owned(),
             is_online: self.state.ui.sync.running,
             can_revoke: true,
+            can_appoint_admin: false,
+            can_demote_admin: false,
         };
         match self
             .state
@@ -230,6 +243,7 @@ impl NativeAppRuntime {
             Some(existing) => *existing = device,
             None => self.state.ui.devices.push(device),
         }
+        self.refresh_device_actions();
     }
 
     fn revoke_device(&mut self, device_pubkey: &str) {
@@ -257,6 +271,51 @@ impl NativeAppRuntime {
         if before == self.state.ui.devices.len() {
             self.state.error = format!("device not found: {device_pubkey}");
         }
+        self.refresh_device_actions();
+    }
+
+    fn set_device_admin_role(&mut self, device_pubkey: &str, make_admin: bool) {
+        if !self.can_manage_devices() {
+            "admin profile is required to manage device admins".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let device_pubkey = device_pubkey.trim();
+        if device_pubkey.is_empty() {
+            "device public key is required".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let admin_count = self
+            .state
+            .ui
+            .devices
+            .iter()
+            .filter(|device| device.role == "admin")
+            .count();
+        let Some(device) = self
+            .state
+            .ui
+            .devices
+            .iter_mut()
+            .find(|device| device.pubkey == device_pubkey)
+        else {
+            self.state.error = format!("device not found: {device_pubkey}");
+            return;
+        };
+
+        if make_admin {
+            device.role = "admin".to_owned();
+            device.state = "Admin".to_owned();
+        } else {
+            if device.role == "admin" && admin_count <= 1 {
+                "cannot remove the last admin".clone_into(&mut self.state.error);
+                return;
+            }
+            device.role = "member".to_owned();
+            device.state = "Authorized".to_owned();
+        }
+        self.refresh_device_actions();
     }
 
     fn add_relay(&mut self, url: &str) {
@@ -339,6 +398,32 @@ impl NativeAppRuntime {
             .as_ref()
             .is_some_and(|account| account.has_owner_signing_authority)
     }
+
+    fn refresh_device_actions(&mut self) {
+        let can_manage = self.can_manage_devices();
+        let current_device = self
+            .state
+            .ui
+            .account
+            .as_ref()
+            .map(|account| account.device_pubkey.clone());
+        let admin_count = self
+            .state
+            .ui
+            .devices
+            .iter()
+            .filter(|device| device.role == "admin")
+            .count();
+        for device in &mut self.state.ui.devices {
+            let is_current = current_device
+                .as_deref()
+                .is_some_and(|current| current == device.pubkey);
+            let is_admin = device.role == "admin";
+            device.can_revoke = can_manage && !is_current;
+            device.can_appoint_admin = can_manage && !is_current && !is_admin;
+            device.can_demote_admin = can_manage && !is_current && is_admin && admin_count > 1;
+        }
+    }
 }
 
 fn paths_for(data_dir: &str) -> UiPaths {
@@ -380,14 +465,17 @@ fn generated_pubkey() -> String {
     format!("pubkey-{next:016x}")
 }
 
-fn local_device(pubkey: String, label: String, state: &str) -> UiDevice {
+fn local_device(pubkey: String, label: String, state: &str, role: &str) -> UiDevice {
     UiDevice {
         pubkey: pubkey.clone(),
         label,
+        role: role.to_owned(),
         state: state.to_owned(),
         detail: pubkey,
         is_online: false,
         can_revoke: false,
+        can_appoint_admin: false,
+        can_demote_admin: false,
     }
 }
 
@@ -479,6 +567,7 @@ mod tests {
         assert!(account.has_owner_signing_authority);
         assert_eq!(state.ui.devices.len(), 1);
         assert_eq!(state.ui.devices[0].label, "Pixel");
+        assert_eq!(state.ui.devices[0].role, "admin");
         assert!(state.ui.snapshot_link.contains(&account.owner_pubkey));
         assert!(!state.ui.relays.is_empty());
         assert!(!state.ui.backups.is_empty());
@@ -508,6 +597,7 @@ mod tests {
         assert_eq!(account.authorization_state, "awaiting_approval");
         assert!(!account.has_owner_signing_authority);
         assert!(account.device_link_request.contains("device="));
+        assert_eq!(state.ui.devices[0].role, "member");
     }
 
     #[test]
@@ -523,7 +613,31 @@ mod tests {
         });
 
         assert!(state.ui.devices.iter().any(|device| {
-            device.pubkey == "device-b" && device.label == "Phone" && device.can_revoke
+            device.pubkey == "device-b"
+                && device.label == "Phone"
+                && device.role == "member"
+                && device.can_revoke
+                && device.can_appoint_admin
+        }));
+
+        let state = app.dispatch(NativeAppAction::AppointAdmin {
+            device_pubkey: "device-b".to_owned(),
+        });
+        assert!(state.ui.devices.iter().any(|device| {
+            device.pubkey == "device-b"
+                && device.role == "admin"
+                && device.can_demote_admin
+                && !device.can_appoint_admin
+        }));
+
+        let state = app.dispatch(NativeAppAction::DemoteAdmin {
+            device_pubkey: "device-b".to_owned(),
+        });
+        assert!(state.ui.devices.iter().any(|device| {
+            device.pubkey == "device-b"
+                && device.role == "member"
+                && !device.can_demote_admin
+                && device.can_appoint_admin
         }));
 
         let state = app.dispatch(NativeAppAction::RevokeDevice {

@@ -219,10 +219,20 @@ public sealed class IrisDriveStatusData
             return rows;
         }
 
+        var adminCount = 0;
+        foreach (var peer in peers.EnumerateArray())
+        {
+            if (String(peer, "role") == "admin")
+            {
+                adminCount += 1;
+            }
+        }
+
         foreach (var peer in peers.EnumerateArray())
         {
             var deviceNpub = String(peer, "device_npub") ?? "";
             var isCurrentDevice = Bool(peer, "is_current_device");
+            var role = String(peer, "role") == "admin" ? "admin" : "member";
             var title = String(peer, "label") ??
                 (!string.IsNullOrWhiteSpace(deviceNpub) ? deviceNpub : String(peer, "device_pubkey")) ??
                 "Device";
@@ -232,6 +242,7 @@ public sealed class IrisDriveStatusData
                 details.Add("this device");
             }
 
+            details.Add(role);
             var syncState = String(peer, "sync_state");
             if (!string.IsNullOrWhiteSpace(syncState))
             {
@@ -263,14 +274,20 @@ public sealed class IrisDriveStatusData
 
             var isOnline = Bool(peer, "fips_online");
             var state = isOnline ? "Online" : "Offline";
+            var canManagePeer = canManageDevices &&
+                !isCurrentDevice &&
+                !string.IsNullOrWhiteSpace(deviceNpub);
             rows.Add(new PeerRow(
                 deviceNpub,
                 title,
+                role,
                 string.Join(" | ", details),
                 state,
                 isOnline,
                 isCurrentDevice,
-                canManageDevices && !isCurrentDevice && !string.IsNullOrWhiteSpace(deviceNpub)));
+                canManagePeer,
+                canManagePeer && role != "admin",
+                canManagePeer && role == "admin" && adminCount > 1));
         }
 
         return rows;
@@ -522,8 +539,11 @@ public sealed record FipsDiagnostics(
 public sealed record PeerRow(
     string DeviceNpub,
     string Title,
+    string Role,
     string Subtitle,
     string State,
     bool IsOnline,
     bool IsCurrentDevice,
-    bool CanRevoke);
+    bool CanRevoke,
+    bool CanAppointAdmin,
+    bool CanDemoteAdmin);

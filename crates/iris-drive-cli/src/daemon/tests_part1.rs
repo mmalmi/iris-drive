@@ -86,6 +86,7 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
             authorization_state: iris_drive_core::DeviceAuthorizationState::Authorized,
             device_label: None,
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         }),

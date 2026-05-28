@@ -1,19 +1,16 @@
 //! Account state machine.
 //!
-//! Wraps the user's identity model — owner pubkey, this device's
-//! identity, whether this device can sign the `AppKeys` roster, and the
-//! current authorization state.
+//! Wraps the account roster model — stable account id, this device's
+//! identity, whether this device is an admin in the current `AppKeys`
+//! roster, and the current authorization state.
 //!
 //! Three creation paths mirror the iris-chat-rs onboarding flows:
 //!
-//! 1. **Create** — fresh owner key + fresh device key. Single-device
-//!    default; the install has owner signing authority.
-//! 2. **Restore** — import an existing owner `nsec` onto this device.
-//!    Generate a fresh device key. Device has owner authority.
-//! 3. **Link** — paste an owner npub. Generate a fresh device key.
-//!    Device does **not** have owner authority and starts in
-//!    `AwaitingApproval`. It must be approved by an owner-capable
-//!    device before its drive root is honoured.
+//! 1. **Create** — fresh device key. Single-device default; this device
+//!    is the first admin and signs the first roster.
+//! 2. **Restore** — import an existing admin-device `nsec`.
+//! 3. **Link** — paste/scan an account/admin invite. Generate a fresh
+//!    device key and wait in `AwaitingApproval` until an admin accepts it.
 
 use std::collections::BTreeMap;
 use std::env;
@@ -21,12 +18,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Keys, PublicKey, SecretKey};
+use nostr_sdk::{JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::app_keys::{AppKeysSnapshot, ApplyDecision, DeviceEntry, apply_snapshot};
+use crate::app_keys::{
+    AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
+};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
+use crate::nostr_events::build_app_keys_event;
 use crate::paths::{key_path_in, owner_key_path_in};
 
 #[derive(Debug, Error)]
@@ -37,12 +37,14 @@ pub enum AccountError {
     InvalidOwnerPubkey(String),
     #[error("invalid device pubkey: {0}")]
     InvalidDevicePubkey(String),
-    #[error("this device does not have owner signing authority")]
+    #[error("this device is not an admin")]
     NoOwnerAuthority,
     #[error("device already authorized")]
     AlreadyAuthorized,
     #[error("device not in roster")]
     DeviceNotInRoster,
+    #[error("cannot remove the last admin device")]
+    CannotRemoveLastAdmin,
     #[error("no AppKeys snapshot yet")]
     NoCurrentSnapshot,
     #[error("no DCK wrap for this device (revoked or never authorized)")]
@@ -51,6 +53,8 @@ pub enum AccountError {
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
     Unwrap(String),
+    #[error("failed to record signed roster event: {0}")]
+    RosterEvent(String),
     #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
     InvalidDckLength(usize),
     #[error("io: {0}")]
@@ -92,14 +96,20 @@ pub struct InboundDeviceLinkRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AccountState {
+    /// Stable account id. New accounts use their first admin device pubkey.
+    /// The name is kept for config/wire compatibility.
     pub owner_pubkey: String,
     pub device_pubkey: String,
+    /// Historical field name. In the current model this is true when the
+    /// current device is an admin in the latest accepted roster.
     pub has_owner_signing_authority: bool,
     pub authorization_state: DeviceAuthorizationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_keys: Option<AppKeysSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_keys_event: Option<AppKeysEventRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_device_link_request: Option<PendingDeviceLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -119,7 +129,11 @@ impl AccountState {
     /// Can this device add/remove other devices in the roster?
     #[must_use]
     pub fn can_manage_devices(&self) -> bool {
-        self.has_owner_signing_authority
+        self.app_keys
+            .as_ref()
+            .map_or(self.has_owner_signing_authority, |snap| {
+                snap.is_admin(&self.device_pubkey)
+            })
     }
 
     /// Recompute `authorization_state` from the current `AppKeys` snapshot.
@@ -137,6 +151,12 @@ impl AccountState {
             }
             None => self.authorization_state,
         };
+        self.has_owner_signing_authority = self
+            .app_keys
+            .as_ref()
+            .map_or(self.has_owner_signing_authority, |snap| {
+                snap.is_admin(&self.device_pubkey)
+            });
         if self.authorization_state == DeviceAuthorizationState::Authorized {
             self.outbound_device_link_request = None;
         }
@@ -147,7 +167,28 @@ impl AccountState {
     /// `authorization_state` is recomputed.
     pub fn apply_app_keys(&mut self, incoming: AppKeysSnapshot) -> ApplyDecision {
         let decision = apply_snapshot(&mut self.app_keys, incoming);
+        if decision == ApplyDecision::Merged {
+            self.app_keys_event = None;
+        }
         self.recompute_authorization();
+        decision
+    }
+
+    pub fn apply_signed_app_keys(
+        &mut self,
+        incoming: AppKeysSnapshot,
+        event: AppKeysEventRecord,
+    ) -> ApplyDecision {
+        let decision = self.apply_app_keys(incoming);
+        match decision {
+            ApplyDecision::Adopted | ApplyDecision::Replaced => {
+                self.app_keys_event = Some(event);
+            }
+            ApplyDecision::Merged => {
+                self.app_keys_event = None;
+            }
+            ApplyDecision::Rejected => {}
+        }
         decision
     }
 
@@ -178,7 +219,7 @@ impl AccountState {
         label: Option<String>,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
-        if owner_pubkey != self.owner_pubkey || !self.has_owner_signing_authority {
+        if owner_pubkey != self.owner_pubkey || !self.can_manage_devices() {
             return Ok(false);
         }
         if !is_pubkey_hex(device_pubkey) {
@@ -239,41 +280,43 @@ impl AccountState {
 pub struct Account {
     pub state: AccountState,
     pub device: DeviceIdentity,
+    /// Legacy compatibility slot. New accounts do not create or require a
+    /// separate owner key; admin authority lives in the roster.
     pub owner_key: Option<OwnerKey>,
 }
 
 impl Account {
-    /// **Create** flow — fresh owner + fresh device, both saved to the
-    /// config dir. The device is auto-authorized via a self-signed
-    /// single-entry `AppKeys` snapshot.
+    /// **Create** flow — fresh device saved to the config dir. The device is
+    /// auto-authorized as the first admin via a self-signed single-entry
+    /// `AppKeys` snapshot.
     pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, AccountError> {
         let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
-        let owner = OwnerKey::generate(owner_key_path_in(config_dir));
-        owner.save()?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let mut state = AccountState {
-            owner_pubkey: owner.pubkey_hex(),
+            owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
 
         let now = current_unix_seconds();
-        let devices = vec![DeviceEntry {
-            pubkey: state.device_pubkey.clone(),
-            added_at: now,
-            label: device_label,
-        }];
+        let devices = vec![DeviceEntry::admin(
+            state.device_pubkey.clone(),
+            now,
+            device_label,
+        )];
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
         let snap = AppKeysSnapshot {
             owner_pubkey: state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(state.device_pubkey.clone()),
             created_at: now,
             devices,
             dck_generation: 1,
@@ -281,45 +324,62 @@ impl Account {
         };
         state.apply_app_keys(snap);
 
-        Ok(Self {
+        let mut account = Self {
             state,
             device,
-            owner_key: Some(owner),
-        })
+            owner_key: None,
+        };
+        account.record_current_app_keys_event()?;
+        Ok(account)
     }
 
-    /// **Restore** flow — import existing owner nsec, generate a fresh
-    /// device. The device must still be added to the existing `AppKeys`
-    /// (caller is responsible for issuing the approval if one is needed;
-    /// `apply_app_keys` will compute authorization state once a snapshot
-    /// arrives).
+    /// **Restore** flow — import an existing admin-device nsec.
     pub fn restore(
         config_dir: &Path,
-        owner_nsec: &str,
+        device_nsec: &str,
         device_label: Option<String>,
     ) -> Result<Self, AccountError> {
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let device = DeviceIdentity::from_secret(device_nsec, key_path_in(config_dir))?;
         device.save()?;
-        let owner = OwnerKey::from_secret(owner_nsec, owner_key_path_in(config_dir))?;
-        owner.save()?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
-        let state = AccountState {
-            owner_pubkey: owner.pubkey_hex(),
+        let mut state = AccountState {
+            owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label,
+            device_label: device_label.clone(),
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
 
-        Ok(Self {
+        let now = current_unix_seconds();
+        let devices = vec![DeviceEntry::admin(
+            state.device_pubkey.clone(),
+            now,
+            device_label,
+        )];
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        let snap = AppKeysSnapshot {
+            owner_pubkey: state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(state.device_pubkey.clone()),
+            created_at: now,
+            devices,
+            dck_generation: 1,
+            wrapped_dck: wraps,
+        };
+        state.apply_app_keys(snap);
+
+        let mut account = Self {
             state,
             device,
-            owner_key: Some(owner),
-        })
+            owner_key: None,
+        };
+        account.record_current_app_keys_event()?;
+        Ok(account)
     }
 
     /// **Link** flow — generate a fresh device key, accept the user's
@@ -345,6 +405,7 @@ impl Account {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label,
             app_keys: None,
+            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
@@ -362,15 +423,10 @@ impl Account {
     /// create/restore/link flow first.
     pub fn load(state: AccountState, config_dir: &Path) -> Result<Self, AccountError> {
         let device = DeviceIdentity::load(key_path_in(config_dir))?;
-        let owner_key = if state.has_owner_signing_authority {
-            Some(OwnerKey::load(owner_key_path_in(config_dir))?)
-        } else {
-            None
-        };
         Ok(Self {
             state,
             device,
-            owner_key,
+            owner_key: None,
         })
     }
 
@@ -391,10 +447,6 @@ impl Account {
         {
             return Err(AccountError::AlreadyAuthorized);
         }
-        let owner = self
-            .owner_key
-            .as_ref()
-            .ok_or(AccountError::NoOwnerAuthority)?;
         let now = next_local_timestamp(self.state.app_keys.as_ref());
         let mut devices = self
             .state
@@ -402,13 +454,13 @@ impl Account {
             .as_ref()
             .map(|s| s.devices.clone())
             .unwrap_or_default();
-        devices.push(DeviceEntry {
-            pubkey: device_pubkey_hex.to_string(),
-            added_at: now,
+        devices.push(DeviceEntry::member(
+            device_pubkey_hex.to_string(),
+            now,
             label,
-        });
+        ));
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
         let next_gen = self
             .state
             .app_keys
@@ -416,12 +468,14 @@ impl Account {
             .map_or(1, |s| s.dck_generation + 1);
         let new_snap = AppKeysSnapshot {
             owner_pubkey: self.state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
             created_at: now,
             devices,
             dck_generation: next_gen,
             wrapped_dck: wraps,
         };
         self.state.apply_app_keys(new_snap);
+        self.record_current_app_keys_event()?;
         self.state
             .inbound_device_link_requests
             .retain(|request| request.device_pubkey != device_pubkey_hex);
@@ -446,10 +500,11 @@ impl Account {
         if !snap.contains(device_pubkey_hex) {
             return Err(AccountError::DeviceNotInRoster);
         }
-        let owner = self
-            .owner_key
-            .as_ref()
-            .ok_or(AccountError::NoOwnerAuthority)?;
+        if snap.is_admin(device_pubkey_hex)
+            && snap.devices.iter().filter(|d| d.is_admin()).count() <= 1
+        {
+            return Err(AccountError::CannotRemoveLastAdmin);
+        }
         let now = next_local_timestamp(self.state.app_keys.as_ref());
         let devices: Vec<DeviceEntry> = snap
             .devices
@@ -458,16 +513,18 @@ impl Account {
             .cloned()
             .collect();
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
         let next_gen = snap.dck_generation + 1;
         let new_snap = AppKeysSnapshot {
             owner_pubkey: self.state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
             created_at: now,
             devices,
             dck_generation: next_gen,
             wrapped_dck: wraps,
         };
         self.state.apply_app_keys(new_snap);
+        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -478,10 +535,6 @@ impl Account {
         if !self.state.can_manage_devices() {
             return Err(AccountError::NoOwnerAuthority);
         }
-        let owner = self
-            .owner_key
-            .as_ref()
-            .ok_or(AccountError::NoOwnerAuthority)?;
         let snap = self
             .state
             .app_keys
@@ -490,16 +543,85 @@ impl Account {
         let devices = snap.devices.clone();
         let next_gen = snap.dck_generation + 1;
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(owner.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
         let now = next_local_timestamp(Some(snap));
         let new_snap = AppKeysSnapshot {
             owner_pubkey: self.state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
             created_at: now,
             devices,
             dck_generation: next_gen,
             wrapped_dck: wraps,
         };
         self.state.apply_app_keys(new_snap);
+        self.record_current_app_keys_event()?;
+        Ok(self.state.app_keys.as_ref().expect("just applied"))
+    }
+
+    pub fn appoint_admin(
+        &mut self,
+        device_pubkey_hex: &str,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        self.set_device_role(device_pubkey_hex, DeviceRole::Admin)
+    }
+
+    pub fn demote_admin(
+        &mut self,
+        device_pubkey_hex: &str,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        self.set_device_role(device_pubkey_hex, DeviceRole::Member)
+    }
+
+    fn set_device_role(
+        &mut self,
+        device_pubkey_hex: &str,
+        role: DeviceRole,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        if !self.state.can_manage_devices() {
+            return Err(AccountError::NoOwnerAuthority);
+        }
+        let snap = self
+            .state
+            .app_keys
+            .as_ref()
+            .ok_or(AccountError::NoCurrentSnapshot)?;
+        let current = snap
+            .device(device_pubkey_hex)
+            .ok_or(AccountError::DeviceNotInRoster)?;
+        if current.role == role {
+            return Ok(self.state.app_keys.as_ref().expect("checked above"));
+        }
+        if current.is_admin()
+            && role != DeviceRole::Admin
+            && snap
+                .devices
+                .iter()
+                .filter(|device| device.is_admin())
+                .count()
+                <= 1
+        {
+            return Err(AccountError::CannotRemoveLastAdmin);
+        }
+        let mut devices = snap.devices.clone();
+        for device in &mut devices {
+            if device.pubkey == device_pubkey_hex {
+                device.role = role;
+            }
+        }
+        let next_gen = snap.dck_generation + 1;
+        let dck = generate_dck();
+        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
+        let now = next_local_timestamp(Some(snap));
+        let new_snap = AppKeysSnapshot {
+            owner_pubkey: self.state.owner_pubkey.clone(),
+            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
+            created_at: now,
+            devices,
+            dck_generation: next_gen,
+            wrapped_dck: wraps,
+        };
+        self.state.apply_app_keys(new_snap);
+        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -516,15 +638,32 @@ impl Account {
             .wrapped_dck
             .get(&self.state.device_pubkey)
             .ok_or(AccountError::NoWrapForThisDevice)?;
-        let owner_pk = PublicKey::from_hex(&self.state.owner_pubkey)
+        let signer_pk = PublicKey::from_hex(snap.signer_pubkey())
             .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
-        let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &owner_pk, wrap)
+        let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| AccountError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .as_slice()
             .try_into()
             .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
         Ok(arr)
+    }
+
+    fn record_current_app_keys_event(&mut self) -> Result<(), AccountError> {
+        let Some(snapshot) = self.state.app_keys.as_ref() else {
+            return Ok(());
+        };
+        if snapshot.signer_pubkey() != self.state.device_pubkey {
+            return Ok(());
+        }
+        let event = build_app_keys_event(self.device.keys(), snapshot)
+            .map_err(|e| AccountError::RosterEvent(e.to_string()))?;
+        self.state.app_keys_event = Some(AppKeysEventRecord {
+            event_id: event.id.to_hex(),
+            signer_pubkey: event.pubkey.to_hex(),
+            event_json: event.as_json(),
+        });
+        Ok(())
     }
 }
 

@@ -166,11 +166,11 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         .as_mut()
         .expect("created account has app keys")
         .devices
-        .push(DeviceEntry {
-            pubkey: remote_device.clone(),
-            added_at: 1,
-            label: Some("remote".into()),
-        });
+        .push(DeviceEntry::member(
+            remote_device.clone(),
+            1,
+            Some("remote".into()),
+        ));
 
     let mut config = AppConfig {
         account: Some(account_state),
@@ -277,11 +277,11 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
         .as_mut()
         .expect("created account has app keys")
         .devices
-        .push(DeviceEntry {
-            pubkey: peer_device.clone(),
-            added_at: 1,
-            label: Some("peer".into()),
-        });
+        .push(DeviceEntry::member(
+            peer_device.clone(),
+            1,
+            Some("peer".into()),
+        ));
 
     let mut config = AppConfig {
         account: Some(account_state),
@@ -404,11 +404,11 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         .as_mut()
         .expect("created account has app keys")
         .devices
-        .push(DeviceEntry {
-            pubkey: peer_device.clone(),
-            added_at: 1,
-            label: Some("peer".into()),
-        });
+        .push(DeviceEntry::member(
+            peer_device.clone(),
+            1,
+            Some("peer".into()),
+        ));
 
     let mut config = AppConfig {
         account: Some(account_state),
@@ -506,11 +506,11 @@ async fn primary_merged_view_ignores_materialized_root_publish_time() {
         .as_mut()
         .expect("created account has app keys")
         .devices
-        .push(DeviceEntry {
-            pubkey: peer_device.clone(),
-            added_at: 1,
-            label: Some("peer".into()),
-        });
+        .push(DeviceEntry::member(
+            peer_device.clone(),
+            1,
+            Some("peer".into()),
+        ));
 
     let mut config = AppConfig {
         account: Some(account_state),

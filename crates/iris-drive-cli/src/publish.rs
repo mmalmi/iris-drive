@@ -422,23 +422,6 @@ pub(crate) async fn publish_current_state(
     use iris_drive_core::relay_sync;
 
     let mut report = PublishStateReport::default();
-    if state.has_owner_signing_authority
-        && let Some(snap) = state.app_keys.as_ref()
-    {
-        let account = Account::load(state.clone(), config_dir).context("loading account")?;
-        let owner_keys = account
-            .owner_key
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-            .keys();
-        match relay_publish_with_timeout(relay_sync::publish_app_keys(client, owner_keys, snap))
-            .await
-        {
-            Ok(_) => report.published_app_keys = true,
-            Err(error) => report.app_keys_publish_error = Some(error),
-        }
-    }
-
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
@@ -469,16 +452,11 @@ pub(crate) async fn publish_current_state(
             Err(error) => report.drive_root_publish_error = Some(error),
         }
 
-        if state.has_owner_signing_authority {
+        if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
             let account = Account::load(state.clone(), config_dir).context("loading account")?;
-            let owner_keys = account
-                .owner_key
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
-                .keys();
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,
-                owner_keys,
+                account.device.keys(),
                 &drive.drive_id,
                 &root,
             ))

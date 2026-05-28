@@ -51,7 +51,7 @@ fn apply_app_keys_event_from_our_owner_replaces() {
     let new_device = Keys::generate().public_key().to_hex();
     acct.approve_device(&new_device, None).unwrap();
     let newer_snap = acct.state.app_keys.clone().unwrap();
-    let event = build_app_keys_event(acct.owner_key.as_ref().unwrap().keys(), &newer_snap).unwrap();
+    let event = build_app_keys_event(acct.device.keys(), &newer_snap).unwrap();
 
     // Older state in config.
     let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
@@ -167,16 +167,10 @@ fn apply_files_root_event_from_owner_maps_to_current_device() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let root = encrypted_root(0x5a, 1_700_000_000, 0);
-    let event =
-        build_private_hashtree_root_event(acct.owner_key.as_ref().unwrap().keys(), "main", &root)
-            .unwrap();
+    let event = build_private_hashtree_root_event(acct.device.keys(), "main", &root).unwrap();
 
-    let outcome = apply_remote_files_root_event(
-        &mut cfg,
-        &event,
-        Some(acct.owner_key.as_ref().unwrap().keys()),
-    )
-    .unwrap();
+    let outcome =
+        apply_remote_files_root_event(&mut cfg, &event, Some(acct.device.keys())).unwrap();
 
     assert_eq!(outcome, FilesRootApply::Applied);
     let entry = cfg
@@ -202,19 +196,11 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
         .device_roots
         .insert(acct.state.device_pubkey.clone(), native_root.clone());
     let legacy_root = encrypted_root(0x5c, 1_700_000_000, 0);
-    let event = build_private_hashtree_root_event(
-        acct.owner_key.as_ref().unwrap().keys(),
-        "main",
-        &legacy_root,
-    )
-    .unwrap();
+    let event =
+        build_private_hashtree_root_event(acct.device.keys(), "main", &legacy_root).unwrap();
 
-    let outcome = apply_remote_files_root_event(
-        &mut cfg,
-        &event,
-        Some(acct.owner_key.as_ref().unwrap().keys()),
-    )
-    .unwrap();
+    let outcome =
+        apply_remote_files_root_event(&mut cfg, &event, Some(acct.device.keys())).unwrap();
 
     assert_eq!(outcome, FilesRootApply::StaleTimestamp);
     let entry = cfg
@@ -232,7 +218,7 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let mut root = encrypted_root(0x5d, 100, 0);
-    let owner_keys = acct.owner_key.as_ref().unwrap().keys();
+    let owner_keys = acct.device.keys();
     let first = build_private_hashtree_root_event(owner_keys, "main", &root).unwrap();
 
     assert_eq!(
@@ -506,13 +492,11 @@ fn apply_app_keys_event_revokes_authorized_state_when_we_get_removed() {
     // Owner publishes a new snapshot removing this device.
     let other_device = Keys::generate().public_key().to_hex();
     acct.approve_device(&other_device, None).unwrap();
+    acct.appoint_admin(&other_device).unwrap();
     acct.revoke_device(&cfg.account.as_ref().unwrap().device_pubkey)
         .unwrap();
-    let event = build_app_keys_event(
-        acct.owner_key.as_ref().unwrap().keys(),
-        acct.state.app_keys.as_ref().unwrap(),
-    )
-    .unwrap();
+    let event =
+        build_app_keys_event(acct.device.keys(), acct.state.app_keys.as_ref().unwrap()).unwrap();
     let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
     assert!(
         matches!(outcome, AppKeysApply::Applied(_)),

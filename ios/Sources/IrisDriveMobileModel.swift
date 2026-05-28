@@ -6,10 +6,13 @@ import UIKit
 struct IrisDriveDevice: Identifiable, Equatable {
     var id: String { detail }
     var label: String
+    var role: String
     var state: String
     var detail: String
     var isOnline: Bool
     var canRevoke: Bool
+    var canAppointAdmin: Bool
+    var canDemoteAdmin: Bool
 }
 
 struct IrisDriveBackup: Identifiable, Equatable {
@@ -71,14 +74,43 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var devices: [IrisDriveDevice] = []
     @Published var backups: [IrisDriveBackup] = []
     @Published var roots: [IrisDriveRoot] = []
+    @Published var isDriveBrowserPresented = false
+    @Published var driveBrowserInitialURL: URL?
+    @Published var authorizationState = "Not linked"
+    @Published var authorizedDeviceCount = 0
+    @Published var publishedDeviceRoots = 0
+    @Published var fileCount = 0
+    @Published var topLevelEntries = 0
+    @Published var visibleFileBytes: UInt64 = 0
 
     private let defaults = UserDefaults.standard
     private let approvedDevicesKey = "approvedDevices"
     private let relaysKey = "relays"
+    private let providerStateFileName = "ios-provider-state.json"
 
     private struct StoredDevice: Codable, Equatable {
         var label: String
         var key: String
+        var isAdmin: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case key
+            case isAdmin
+        }
+
+        init(label: String, key: String, isAdmin: Bool = false) {
+            self.label = label
+            self.key = key
+            self.isAdmin = isAdmin
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try container.decode(String.self, forKey: .label)
+            key = try container.decode(String.self, forKey: .key)
+            isAdmin = try container.decodeIfPresent(Bool.self, forKey: .isAdmin) ?? false
+        }
     }
 
     init() {
@@ -117,6 +149,10 @@ final class IrisDriveMobileModel: ObservableObject {
         "https://drive.iris.to/snapshot/\(ownerPublicKey.isEmpty ? "local" : ownerPublicKey)"
     }
 
+    var rootStatus: String {
+        hasLocalProfile ? "Local provider root" : "No local root"
+    }
+
     var deviceLinkRequest: String {
         guard hasLocalProfile else { return "" }
         return "iris-drive://device-link?owner=\(ownerPublicKey)&device=\(devicePublicKey)"
@@ -139,10 +175,11 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomain()
     }
 
-    func ensureFileProviderDomain() {
+    func ensureFileProviderDomain(completion: ((Bool) -> Void)? = nil) {
         guard hasLocalProfile else {
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
+            completion?(false)
             return
         }
         fileProviderStatus = "Registering Files provider"
@@ -154,8 +191,10 @@ final class IrisDriveMobileModel: ObservableObject {
         NSFileProviderManager.add(domain) { [weak self] error in
             if error == nil {
                 Task { @MainActor in
-                    self?.fileProviderStatus = "Files provider ready"
-                    self?.rebuildDerivedState()
+                    guard let self else { return }
+                    self.fileProviderStatus = "Files provider registered"
+                    self.rebuildDerivedState()
+                    completion?(true)
                 }
                 return
             }
@@ -163,17 +202,37 @@ final class IrisDriveMobileModel: ObservableObject {
             NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
                 let exists = domains.contains { $0.identifier == irisDriveDomainIdentifier }
                 Task { @MainActor [weak self] in
-                    self?.fileProviderStatus = exists
-                        ? "Files provider ready"
+                    guard let self else { return }
+                    self.fileProviderStatus = exists
+                        ? "Files provider registered"
                         : "Files provider unavailable"
-                    self?.rebuildDerivedState()
+                    self.rebuildDerivedState()
+                    completion?(exists)
                 }
             }
         }
     }
 
     func openDriveFolder() {
-        ensureFileProviderDomain()
+        guard hasLocalProfile else {
+            fileProviderStatus = "Files provider not registered"
+            rebuildDerivedState()
+            return
+        }
+        fileProviderStatus = "Opening Files provider"
+        rebuildDerivedState()
+        ensureFileProviderDomain { [weak self] ready in
+            guard let self else { return }
+            guard ready else {
+                self.fileProviderStatus = "Files provider unavailable"
+                self.rebuildDerivedState()
+                return
+            }
+            self.openRegisteredDriveFolder()
+        }
+    }
+
+    private func openRegisteredDriveFolder() {
         let domain = NSFileProviderDomain(
             identifier: irisDriveDomainIdentifier,
             displayName: irisDriveFileProviderDisplayName
@@ -185,12 +244,13 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, _ in
             Task { @MainActor in
-                guard let url else {
-                    self?.fileProviderStatus = "Files provider URL unavailable"
-                    self?.rebuildDerivedState()
-                    return
-                }
-                UIApplication.shared.open(url)
+                guard let self else { return }
+                self.driveBrowserInitialURL = url
+                self.isDriveBrowserPresented = true
+                self.fileProviderStatus = url == nil
+                    ? "Files provider registered"
+                    : "Files provider open"
+                self.rebuildDerivedState()
             }
         }
     }
@@ -281,6 +341,29 @@ final class IrisDriveMobileModel: ObservableObject {
         let stored = loadApprovedDevices().filter { $0.key != id }
         saveApprovedDevices(stored)
         statusTitle = "Device revoked"
+        statusDetail = syncStateTitle
+        load()
+    }
+
+    func appointAdmin(id: String) {
+        var stored = loadApprovedDevices()
+        guard let index = stored.firstIndex(where: { $0.key == id }) else { return }
+        stored[index].isAdmin = true
+        saveApprovedDevices(stored)
+        statusTitle = "Device made admin"
+        statusDetail = syncStateTitle
+        load()
+    }
+
+    func demoteAdmin(id: String) {
+        var stored = loadApprovedDevices()
+        let adminCount = (hasOwnerAuthority ? 1 : 0) + stored.filter(\.isAdmin).count
+        guard adminCount > 1,
+              let index = stored.firstIndex(where: { $0.key == id })
+        else { return }
+        stored[index].isAdmin = false
+        saveApprovedDevices(stored)
+        statusTitle = "Admin removed"
         statusDetail = syncStateTitle
         load()
     }
@@ -450,7 +533,6 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func rebuildDerivedState() {
-        let authorizationState: String
         if ownerPublicKey.isEmpty {
             authorizationState = "Not linked"
         } else if hasOwnerAuthority {
@@ -461,21 +543,35 @@ final class IrisDriveMobileModel: ObservableObject {
 
         let currentDevice = IrisDriveDevice(
             label: deviceLabel,
+            role: hasOwnerAuthority ? "Admin" : "Member",
             state: authorizationState,
             detail: ownerPublicKey.isEmpty ? "No owner profile on this device." : devicePublicKey,
             isOnline: hasLocalProfile && syncRunning,
-            canRevoke: false
+            canRevoke: false,
+            canAppointAdmin: false,
+            canDemoteAdmin: false
         )
-        let approved = loadApprovedDevices().map { device in
+        let storedDevices = loadApprovedDevices()
+        let adminCount = (hasOwnerAuthority ? 1 : 0) + storedDevices.filter(\.isAdmin).count
+        let approved = storedDevices.map { device in
             IrisDriveDevice(
                 label: device.label,
-                state: "Authorized",
+                role: device.isAdmin ? "Admin" : "Member",
+                state: device.isAdmin ? "Admin" : "Authorized",
                 detail: device.key,
                 isOnline: syncRunning,
-                canRevoke: true
+                canRevoke: hasOwnerAuthority,
+                canAppointAdmin: hasOwnerAuthority && !device.isAdmin,
+                canDemoteAdmin: hasOwnerAuthority && device.isAdmin && adminCount > 1
             )
         }
         devices = [currentDevice] + approved
+        authorizedDeviceCount = devices.filter { $0.state == "Authorized" || $0.state == "Admin" }.count
+        publishedDeviceRoots = hasLocalProfile ? 1 : 0
+        let stats = loadProviderStats()
+        fileCount = stats.fileCount
+        topLevelEntries = stats.topLevelEntries
+        visibleFileBytes = stats.visibleFileBytes
         backups = defaultBlossomServers.map { server in
             IrisDriveBackup(
                 label: "Blossom fallback",
@@ -521,6 +617,34 @@ final class IrisDriveMobileModel: ObservableObject {
     private func saveRelays(_ relays: [String]) {
         guard let data = try? JSONEncoder().encode(relays) else { return }
         defaults.set(data, forKey: relaysKey)
+    }
+
+    private struct ProviderState: Decodable {
+        var entries: [ProviderEntry]
+    }
+
+    private struct ProviderEntry: Decodable {
+        var path: String
+        var kind: String
+        var size: UInt64
+    }
+
+    private func loadProviderStats() -> (
+        fileCount: Int,
+        topLevelEntries: Int,
+        visibleFileBytes: UInt64
+    ) {
+        let url = IrisDriveSharedContainer.baseDirectory
+            .appendingPathComponent(providerStateFileName, isDirectory: false)
+        guard let data = try? Data(contentsOf: url),
+              let state = try? JSONDecoder().decode(ProviderState.self, from: data)
+        else {
+            return (0, 0, 0)
+        }
+        let fileEntries = state.entries.filter { $0.kind != "directory" }
+        let topLevelEntries = state.entries.filter { !$0.path.contains("/") }.count
+        let visibleFileBytes = fileEntries.reduce(UInt64(0)) { $0 + $1.size }
+        return (fileEntries.count, topLevelEntries, visibleFileBytes)
     }
 
     private func isDeviceLink(_ url: URL) -> Bool {

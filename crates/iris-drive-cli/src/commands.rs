@@ -76,7 +76,7 @@ pub(crate) enum Command {
         label: Option<String>,
     },
     /// Approve a pending device by adding it to the `AppKeys` roster.
-    /// Only usable on devices with owner signing authority.
+    /// Only usable on admin devices.
     Approve {
         /// Device pubkey to authorize (npub1... or 64-char hex).
         device: String,
@@ -92,7 +92,7 @@ pub(crate) enum Command {
     /// Print the current `AppKeys` roster as JSON.
     Roster,
     /// Rotate the drive content key (DCK) without changing the roster.
-    /// Useful for periodic key freshness. Owner-only.
+    /// Useful for periodic key freshness. Admin-only.
     RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
@@ -251,6 +251,18 @@ pub(crate) enum DevicesCmd {
     /// Revoke an authorized device and rotate the drive content key.
     Revoke {
         /// Device pubkey to revoke (npub1... or 64-char hex).
+        device: String,
+    },
+    /// Promote an authorized device to admin.
+    #[command(name = "appoint-admin", alias = "promote-admin")]
+    AppointAdmin {
+        /// Device pubkey to promote (npub1... or 64-char hex).
+        device: String,
+    },
+    /// Demote an admin device to a normal member.
+    #[command(name = "demote-admin")]
+    DemoteAdmin {
+        /// Device pubkey to demote (npub1... or 64-char hex).
         device: String,
     },
 }

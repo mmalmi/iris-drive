@@ -5,7 +5,7 @@ final class IrisDriveStatus: ObservableObject {
     static let shared = IrisDriveStatus()
     static let closeToMenuBarOnCloseKey = "closeToMenuBarOnClose"
 
-    @Published var message = "Starting sync"
+    @Published var message = "Setup needed"
     @Published var daemonRunning = false
     @Published var closeToMenuBarOnClose =
         UserDefaults.standard.object(forKey: closeToMenuBarOnCloseKey) as? Bool ?? true
@@ -236,6 +236,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let id: String
     let npub: String
     let label: String?
+    let role: String
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
@@ -250,6 +251,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         id = pubkey
         npub = json["device_npub"] as? String ?? pubkey
         label = json["label"] as? String
+        role = json["role"] as? String ?? "member"
         isCurrentDevice = json["is_current_device"] as? Bool ?? false
         authorized = json["authorized"] as? Bool ?? false
         fipsOnline = json["fips_online"] as? Bool ?? false

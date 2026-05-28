@@ -24,24 +24,9 @@ pub(crate) fn cmd_sync(
             .context("connecting to relays")?;
         let timeout = std::time::Duration::from_secs(timeout_secs);
 
-        // 1) Pull latest AppKeys and apply.
-        let mut app_keys_applied = "none";
-        if let Some(ev) = relay_sync::fetch_latest_app_keys(&client, &state.owner_pubkey, timeout)
-            .await
-            .context("fetching AppKeys")?
-        {
-            let outcome = relay_sync::apply_remote_app_keys_event(&mut config, &ev)
-                .context("applying AppKeys event")?;
-            app_keys_applied = match outcome {
-                relay_sync::AppKeysApply::NotOurOwner => "not_our_owner",
-                relay_sync::AppKeysApply::Applied(d) => match d {
-                    iris_drive_core::ApplyDecision::Adopted => "adopted",
-                    iris_drive_core::ApplyDecision::Replaced => "replaced",
-                    iris_drive_core::ApplyDecision::Merged => "merged",
-                    iris_drive_core::ApplyDecision::Rejected => "rejected",
-                },
-            };
-        }
+        // 1) AppKeys rosters are not relayed; they arrive over direct/FIPS
+        // link messages or the direct root-event mesh.
+        let app_keys_applied = "none";
 
         // 2) Pull drive roots for every authorized device.
         let authorized_devices: Vec<String> = config
@@ -101,19 +86,18 @@ pub(crate) fn cmd_sync(
         {
             Ok(Some(ev)) => {
                 files_root_event_seen = true;
-                if state.has_owner_signing_authority {
+                if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
                     let account_state = config.account.clone().ok_or_else(|| {
                         anyhow::anyhow!("not initialized; run `idrive init` first")
                     })?;
-                    let account = Account::load(account_state, config_dir)
-                        .context("loading owner account")?;
-                    let owner_keys = account
-                        .owner_key
-                        .as_ref()
-                        .map(iris_drive_core::OwnerKey::keys);
-                    let outcome =
-                        relay_sync::apply_remote_files_root_event(&mut config, &ev, owner_keys)
-                            .context("applying files-root event")?;
+                    let account =
+                        Account::load(account_state, config_dir).context("loading account")?;
+                    let outcome = relay_sync::apply_remote_files_root_event(
+                        &mut config,
+                        &ev,
+                        Some(account.device.keys()),
+                    )
+                    .context("applying files-root event")?;
                     files_root_event_outcome = files_root_apply_label(&outcome).to_string();
                     if matches!(outcome, relay_sync::FilesRootApply::Applied)
                         && let Some(root_ref) = config
@@ -126,7 +110,7 @@ pub(crate) fn cmd_sync(
                         root_cids_to_download.push(root_ref.root_cid.clone());
                     }
                 } else {
-                    files_root_event_outcome = "owner_key_unavailable".to_string();
+                    files_root_event_outcome = "account_key_unavailable".to_string();
                 }
             }
             Ok(None) => {}

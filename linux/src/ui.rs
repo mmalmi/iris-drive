@@ -27,7 +27,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let open_snapshot_button =
         action_button("document-open-symbolic", "Open Snapshot", "Open snapshot");
     let init_button = text_button("Initialize");
-    let restart_button = action_button("view-refresh-symbolic", "Restart", "Restart sync");
     let stop_button = action_button("process-stop-symbolic", "Stop", "Stop sync");
     let start_button = action_button("media-playback-start-symbolic", "Start", "Start sync");
 
@@ -82,7 +81,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
     actions.append(&folder_button);
     actions.append(&copy_snapshot_button);
     actions.append(&open_snapshot_button);
-    actions.append(&restart_button);
     actions.append(&stop_button);
     actions.append(&start_button);
     main.append(&actions);
@@ -121,13 +119,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let device = value_label();
     let snapshot = value_label();
     let files = metric_value_label();
-    let blocks = metric_value_label();
     let storage = metric_value_label();
     let devices = metric_value_label();
 
     let metrics = flow_section("iris-metrics", 1, 4);
     metrics.append(&metric_tile("Files", &files));
-    metrics.append(&metric_tile("Blocks", &blocks));
     metrics.append(&metric_tile("Storage", &storage));
     metrics.append(&metric_tile("Devices", &devices));
     dashboard.append(&metrics);
@@ -328,7 +324,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
             device,
             snapshot,
             files,
-            blocks,
             storage,
             devices,
             account_owner,
@@ -354,12 +349,12 @@ pub(crate) fn build_ui(app: &adw::Application) {
             folder_button,
             copy_snapshot_button,
             open_snapshot_button,
-            restart_button,
             start_button,
             stop_button,
         },
         daemon: RefCell::new(None),
         setup_screen: RefCell::new(SetupScreen::Welcome),
+        setup_username: RefCell::new(String::new()),
         tray: RefCell::new(None),
         tray_available: Cell::new(false),
         settings_refreshing: Cell::new(false),
@@ -377,11 +372,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
         let button = model.ui.start_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| start_daemon(&model));
-    }
-    {
-        let button = model.ui.restart_button.clone();
-        let model = Rc::clone(&model);
-        button.connect_clicked(move |_| restart_daemon(&model));
     }
     {
         let button = model.ui.stop_button.clone();

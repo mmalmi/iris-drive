@@ -48,7 +48,6 @@ pub(crate) fn refresh(model: &AppRef) {
                 .set_visible(find_bool(account, &["has_owner_signing_authority"]).unwrap_or(false));
             model.ui.snapshot.set_text(&snapshot_value(&json));
             model.ui.files.set_text(&file_count_value(&json));
-            model.ui.blocks.set_text(&block_count_value(&json));
             model.ui.storage.set_text(&storage_value(&json));
             model.ui.devices.set_text(&device_count_value(&json));
             model
@@ -87,7 +86,6 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.approve_box.set_visible(false);
             model.ui.snapshot.set_text("-");
             model.ui.files.set_text("0");
-            model.ui.blocks.set_text("0");
             model.ui.storage.set_text("0 B");
             model.ui.devices.set_text("0/0");
             model.ui.sidebar_online.set_text("0/0 online");
@@ -112,8 +110,6 @@ pub(crate) fn set_view_mode(model: &AppRef, initialized: bool, sync_running: boo
     model.ui.folder_button.set_visible(initialized);
     model.ui.copy_snapshot_button.set_visible(initialized);
     model.ui.open_snapshot_button.set_visible(initialized);
-    model.ui.restart_button.set_visible(initialized);
-    model.ui.restart_button.set_sensitive(initialized);
     model.ui.start_button.set_visible(initialized);
     model
         .ui

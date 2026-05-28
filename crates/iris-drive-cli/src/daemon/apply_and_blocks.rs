@@ -9,9 +9,7 @@ pub(crate) async fn apply_one_event(
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
-    if kind == iris_drive_core::nostr_events::KIND_APP_KEYS
-        && event.identifier() == Some(iris_drive_core::nostr_events::D_TAG_APP_KEYS)
-    {
+    if iris_drive_core::nostr_events::is_app_keys_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_app_keys_event(&mut config, event)?;
         println!(
             "{}",
@@ -108,24 +106,21 @@ pub(crate) fn apply_files_root_event(
     account_state: AccountState,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
-    if !account_state.has_owner_signing_authority {
+    if !account_state.can_manage_devices() || account_state.device_pubkey != account_state.owner_pubkey {
         println!(
             "{}",
             json!({
                 "event": "files_root",
                 "event_id": event.id.to_hex(),
                 "author": account_npub(&event.pubkey.to_hex()),
-                "outcome": "owner_key_unavailable",
+                "outcome": "account_key_unavailable",
             })
         );
         return Ok(());
     }
-    let account = Account::load(account_state, config_dir).context("loading owner account")?;
-    let owner_keys = account
-        .owner_key
-        .as_ref()
-        .map(iris_drive_core::OwnerKey::keys);
-    let outcome = relay_sync::apply_remote_files_root_event(config, event, owner_keys)?;
+    let account = Account::load(account_state, config_dir).context("loading account")?;
+    let outcome =
+        relay_sync::apply_remote_files_root_event(config, event, Some(account.device.keys()))?;
     let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
     let root_cid_to_pull = if was_applied {
         config

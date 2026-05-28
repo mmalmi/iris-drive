@@ -14,6 +14,21 @@ internal data class AppState(
     val snapshotLink: String = "",
     val error: String = "",
 ) {
+    val fileCount: Int
+        get() = 0
+
+    val topLevelEntries: Int
+        get() = roots.size
+
+    val visibleFileBytes: Long
+        get() = 0
+
+    val authorizedDeviceCount: Int
+        get() = devices.count { it.state.equals("authorized", ignoreCase = true) || it.role == "admin" }
+
+    val publishedDeviceRoots: Int
+        get() = if (account == null) 0 else roots.size
+
     companion object {
         fun fromJson(jsonText: String): AppState {
             val json = runCatching { JSONObject(jsonText) }.getOrElse {
@@ -47,10 +62,13 @@ internal data class AccountState(
 internal data class DeviceState(
     val pubkey: String,
     val label: String,
+    val role: String,
     val state: String,
     val detail: String,
     val isOnline: Boolean,
     val canRevoke: Boolean,
+    val canAppointAdmin: Boolean,
+    val canDemoteAdmin: Boolean,
 )
 
 internal data class BackupState(
@@ -109,6 +127,18 @@ internal object NativeActions {
     fun revokeDevice(devicePubkey: String): String =
         JSONObject()
             .put("type", "revoke_device")
+            .put("device_pubkey", devicePubkey)
+            .toString()
+
+    fun appointAdmin(devicePubkey: String): String =
+        JSONObject()
+            .put("type", "appoint_admin")
+            .put("device_pubkey", devicePubkey)
+            .toString()
+
+    fun demoteAdmin(devicePubkey: String): String =
+        JSONObject()
+            .put("type", "demote_admin")
             .put("device_pubkey", devicePubkey)
             .toString()
 
@@ -194,10 +224,13 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
                 DeviceState(
                     pubkey = item.optString("pubkey"),
                     label = item.optString("label"),
+                    role = item.optString("role"),
                     state = item.optString("state"),
                     detail = item.optString("detail"),
                     isOnline = item.optBoolean("is_online"),
                     canRevoke = item.optBoolean("can_revoke"),
+                    canAppointAdmin = item.optBoolean("can_appoint_admin"),
+                    canDemoteAdmin = item.optBoolean("can_demote_admin"),
                 ),
             )
         }

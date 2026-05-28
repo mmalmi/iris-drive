@@ -25,7 +25,7 @@ use iris_drive_core::{
     paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
 use nostr_sdk::nips::nip19::FromBech32;
-use nostr_sdk::{Event, PublicKey, RelayStatus};
+use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

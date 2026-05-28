@@ -23,11 +23,11 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveR
         .as_mut()
         .unwrap()
         .devices
-        .push(iris_drive_core::app_keys::DeviceEntry {
-            pubkey: remote.clone(),
-            added_at: 100,
-            label: Some("remote".into()),
-        });
+        .push(iris_drive_core::app_keys::DeviceEntry::member(
+            remote.clone(),
+            100,
+            Some("remote".into()),
+        ));
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(config_dir)).unwrap();
 

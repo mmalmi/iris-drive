@@ -39,10 +39,16 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
         .and_then(|account| account.get("has_owner_signing_authority"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let admin_count = peers
+        .iter()
+        .filter(|peer| find_string(peer, &["role"]) == Some("admin"))
+        .count();
     for peer in peers {
         let title =
             find_string(peer, &["label", "device_npub", "device_pubkey"]).unwrap_or("Device");
         let device_npub = find_string(peer, &["device_npub"]).unwrap_or("");
+        let role = find_string(peer, &["role"]).unwrap_or("member");
+        let is_admin = role == "admin";
         let is_current_device = peer
             .get("is_current_device")
             .and_then(Value::as_bool)
@@ -51,6 +57,7 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
         if is_current_device {
             metadata.push("this device".to_string());
         }
+        metadata.push(role.to_string());
         if let Some(sync_state) = find_string(peer, &["sync_state"]) {
             metadata.push(sync_state.to_string());
         }
@@ -74,6 +81,7 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let state = if fips_online { "Online" } else { "Offline" };
+        let can_manage_peer = can_manage_devices && !is_current_device && !device_npub.is_empty();
         list.append(&peer_row(
             model,
             title,
@@ -81,7 +89,9 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
             state,
             fips_online,
             device_npub,
-            can_manage_devices && !is_current_device && !device_npub.is_empty(),
+            can_manage_peer && !is_admin,
+            can_manage_peer && is_admin && admin_count > 1,
+            can_manage_peer,
         ));
     }
 }
@@ -283,6 +293,8 @@ pub(crate) fn peer_row(
     state: &str,
     is_online: bool,
     device_npub: &str,
+    can_appoint_admin: bool,
+    can_demote_admin: bool,
     can_revoke: bool,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
@@ -321,6 +333,36 @@ pub(crate) fn peer_row(
         labels.append(&subtitle_label);
     }
     body.append(&labels);
+
+    if can_appoint_admin {
+        let appoint = icon_button("contact-new-symbolic", "Make admin");
+        let model = Rc::clone(model);
+        let device_npub = device_npub.to_string();
+        appoint.connect_clicked(move |_| match appoint_admin(&device_npub) {
+            Ok(()) => {
+                restart_daemon(&model);
+                model.ui.notice.set_text("Device made admin");
+                refresh(&model);
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        });
+        body.append(&appoint);
+    }
+
+    if can_demote_admin {
+        let demote = icon_button("changes-prevent-symbolic", "Remove admin");
+        let model = Rc::clone(model);
+        let device_npub = device_npub.to_string();
+        demote.connect_clicked(move |_| match demote_admin(&device_npub) {
+            Ok(()) => {
+                restart_daemon(&model);
+                model.ui.notice.set_text("Admin removed");
+                refresh(&model);
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        });
+        body.append(&demote);
+    }
 
     if can_revoke {
         let revoke = icon_button("user-trash-symbolic", "Revoke device");

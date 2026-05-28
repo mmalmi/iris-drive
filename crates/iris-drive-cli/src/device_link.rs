@@ -15,6 +15,8 @@ pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> 
         DevicesCmd::Approve { request, label } => cmd_approve(config_dir, &request, label),
         DevicesCmd::List => cmd_roster(config_dir),
         DevicesCmd::Revoke { device } => cmd_revoke(config_dir, &device),
+        DevicesCmd::AppointAdmin { device } => cmd_appoint_admin(config_dir, &device),
+        DevicesCmd::DemoteAdmin { device } => cmd_demote_admin(config_dir, &device),
     }
 }
 
@@ -27,7 +29,7 @@ pub(crate) fn cmd_devices_invite(config_dir: &std::path::Path) -> Result<()> {
     let invite = device_link_invite_json(state);
     if invite.is_null() {
         return Err(anyhow::anyhow!(
-            "device link invites require owner signing authority"
+            "device link invites require an admin device"
         ));
     }
     println!("{invite}");

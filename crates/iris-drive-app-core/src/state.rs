@@ -33,10 +33,13 @@ pub struct UiAccount {
 pub struct UiDevice {
     pub pubkey: String,
     pub label: String,
+    pub role: String,
     pub state: String,
     pub detail: String,
     pub is_online: bool,
     pub can_revoke: bool,
+    pub can_appoint_admin: bool,
+    pub can_demote_admin: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

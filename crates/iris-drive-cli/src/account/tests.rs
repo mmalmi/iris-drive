@@ -60,12 +60,19 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     admin
         .approve_device(&joiner_pubkey, Some("laptop".into()))
         .unwrap();
+    let roster_event = iris_drive_core::nostr_events::build_app_keys_event(
+        admin.device.keys(),
+        admin.state.app_keys.as_ref().unwrap(),
+    )
+    .unwrap();
 
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         app_keys: admin.state.app_keys.clone().unwrap(),
+        app_keys_event_id: roster_event.id.to_hex(),
+        app_keys_event_json: roster_event.as_json(),
         sent_at: 456,
     };
     let message = iris_drive_core::FipsAppMessage {
@@ -136,11 +143,14 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
     config.save(config_path_in(admin_dir.path())).unwrap();
 
     let app_keys = admin.state.app_keys.as_ref().unwrap();
+    let roster_event =
+        iris_drive_core::nostr_events::build_app_keys_event(admin.device.keys(), app_keys).unwrap();
     let frame = DeviceLinkRosterAckFrame {
         schema: 1,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         device_pubkey: joiner_pubkey.clone(),
+        app_keys_event_id: roster_event.id.to_hex(),
         app_keys_created_at: app_keys.created_at,
         dck_generation: app_keys.dck_generation,
         acknowledged_at: 789,

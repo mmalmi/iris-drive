@@ -68,6 +68,12 @@ class MainActivity : ComponentActivity() {
                 onRevokeDevice = { devicePubkey ->
                     dispatch(NativeActions.revokeDevice(devicePubkey))
                 },
+                onAppointAdmin = { devicePubkey ->
+                    dispatch(NativeActions.appointAdmin(devicePubkey))
+                },
+                onDemoteAdmin = { devicePubkey ->
+                    dispatch(NativeActions.demoteAdmin(devicePubkey))
+                },
                 onAddRelay = { url -> dispatch(NativeActions.addRelay(url)) },
                 onRemoveRelay = { url -> dispatch(NativeActions.removeRelay(url)) },
                 onResetRelays = { dispatch(NativeActions.resetRelays()) },
@@ -84,15 +90,6 @@ class MainActivity : ComponentActivity() {
                 onStopSync = {
                     dispatch(NativeActions.stopSync())
                     stopSyncService()
-                },
-                onRestartSync = {
-                    dispatch(NativeActions.restartSync())
-                    stopSyncService()
-                    if (needsNotificationPermission()) {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        startSyncService()
-                    }
                 },
             )
         }

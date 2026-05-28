@@ -796,6 +796,7 @@ pub(crate) fn peer_statuses(
                 "device_pubkey": device.pubkey,
                 "device_npub": device_npub,
                 "label": device.label,
+                "role": device_role_label(device.role),
                 "authorized": true,
                 "is_current_device": is_current_device,
                 "added_at": device.added_at,

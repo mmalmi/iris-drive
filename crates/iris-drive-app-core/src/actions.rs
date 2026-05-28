@@ -22,6 +22,12 @@ pub enum NativeAppAction {
     RevokeDevice {
         device_pubkey: String,
     },
+    AppointAdmin {
+        device_pubkey: String,
+    },
+    DemoteAdmin {
+        device_pubkey: String,
+    },
     AddRelay {
         url: String,
     },

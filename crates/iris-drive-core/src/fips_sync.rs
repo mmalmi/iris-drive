@@ -467,28 +467,35 @@ fn authorized_device_fips_peers(
     let Some(account) = config.account.as_ref() else {
         return Vec::new();
     };
-    let Some(app_keys) = account.app_keys.as_ref() else {
-        return Vec::new();
-    };
+    let mut peers = Vec::new();
     let local_device = &account.device_pubkey;
-    app_keys
-        .devices
-        .iter()
-        .filter(|device| device.pubkey != *local_device)
-        .filter_map(|device| {
-            PublicKey::from_hex(&device.pubkey)
-                .ok()
-                .and_then(|pubkey| pubkey.to_bech32().ok())
-                .map(|npub| FipsPeerConfig {
-                    udp_addresses: static_peer_addresses_for_device(
-                        &settings.static_peer_hints,
-                        device,
-                        &npub,
-                    ),
-                    npub,
-                })
-        })
-        .collect()
+    if let Some(app_keys) = account.app_keys.as_ref() {
+        peers.extend(
+            app_keys
+                .devices
+                .iter()
+                .filter(|device| device.pubkey != *local_device)
+                .filter_map(|device| {
+                    PublicKey::from_hex(&device.pubkey)
+                        .ok()
+                        .and_then(|pubkey| pubkey.to_bech32().ok())
+                        .map(|npub| FipsPeerConfig {
+                            udp_addresses: static_peer_addresses_for_device(
+                                &settings.static_peer_hints,
+                                device,
+                                &npub,
+                            ),
+                            npub,
+                        })
+                }),
+        );
+    }
+    if let Some(pending) = pending_device_link_fips_peer(config, settings)
+        && !peers.iter().any(|peer| peer.npub == pending.npub)
+    {
+        peers.push(pending);
+    }
+    peers
 }
 
 fn routing_fips_peers(config: &AppConfig, settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
@@ -501,20 +508,23 @@ fn pending_device_link_fips_peers(
     config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> Vec<FipsPeerConfig> {
-    let Some(account) = config.account.as_ref() else {
-        return Vec::new();
-    };
+    pending_device_link_fips_peer(config, settings)
+        .into_iter()
+        .collect()
+}
+
+fn pending_device_link_fips_peer(
+    config: &AppConfig,
+    settings: &FipsTransportSettings,
+) -> Option<FipsPeerConfig> {
+    let account = config.account.as_ref()?;
     if account.has_owner_signing_authority
         || account.authorization_state != crate::DeviceAuthorizationState::AwaitingApproval
     {
-        return Vec::new();
+        return None;
     }
-    let Some(request) = account.outbound_device_link_request.as_ref() else {
-        return Vec::new();
-    };
+    let request = account.outbound_device_link_request.as_ref()?;
     fips_peer_config_for_pubkey(&request.admin_device_pubkey, settings)
-        .into_iter()
-        .collect()
 }
 
 fn fips_peer_config_for_pubkey(

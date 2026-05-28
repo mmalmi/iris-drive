@@ -24,29 +24,40 @@ public sealed class IrisDriveService
         return IrisDriveStatusData.FromJson(document.RootElement);
     }
 
-    public Task CreateProfileAsync(string label)
+    public Task CreateProfileAsync(string username, string profilePhotoPath)
     {
-        return FinishSetupAsync(BuildLabelArgs(new[] { "init", "--force" }, label));
+        var args = new[] { "init", "--force" }.ToList();
+        if (!string.IsNullOrWhiteSpace(username))
+        {
+            args.Add("--username");
+            args.Add(username.Trim());
+            if (!string.IsNullOrWhiteSpace(profilePhotoPath))
+            {
+                args.Add("--profile-photo");
+                args.Add(profilePhotoPath.Trim());
+            }
+        }
+        return FinishSetupAsync(args);
     }
 
-    public Task RestoreProfileAsync(string secret, string label)
+    public Task RestoreProfileAsync(string secret)
     {
         if (string.IsNullOrWhiteSpace(secret))
         {
             throw new InvalidOperationException("Secret key is required.");
         }
 
-        return FinishSetupAsync(BuildLabelArgs(new[] { "restore", secret.Trim() }, label));
+        return FinishSetupAsync(new[] { "restore", secret.Trim() });
     }
 
-    public Task LinkDeviceAsync(string owner, string label)
+    public Task LinkDeviceAsync(string owner)
     {
         if (string.IsNullOrWhiteSpace(owner))
         {
             throw new InvalidOperationException("Owner public key is required.");
         }
 
-        return FinishSetupAsync(BuildLabelArgs(new[] { "link", owner.Trim() }, label));
+        return FinishSetupAsync(new[] { "link", owner.Trim() });
     }
 
     public async Task ApproveDeviceAsync(string device, string label)
@@ -67,6 +78,26 @@ public sealed class IrisDriveService
         }
 
         return RunAsync("revoke", device.Trim());
+    }
+
+    public Task AppointAdminAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device key is required.");
+        }
+
+        return RunAsync("devices", "appoint-admin", device.Trim());
+    }
+
+    public Task DemoteAdminAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device key is required.");
+        }
+
+        return RunAsync("devices", "demote-admin", device.Trim());
     }
 
     public Task AddRelayAsync(string relay)

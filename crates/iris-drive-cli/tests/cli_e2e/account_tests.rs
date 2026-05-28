@@ -11,7 +11,7 @@ fn init_creates_key_and_config() {
         .stdout(contains("npub1"))
         .stdout(contains("main"));
     assert!(dir.path().join("key").exists());
-    assert!(dir.path().join("owner_key").exists()); // create flow also writes owner
+    assert!(!dir.path().join("owner_key").exists());
     assert!(dir.path().join("config.toml").exists());
 }
 
@@ -29,12 +29,12 @@ fn init_yields_authorized_owner_capable_account() {
 }
 
 #[test]
-fn restore_uses_provided_nsec_and_grants_owner_authority() {
-    // Capture original owner npub from an init.
+fn restore_uses_provided_device_nsec_and_grants_admin_authority() {
+    // Capture original account/device npub from an init.
     let dir_a = tempdir().unwrap();
     idrive(dir_a.path()).arg("init").assert().success();
-    // Read the persisted owner nsec from disk to drive `restore`.
-    let nsec = std::fs::read_to_string(dir_a.path().join("owner_key"))
+    // Read the persisted device nsec from disk to drive `restore`.
+    let nsec = std::fs::read_to_string(dir_a.path().join("key"))
         .unwrap()
         .trim()
         .to_string();
@@ -53,9 +53,8 @@ fn restore_uses_provided_nsec_and_grants_owner_authority() {
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["owner_npub"], original_owner_npub);
     assert_eq!(v["has_owner_signing_authority"], true);
-    // Device key must differ.
-    assert_ne!(v["device_npub"], original_v["device_npub"]);
-    assert!(dir_b.path().join("owner_key").exists());
+    assert_eq!(v["device_npub"], original_v["device_npub"]);
+    assert!(!dir_b.path().join("owner_key").exists());
 }
 
 #[test]
@@ -193,6 +192,47 @@ fn link_then_approve_authorizes_the_linked_device() {
     )
     .unwrap();
     assert_eq!(roster["app_keys"]["devices"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn devices_can_appoint_and_demote_admin() {
+    let owner_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+
+    let linked_dir = tempdir().unwrap();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", owner_npub, "--label", "laptop"],
+    );
+    let linked_device = linked["device_npub"].as_str().unwrap();
+    run_json(owner_dir.path(), &["approve", linked_device]);
+
+    let promoted = run_json(
+        owner_dir.path(),
+        &["devices", "appoint-admin", linked_device],
+    );
+    assert_eq!(promoted["role"], "admin");
+    let status = run_json(owner_dir.path(), &["status"]);
+    assert!(status["peers"].as_array().unwrap().iter().any(|device| {
+        device["device_npub"].as_str() == Some(linked_device)
+            && device["role"].as_str() == Some("admin")
+    }));
+    let roster = run_json(owner_dir.path(), &["devices", "list"]);
+    assert!(
+        roster["app_keys"]["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|device| device["npub"].as_str() == Some(linked_device)
+                && device["role"].as_str() == Some("admin"))
+    );
+
+    let demoted = run_json(
+        owner_dir.path(),
+        &["devices", "demote-admin", linked_device],
+    );
+    assert_eq!(demoted["role"], "member");
 }
 
 #[test]
