@@ -158,10 +158,10 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					2AEF53C9FE79D54F9AB8EE95 = {
-						ProvisioningStyle = Automatic;
+						DevelopmentTeam = J8PPJKD7TA;
 					};
 					F8BA9ACB95AFB2250E4FE292 = {
-						ProvisioningStyle = Automatic;
+						DevelopmentTeam = J8PPJKD7TA;
 					};
 				};
 			};
@@ -266,6 +266,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = J8PPJKD7TA;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -334,6 +335,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = J8PPJKD7TA;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -402,7 +404,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = IrisDriveIOS.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -412,6 +415,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios;
 				PRODUCT_MODULE_NAME = IrisDriveIOS;
 				PRODUCT_NAME = "Iris Drive";
+				PROVISIONING_PROFILE = "$(IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -421,6 +425,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = FileProvider/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -430,6 +436,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.FileProvider;
 				PRODUCT_MODULE_NAME = IrisDriveFileProvider;
 				PRODUCT_NAME = IrisDriveFileProvider;
+				PROVISIONING_PROFILE = "$(IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
