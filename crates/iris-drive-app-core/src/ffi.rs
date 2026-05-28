@@ -10,7 +10,7 @@ use crate::state::{
 };
 
 const DEFAULT_DEVICE_LABEL: &str = "This device";
-const DEFAULT_ROOT_STATUS: &str = "pending provider hookup";
+const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 static NEXT_SYNTHETIC_PUBKEY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(uniffi::Object, Debug)]

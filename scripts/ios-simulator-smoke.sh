@@ -124,6 +124,9 @@ xcrun simctl boot "$DEVICE_UDID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
 xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
+xcrun simctl openurl \
+  "$DEVICE_UDID" \
+  "iris-drive://device-link?owner=ios-smoke-owner&device=ios-smoke-device" >/dev/null
 
 if ! xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data >/dev/null; then
   echo "FAIL: iOS app container unavailable after launch" >&2

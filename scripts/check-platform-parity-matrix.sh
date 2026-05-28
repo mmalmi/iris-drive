@@ -16,6 +16,8 @@ require_contains() {
 require_contains "| Capability | Linux GTK | macOS SwiftUI | Windows WPF | iOS SwiftUI | Android Compose |"
 require_contains "| First-run create profile |"
 require_contains "| Native OS file-provider surface |"
+require_contains "SAF DocumentsProvider + open action"
+require_contains "DocumentsProvider read/write surface"
 require_contains "iOS simulator smoke"
 require_contains "Android adb smoke"
 require_contains "just e2e-5devices"

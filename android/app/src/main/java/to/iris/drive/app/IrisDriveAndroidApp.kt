@@ -34,6 +34,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,7 +46,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
@@ -53,7 +53,7 @@ import to.iris.drive.app.core.DeviceState
 import to.iris.drive.app.core.SyncRoot
 
 private const val DocumentsProviderAuthority = "to.iris.drive.documents"
-private const val ProviderRoot = "content://to.iris.drive.documents/root"
+private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
 
 private val Background = Color(0xFFF7FAF8)
 private val Ink = Color(0xFF172321)
@@ -72,6 +72,7 @@ internal fun IrisDriveAndroidApp(
     onLinkDevice: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
     onOpenUrl: (String) -> Unit,
+    onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAddRelay: (String) -> Unit,
@@ -83,7 +84,7 @@ internal fun IrisDriveAndroidApp(
     onStopSync: () -> Unit,
     onRestartSync: () -> Unit,
 ) {
-    val state by stateFlow.collectAsStateWithLifecycle()
+    val state by stateFlow.collectAsState()
     var addRootOpen by remember { mutableStateOf(false) }
     val account = state.account
 
@@ -126,6 +127,7 @@ internal fun IrisDriveAndroidApp(
                     onCopyLinkRequest = { onCopyText("Link request", account.deviceLinkRequest) },
                     onCopySnapshotLink = { onCopyText("Snapshot link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
+                    onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
                     onRevokeDevice = onRevokeDevice,
                     onAddRelay = onAddRelay,
@@ -290,6 +292,7 @@ private fun DriveContent(
     onCopyLinkRequest: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
+    onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAddRelay: (String) -> Unit,
@@ -322,6 +325,7 @@ private fun DriveContent(
         item {
             ProviderPanel(
                 snapshotLink = state.snapshotLink.ifBlank { "https://drive.iris.to/snapshot/local" },
+                onOpenDriveFolder = onOpenDriveFolder,
                 onCopySnapshotLink = onCopySnapshotLink,
                 onOpenSnapshotLink = onOpenSnapshotLink,
             )
@@ -405,6 +409,7 @@ private fun SyncPanel(
 @Composable
 private fun ProviderPanel(
     snapshotLink: String,
+    onOpenDriveFolder: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
 ) {
@@ -424,6 +429,11 @@ private fun ProviderPanel(
                     Text(snapshotLink, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
+        }
+        Button(onClick = onOpenDriveFolder) {
+            Icon(painterResource(R.drawable.ic_drive), contentDescription = null)
+            Spacer(Modifier.size(8.dp))
+            Text("Open drive")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopySnapshotLink) {

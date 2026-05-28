@@ -16,7 +16,7 @@ equivalent to desktop.
 | Approve linked device from request link | Yes | Yes | Yes | UI scaffold | App-core UI flow + deep link |
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
-| Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain | SAF DocumentsProvider |
+| Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain | SAF DocumentsProvider + open action |
 | Copy/open snapshot link | Yes | Yes | Yes | UI scaffold | App-core UI flow |
 | Devices list and auth state | Yes | Yes | Yes | UI scaffold | App-core UI flow |
 | Device online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
@@ -27,7 +27,7 @@ equivalent to desktop.
 | Hashtree config/block/root paths | Yes | Yes | Yes | App-group/runtime path only | App files path only |
 | Tray/menu-bar control | Yes | Yes | Yes | N/A | N/A |
 | Close to tray/menu-bar | Yes | Yes | Yes | N/A | N/A |
-| Native OS file-provider surface | FUSE mount | FileProvider domain | Cloud Files read hydration | FileProvider extension/domain | DocumentsProvider scaffold |
+| Native OS file-provider surface | FUSE mount | FileProvider domain | Cloud Files read hydration | FileProvider extension/domain | DocumentsProvider read/write surface |
 | Multidevice e2e label | `ubuntu` | `macos` | `windows` | `ios` provider-command peer + simulator smoke | `android` provider-command peer + adb smoke |
 
 ## Desktop test target

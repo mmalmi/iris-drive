@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onCopyText = ::copyToClipboard,
                 onOpenUrl = ::openUrl,
+                onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label))
                 },
@@ -166,6 +168,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openDriveFolder() {
+        val uri = DocumentsContract.buildRootUri(
+            getString(R.string.documents_provider_authority),
+            DOCUMENTS_ROOT_ID,
+        )
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    .putExtra(DocumentsContract.EXTRA_INITIAL_URI, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    .addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),
+            )
+        }.onFailure {
+            Toast.makeText(this, "No app can open the drive folder", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun needsNotificationPermission(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
@@ -183,12 +203,18 @@ class MainActivity : ComponentActivity() {
             "add-root" -> dispatch(
                 NativeActions.addRoot(
                     "Android smoke",
-                    "content://to.iris.drive.documents/root",
+                    providerRootDocumentUri(),
                 ),
             )
             "refresh" -> refresh()
         }
     }
+
+    private fun providerRootDocumentUri(): String =
+        DocumentsContract.buildDocumentUri(
+            getString(R.string.documents_provider_authority),
+            DOCUMENTS_ROOT_DOCUMENT_ID,
+        ).toString()
 
     private fun isDeviceLinkUri(uri: Uri): Boolean =
         (uri.scheme == "iris-drive" && uri.host == "device-link") ||
@@ -196,5 +222,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"
+        private const val DOCUMENTS_ROOT_ID = "iris-drive"
+        private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
     }
 }
