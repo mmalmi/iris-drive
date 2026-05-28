@@ -63,6 +63,13 @@ private val SoftTeal = Color(0xFFE7F4F0)
 private val Amber = Color(0xFFF5A524)
 private val Danger = Color(0xFFB42318)
 
+private enum class SetupRoute {
+    Welcome,
+    CreateProfile,
+    SignIn,
+    LinkDevice,
+}
+
 @Composable
 internal fun IrisDriveAndroidApp(
     stateFlow: StateFlow<AppState>,
@@ -205,6 +212,7 @@ private fun SetupContent(
     var deviceLabel by remember { mutableStateOf("Android device") }
     var restoreSecret by remember { mutableStateOf("") }
     var linkOwner by remember { mutableStateOf("") }
+    var route by remember { mutableStateOf(SetupRoute.Welcome) }
 
     LazyColumn(
         modifier = Modifier
@@ -216,68 +224,146 @@ private fun SetupContent(
         if (error.isNotBlank()) {
             item { Notice(error) }
         }
-        item {
-            CardSection(title = "Iris Drive", trailing = "setup") {
-                Image(
-                    painter = painterResource(id = R.drawable.brand_icon),
-                    contentDescription = "Iris Drive",
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .size(96.dp),
-                )
-                OutlinedTextField(
-                    value = deviceLabel,
-                    onValueChange = { deviceLabel = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Device label") },
-                )
-            }
-        }
-        item {
-            CardSection(title = "Create Profile", trailing = "owner") {
-                Button(onClick = { onCreateProfile(deviceLabel) }) {
-                    Icon(painterResource(R.drawable.ic_add), contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Create profile")
+        when (route) {
+            SetupRoute.Welcome -> {
+                item {
+                    SetupHeader(trailing = "setup")
+                }
+                item {
+                    CardSection(title = "Get Started", trailing = "account") {
+                        Button(
+                            onClick = { route = SetupRoute.CreateProfile },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(painterResource(R.drawable.ic_add), contentDescription = null)
+                            Spacer(Modifier.size(8.dp))
+                            Text("Create profile")
+                        }
+                        OutlinedButton(
+                            onClick = { route = SetupRoute.SignIn },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Sign in")
+                        }
+                        OutlinedButton(
+                            onClick = { route = SetupRoute.LinkDevice },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Link this device")
+                        }
+                    }
                 }
             }
-        }
-        item {
-            CardSection(title = "Sign In", trailing = "restore") {
-                OutlinedTextField(
-                    value = restoreSecret,
-                    onValueChange = { restoreSecret = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Secret key") },
-                )
-                Button(
-                    onClick = { onRestoreProfile(restoreSecret, deviceLabel) },
-                    enabled = restoreSecret.isNotBlank(),
-                ) {
-                    Text("Sign in")
+            SetupRoute.CreateProfile -> {
+                item {
+                    SetupHeader(trailing = "owner")
+                }
+                item {
+                    CardSection(title = "Create Profile", trailing = "owner") {
+                        DeviceLabelField(
+                            deviceLabel = deviceLabel,
+                            onDeviceLabelChange = { deviceLabel = it },
+                        )
+                        Button(
+                            onClick = { onCreateProfile(deviceLabel) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(painterResource(R.drawable.ic_add), contentDescription = null)
+                            Spacer(Modifier.size(8.dp))
+                            Text("Create profile")
+                        }
+                        TextButton(onClick = { route = SetupRoute.Welcome }) {
+                            Text("Back")
+                        }
+                    }
                 }
             }
-        }
-        item {
-            CardSection(title = "Link Device", trailing = "request") {
-                OutlinedTextField(
-                    value = linkOwner,
-                    onValueChange = { linkOwner = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Owner public key") },
-                )
-                OutlinedButton(
-                    onClick = { onLinkDevice(linkOwner, deviceLabel) },
-                    enabled = linkOwner.isNotBlank(),
-                ) {
-                    Text("Link this device")
+            SetupRoute.SignIn -> {
+                item {
+                    SetupHeader(trailing = "restore")
+                }
+                item {
+                    CardSection(title = "Sign In", trailing = "restore") {
+                        DeviceLabelField(
+                            deviceLabel = deviceLabel,
+                            onDeviceLabelChange = { deviceLabel = it },
+                        )
+                        OutlinedTextField(
+                            value = restoreSecret,
+                            onValueChange = { restoreSecret = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Secret key") },
+                        )
+                        Button(
+                            onClick = { onRestoreProfile(restoreSecret, deviceLabel) },
+                            enabled = restoreSecret.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Sign in")
+                        }
+                        TextButton(onClick = { route = SetupRoute.Welcome }) {
+                            Text("Back")
+                        }
+                    }
+                }
+            }
+            SetupRoute.LinkDevice -> {
+                item {
+                    SetupHeader(trailing = "request")
+                }
+                item {
+                    CardSection(title = "Link Device", trailing = "request") {
+                        DeviceLabelField(
+                            deviceLabel = deviceLabel,
+                            onDeviceLabelChange = { deviceLabel = it },
+                        )
+                        OutlinedTextField(
+                            value = linkOwner,
+                            onValueChange = { linkOwner = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Owner public key") },
+                        )
+                        Button(
+                            onClick = { onLinkDevice(linkOwner, deviceLabel) },
+                            enabled = linkOwner.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Link this device")
+                        }
+                        TextButton(onClick = { route = SetupRoute.Welcome }) {
+                            Text("Back")
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SetupHeader(trailing: String) {
+    CardSection(title = "Iris Drive", trailing = trailing) {
+        Image(
+            painter = painterResource(id = R.drawable.brand_icon),
+            contentDescription = "Iris Drive",
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .size(96.dp),
+        )
+    }
+}
+
+@Composable
+private fun DeviceLabelField(deviceLabel: String, onDeviceLabelChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = deviceLabel,
+        onValueChange = onDeviceLabelChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text("Device label") },
+    )
 }
 
 @Composable
