@@ -387,7 +387,7 @@ impl Account {
             return Err(AccountError::NoOwnerAuthority);
         }
         if let Some(snap) = &self.state.app_keys
-            && snap.contains(&device_pubkey_hex)
+            && snap.contains(device_pubkey_hex)
         {
             return Err(AccountError::AlreadyAuthorized);
         }
