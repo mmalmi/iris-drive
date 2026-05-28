@@ -14,7 +14,7 @@ use hashtree_lmdb::LmdbBlobStore;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::{
     AccountState, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync,
-    DeviceRootRef, Drive, DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    DeviceRootRef, Drive, DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID, UserProfile,
     account::Account,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
@@ -115,7 +115,18 @@ fn run_cli() -> ExitCode {
     };
 
     let result = match cli.command {
-        Command::Init { force, label } => cmd_init(&config_dir, force, label),
+        Command::Init {
+            force,
+            label,
+            username,
+            profile_photo,
+        } => cmd_init(
+            &config_dir,
+            force,
+            label,
+            username.as_deref(),
+            profile_photo.as_deref(),
+        ),
         Command::Restore { nsec, label } => cmd_restore(&config_dir, &nsec, label),
         Command::Link { owner, label } => cmd_link(&config_dir, &owner, label),
         Command::Approve { device, label } => cmd_approve(&config_dir, &device, label),
@@ -272,7 +283,14 @@ mod daemon_lock_tests {
     async fn direct_mesh_sync_events_skip_materialized_only_roots() {
         let cfg_dir = tempdir().unwrap();
         let work = tempdir().unwrap();
-        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+        cmd_init(
+            cfg_dir.path(),
+            false,
+            Some("test-device".into()),
+            None,
+            None,
+        )
+        .unwrap();
 
         std::fs::write(work.path().join("from-peer.txt"), b"materialized copy").unwrap();
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
@@ -309,7 +327,14 @@ mod daemon_lock_tests {
     async fn direct_mesh_sync_events_reannounce_publishable_parent_root() {
         let cfg_dir = tempdir().unwrap();
         let work = tempdir().unwrap();
-        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+        cmd_init(
+            cfg_dir.path(),
+            false,
+            Some("test-device".into()),
+            None,
+            None,
+        )
+        .unwrap();
 
         std::fs::write(work.path().join("mine.txt"), b"local edit").unwrap();
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
@@ -385,7 +410,14 @@ mod daemon_lock_tests {
     #[tokio::test]
     async fn direct_mesh_sync_events_refuse_unreadable_local_root() {
         let cfg_dir = tempdir().unwrap();
-        cmd_init(cfg_dir.path(), false, Some("test-device".into())).unwrap();
+        cmd_init(
+            cfg_dir.path(),
+            false,
+            Some("test-device".into()),
+            None,
+            None,
+        )
+        .unwrap();
 
         let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
         let account = config.account.clone().unwrap();

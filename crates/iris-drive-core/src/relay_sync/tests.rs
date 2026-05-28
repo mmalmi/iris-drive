@@ -49,7 +49,7 @@ fn apply_app_keys_event_from_our_owner_replaces() {
 
     // Owner approves a fake device — produces a newer snapshot.
     let new_device = Keys::generate().public_key().to_hex();
-    acct.approve_device(new_device, None).unwrap();
+    acct.approve_device(&new_device, None).unwrap();
     let newer_snap = acct.state.app_keys.clone().unwrap();
     let event = build_app_keys_event(acct.owner_key.as_ref().unwrap().keys(), &newer_snap).unwrap();
 
@@ -96,7 +96,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
     // Approve a second device whose Keys we control end-to-end.
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(device_b_hex.clone(), None).unwrap();
+    acct.approve_device(&device_b_hex, None).unwrap();
     cfg.account = Some(acct.state.clone());
 
     // Device B publishes a drive-root event.
@@ -128,7 +128,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
     owner_acct
-        .approve_device(device_b_hex.clone(), Some("old-phone".into()))
+        .approve_device(&device_b_hex, Some("old-phone".into()))
         .unwrap();
 
     let linked = Account::link(
@@ -314,7 +314,7 @@ fn apply_drive_root_event_for_unknown_drive_ignored() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(device_b_hex.clone(), None).unwrap();
+    acct.approve_device(&device_b_hex, None).unwrap();
     cfg.account = Some(acct.state.clone());
     let root = encrypted_root(0x44, 0, 1);
     let event = build_drive_root_event(
@@ -335,7 +335,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(device_b_hex.clone(), None).unwrap();
+    acct.approve_device(&device_b_hex, None).unwrap();
     cfg.account = Some(acct.state.clone());
 
     // First publish — applied.
@@ -392,7 +392,7 @@ fn apply_drive_root_event_ignores_same_legacy_root_with_newer_timestamp() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(device_b_hex.clone(), None).unwrap();
+    acct.approve_device(&device_b_hex, None).unwrap();
     cfg.account = Some(acct.state.clone());
 
     let mut root = encrypted_root(0x13, 100, 1);
@@ -439,7 +439,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(device_b_hex.clone(), None).unwrap();
+    acct.approve_device(&device_b_hex, None).unwrap();
     cfg.account = Some(acct.state.clone());
 
     let root_1 = causal_encrypted_root(0x21, 300, 1, 1);
@@ -505,7 +505,7 @@ fn apply_app_keys_event_revokes_authorized_state_when_we_get_removed() {
     );
     // Owner publishes a new snapshot removing this device.
     let other_device = Keys::generate().public_key().to_hex();
-    acct.approve_device(other_device, None).unwrap();
+    acct.approve_device(&other_device, None).unwrap();
     acct.revoke_device(&cfg.account.as_ref().unwrap().device_pubkey)
         .unwrap();
     let event = build_app_keys_event(

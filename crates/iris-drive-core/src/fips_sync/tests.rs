@@ -385,6 +385,8 @@ fn discovery_scope_uses_iris_drive_overlay() {
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
             device_label: None,
             app_keys: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
         }),
         ..Default::default()
     };
@@ -481,6 +483,8 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
                 dck_generation: 0,
                 wrapped_dck: std::collections::BTreeMap::default(),
             }),
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
         }),
         ..Default::default()
     };
@@ -495,6 +499,40 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
             .iter()
             .any(|peer| peer.udp_addresses == vec!["10.44.214.2:22121".to_string()])
     );
+}
+
+#[test]
+fn pending_device_link_admin_is_routing_peer_not_authorized_peer() {
+    let admin_keys = nostr_sdk::Keys::generate();
+    let admin_pubkey = admin_keys.public_key().to_hex();
+    let admin_npub = admin_keys.public_key().to_bech32().unwrap();
+    let settings = FipsTransportSettings {
+        bootstrap_peer_hints: Vec::new(),
+        static_peer_hints: parse_static_peer_hints(&format!("{admin_npub}=10.44.1.9:22121")),
+        ..Default::default()
+    };
+    let config = AppConfig {
+        account: Some(crate::AccountState {
+            owner_pubkey: "aa".repeat(32),
+            device_pubkey: "dd".repeat(32),
+            has_owner_signing_authority: false,
+            authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
+            device_label: None,
+            app_keys: None,
+            outbound_device_link_request: Some(crate::account::PendingDeviceLinkRequest {
+                admin_device_pubkey: admin_pubkey,
+                requested_at: 42,
+            }),
+            inbound_device_link_requests: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    assert!(authorized_device_fips_peers(&config, &settings).is_empty());
+    let routing = routing_fips_peers(&config, &settings);
+    assert_eq!(routing.len(), 1);
+    assert_eq!(routing[0].npub, admin_npub);
+    assert_eq!(routing[0].udp_addresses, vec!["10.44.1.9:22121"]);
 }
 
 #[test]

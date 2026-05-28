@@ -253,6 +253,12 @@ pub(crate) fn cmd_daemon(
         provider_root_poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut device_link_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS),
+        );
+        device_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut sent_device_link_requests = BTreeMap::new();
         let mut last_provider_root_key = current_device_root_key(&config);
 
         loop {
@@ -569,6 +575,22 @@ pub(crate) fn cmd_daemon(
                         ),
                     }
                 }
+                _ = device_link_timer.tick() => {
+                    match send_pending_device_link_request(
+                        config_dir,
+                        fips_blocks.as_deref(),
+                        &mut sent_device_link_requests,
+                    )
+                    .await
+                    {
+                        Ok(Some(payload)) => println!("{payload}"),
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "device_link_request_send_error", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
                 recv = async {
                     if let Some(rx) = direct_app_message_rx.as_mut() {
                         Some(rx.recv().await)
@@ -578,6 +600,17 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
+                            match handle_device_link_app_message(config_dir, &message).await {
+                                Ok(true) => continue,
+                                Ok(false) => {}
+                                Err(error) => {
+                                    println!(
+                                        "{}",
+                                        json!({"event": "device_link_request_receive_error", "error": format!("{error:#}")})
+                                    );
+                                    continue;
+                                }
+                            }
                             if let Some(sync) = fips_blocks.as_ref()
                                 && let Err(error) = direct_roots
                                     .handle_app_message(

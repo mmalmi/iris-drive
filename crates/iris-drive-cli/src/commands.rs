@@ -24,6 +24,12 @@ pub(crate) enum Command {
         /// Human-readable device label (e.g. "Mac mini").
         #[arg(long)]
         label: Option<String>,
+        /// Optional username/display name for the owner profile.
+        #[arg(long)]
+        username: Option<String>,
+        /// Optional local profile photo path.
+        #[arg(long)]
+        profile_photo: Option<String>,
     },
     /// **Restore** flow: import an existing owner `nsec` onto this
     /// device. A fresh device key is generated; this install has owner

@@ -44,6 +44,9 @@ pub struct AppConfig {
     /// / link flow.
     #[serde(default)]
     pub account: Option<AccountState>,
+    /// Optional local profile metadata collected during account creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_profile: Option<UserProfile>,
     #[serde(default)]
     pub drives: Vec<Drive>,
     /// Relays to publish to and subscribe from. Defaults to
@@ -67,6 +70,32 @@ pub struct AppConfig {
     pub backup_targets: Vec<BackupTarget>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UserProfile {
+    pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_path: Option<String>,
+}
+
+impl UserProfile {
+    #[must_use]
+    pub fn from_optional(username: Option<&str>, photo_path: Option<&str>) -> Option<Self> {
+        let username = username
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?
+            .to_string();
+        let photo_path = photo_path.and_then(|path| {
+            let trimmed = path.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+        Some(Self {
+            username,
+            photo_path,
+        })
+    }
+}
+
 fn default_relays() -> Vec<String> {
     DEFAULT_RELAYS.iter().map(|s| (*s).to_string()).collect()
 }
@@ -83,6 +112,7 @@ impl Default for AppConfig {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
             account: None,
+            user_profile: None,
             drives: Vec::new(),
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
@@ -440,6 +470,21 @@ mod tests {
     }
 
     #[test]
+    fn user_profile_requires_username_before_photo() {
+        assert_eq!(
+            UserProfile::from_optional(None, Some("/tmp/avatar.png")),
+            None
+        );
+        assert_eq!(
+            UserProfile::from_optional(Some("  ada  "), Some("  /tmp/avatar.png  ")),
+            Some(UserProfile {
+                username: "ada".into(),
+                photo_path: Some("/tmp/avatar.png".into()),
+            })
+        );
+    }
+
+    #[test]
     fn stale_drive_fields_are_rejected() {
         let raw = format!(
             r#"
@@ -528,6 +573,8 @@ dck_generation = 1
                 authorization_state: crate::account::DeviceAuthorizationState::Authorized,
                 device_label: None,
                 app_keys: None,
+                outbound_device_link_request: None,
+                inbound_device_link_requests: Vec::new(),
             }),
             ..AppConfig::default()
         };

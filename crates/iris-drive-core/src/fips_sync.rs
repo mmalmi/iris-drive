@@ -127,7 +127,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         transport
             .set_peer_configs_with_routing_peers(
                 authorized_device_fips_peers(config, &transport_settings),
-                bootstrap_fips_peers(&transport_settings),
+                routing_fips_peers(config, &transport_settings),
             )
             .await;
         let receiver_task = transport.start();
@@ -177,7 +177,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.transport
             .set_peer_configs_with_routing_peers(
                 authorized_device_fips_peers(config, &self.transport_settings),
-                bootstrap_fips_peers(&self.transport_settings),
+                routing_fips_peers(config, &self.transport_settings),
             )
             .await;
     }
@@ -491,6 +491,48 @@ fn authorized_device_fips_peers(
         .collect()
 }
 
+fn routing_fips_peers(config: &AppConfig, settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
+    let mut peers = bootstrap_fips_peers(settings);
+    peers.extend(pending_device_link_fips_peers(config, settings));
+    peers
+}
+
+fn pending_device_link_fips_peers(
+    config: &AppConfig,
+    settings: &FipsTransportSettings,
+) -> Vec<FipsPeerConfig> {
+    let Some(account) = config.account.as_ref() else {
+        return Vec::new();
+    };
+    if account.has_owner_signing_authority
+        || account.authorization_state != crate::DeviceAuthorizationState::AwaitingApproval
+    {
+        return Vec::new();
+    }
+    let Some(request) = account.outbound_device_link_request.as_ref() else {
+        return Vec::new();
+    };
+    fips_peer_config_for_pubkey(&request.admin_device_pubkey, settings)
+        .into_iter()
+        .collect()
+}
+
+fn fips_peer_config_for_pubkey(
+    pubkey_hex: &str,
+    settings: &FipsTransportSettings,
+) -> Option<FipsPeerConfig> {
+    PublicKey::from_hex(pubkey_hex)
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .map(|npub| FipsPeerConfig {
+            udp_addresses: static_peer_addresses_for_keys(
+                &settings.static_peer_hints,
+                &[pubkey_hex, &npub],
+            ),
+            npub,
+        })
+}
+
 fn bootstrap_fips_peers(settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
     settings
         .bootstrap_peer_hints
@@ -541,10 +583,18 @@ fn static_peer_addresses_for_device(
     device: &crate::app_keys::DeviceEntry,
     npub: &str,
 ) -> Vec<String> {
+    let mut keys = vec![device.pubkey.as_str(), npub];
+    if let Some(label) = device.label.as_deref() {
+        keys.push(label);
+    }
+    static_peer_addresses_for_keys(hints, &keys)
+}
+
+fn static_peer_addresses_for_keys(hints: &[(String, Vec<String>)], keys: &[&str]) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (key, addresses) in hints {
-        if !static_peer_key_matches_device(key, device, npub) {
+        if !static_peer_key_matches_any(key, keys) {
             continue;
         }
         for address in addresses {
@@ -557,21 +607,14 @@ fn static_peer_addresses_for_device(
     out
 }
 
-fn static_peer_key_matches_device(
-    key: &str,
-    device: &crate::app_keys::DeviceEntry,
-    npub: &str,
-) -> bool {
+fn static_peer_key_matches_any(key: &str, values: &[&str]) -> bool {
     let key = key.trim();
     if key.is_empty() {
         return false;
     }
-    key.eq_ignore_ascii_case(npub)
-        || key.eq_ignore_ascii_case(&device.pubkey)
-        || device
-            .label
-            .as_deref()
-            .is_some_and(|label| key.eq_ignore_ascii_case(label.trim()))
+    values
+        .iter()
+        .any(|value| key.eq_ignore_ascii_case(value.trim()))
 }
 
 fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {

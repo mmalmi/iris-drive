@@ -5,6 +5,8 @@ pub(crate) fn cmd_init(
     config_dir: &std::path::Path,
     force: bool,
     label: Option<String>,
+    username: Option<&str>,
+    profile_photo: Option<&str>,
 ) -> Result<()> {
     if already_initialized(config_dir) && !force {
         eprintln!("iris-drive already initialized at {}", config_dir.display());
@@ -12,7 +14,11 @@ pub(crate) fn cmd_init(
         return Err(anyhow::anyhow!("already initialized"));
     }
     let account = Account::create(config_dir, label).context("creating account")?;
-    finish_account_init(config_dir, &account)
+    finish_account_init(
+        config_dir,
+        &account,
+        UserProfile::from_optional(username, profile_photo),
+    )
 }
 
 pub(crate) fn cmd_restore(
@@ -27,7 +33,7 @@ pub(crate) fn cmd_restore(
         ));
     }
     let account = Account::restore(config_dir, nsec, label).context("restoring account")?;
-    finish_account_init(config_dir, &account)
+    finish_account_init(config_dir, &account, None)
 }
 
 pub(crate) fn cmd_link(
@@ -41,14 +47,28 @@ pub(crate) fn cmd_link(
             config_dir.display()
         ));
     }
-    let owner_hex = normalize_pubkey(owner).context("parsing owner pubkey")?;
-    let account = Account::link(config_dir, owner_hex, label).context("linking device")?;
-    finish_account_init(config_dir, &account)
+    let target = resolve_device_link_target(owner)?;
+    let mut account =
+        Account::link(config_dir, target.owner_hex, label).context("linking device")?;
+    if let Some(admin_device_hex) = target.admin_device_hex {
+        account
+            .state
+            .queue_outbound_device_link_request(admin_device_hex, unix_now_seconds())
+            .context("queueing device link request")?;
+    }
+    finish_account_init(config_dir, &account, None)
 }
 
-pub(crate) fn finish_account_init(config_dir: &std::path::Path, account: &Account) -> Result<()> {
+pub(crate) fn finish_account_init(
+    config_dir: &std::path::Path,
+    account: &Account,
+    user_profile: Option<UserProfile>,
+) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     config.account = Some(account.state.clone());
+    if user_profile.is_some() {
+        config.user_profile = user_profile;
+    }
     if config.drive(PRIMARY_DRIVE_ID).is_none() {
         config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
     }
@@ -62,6 +82,7 @@ pub(crate) fn finish_account_init(config_dir: &std::path::Path, account: &Accoun
             "has_owner_signing_authority": account.state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(&account.state),
             "device_link_request": device_link_request_json(&account.state),
+            "device_link_invite": device_link_invite_json(&account.state),
             "drives": config.drives.iter().map(|d| &d.drive_id).collect::<Vec<_>>(),
         })
     );
@@ -83,7 +104,7 @@ pub(crate) fn cmd_approve(
     let approved_device_npub = account_npub(&device_hex);
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
-        .approve_device(device_hex, label)
+        .approve_device(&device_hex, label)
         .context("approving device")?;
     let device_count = snap.devices.len();
     config.account = Some(account.state.clone());
@@ -139,6 +160,8 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
             "owner_npub": account_npub(&state.owner_pubkey),
             "current_device_npub": account_npub(&state.device_pubkey),
             "authorization_state": authorization_state_label(&state),
+            "device_link_invite": device_link_invite_json(&state),
+            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
             "app_keys": snap.map(|s| json!({
                 "created_at": s.created_at,
                 "dck_generation": s.dck_generation,
@@ -194,6 +217,8 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
             "has_owner_signing_authority": state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(&state),
             "device_link_request": device_link_request_json(&state),
+            "device_link_invite": device_link_invite_json(&state),
+            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
         })
     );
     Ok(())
@@ -238,6 +263,18 @@ pub(crate) struct DeviceApprovalRequest {
     label: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeviceLinkTarget {
+    owner_hex: String,
+    admin_device_hex: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeviceLinkInvite {
+    owner_hex: String,
+    admin_device_hex: String,
+}
+
 pub(crate) fn resolve_device_approval_input(
     input: &str,
     expected_owner_hex: &str,
@@ -259,6 +296,20 @@ pub(crate) fn resolve_device_approval_input(
     ))
 }
 
+pub(crate) fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget> {
+    if let Some(invite) = decode_device_link_invite(input)? {
+        return Ok(DeviceLinkTarget {
+            owner_hex: invite.owner_hex,
+            admin_device_hex: Some(invite.admin_device_hex),
+        });
+    }
+
+    Ok(DeviceLinkTarget {
+        owner_hex: normalize_pubkey(input).context("parsing owner pubkey")?,
+        admin_device_hex: None,
+    })
+}
+
 pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     if state.has_owner_signing_authority
         || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
@@ -277,7 +328,49 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
         "owner_npub": account_npub(&state.owner_pubkey),
         "device_npub": account_npub(&state.device_pubkey),
         "label": state.device_label.as_deref(),
+        "admin_device_npub": state
+            .outbound_device_link_request
+            .as_ref()
+            .map(|request| account_npub(&request.admin_device_pubkey)),
+        "requested_at": state
+            .outbound_device_link_request
+            .as_ref()
+            .map(|request| request.requested_at),
+        "sent_over_fips": state.outbound_device_link_request.is_some(),
     })
+}
+
+pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
+    if !state.has_owner_signing_authority {
+        return Value::Null;
+    }
+    let url = encode_device_link_invite(&state.owner_pubkey, &state.device_pubkey);
+    json!({
+        "url": url,
+        "web_url": device_link_web_url(&url),
+        "owner_npub": account_npub(&state.owner_pubkey),
+        "admin_device_npub": account_npub(&state.device_pubkey),
+    })
+}
+
+pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Value> {
+    state
+        .inbound_device_link_requests
+        .iter()
+        .map(|request| {
+            json!({
+                "url": encode_device_approval_request(
+                    &state.owner_pubkey,
+                    &request.device_pubkey,
+                    request.label.as_deref(),
+                ),
+                "owner_npub": account_npub(&state.owner_pubkey),
+                "device_npub": account_npub(&request.device_pubkey),
+                "label": request.label.as_deref(),
+                "requested_at": request.requested_at,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn encode_device_approval_request(
@@ -295,6 +388,53 @@ pub(crate) fn encode_device_approval_request(
         url.push_str(&percent_encode_component(label));
     }
     url
+}
+
+pub(crate) fn encode_device_link_invite(owner_hex: &str, admin_device_hex: &str) -> String {
+    format!(
+        "iris-drive://link-device?owner={}&admin={}",
+        account_npub(owner_hex),
+        account_npub(admin_device_hex)
+    )
+}
+
+pub(crate) fn device_link_web_url(invite_url: &str) -> String {
+    invite_url.replacen(
+        "iris-drive://link-device",
+        "https://drive.iris.to/link-device",
+        1,
+    )
+}
+
+pub(crate) fn decode_device_link_invite(input: &str) -> Result<Option<DeviceLinkInvite>> {
+    let trimmed = input.trim();
+    let Some(query) = device_link_invite_query(trimmed) else {
+        return Ok(None);
+    };
+
+    let mut owner = None;
+    let mut admin = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let key = percent_decode_component(raw_key)?;
+        let value = percent_decode_component(raw_value)?;
+        match key.as_str() {
+            "owner" if !value.trim().is_empty() => owner = Some(value),
+            "admin" | "admin_device" if !value.trim().is_empty() => admin = Some(value),
+            _ => {}
+        }
+    }
+
+    let owner = owner.ok_or_else(|| anyhow::anyhow!("device link invite is missing owner"))?;
+    let admin = admin.ok_or_else(|| anyhow::anyhow!("device link invite is missing admin"))?;
+
+    Ok(Some(DeviceLinkInvite {
+        owner_hex: normalize_pubkey(&owner).context("parsing invite owner")?,
+        admin_device_hex: normalize_pubkey(&admin).context("parsing invite admin device")?,
+    }))
 }
 
 pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<DeviceApprovalRequest>> {
@@ -331,6 +471,16 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
     }))
 }
 
+pub(crate) fn device_link_invite_query(input: &str) -> Option<&str> {
+    if let Some(rest) = input.strip_prefix("iris-drive://link-device") {
+        return rest.strip_prefix('?');
+    }
+    if let Some(rest) = input.strip_prefix("https://drive.iris.to/link-device") {
+        return rest.strip_prefix('?');
+    }
+    None
+}
+
 pub(crate) fn device_approval_query(input: &str) -> Option<&str> {
     if let Some(rest) = input.strip_prefix("iris-drive://device-link") {
         return rest.strip_prefix('?');
@@ -339,6 +489,186 @@ pub(crate) fn device_approval_query(input: &str) -> Option<&str> {
         return rest.strip_prefix('?');
     }
     None
+}
+
+fn unix_now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+pub(crate) const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
+pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeviceLinkRequestFrame {
+    schema: u32,
+    owner_pubkey: String,
+    device_pubkey: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    requested_at: u64,
+    url: String,
+}
+
+pub(crate) async fn send_pending_device_link_request(
+    config_dir: &Path,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    sent_cache: &mut BTreeMap<String, std::time::Instant>,
+) -> Result<Option<Value>> {
+    let Some(sync) = fips_blocks else {
+        return Ok(None);
+    };
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(None);
+    };
+    if state.has_owner_signing_authority
+        || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
+    {
+        return Ok(None);
+    }
+    let Some(pending) = state.outbound_device_link_request.as_ref() else {
+        return Ok(None);
+    };
+
+    let admin_npub = account_npub(&pending.admin_device_pubkey);
+    let fingerprint = format!(
+        "{}:{}:{}",
+        pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
+    );
+    let now = std::time::Instant::now();
+    if sent_cache.get(&fingerprint).is_some_and(|last_sent| {
+        now.duration_since(*last_sent)
+            < std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
+    }) {
+        return Ok(None);
+    }
+
+    sync.refresh_authorized_peers(&config).await;
+    let frame = DeviceLinkRequestFrame {
+        schema: 1,
+        owner_pubkey: state.owner_pubkey.clone(),
+        device_pubkey: state.device_pubkey.clone(),
+        label: state.device_label.clone(),
+        requested_at: pending.requested_at,
+        url: encode_device_approval_request(
+            &state.owner_pubkey,
+            &state.device_pubkey,
+            state.device_label.as_deref(),
+        ),
+    };
+    let bytes = serde_json::to_vec(&frame)?;
+    sync.send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes.clone())
+        .await?;
+    sent_cache.insert(fingerprint, now);
+
+    Ok(Some(json!({
+        "event": "device_link_request_sent",
+        "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
+        "admin_device_npub": admin_npub,
+        "device_npub": account_npub(&state.device_pubkey),
+        "requested_at": pending.requested_at,
+        "sent_bytes": bytes.len(),
+    })))
+}
+
+pub(crate) async fn handle_device_link_app_message(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool> {
+    if message.topic != DEVICE_LINK_REQUEST_APP_TOPIC {
+        return Ok(false);
+    }
+    let frame: DeviceLinkRequestFrame =
+        serde_json::from_slice(&message.data).context("parsing device link request frame")?;
+    if frame.schema != 1 {
+        return Err(anyhow::anyhow!(
+            "unsupported device link request schema {}",
+            frame.schema
+        ));
+    }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing link request owner")?;
+    let device_hex =
+        normalize_pubkey(&frame.device_pubkey).context("parsing link request device")?;
+
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_mut() else {
+        return Ok(true);
+    };
+    let changed = state
+        .record_inbound_device_link_request(
+            &owner_hex,
+            &device_hex,
+            frame.label,
+            frame.requested_at,
+        )
+        .context("recording inbound device link request")?;
+    if changed {
+        config.save(config_path_in(config_dir))?;
+        println!(
+            "{}",
+            json!({
+                "event": "device_link_request_received",
+                "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
+                "peer": message.peer_id,
+                "device_npub": account_npub(&device_hex),
+                "requested_at": frame.requested_at,
+            })
+        );
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn device_link_app_message_records_inbound_request_for_owner_admin() {
+        let config_dir = tempdir().unwrap();
+        let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
+        let mut config = AppConfig {
+            account: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+        let frame = DeviceLinkRequestFrame {
+            schema: 1,
+            owner_pubkey: account.state.owner_pubkey.clone(),
+            device_pubkey: linked_device.clone(),
+            label: Some(" phone ".into()),
+            requested_at: 123,
+            url: encode_device_approval_request(
+                &account.state.owner_pubkey,
+                &linked_device,
+                Some(" phone "),
+            ),
+        };
+        let message = iris_drive_core::FipsAppMessage {
+            peer_id: account_npub(&linked_device),
+            topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
+            data: serde_json::to_vec(&frame).unwrap(),
+        };
+
+        assert!(
+            handle_device_link_app_message(config_dir.path(), &message)
+                .await
+                .unwrap()
+        );
+
+        let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+        let inbound = &saved.account.unwrap().inbound_device_link_requests;
+        assert_eq!(inbound.len(), 1);
+        assert_eq!(inbound[0].device_pubkey, linked_device);
+        assert_eq!(inbound[0].label.as_deref(), Some("phone"));
+        assert_eq!(inbound[0].requested_at, 123);
+    }
 }
 
 pub(crate) fn percent_encode_component(input: &str) -> String {

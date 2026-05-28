@@ -99,6 +99,44 @@ fn link_creates_awaiting_device_with_no_owner_key() {
 }
 
 #[test]
+fn owner_invite_link_queues_fips_request_to_admin_device() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let invite_url = owner["device_link_invite"]["url"].as_str().unwrap();
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let admin_device_npub = owner["device_npub"].as_str().unwrap();
+
+    let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
+
+    assert_eq!(linked["owner_npub"], owner_npub);
+    assert_eq!(
+        linked["device_link_request"]["admin_device_npub"],
+        admin_device_npub
+    );
+    assert!(
+        linked["device_link_request"]["requested_at"]
+            .as_u64()
+            .is_some()
+    );
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = owner_config.account.as_ref().unwrap();
+    let config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let state = config.account.as_ref().unwrap();
+    assert_eq!(
+        state
+            .outbound_device_link_request
+            .as_ref()
+            .unwrap()
+            .admin_device_pubkey
+            .as_str(),
+        owner_state.device_pubkey.as_str()
+    );
+}
+
+#[test]
 fn link_then_approve_authorizes_the_linked_device() {
     // Set up owner-capable install + a separate linked install.
     let owner_dir = tempdir().unwrap();
