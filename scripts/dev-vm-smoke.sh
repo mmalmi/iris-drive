@@ -47,9 +47,7 @@ HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_HEAVY_PROJECTION_SYNC_WA
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-30}"
-MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT:-$(scale_wait_timeout "$MACOS_VISIBLE_WRITE_TIMEOUT" 2)}"
 VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-30}"
-VISIBLE_MANIFEST_COMMAND_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_COMMAND_TIMEOUT:-$(scale_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 2)}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
 PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
@@ -64,40 +62,6 @@ log() {
 die() {
   printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
   exit 1
-}
-
-kill_process_tree() {
-  local pid="$1"
-  local signal="$2"
-  local child
-  while IFS= read -r child; do
-    [[ -n "$child" ]] || continue
-    kill_process_tree "$child" "$signal"
-  done < <(pgrep -P "$pid" 2>/dev/null || true)
-  kill "-$signal" "$pid" >/dev/null 2>&1 || true
-}
-
-run_limited() {
-  local limit="$1"
-  shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill_process_tree "$pid" TERM
-    sleep 1
-    kill_process_tree "$pid" KILL
-  ) &
-  local watchdog=$!
-  local status=0
-  if wait "$pid"; then
-    status=0
-  else
-    status=$?
-  fi
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
 }
 
 json_escape() {
@@ -899,8 +863,7 @@ write_macos_visible_file() {
   local content="$2"
   local content_b64
   content_b64="$(base64_arg "$content")"
-  run_limited "$MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT" \
-    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 content_b64="$2"
@@ -939,8 +902,7 @@ REMOTE_SH
 write_macos_visible_zero_file() {
   local path="$1"
   local bytes="$2"
-  run_limited "$MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT" \
-    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 bytes="$2"
@@ -1230,9 +1192,9 @@ entries.sort(key=lambda entry: entry["path"])
 print(json.dumps({"entries": entries}, sort_keys=True))
 PY
 )"
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
   EXPECTED_JSON="$expected_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1278,9 +1240,9 @@ import sys
 print(json.dumps(sorted(sys.argv[1:])))
 PY
 )"
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
   EXPECTED_PATHS_JSON="$expected_paths_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1326,9 +1288,9 @@ heavy_projection_manifest_matches() {
   local ubuntu_json
   local macos_json
   local windows_json
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
   FILE_COUNT="$file_count" \
     LARGE_BYTES="$large_bytes" \
     RUN_ID="$run_id" \
