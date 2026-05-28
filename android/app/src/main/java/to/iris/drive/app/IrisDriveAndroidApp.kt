@@ -41,10 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,6 +70,8 @@ internal fun IrisDriveAndroidApp(
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
     onLinkDevice: (String, String) -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onOpenUrl: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAddRelay: (String) -> Unit,
@@ -86,14 +85,6 @@ internal fun IrisDriveAndroidApp(
 ) {
     val state by stateFlow.collectAsStateWithLifecycle()
     var addRootOpen by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
-    val uriHandler = LocalUriHandler.current
-    val copyText: (String) -> Unit = { value ->
-        clipboard.setText(AnnotatedString(value))
-    }
-    val openUri: (String) -> Unit = { value ->
-        runCatching { uriHandler.openUri(value) }
-    }
     val account = state.account
 
     IrisDriveTheme {
@@ -130,11 +121,11 @@ internal fun IrisDriveAndroidApp(
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
                     onRestartSync = onRestartSync,
-                    onCopyOwnerKey = { copyText(account.ownerPubkey) },
-                    onCopyDeviceKey = { copyText(account.devicePubkey) },
-                    onCopyLinkRequest = { copyText(account.deviceLinkRequest) },
-                    onCopySnapshotLink = { copyText(state.snapshotLink) },
-                    onOpenSnapshotLink = { openUri(state.snapshotLink) },
+                    onCopyOwnerKey = { onCopyText("Owner key", account.ownerPubkey) },
+                    onCopyDeviceKey = { onCopyText("Device key", account.devicePubkey) },
+                    onCopyLinkRequest = { onCopyText("Link request", account.deviceLinkRequest) },
+                    onCopySnapshotLink = { onCopyText("Snapshot link", state.snapshotLink) },
+                    onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onApproveDevice = onApproveDevice,
                     onRevokeDevice = onRevokeDevice,
                     onAddRelay = onAddRelay,

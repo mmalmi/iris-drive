@@ -1,11 +1,15 @@
 package to.iris.drive.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -55,6 +59,8 @@ class MainActivity : ComponentActivity() {
                 onLinkDevice = { ownerPubkey, deviceLabel ->
                     dispatch(NativeActions.linkDevice(ownerPubkey, deviceLabel))
                 },
+                onCopyText = ::copyToClipboard,
+                onOpenUrl = ::openUrl,
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label))
                 },
@@ -142,6 +148,22 @@ class MainActivity : ComponentActivity() {
             Intent(this, IrisDriveSyncService::class.java)
                 .setAction(IrisDriveSyncService.ACTION_STOP),
         )
+    }
+
+    private fun copyToClipboard(label: String, value: String) {
+        if (value.isBlank()) return
+        val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        manager.setPrimaryClip(ClipData.newPlainText(label, value))
+        Toast.makeText(this, "$label copied", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openUrl(url: String) {
+        if (url.isBlank()) return
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }.onFailure {
+            Toast.makeText(this, "No app can open this link", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun needsNotificationPermission(): Boolean =
