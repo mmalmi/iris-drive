@@ -230,6 +230,72 @@ fn owner_approves_device_request_link() {
 }
 
 #[test]
+fn devices_group_covers_invite_request_approve_and_list_flow() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let invite = run_json(owner_dir.path(), &["devices", "invite"]);
+    let invite_url = invite["url"].as_str().unwrap();
+    assert!(invite_url.starts_with("iris-drive://link-device?"));
+
+    let linked = run_json(
+        linked_dir.path(),
+        &["devices", "request", invite_url, "--label", "laptop"],
+    );
+    assert_eq!(linked["authorization_state"], "awaiting_approval");
+    let request_url = linked["device_link_request"]["url"].as_str().unwrap();
+    assert!(request_url.starts_with("iris-drive://device-link?"));
+    assert_eq!(
+        linked["device_link_request"]["sent_over_fips"],
+        serde_json::Value::Bool(true)
+    );
+
+    let requests = run_json(linked_dir.path(), &["devices", "requests"]);
+    assert!(requests["outbound"].is_object());
+    assert!(requests["inbound"].as_array().unwrap().is_empty());
+
+    let approved = run_json(owner_dir.path(), &["devices", "approve", request_url]);
+    assert_eq!(approved["roster_size"], 2);
+
+    let devices = run_json(owner_dir.path(), &["devices", "list"]);
+    assert_eq!(devices["app_keys"]["devices"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn devices_request_manual_owner_and_admin_device_queues_fips_request() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let admin_device_npub = owner["device_npub"].as_str().unwrap();
+
+    let linked = run_json(
+        linked_dir.path(),
+        &[
+            "devices",
+            "request",
+            owner_npub,
+            "--admin-device",
+            admin_device_npub,
+            "--label",
+            "manual laptop",
+        ],
+    );
+
+    assert_eq!(linked["authorization_state"], "awaiting_approval");
+    assert_eq!(
+        linked["device_link_request"]["admin_device_npub"].as_str(),
+        Some(admin_device_npub)
+    );
+    assert_eq!(
+        linked["device_link_request"]["sent_over_fips"],
+        serde_json::Value::Bool(true)
+    );
+}
+
+#[test]
 fn owner_can_revoke_a_linked_device() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();

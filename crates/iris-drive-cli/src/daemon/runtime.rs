@@ -259,6 +259,8 @@ pub(crate) fn cmd_daemon(
         );
         device_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_device_link_requests = BTreeMap::new();
+        let mut sent_device_link_rosters = BTreeMap::new();
+        let mut acked_device_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_device_root_key(&config);
 
         loop {
@@ -590,6 +592,21 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "device_link_request_send_error", "error": format!("{error:#}")})
                         ),
                     }
+                    match send_authorized_device_link_rosters(
+                        config_dir,
+                        fips_blocks.as_deref(),
+                        &mut sent_device_link_rosters,
+                        &acked_device_link_rosters,
+                    )
+                    .await
+                    {
+                        Ok(Some(payload)) => println!("{payload}"),
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "device_link_roster_send_error", "error": format!("{error:#}")})
+                        ),
+                    }
                 }
                 recv = async {
                     if let Some(rx) = direct_app_message_rx.as_mut() {
@@ -600,7 +617,14 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
-                            match handle_device_link_app_message(config_dir, &message).await {
+                            match handle_device_link_app_message(
+                                config_dir,
+                                &message,
+                                fips_blocks.as_deref(),
+                                &mut acked_device_link_rosters,
+                            )
+                            .await
+                            {
                                 Ok(true) => continue,
                                 Ok(false) => {}
                                 Err(error) => {

@@ -55,9 +55,20 @@ just run-daemon
 Useful CLI probes:
 
 ```bash
+just run-cli stats
 just run-cli status
 just run-cli whoami
 just run-cli list
+```
+
+Most desktop GUI actions have matching CLI flows:
+
+```bash
+just run-cli devices invite
+just run-cli devices request <owner-npub-or-invite-url> --label "Laptop"
+just run-cli devices approve <device-request-url-or-npub>
+just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
+just run-cli backups sync
 ```
 
 When `idrive daemon` is running it also starts a loopback browser gateway on

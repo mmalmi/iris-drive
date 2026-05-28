@@ -33,9 +33,11 @@ mod account;
 mod backups;
 mod commands;
 mod daemon;
+mod device_link;
 mod drive;
 mod mount;
 mod publish;
+mod stats;
 mod status;
 mod sync;
 
@@ -48,9 +50,13 @@ use commands::*;
 #[allow(clippy::wildcard_imports)]
 use daemon::*;
 #[allow(clippy::wildcard_imports)]
+use device_link::*;
+#[allow(clippy::wildcard_imports)]
 use drive::*;
 #[allow(clippy::wildcard_imports)]
 use publish::*;
+#[allow(clippy::wildcard_imports)]
+use stats::*;
 #[allow(clippy::wildcard_imports)]
 use status::*;
 #[allow(clippy::wildcard_imports)]
@@ -115,6 +121,12 @@ fn run_cli() -> ExitCode {
     };
 
     let result = match cli.command {
+        Command::Version { json } => {
+            cmd_version(json);
+            Ok(())
+        }
+        Command::InstallCli { path, force } => cmd_install_cli(path, force),
+        Command::UninstallCli { path } => cmd_uninstall_cli(path),
         Command::Init {
             force,
             label,
@@ -134,6 +146,8 @@ fn run_cli() -> ExitCode {
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
+        Command::Stats => cmd_stats(&config_dir),
+        Command::Devices(command) => cmd_devices(&config_dir, command),
         Command::NhashResolver { command } => cmd_nhash_resolver(&config_dir, command),
         Command::Conflicts(command) => cmd_conflicts(&config_dir, command),
         Command::Drives => cmd_drives(&config_dir),
@@ -180,6 +194,167 @@ fn run_cli() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn cmd_version(json_output: bool) {
+    if json_output {
+        println!(
+            "{}",
+            json!({
+                "version": env!("CARGO_PKG_VERSION"),
+            })
+        );
+    } else {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+    }
+}
+
+fn cmd_install_cli(path: Option<PathBuf>, force: bool) -> Result<()> {
+    let path = path.unwrap_or_else(default_cli_install_path);
+    if path.as_os_str().is_empty() {
+        return Err(anyhow::anyhow!("install path must not be empty"));
+    }
+    if path.is_dir() {
+        return Err(anyhow::anyhow!(
+            "install path points to a directory: {}",
+            path.display()
+        ));
+    }
+
+    let current_exe = std::env::current_exe().context("locating current idrive executable")?;
+    let current_exe = std::fs::canonicalize(&current_exe)
+        .with_context(|| format!("canonicalizing {}", current_exe.display()))?;
+    if let Ok(existing) = std::fs::canonicalize(&path)
+        && existing == current_exe
+    {
+        println!(
+            "{}",
+            json!({
+                "installed": true,
+                "path": path.display().to_string(),
+                "already_current": true,
+            })
+        );
+        return Ok(());
+    }
+
+    if path.exists() && !force {
+        return Err(anyhow::anyhow!("{} already exists", path.display()));
+    }
+    if path.exists() {
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("inspecting {}", path.display()))?;
+        if metadata.file_type().is_dir() {
+            return Err(anyhow::anyhow!(
+                "refusing to overwrite directory {}",
+                path.display()
+            ));
+        }
+        std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+    }
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating install directory {}", parent.display()))?;
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let temp_path = parent.join(format!(".idrive-install-{}-{nonce}", std::process::id()));
+    if temp_path.exists() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    std::fs::copy(&current_exe, &temp_path).with_context(|| {
+        format!(
+            "copying {} to {}",
+            current_exe.display(),
+            temp_path.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&temp_path)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&temp_path, permissions)
+            .with_context(|| format!("marking {} executable", temp_path.display()))?;
+    }
+    std::fs::rename(&temp_path, &path)
+        .with_context(|| format!("moving {} into {}", temp_path.display(), path.display()))?;
+    println!(
+        "{}",
+        json!({
+            "installed": true,
+            "path": path.display().to_string(),
+        })
+    );
+    Ok(())
+}
+
+fn cmd_uninstall_cli(path: Option<PathBuf>) -> Result<()> {
+    let path = path.unwrap_or_else(default_cli_install_path);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {
+            println!(
+                "{}",
+                json!({
+                    "uninstalled": true,
+                    "path": path.display().to_string(),
+                })
+            );
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "{}",
+                json!({
+                    "uninstalled": false,
+                    "path": path.display().to_string(),
+                    "not_found": true,
+                })
+            );
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
+fn default_cli_install_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(dir) = default_windows_cli_install_dir() {
+            return dir.join("idrive.exe");
+        }
+        return PathBuf::from("idrive.exe");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/usr/local/bin/idrive")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn default_windows_cli_install_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir();
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            if home.as_ref().is_some_and(|home| dir.starts_with(home)) {
+                return Some(dir);
+            }
+        }
+    }
+    home.map(|home| home.join(".cargo").join("bin"))
 }
 
 #[cfg(test)]

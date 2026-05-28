@@ -408,9 +408,9 @@ pub(crate) fn cmd_conflict_resolve(config_dir: &std::path::Path, conflict_id: &s
 
 #[derive(Debug, Default)]
 pub(crate) struct FileStats {
-    file_count: u64,
-    total_bytes: u64,
-    truncated: bool,
+    pub(crate) file_count: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) truncated: bool,
 }
 
 fn retry_interrupted_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
@@ -568,13 +568,13 @@ pub(crate) fn percent_encode_path_segment(segment: &str) -> String {
     encoded
 }
 
-const STATUS_BLOCK_STATS_ENTRY_LIMIT: usize = 512;
+pub(crate) const STATUS_BLOCK_STATS_ENTRY_LIMIT: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PrimaryDriveStatusStats {
-    file_count: usize,
-    top_level_entries: usize,
-    visible_file_bytes: u64,
+    pub(crate) file_count: usize,
+    pub(crate) top_level_entries: usize,
+    pub(crate) visible_file_bytes: u64,
 }
 
 pub(crate) fn root_top_level_entries(config_dir: &Path, root_cid: &str) -> Option<usize> {

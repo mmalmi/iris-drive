@@ -14,6 +14,29 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Print the idrive CLI version.
+    Version {
+        /// Print version metadata as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install this idrive binary to a user-selectable path.
+    #[command(name = "install-cli")]
+    InstallCli {
+        /// Destination path for the idrive executable.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Replace an existing file.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove an idrive binary previously installed with `install-cli`.
+    #[command(name = "uninstall-cli")]
+    UninstallCli {
+        /// Installed executable path to remove.
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
     /// **Create** flow: generate a fresh owner key + a fresh device key
     /// on this machine. Single-device default; this install has owner
     /// signing authority and the `AppKeys` roster lists this one device.
@@ -73,6 +96,11 @@ pub(crate) enum Command {
     RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
+    /// Print compact GUI summary stats as JSON.
+    Stats,
+    /// Manage linked devices and device-link requests.
+    #[command(subcommand)]
+    Devices(DevicesCmd),
     /// View or toggle the local `nhash.iris.localhost` resolver service.
     NhashResolver {
         #[command(subcommand)]
@@ -189,6 +217,41 @@ pub(crate) enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum DevicesCmd {
+    /// Print a link-device invite URL for this owner-capable device.
+    Invite,
+    /// Request linking this device using an owner/admin invite URL or owner pubkey.
+    #[command(alias = "ask", alias = "connect", alias = "link")]
+    Request {
+        /// Link-device invite URL from an owner-capable device, or an owner npub/hex.
+        owner_or_invite: String,
+        /// Admin device pubkey for manual pairing when no invite URL is available.
+        #[arg(long, alias = "admin")]
+        admin_device: Option<String>,
+        /// Human-readable device label.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Print inbound and outbound pending device-link requests.
+    Requests,
+    /// Approve a pending device link request.
+    Approve {
+        /// Device pubkey or device-link approval URL.
+        request: String,
+        /// Optional device label to record alongside.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Print the current authorized-device roster.
+    List,
+    /// Revoke an authorized device and rotate the drive content key.
+    Revoke {
+        /// Device pubkey to revoke (npub1... or 64-char hex).
+        device: String,
     },
 }
 

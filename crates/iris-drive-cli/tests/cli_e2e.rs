@@ -47,6 +47,83 @@ fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
     })
 }
 
+#[test]
+fn help_includes_desktop_operator_commands() {
+    let dir = tempdir().unwrap();
+
+    idrive(dir.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("version"))
+        .stdout(contains("install-cli"))
+        .stdout(contains("uninstall-cli"))
+        .stdout(contains("devices"))
+        .stdout(contains("stats"))
+        .stdout(contains("daemon"));
+}
+
+#[test]
+fn version_prints_plain_text_and_json() {
+    let dir = tempdir().unwrap();
+
+    idrive(dir.path())
+        .arg("version")
+        .assert()
+        .success()
+        .stdout(format!("{}\n", env!("CARGO_PKG_VERSION")));
+
+    let value = run_json(dir.path(), &["version", "--json"]);
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
+fn install_cli_and_uninstall_cli_roundtrip_for_custom_path() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join(if cfg!(windows) {
+        "idrive.exe"
+    } else {
+        "idrive"
+    });
+    let target_arg = target.to_string_lossy().into_owned();
+
+    idrive(dir.path())
+        .args(["install-cli", "--path", &target_arg])
+        .assert()
+        .success();
+    assert!(target.exists(), "installed target should exist");
+
+    idrive(dir.path())
+        .args(["install-cli", "--path", &target_arg])
+        .assert()
+        .failure()
+        .stderr(contains("already exists"));
+
+    idrive(dir.path())
+        .args(["install-cli", "--path", &target_arg, "--force"])
+        .assert()
+        .success();
+
+    idrive(dir.path())
+        .args(["uninstall-cli", "--path", &target_arg])
+        .assert()
+        .success();
+    assert!(!target.exists(), "uninstall should remove target");
+}
+
+#[test]
+fn stats_prints_gui_summary_counts() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+
+    let value = run_json(dir.path(), &["stats"]);
+    assert_eq!(value["initialized"], true);
+    assert_eq!(value["files"], 0);
+    assert_eq!(value["authorized_devices"], 1);
+    assert_eq!(value["backup_targets"], 0);
+    assert_eq!(value["unresolved_conflicts"], 0);
+}
+
 fn configure_local_blossom(config_dir: &std::path::Path, url: &str) {
     idrive(config_dir)
         .args(["blossom-servers", "remove", "https://upload.iris.to"])

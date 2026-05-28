@@ -41,13 +41,22 @@ pub(crate) fn cmd_link(
     owner: &str,
     label: Option<String>,
 ) -> Result<()> {
+    cmd_link_with_admin_device(config_dir, owner, None, label)
+}
+
+pub(crate) fn cmd_link_with_admin_device(
+    config_dir: &std::path::Path,
+    owner: &str,
+    admin_device: Option<&str>,
+    label: Option<String>,
+) -> Result<()> {
     if already_initialized(config_dir) {
         return Err(anyhow::anyhow!(
             "already initialized; remove {} first if you really want to overwrite",
             config_dir.display()
         ));
     }
-    let target = resolve_device_link_target(owner)?;
+    let target = resolve_device_link_target_with_admin(owner, admin_device)?;
     let mut account =
         Account::link(config_dir, target.owner_hex, label).context("linking device")?;
     if let Some(admin_device_hex) = target.admin_device_hex {
@@ -296,17 +305,28 @@ pub(crate) fn resolve_device_approval_input(
     ))
 }
 
-pub(crate) fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget> {
+pub(crate) fn resolve_device_link_target_with_admin(
+    input: &str,
+    admin_device: Option<&str>,
+) -> Result<DeviceLinkTarget> {
     if let Some(invite) = decode_device_link_invite(input)? {
+        if admin_device.is_some() {
+            return Err(anyhow::anyhow!(
+                "--admin-device is only valid with a manual owner pubkey, not an invite URL"
+            ));
+        }
         return Ok(DeviceLinkTarget {
             owner_hex: invite.owner_hex,
             admin_device_hex: Some(invite.admin_device_hex),
         });
     }
 
+    let admin_device_hex = admin_device
+        .map(|admin| normalize_pubkey(admin).context("parsing admin device pubkey"))
+        .transpose()?;
     Ok(DeviceLinkTarget {
         owner_hex: normalize_pubkey(input).context("parsing owner pubkey")?,
-        admin_device_hex: None,
+        admin_device_hex,
     })
 }
 
@@ -498,7 +518,10 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
+pub(crate) const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
+pub(crate) const DEVICE_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/device-link/v1/roster-ack";
 pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
+pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeviceLinkRequestFrame {
@@ -509,6 +532,26 @@ struct DeviceLinkRequestFrame {
     label: Option<String>,
     requested_at: u64,
     url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeviceLinkRosterFrame {
+    schema: u32,
+    owner_pubkey: String,
+    admin_device_pubkey: String,
+    app_keys: iris_drive_core::AppKeysSnapshot,
+    sent_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeviceLinkRosterAckFrame {
+    schema: u32,
+    owner_pubkey: String,
+    admin_device_pubkey: String,
+    device_pubkey: String,
+    app_keys_created_at: i64,
+    dck_generation: u64,
+    acknowledged_at: u64,
 }
 
 pub(crate) async fn send_pending_device_link_request(
@@ -573,13 +616,115 @@ pub(crate) async fn send_pending_device_link_request(
     })))
 }
 
+pub(crate) async fn send_authorized_device_link_rosters(
+    config_dir: &Path,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    sent_cache: &mut BTreeMap<String, std::time::Instant>,
+    acked_rosters: &BTreeSet<String>,
+) -> Result<Option<Value>> {
+    let Some(sync) = fips_blocks else {
+        return Ok(None);
+    };
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(None);
+    };
+    if !state.has_owner_signing_authority {
+        return Ok(None);
+    }
+    let Some(app_keys) = state.app_keys.as_ref() else {
+        return Ok(None);
+    };
+    if !app_keys.contains(&state.device_pubkey) {
+        return Ok(None);
+    }
+
+    let now = std::time::Instant::now();
+    let due_devices = app_keys
+        .devices
+        .iter()
+        .filter(|device| device.pubkey != state.device_pubkey)
+        .filter(|device| {
+            let fingerprint = device_link_roster_fingerprint(device.pubkey.as_str(), app_keys);
+            if acked_rosters.contains(&fingerprint) {
+                return false;
+            }
+            !sent_cache.get(&fingerprint).is_some_and(|last_sent| {
+                now.duration_since(*last_sent)
+                    < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+            })
+        })
+        .map(|device| device.pubkey.clone())
+        .collect::<Vec<_>>();
+    if due_devices.is_empty() {
+        return Ok(None);
+    }
+
+    sync.refresh_authorized_peers(&config).await;
+    let frame = DeviceLinkRosterFrame {
+        schema: 1,
+        owner_pubkey: state.owner_pubkey.clone(),
+        admin_device_pubkey: state.device_pubkey.clone(),
+        app_keys: app_keys.clone(),
+        sent_at: unix_now_seconds(),
+    };
+    let bytes = serde_json::to_vec(&frame)?;
+    let mut recipients = Vec::new();
+    for device_pubkey in due_devices {
+        let recipient_npub = account_npub(&device_pubkey);
+        sync.send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
+            .await?;
+        sent_cache.insert(
+            device_link_roster_fingerprint(&device_pubkey, app_keys),
+            now,
+        );
+        recipients.push(recipient_npub);
+    }
+
+    Ok(Some(json!({
+        "event": "device_link_roster_sent",
+        "topic": DEVICE_LINK_ROSTER_APP_TOPIC,
+        "recipient_device_npubs": recipients,
+        "dck_generation": app_keys.dck_generation,
+        "created_at": app_keys.created_at,
+        "sent_bytes": bytes.len(),
+    })))
+}
+
+fn device_link_roster_fingerprint(
+    device_pubkey: &str,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> String {
+    format!(
+        "{}:{}:{}",
+        device_pubkey, app_keys.created_at, app_keys.dck_generation
+    )
+}
+
 pub(crate) async fn handle_device_link_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool> {
-    if message.topic != DEVICE_LINK_REQUEST_APP_TOPIC {
-        return Ok(false);
+    match message.topic.as_str() {
+        DEVICE_LINK_REQUEST_APP_TOPIC => {
+            handle_device_link_request_app_message(config_dir, message).await
+        }
+        DEVICE_LINK_ROSTER_APP_TOPIC => {
+            handle_device_link_roster_app_message(config_dir, message, fips_blocks).await
+        }
+        DEVICE_LINK_ROSTER_ACK_APP_TOPIC => {
+            handle_device_link_roster_ack_app_message(config_dir, message, acked_rosters)
+        }
+        _ => Ok(false),
     }
+}
+
+async fn handle_device_link_request_app_message(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool> {
     let frame: DeviceLinkRequestFrame =
         serde_json::from_slice(&message.data).context("parsing device link request frame")?;
     if frame.schema != 1 {
@@ -621,113 +766,182 @@ pub(crate) async fn handle_device_link_app_message(
     Ok(true)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
+async fn handle_device_link_roster_app_message(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<bool> {
+    let frame: DeviceLinkRosterFrame =
+        serde_json::from_slice(&message.data).context("parsing device link roster frame")?;
+    if frame.schema != 1 {
+        return Err(anyhow::anyhow!(
+            "unsupported device link roster schema {}",
+            frame.schema
+        ));
+    }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing roster owner")?;
+    let admin_device_hex =
+        normalize_pubkey(&frame.admin_device_pubkey).context("parsing roster admin device")?;
+    let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
-    #[tokio::test]
-    async fn device_link_app_message_records_inbound_request_for_owner_admin() {
-        let config_dir = tempdir().unwrap();
-        let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
-        let mut config = AppConfig {
-            account: Some(account.state.clone()),
-            ..AppConfig::default()
-        };
-        config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
-        config.save(config_path_in(config_dir.path())).unwrap();
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_mut() else {
+        return Ok(true);
+    };
+    if state.has_owner_signing_authority || state.owner_pubkey != owner_hex {
+        return Ok(true);
+    }
+    if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
+        return Ok(true);
+    }
+    if frame.app_keys.owner_pubkey != state.owner_pubkey
+        || !frame.app_keys.contains(&state.device_pubkey)
+        || !frame.app_keys.contains(&admin_device_hex)
+    {
+        return Ok(true);
+    }
 
-        let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
-        let frame = DeviceLinkRequestFrame {
-            schema: 1,
-            owner_pubkey: account.state.owner_pubkey.clone(),
-            device_pubkey: linked_device.clone(),
-            label: Some(" phone ".into()),
-            requested_at: 123,
-            url: encode_device_approval_request(
-                &account.state.owner_pubkey,
-                &linked_device,
-                Some(" phone "),
-            ),
-        };
-        let message = iris_drive_core::FipsAppMessage {
-            peer_id: account_npub(&linked_device),
-            topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
-            data: serde_json::to_vec(&frame).unwrap(),
-        };
+    let should_apply = state
+        .outbound_device_link_request
+        .as_ref()
+        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_hex);
+    let already_current = state.app_keys.as_ref() == Some(&frame.app_keys);
+    if !should_apply && !already_current {
+        return Ok(true);
+    }
 
-        assert!(
-            handle_device_link_app_message(config_dir.path(), &message)
-                .await
-                .unwrap()
+    let decision = if should_apply {
+        state.apply_app_keys(frame.app_keys)
+    } else {
+        iris_drive_core::ApplyDecision::Rejected
+    };
+    let accepted = should_apply && decision != iris_drive_core::ApplyDecision::Rejected;
+    let ack_data = if accepted || already_current {
+        Some((
+            state.device_pubkey.clone(),
+            state
+                .app_keys
+                .as_ref()
+                .expect("accepted/current app keys")
+                .clone(),
+        ))
+    } else {
+        None
+    };
+    if accepted {
+        let authorization_state = authorization_state_label(state);
+        config.save(config_path_in(config_dir))?;
+        println!(
+            "{}",
+            json!({
+                "event": "device_link_roster_received",
+                "topic": DEVICE_LINK_ROSTER_APP_TOPIC,
+                "peer": message.peer_id,
+                "admin_device_npub": account_npub(&admin_device_hex),
+                "authorization_state": authorization_state,
+                "apply_decision": format!("{decision:?}").to_ascii_lowercase(),
+            })
         );
-
-        let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-        let inbound = &saved.account.unwrap().inbound_device_link_requests;
-        assert_eq!(inbound.len(), 1);
-        assert_eq!(inbound[0].device_pubkey, linked_device);
-        assert_eq!(inbound[0].label.as_deref(), Some("phone"));
-        assert_eq!(inbound[0].requested_at, 123);
     }
+    if let Some((device_pubkey, app_keys)) = ack_data {
+        send_device_link_roster_ack(
+            fips_blocks,
+            &admin_device_hex,
+            &owner_hex,
+            &device_pubkey,
+            &app_keys,
+        )
+        .await?;
+    }
+    Ok(true)
 }
 
-pub(crate) fn percent_encode_component(input: &str) -> String {
-    let mut encoded = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(hex_digit(byte >> 4));
-            encoded.push(hex_digit(byte & 0x0f));
-        }
+fn handle_device_link_roster_ack_app_message(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+    acked_rosters: &mut BTreeSet<String>,
+) -> Result<bool> {
+    let frame: DeviceLinkRosterAckFrame =
+        serde_json::from_slice(&message.data).context("parsing device link roster ack frame")?;
+    if frame.schema != 1 {
+        return Err(anyhow::anyhow!(
+            "unsupported device link roster ack schema {}",
+            frame.schema
+        ));
     }
-    encoded
-}
-
-pub(crate) fn percent_decode_component(input: &str) -> Result<String> {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hi = bytes
-                .get(index + 1)
-                .copied()
-                .and_then(hex_value)
-                .ok_or_else(|| anyhow::anyhow!("invalid percent encoding"))?;
-            let lo = bytes
-                .get(index + 2)
-                .copied()
-                .and_then(hex_value)
-                .ok_or_else(|| anyhow::anyhow!("invalid percent encoding"))?;
-            output.push((hi << 4) | lo);
-            index += 3;
-        } else {
-            output.push(bytes[index]);
-            index += 1;
-        }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing ack owner")?;
+    let admin_device_hex =
+        normalize_pubkey(&frame.admin_device_pubkey).context("parsing ack admin device")?;
+    let device_hex = normalize_pubkey(&frame.device_pubkey).context("parsing ack device")?;
+    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
+        return Ok(true);
     }
 
-    String::from_utf8(output).context("request contains invalid UTF-8")
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(true);
+    };
+    let Some(app_keys) = state.app_keys.as_ref() else {
+        return Ok(true);
+    };
+    if !state.has_owner_signing_authority
+        || state.owner_pubkey != owner_hex
+        || state.device_pubkey != admin_device_hex
+        || !app_keys.contains(&device_hex)
+        || app_keys.created_at != frame.app_keys_created_at
+        || app_keys.dck_generation != frame.dck_generation
+    {
+        return Ok(true);
+    }
+
+    let fingerprint = device_link_roster_fingerprint(&device_hex, app_keys);
+    let changed = acked_rosters.insert(fingerprint);
+    if changed {
+        println!(
+            "{}",
+            json!({
+                "event": "device_link_roster_ack_received",
+                "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+                "device_npub": account_npub(&device_hex),
+                "dck_generation": app_keys.dck_generation,
+                "created_at": app_keys.created_at,
+            })
+        );
+    }
+    Ok(true)
 }
 
-pub(crate) fn hex_digit(value: u8) -> char {
-    match value {
-        0..=9 => (b'0' + value) as char,
-        10..=15 => (b'A' + value - 10) as char,
-        _ => '0',
-    }
+async fn send_device_link_roster_ack(
+    fips_blocks: Option<&FsFipsBlockSync>,
+    admin_device_hex: &str,
+    owner_hex: &str,
+    device_hex: &str,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> Result<()> {
+    let Some(sync) = fips_blocks else {
+        return Ok(());
+    };
+    let frame = DeviceLinkRosterAckFrame {
+        schema: 1,
+        owner_pubkey: owner_hex.to_string(),
+        admin_device_pubkey: admin_device_hex.to_string(),
+        device_pubkey: device_hex.to_string(),
+        app_keys_created_at: app_keys.created_at,
+        dck_generation: app_keys.dck_generation,
+        acknowledged_at: unix_now_seconds(),
+    };
+    sync.send_app_message(
+        &account_npub(admin_device_hex),
+        DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+        serde_json::to_vec(&frame)?,
+    )
+    .await?;
+    Ok(())
 }
 
-pub(crate) fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
+#[cfg(test)]
+mod tests;
 
 pub(crate) fn account_npub(hex: &str) -> String {
     use nostr_sdk::nips::nip19::ToBech32;
