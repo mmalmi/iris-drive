@@ -2,6 +2,7 @@ package to.iris.drive.app.provider
 
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.InputStream
 import java.net.URLConnection
 
 internal data class IrisDriveDocumentEntry(
@@ -62,6 +63,21 @@ internal class IrisDriveDocumentStore(
             }
         }
         return entryFor(target, mimeType.takeIf { it.isNotBlank() } ?: DEFAULT_FILE_MIME_TYPE)
+    }
+
+    fun importFile(
+        parentDocumentId: String,
+        mimeType: String,
+        displayName: String,
+        input: InputStream,
+    ): IrisDriveDocumentEntry {
+        val entry = createDocument(parentDocumentId, mimeType, displayName)
+        input.use { source ->
+            fileForDocument(entry.documentId).outputStream().use { target ->
+                source.copyTo(target)
+            }
+        }
+        return queryDocument(entry.documentId)
     }
 
     fun deleteDocument(documentId: String) {

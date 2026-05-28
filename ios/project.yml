@@ -39,6 +39,7 @@ targets:
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID)
     dependencies:
       - target: IrisDriveFileProvider
+      - target: IrisDriveShareExtension
 
   IrisDriveFileProvider:
     type: app-extension
@@ -58,3 +59,24 @@ targets:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID)
+
+  IrisDriveShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: FileProvider/FileProviderStorage.swift
+      - path: FileProvider/FileProviderItem.swift
+    settings:
+      base:
+        PRODUCT_NAME: IrisDriveShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.ios.ShareExtension
+        PRODUCT_MODULE_NAME: IrisDriveShareExtension
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        SKIP_INSTALL: YES
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
+          PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID)

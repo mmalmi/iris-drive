@@ -1,5 +1,6 @@
 package to.iris.drive.app.provider
 
+import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,6 +69,42 @@ class IrisDriveDocumentStoreTest {
             listOf("note (2).txt", "note.txt"),
             store.childDocuments(IrisDriveDocumentStore.ROOT_DOCUMENT_ID).map { it.displayName },
         )
+    }
+
+    @Test
+    fun importFileWritesBytesAndSanitizesName() {
+        val store = newStore()
+
+        val imported = store.importFile(
+            IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
+            "text/plain",
+            "../Shared/note.txt",
+            ByteArrayInputStream("shared bytes".toByteArray()),
+        )
+
+        assertEquals("Shared_note.txt", imported.displayName)
+        assertEquals("shared bytes", store.fileForDocument(imported.documentId).readText())
+    }
+
+    @Test
+    fun importFileDeDuplicatesNames() {
+        val store = newStore()
+
+        store.importFile(
+            IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
+            "text/plain",
+            "note.txt",
+            ByteArrayInputStream("first".toByteArray()),
+        )
+        val second = store.importFile(
+            IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
+            "text/plain",
+            "note.txt",
+            ByteArrayInputStream("second".toByteArray()),
+        )
+
+        assertEquals("note (2).txt", second.displayName)
+        assertEquals("second", store.fileForDocument(second.documentId).readText())
     }
 
     private fun newStore(): IrisDriveDocumentStore =

@@ -167,6 +167,33 @@ enum FileProviderStorage {
         }
     }
 
+    static func importSharedFile(
+        named displayName: String,
+        contentType: UTType,
+        contents: Data
+    ) throws {
+        try mutateState { state in
+            let destination = uniquePath(
+                in: state,
+                parent: "",
+                name: sanitizedFileName(displayName, contentType: contentType)
+            )
+            let now = Date()
+            state.entries.append(
+                ProviderEntry(
+                    path: destination,
+                    kind: "file",
+                    size: UInt64(contents.count),
+                    version: newAnchor(),
+                    contentBase64: contents.base64EncodedString(),
+                    createdAt: now,
+                    modifiedAt: now
+                )
+            )
+            state.anchor = newAnchor()
+        }
+    }
+
     static func modifyItem(
         _ item: NSFileProviderItem,
         changedFields: NSFileProviderItemFields,
@@ -346,6 +373,41 @@ enum FileProviderStorage {
             return cleanName
         }
         return "\(parent)/\(cleanName)"
+    }
+
+    private static func uniquePath(in state: ProviderState, parent: String, name: String) -> String {
+        let existing = Set(state.entries.map(\.path))
+        var candidate = joinedPath(parent: parent, name: name)
+        if !existing.contains(candidate) {
+            return candidate
+        }
+
+        let nsName = name as NSString
+        let extensionWithDot = nsName.pathExtension.isEmpty ? "" : ".\(nsName.pathExtension)"
+        let basename = nsName.deletingPathExtension
+        var index = 2
+        while existing.contains(candidate) {
+            candidate = joinedPath(parent: parent, name: "\(basename) (\(index))\(extensionWithDot)")
+            index += 1
+        }
+        return candidate
+    }
+
+    private static func sanitizedFileName(_ displayName: String, contentType: UTType) -> String {
+        let separators = CharacterSet(charactersIn: "/:")
+        let components = displayName
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+        var name = components.joined(separator: "_")
+        if name.isEmpty {
+            name = "Shared file"
+        }
+        if (name as NSString).pathExtension.isEmpty,
+           let preferredExtension = contentType.preferredFilenameExtension {
+            name += ".\(preferredExtension)"
+        }
+        return name
     }
 
     private static func parentPath(for path: String) -> String {
