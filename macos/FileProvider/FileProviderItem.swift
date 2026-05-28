@@ -101,9 +101,11 @@ enum FileProviderStorage {
     private static let legacyAppGroupIdentifier = "group.to.iris.drive"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
+    private static let contentCacheDirectoryName = "FileProviderContentCache"
     private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
     private static let providerListCacheTTL: TimeInterval = 1.0
     private static let providerListCacheLock = NSLock()
+    private static let contentCacheLock = NSLock()
     private static var providerListCache: (loadedAt: Date, list: ProviderList)?
     private static var configuredRuntime: Runtime?
 
@@ -190,6 +192,7 @@ enum FileProviderStorage {
         let path: String
         let kind: String
         let size: UInt64
+        let version: String?
     }
 
     private struct ProviderSnapshot: Codable {
@@ -505,6 +508,21 @@ enum FileProviderStorage {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
+        let list = providerList()
+        if let entry = list.entries.first(where: { $0.path == path && $0.kind != "directory" }) {
+            if let cached = try cachedContentsURL(for: entry, anchor: list.anchor) {
+                debugLog("fetch contents cache hit path=\(path)")
+                return cached
+            }
+            do {
+                let materialized = try materializedContentsURL(for: entry, anchor: list.anchor)
+                debugLog("fetch contents materialized cache path=\(path)")
+                return materialized
+            } catch {
+                debugLog("fetch contents materialized cache failed path=\(path) error=\(error)")
+            }
+        }
+
         let directory = try temporaryDirectory()
         let output = directory
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
@@ -603,6 +621,86 @@ enum FileProviderStorage {
         providerListCacheLock.unlock()
     }
 
+    private static func cachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL? {
+        let url = contentCacheURL(for: entry, anchor: anchor)
+        guard contentCacheFileMatches(url, entry: entry) else {
+            return nil
+        }
+        return url
+    }
+
+    private static func materializedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL {
+        contentCacheLock.lock()
+        defer { contentCacheLock.unlock() }
+
+        if let cached = try cachedContentsURL(for: entry, anchor: anchor) {
+            return cached
+        }
+
+        let root = contentCacheRootURL(for: anchor)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        _ = try runIDrive(arguments: ["materialize", root.path], timeout: 60)
+        pruneContentCacheDirectories(keeping: root)
+
+        let url = contentCacheURL(for: entry, anchor: anchor)
+        guard contentCacheFileMatches(url, entry: entry) else {
+            throw providerError("materialized cache missing \(entry.path)")
+        }
+        return url
+    }
+
+    private static func contentCacheRootURL(for anchor: String?) -> URL {
+        baseDirectory
+            .appendingPathComponent(contentCacheDirectoryName, isDirectory: true)
+            .appendingPathComponent(contentCacheKey(for: anchor), isDirectory: true)
+    }
+
+    private static func contentCacheURL(for entry: ProviderEntry, anchor: String?) -> URL {
+        var url = contentCacheRootURL(for: anchor)
+        for component in entry.path.split(separator: "/") {
+            url.appendPathComponent(String(component), isDirectory: false)
+        }
+        return url
+    }
+
+    private static func contentCacheKey(for anchor: String?) -> String {
+        let value = anchor ?? "unavailable"
+        let encoded = Data(value.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "=", with: "")
+        return encoded.isEmpty ? "empty" : encoded
+    }
+
+    private static func contentCacheFileMatches(_ url: URL, entry: ProviderEntry) -> Bool {
+        guard FileManager.default.isReadableFile(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize
+        else {
+            return false
+        }
+        return UInt64(size) == entry.size
+    }
+
+    private static func pruneContentCacheDirectories(keeping keepURL: URL) {
+        let root = baseDirectory.appendingPathComponent(contentCacheDirectoryName, isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+        let keepPath = keepURL.standardizedFileURL.path
+        for url in entries where url.standardizedFileURL.path != keepPath {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     private static func fileSize(at url: URL?) -> Int {
         guard let url,
               let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
@@ -621,7 +719,7 @@ enum FileProviderStorage {
         baseDirectory.appendingPathComponent(snapshotFileName, isDirectory: false)
     }
 
-    private static func runIDrive(arguments: [String]) throws -> Data {
+    private static func runIDrive(arguments: [String], timeout: TimeInterval = 15) throws -> Data {
         guard let executable = idriveExecutable, !executable.isEmpty else {
             throw providerError("bundled idrive helper unavailable")
         }
@@ -656,7 +754,7 @@ enum FileProviderStorage {
         }
 
         try process.run()
-        let deadline = Date().addingTimeInterval(15)
+        let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
