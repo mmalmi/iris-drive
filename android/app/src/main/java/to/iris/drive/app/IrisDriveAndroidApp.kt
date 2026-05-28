@@ -658,6 +658,9 @@ private fun DevicesPanel(
                 Column(Modifier.weight(1f)) {
                     Text(device.label, fontWeight = FontWeight.SemiBold)
                     Text("${device.role.ifBlank { "member" }} | ${device.state}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    if (device.isCurrentDevice) {
+                        Text("Device ID: ${device.pubkey}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
                     Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (device.canAppointAdmin) {

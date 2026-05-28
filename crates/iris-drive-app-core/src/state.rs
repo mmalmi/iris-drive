@@ -36,6 +36,7 @@ pub struct UiDevice {
     pub role: String,
     pub state: String,
     pub detail: String,
+    pub is_current_device: bool,
     pub is_online: bool,
     pub can_revoke: bool,
     pub can_appoint_admin: bool,

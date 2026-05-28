@@ -228,6 +228,7 @@ impl NativeAppRuntime {
             role: "member".to_owned(),
             state: "Authorized".to_owned(),
             detail: request.to_owned(),
+            is_current_device: false,
             is_online: self.state.ui.sync.running,
             can_revoke: true,
             can_appoint_admin: false,
@@ -422,6 +423,7 @@ impl NativeAppRuntime {
             device.can_revoke = can_manage && !is_current;
             device.can_appoint_admin = can_manage && !is_current && !is_admin;
             device.can_demote_admin = can_manage && !is_current && is_admin && admin_count > 1;
+            device.is_current_device = is_current;
         }
     }
 }
@@ -472,6 +474,7 @@ fn local_device(pubkey: String, label: String, state: &str, role: &str) -> UiDev
         role: role.to_owned(),
         state: state.to_owned(),
         detail: pubkey,
+        is_current_device: true,
         is_online: false,
         can_revoke: false,
         can_appoint_admin: false,

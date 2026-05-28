@@ -56,6 +56,9 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
         let mut metadata = Vec::new();
         if is_current_device {
             metadata.push("this device".to_string());
+            if !device_npub.is_empty() {
+                metadata.push(format!("Device ID: {device_npub}"));
+            }
         }
         metadata.push(role.to_string());
         if let Some(sync_state) = find_string(peer, &["sync_state"]) {

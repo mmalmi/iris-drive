@@ -30,6 +30,7 @@ class AppStateTest {
                     role = "admin",
                     state = "Admin",
                     detail = "device-a",
+                    isCurrentDevice = true,
                     isOnline = true,
                     canRevoke = false,
                     canAppointAdmin = false,
@@ -41,6 +42,7 @@ class AppStateTest {
                     role = "member",
                     state = "Authorized",
                     detail = "device-b",
+                    isCurrentDevice = false,
                     isOnline = false,
                     canRevoke = true,
                     canAppointAdmin = true,
@@ -53,6 +55,7 @@ class AppStateTest {
         assertEquals(1, state.publishedDeviceRoots)
         assertEquals(2, state.authorizedDeviceCount)
         assertEquals("admin", state.devices[0].role)
+        assertTrue(state.devices[0].isCurrentDevice)
         assertTrue(state.devices[1].canAppointAdmin)
     }
 }

@@ -268,6 +268,16 @@ public partial class MainWindow : Window
                 FontSize = 12,
             });
         }
+        if (peer.IsCurrentDevice && !string.IsNullOrWhiteSpace(peer.DeviceNpub))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"Device ID: {peer.DeviceNpub}",
+                Foreground = (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontSize = 12,
+            });
+        }
 
         var dot = new Ellipse
         {

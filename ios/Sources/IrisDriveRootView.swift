@@ -324,6 +324,9 @@ private struct DevicesView: View {
             Section {
                 ForEach(model.devices) { device in
                     DisclosureGroup {
+                        if device.detail == model.devicePublicKey {
+                            LabeledContent("Device ID", value: model.devicePublicKey)
+                        }
                         Text(device.detail)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
