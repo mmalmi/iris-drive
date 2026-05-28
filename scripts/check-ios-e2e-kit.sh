@@ -24,6 +24,7 @@ require_contains() {
 require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
+require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/FileProvider/FileProviderExtension.swift
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
@@ -38,9 +39,10 @@ require_contains ios/Sources/IrisDriveMobileModel.swift "copyLinkRequest"
 require_contains ios/Sources/IrisDriveMobileModel.swift "openDriveFolder"
 require_contains ios/Sources/IrisDriveMobileModel.swift "addRelay"
 require_contains ios/Sources/IrisDriveMobileModel.swift "device-link"
+require_contains ios/Sources/IrisDriveNativeCore.swift "iris_drive_app_dispatch_json"
 require_contains ios/Sources/IrisDriveRootView.swift "Copy link request"
 require_contains scripts/ios-simulator-smoke.sh "xcrun simctl"
-require_contains scripts/ios-simulator-smoke.sh "simctl openurl"
+require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION"
 require_contains scripts/cross-vm-four-platform-e2e.sh "IRIS_DRIVE_E2E_IOS_HOST"
 require_contains Justfile "ios-build"
 require_contains Justfile "ios-smoke"

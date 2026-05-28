@@ -51,6 +51,7 @@ private let irisDriveFileProviderDisplayName = "My Drive"
 private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
+private let iosDebugStateFileName = "debug-state.json"
 
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {
@@ -87,6 +88,8 @@ final class IrisDriveMobileModel: ObservableObject {
     private let approvedDevicesKey = "approvedDevices"
     private let relaysKey = "relays"
     private let providerStateFileName = "ios-provider-state.json"
+    private let nativeCore: IrisDriveNativeCore
+    private var lastState: NativeAppState?
 
     private struct StoredDevice: Codable, Equatable {
         var label: String
@@ -114,23 +117,26 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     init() {
+        nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
         load()
     }
 
     var sharedContainerPath: String {
-        IrisDriveSharedContainer.baseDirectory.path
+        lastState?.ui.paths.dataDir ?? IrisDriveSharedContainer.baseDirectory.path
     }
 
     var configPath: String {
-        IrisDriveSharedContainer.baseDirectory
-            .appendingPathComponent("config.toml", isDirectory: false)
-            .path
+        lastState?.ui.paths.configPath
+            ?? IrisDriveSharedContainer.baseDirectory
+                .appendingPathComponent("config.toml", isDirectory: false)
+                .path
     }
 
     var blocksPath: String {
-        IrisDriveSharedContainer.baseDirectory
-            .appendingPathComponent("blocks", isDirectory: true)
-            .path
+        lastState?.ui.paths.blocksDir
+            ?? IrisDriveSharedContainer.baseDirectory
+                .appendingPathComponent("blocks", isDirectory: true)
+                .path
     }
 
     var statusSymbol: String {
@@ -146,16 +152,16 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var snapshotLink: String {
-        "https://drive.iris.to/snapshot/\(ownerPublicKey.isEmpty ? "local" : ownerPublicKey)"
+        lastState?.ui.snapshotLink
+            ?? "https://drive.iris.to/snapshot/\(ownerPublicKey.isEmpty ? "local" : ownerPublicKey)"
     }
 
     var rootStatus: String {
-        hasLocalProfile ? "Local provider root" : "No local root"
+        roots.first?.status ?? (hasLocalProfile ? "Local provider root" : "No local root")
     }
 
     var deviceLinkRequest: String {
-        guard hasLocalProfile else { return "" }
-        return "iris-drive://device-link?owner=\(ownerPublicKey)&device=\(devicePublicKey)"
+        lastState?.ui.account?.deviceLinkRequest ?? ""
     }
 
     var hasLocalProfile: Bool {
@@ -163,7 +169,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var hasOwnerAuthority: Bool {
-        hasLocalProfile && defaults.bool(forKey: "hasOwnerAuthority")
+        lastState?.ui.account?.hasOwnerSigningAuthority ?? false
     }
 
     func ensureFileProviderDomainIfProfileExists() {
@@ -256,20 +262,18 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func refresh() {
-        load()
+        applyStateJson(nativeCore.refreshJson())
         ensureFileProviderDomainIfProfileExists()
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
-        ownerPublicKey = "local-owner"
-        statusTitle = "Linked"
-        statusDetail = syncStateTitle
-        devicePublicKey = "device-\(UUID().uuidString.prefix(8))"
         profileUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         self.profilePhotoName = profileUsername.isEmpty ? "" : profilePhotoName
-        defaults.set(true, forKey: "hasOwnerAuthority")
-        persist()
-        load()
+        dispatch([
+            "type": "create_profile",
+            "device_label": deviceLabel,
+        ])
+        persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
     }
 
@@ -277,16 +281,16 @@ final class IrisDriveMobileModel: ObservableObject {
         guard !restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        ownerPublicKey = "restored-owner"
-        statusTitle = "Restored"
-        statusDetail = syncStateTitle
-        devicePublicKey = "device-\(UUID().uuidString.prefix(8))"
+        let secret = restoreSecret
         restoreSecret = ""
         profileUsername = ""
         profilePhotoName = ""
-        defaults.set(true, forKey: "hasOwnerAuthority")
-        persist()
-        load()
+        dispatch([
+            "type": "restore_profile",
+            "secret": secret,
+            "device_label": deviceLabel,
+        ])
+        persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
     }
 
@@ -294,14 +298,11 @@ final class IrisDriveMobileModel: ObservableObject {
         guard !ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        if devicePublicKey == "local-device" {
-            devicePublicKey = "device-\(UUID().uuidString.prefix(8))"
-        }
-        statusTitle = "Link requested"
-        statusDetail = "Approval is pending from an owner device."
-        defaults.set(false, forKey: "hasOwnerAuthority")
-        persist()
-        load()
+        dispatch([
+            "type": "link_device",
+            "owner_pubkey": ownerPublicKey,
+            "device_label": deviceLabel,
+        ])
         ensureFileProviderDomainIfProfileExists()
     }
 
@@ -310,96 +311,54 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func approveDevice(request: String, label: String) {
-        guard hasOwnerAuthority else {
-            statusTitle = "Owner profile required"
-            statusDetail = "Only an owner device can approve linked devices."
-            return
-        }
-        let key = deviceKey(from: request).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        var stored = loadApprovedDevices()
-        let device = StoredDevice(
-            label: label.isEmpty ? "Linked device" : label,
-            key: key
-        )
-        if let index = stored.firstIndex(where: { $0.key == key }) {
-            stored[index] = device
-        } else {
-            stored.append(device)
-        }
-        saveApprovedDevices(stored)
+        dispatch([
+            "type": "approve_device",
+            "request": request,
+            "label": label,
+        ])
         approveDeviceKey = ""
         approveDeviceLabel = ""
-        statusTitle = "Device approved"
-        statusDetail = syncStateTitle
-        persist()
-        load()
     }
 
     func revokeDevice(id: String) {
-        let stored = loadApprovedDevices().filter { $0.key != id }
-        saveApprovedDevices(stored)
-        statusTitle = "Device revoked"
-        statusDetail = syncStateTitle
-        load()
+        dispatch([
+            "type": "revoke_device",
+            "device_pubkey": id,
+        ])
     }
 
     func appointAdmin(id: String) {
-        var stored = loadApprovedDevices()
-        guard let index = stored.firstIndex(where: { $0.key == id }) else { return }
-        stored[index].isAdmin = true
-        saveApprovedDevices(stored)
-        statusTitle = "Device made admin"
-        statusDetail = syncStateTitle
-        load()
+        dispatch([
+            "type": "appoint_admin",
+            "device_pubkey": id,
+        ])
     }
 
     func demoteAdmin(id: String) {
-        var stored = loadApprovedDevices()
-        let adminCount = (hasOwnerAuthority ? 1 : 0) + stored.filter(\.isAdmin).count
-        guard adminCount > 1,
-              let index = stored.firstIndex(where: { $0.key == id })
-        else { return }
-        stored[index].isAdmin = false
-        saveApprovedDevices(stored)
-        statusTitle = "Admin removed"
-        statusDetail = syncStateTitle
-        load()
+        dispatch([
+            "type": "demote_admin",
+            "device_pubkey": id,
+        ])
     }
 
     func revokeDevice(label: String) {
-        let stored = loadApprovedDevices().filter { $0.label != label }
-        saveApprovedDevices(stored)
-        statusTitle = "Device revoked"
-        statusDetail = syncStateTitle
-        load()
+        if let device = devices.first(where: { $0.label == label }) {
+            revokeDevice(id: device.id)
+        }
     }
 
     func startSync() {
         guard hasLocalProfile else { return }
-        syncRunning = true
-        statusTitle = "Sync on"
-        statusDetail = "Foreground sync is active."
-        persist()
-        load()
+        dispatch(["type": "start_sync"])
     }
 
     func stopSync() {
-        syncRunning = false
-        statusTitle = "Sync paused"
-        statusDetail = "Foreground sync is paused."
-        persist()
-        load()
+        dispatch(["type": "stop_sync"])
     }
 
     func restartSync() {
         guard hasLocalProfile else { return }
-        syncRunning = true
-        statusTitle = "Sync on"
-        statusDetail = "Foreground sync is active."
-        persist()
-        load()
+        dispatch(["type": "restart_sync"])
     }
 
     func copyOwnerKey() {
@@ -427,20 +386,20 @@ final class IrisDriveMobileModel: ObservableObject {
         let candidate = (value ?? relayInput).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else { return }
         if !relays.contains(candidate) {
-            relays.append(candidate)
+            dispatch([
+                "type": "add_relay",
+                "url": candidate,
+            ])
         }
-        relay = relays.first ?? defaultRelay
         relayInput = ""
-        persist()
+        persistLocalSettings()
     }
 
     func removeRelay(_ value: String) {
-        relays.removeAll { $0 == value }
-        if relays.isEmpty {
-            relays = defaultRelays
-        }
-        relay = relays.first ?? defaultRelay
-        persist()
+        dispatch([
+            "type": "remove_relay",
+            "url": value,
+        ])
     }
 
     func resetRelay() {
@@ -448,25 +407,22 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func resetRelays() {
-        relays = defaultRelays
-        relay = defaultRelay
+        dispatch(["type": "reset_relays"])
         relayInput = ""
-        persist()
+        persistLocalSettings()
     }
 
     func resetLocalState() {
-        ownerPublicKey = ""
-        devicePublicKey = "local-device"
+        try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
+        lastState = nil
         restoreSecret = ""
         syncRunning = false
         statusTitle = "Ready"
         statusDetail = "Waiting for this device to be linked."
         profileUsername = ""
         profilePhotoName = ""
-        defaults.set(false, forKey: "hasOwnerAuthority")
-        saveApprovedDevices([])
-        persist()
-        load()
+        persistLocalSettings()
+        applyStateJson(nativeCore.refreshJson())
     }
 
     func handle(url: URL) {
@@ -486,14 +442,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         if let owner, !owner.isEmpty {
             ownerPublicKey = owner
-            if devicePublicKey == "local-device" {
-                devicePublicKey = "device-\(UUID().uuidString.prefix(8))"
-            }
-            statusTitle = "Link requested"
-            statusDetail = "Approval is pending from an owner device."
-            defaults.set(false, forKey: "hasOwnerAuthority")
-            persist()
-            load()
+            linkDevice()
             ensureFileProviderDomainIfProfileExists()
             return
         }
@@ -502,92 +451,158 @@ final class IrisDriveMobileModel: ObservableObject {
         statusDetail = device ?? url.absoluteString
     }
 
+    func handleDebugLaunchEnvironment() {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["IRIS_DRIVE_DEBUG_ACTION"] == "link-device",
+              let owner = environment["IRIS_DRIVE_DEBUG_OWNER"],
+              !owner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+        ownerPublicKey = owner
+        linkDevice()
+        #endif
+    }
+
     private func load() {
+        applyStateJson(nativeCore.refreshJson())
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
-        ownerPublicKey = defaults.string(forKey: "ownerPublicKey") ?? ownerPublicKey
-        devicePublicKey = defaults.string(forKey: "devicePublicKey") ?? devicePublicKey
-        statusTitle = defaults.string(forKey: "statusTitle") ?? statusTitle
-        statusDetail = defaults.string(forKey: "statusDetail") ?? statusDetail
         profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
         profilePhotoName = defaults.string(forKey: "profilePhotoName") ?? profilePhotoName
-        relay = defaults.string(forKey: "relay") ?? relay
-        relays = loadRelays()
         relayInput = ""
         syncOverCellular = defaults.bool(forKey: "syncOverCellular")
-        syncRunning = defaults.bool(forKey: "syncRunning")
-        rebuildDerivedState()
     }
 
     func persist() {
+        persistLocalSettings()
+    }
+
+    private func persistLocalSettings() {
         defaults.set(deviceLabel, forKey: "deviceLabel")
-        defaults.set(ownerPublicKey, forKey: "ownerPublicKey")
-        defaults.set(devicePublicKey, forKey: "devicePublicKey")
-        defaults.set(statusTitle, forKey: "statusTitle")
-        defaults.set(statusDetail, forKey: "statusDetail")
         defaults.set(profileUsername, forKey: "profileUsername")
         defaults.set(profilePhotoName, forKey: "profilePhotoName")
-        defaults.set(relay, forKey: "relay")
         defaults.set(syncOverCellular, forKey: "syncOverCellular")
-        defaults.set(syncRunning, forKey: "syncRunning")
-        saveRelays(relays)
     }
 
     private func rebuildDerivedState() {
-        if ownerPublicKey.isEmpty {
+        guard let state = lastState else {
+            ownerPublicKey = ""
+            devicePublicKey = "local-device"
             authorizationState = "Not linked"
-        } else if hasOwnerAuthority {
-            authorizationState = "Authorized"
-        } else {
-            authorizationState = "Awaiting approval"
+            devices = []
+            roots = []
+            backups = []
+            relays = defaultRelays
+            relay = defaultRelay
+            syncRunning = false
+            statusTitle = "Ready"
+            statusDetail = "Waiting for this device to be linked."
+            return
         }
 
-        let currentDevice = IrisDriveDevice(
-            label: deviceLabel,
-            role: hasOwnerAuthority ? "Admin" : "Member",
-            state: authorizationState,
-            detail: ownerPublicKey.isEmpty ? "No owner profile on this device." : devicePublicKey,
-            isOnline: hasLocalProfile && syncRunning,
-            canRevoke: false,
-            canAppointAdmin: false,
-            canDemoteAdmin: false
-        )
-        let storedDevices = loadApprovedDevices()
-        let adminCount = (hasOwnerAuthority ? 1 : 0) + storedDevices.filter(\.isAdmin).count
-        let approved = storedDevices.map { device in
+        ownerPublicKey = state.ui.account?.ownerPubkey ?? ""
+        devicePublicKey = state.ui.account?.devicePubkey ?? "local-device"
+        deviceLabel = state.ui.account?.deviceLabel.isEmpty == false
+            ? state.ui.account?.deviceLabel ?? deviceLabel
+            : deviceLabel
+        syncRunning = state.ui.sync.running
+        authorizationState = authorizationTitle(state.ui.account?.authorizationState)
+        statusTitle = ownerPublicKey.isEmpty ? "Ready" : authorizationState
+        statusDetail = state.error.isEmpty ? syncStateTitle : state.error
+        relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
+        relay = relays.first ?? defaultRelay
+        devices = state.ui.devices.map { device in
             IrisDriveDevice(
-                label: device.label,
-                role: device.isAdmin ? "Admin" : "Member",
-                state: device.isAdmin ? "Admin" : "Authorized",
-                detail: device.key,
-                isOnline: syncRunning,
-                canRevoke: hasOwnerAuthority,
-                canAppointAdmin: hasOwnerAuthority && !device.isAdmin,
-                canDemoteAdmin: hasOwnerAuthority && device.isAdmin && adminCount > 1
+                label: device.label.isEmpty ? "This device" : device.label,
+                role: roleTitle(device.role),
+                state: authorizationTitle(device.state),
+                detail: device.detail,
+                isOnline: device.isOnline,
+                canRevoke: device.canRevoke,
+                canAppointAdmin: device.canAppointAdmin,
+                canDemoteAdmin: device.canDemoteAdmin
             )
         }
-        devices = [currentDevice] + approved
         authorizedDeviceCount = devices.filter { $0.state == "Authorized" || $0.state == "Admin" }.count
-        publishedDeviceRoots = hasLocalProfile ? 1 : 0
+        publishedDeviceRoots = hasLocalProfile ? max(1, state.ui.roots.count) : 0
         let stats = loadProviderStats()
         fileCount = stats.fileCount
         topLevelEntries = stats.topLevelEntries
         visibleFileBytes = stats.visibleFileBytes
-        backups = defaultBlossomServers.map { server in
+        backups = state.ui.backups.map { backup in
             IrisDriveBackup(
-                label: "Blossom fallback",
-                state: ownerPublicKey.isEmpty ? "Paused" : "Ready",
-                detail: server
+                label: backup.label,
+                state: backup.state,
+                detail: backup.detail
             )
         }
-        roots = hasLocalProfile
-            ? [
-                IrisDriveRoot(
-                    name: driveName,
-                    status: fileProviderStatus,
-                    path: sharedContainerPath
-                ),
-            ]
-            : []
+        roots = state.ui.roots.map { root in
+            IrisDriveRoot(name: root.name, status: root.status, path: root.localPath)
+        }
+    }
+
+    private func dispatch(_ action: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: action),
+              let actionJson = String(data: data, encoding: .utf8)
+        else {
+            statusTitle = "Native action failed"
+            statusDetail = "Unable to encode action."
+            return
+        }
+        applyStateJson(nativeCore.dispatchJson(actionJson))
+    }
+
+    private func applyStateJson(_ json: String) {
+        guard let data = json.data(using: .utf8),
+              let state = try? JSONDecoder().decode(NativeAppState.self, from: data)
+        else {
+            statusTitle = "Native state failed"
+            statusDetail = json
+            writeDebugState(json)
+            return
+        }
+        lastState = state
+        rebuildDerivedState()
+        writeDebugState(json)
+    }
+
+    private func writeDebugState(_ json: String) {
+        #if DEBUG
+        let url = IrisDriveSharedContainer.baseDirectory
+            .appendingPathComponent(iosDebugStateFileName, isDirectory: false)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? json.write(to: url, atomically: true, encoding: .utf8)
+        #endif
+    }
+
+    private func authorizationTitle(_ value: String?) -> String {
+        switch value {
+        case "authorized", "Authorized":
+            "Authorized"
+        case "awaiting_approval", "Awaiting approval":
+            "Awaiting approval"
+        case "revoked", "Revoked":
+            "Revoked"
+        case "Admin":
+            "Admin"
+        default:
+            ownerPublicKey.isEmpty ? "Not linked" : (value ?? "Linked")
+        }
+    }
+
+    private func roleTitle(_ value: String) -> String {
+        switch value {
+        case "admin":
+            "Admin"
+        case "member":
+            "Member"
+        default:
+            value
+        }
     }
 
     private func loadApprovedDevices() -> [StoredDevice] {
