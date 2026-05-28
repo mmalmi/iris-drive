@@ -243,6 +243,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     edited_root: &Cid,
     previous_root: Option<&Cid>,
     base_root: &Cid,
+    projection_root: Option<&Cid>,
     tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<VisibleImportDelta, IndexError> {
     let edited_root = filter_ignored_entries_from_root(tree, edited_root).await?;
@@ -256,6 +257,11 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     collect_visible_files(tree, &base_root, "", &mut base_files).await?;
     let mut base_dirs = BTreeSet::new();
     collect_visible_dirs(tree, &base_root, "", &mut base_dirs).await?;
+    let mut projection_files = BTreeMap::new();
+    if let Some(projection_root) = projection_root {
+        let projection_root = filter_ignored_entries_from_root(tree, projection_root).await?;
+        collect_visible_files(tree, &projection_root, "", &mut projection_files).await?;
+    }
 
     let previous_visible_root = match previous_root {
         Some(previous_root) => filter_ignored_entries_from_root(tree, previous_root).await?,
@@ -296,6 +302,15 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         }
         match edited {
             Some(entry) => {
+                if projection_files
+                    .get(&path)
+                    .is_some_and(|projection| visible_entry_matches(projection, entry))
+                    && !previous_files
+                        .get(&path)
+                        .is_some_and(|previous| visible_entry_matches(previous, entry))
+                {
+                    continue;
+                }
                 root = set_visible_file_entry(tree, &root, &path, entry).await?;
             }
             None if tombstone_path_allowed(tombstone_paths, &path) => {

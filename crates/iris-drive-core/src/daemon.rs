@@ -121,6 +121,8 @@ pub enum DaemonError {
     Uninitialized,
     #[error("index: {0}")]
     Index(#[from] IndexError),
+    #[error("materialize: {0}")]
+    Materialize(#[from] crate::MaterializeError),
     #[error("sync cache: {0}")]
     SyncCache(#[from] SyncCacheError),
     #[error("store: {0}")]
@@ -309,11 +311,15 @@ impl Daemon {
         let mut scoped_tombstone_paths = None;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
+            let projection_root = crate::primary_merged_root(&self.tree, &self.config)
+                .await?
+                .root_cid;
             let delta = local_visible_root_for_mount_import(
                 &self.tree,
                 &root,
                 previous_root.as_ref(),
                 tombstone_base_root,
+                Some(&projection_root),
                 tombstone_paths,
             )
             .await?;
@@ -1015,6 +1021,118 @@ mod tests {
             .import_visible_root_with_tombstone_base(
                 edited_visible_root,
                 Some(visible.root_cid.clone()),
+            )
+            .await
+            .unwrap();
+
+        let root = daemon
+            .config()
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .device_roots
+            .get(&account.state.device_pubkey)
+            .unwrap();
+        let root_cid = Cid::parse(&root.root_cid).unwrap();
+        let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+            .await
+            .unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local.txt"]
+        );
+        assert!(tombstones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_base() {
+        let cfg_dir = tempdir().unwrap();
+        let account = init_config_with_account(cfg_dir.path());
+        let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let state = config.account.as_mut().unwrap();
+        state.app_keys.as_mut().unwrap().devices.push(DeviceEntry {
+            pubkey: remote.clone(),
+            added_at: 100,
+            label: Some("remote".into()),
+        });
+        state.app_keys.as_mut().unwrap().normalize();
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let old_visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let remote_dir = tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("foreign-new.txt"), b"from remote").unwrap();
+        let remote_meta = DriveRootMeta {
+            schema: DriveRootMeta::SCHEMA,
+            drive_id: PRIMARY_DRIVE_ID.into(),
+            device_id: remote.clone(),
+            device_seq: 1,
+            dck_generation: 1,
+            materialized_only: false,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            created_at: 100,
+        };
+        let remote_root = crate::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            100,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap();
+        drop(daemon);
+
+        let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+        let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+        drive.device_roots.insert(
+            remote.clone(),
+            DeviceRootRef::from_meta(
+                remote_root.to_string(),
+                remote_meta.created_at,
+                &remote_meta,
+            ),
+        );
+        config.upsert_drive(drive);
+        config.save(config_path_in(cfg_dir.path())).unwrap();
+
+        let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+        let latest_visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        assert!(
+            daemon
+                .tree()
+                .resolve(&latest_visible.root_cid, "foreign-new.txt")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let (local_file, local_size) = daemon.tree().put(b"from local").await.unwrap();
+        let edited_visible_root = daemon
+            .tree()
+            .set_entry(
+                &latest_visible.root_cid,
+                &[],
+                "local.txt",
+                &local_file,
+                local_size,
+                hashtree_core::LinkType::Blob,
+            )
+            .await
+            .unwrap();
+
+        daemon
+            .import_visible_root_with_tombstone_base(
+                edited_visible_root,
+                Some(old_visible.root_cid.clone()),
             )
             .await
             .unwrap();

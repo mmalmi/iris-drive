@@ -587,6 +587,7 @@ fn provider_import_error_message_is_retryable(message: &str) -> bool {
         && (message.contains("os error 2")
             || message.contains("No such file or directory")
             || message.contains("The system cannot find the file specified"))
+        || message.contains("Missing chunk")
 }
 
 pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
@@ -820,7 +821,7 @@ mod tests {
         assert!(provider_import_error_message_is_retryable(
             "index: tree: Store error: IO error: No such file or directory (os error 2)"
         ));
-        assert!(!provider_import_error_message_is_retryable(
+        assert!(provider_import_error_message_is_retryable(
             "index: tree: Missing chunk: abc123"
         ));
         assert!(!provider_import_error_message_is_retryable(

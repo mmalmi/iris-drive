@@ -453,9 +453,10 @@ async fn visible_root_import_preserves_created_empty_directory() {
         .await
         .unwrap();
 
-    let delta = local_visible_root_for_mount_import(&tree, &edited_root, None, &base_root, None)
-        .await
-        .unwrap();
+    let delta =
+        local_visible_root_for_mount_import(&tree, &edited_root, None, &base_root, None, None)
+            .await
+            .unwrap();
 
     let folder = tree
         .resolve(&delta.root, "folder")
@@ -480,6 +481,7 @@ async fn visible_root_import_tombstones_deleted_scoped_directory_tree() {
         &edited_root,
         None,
         &base_root,
+        None,
         Some(&scoped_paths),
     )
     .await
