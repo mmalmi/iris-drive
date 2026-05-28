@@ -46,8 +46,10 @@ WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_D
 HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT:-$(scale_wait_timeout "$SYNC_WAIT_TIMEOUT" 4)}"
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
-MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-30}"
+MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-180}"
+MACOS_VISIBLE_WRITE_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_SSH_TIMEOUT:-$(scale_wait_timeout "$MACOS_VISIBLE_WRITE_TIMEOUT" 2)}"
 VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-180}"
+VISIBLE_MANIFEST_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_SSH_TIMEOUT:-$(scale_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 2)}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
 PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
@@ -62,6 +64,35 @@ log() {
 die() {
   printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+ssh_limited() {
+  local timeout="$1"
+  shift
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$timeout" ssh "$@"
 }
 
 json_escape() {
@@ -863,7 +894,8 @@ write_macos_visible_file() {
   local content="$2"
   local content_b64
   content_b64="$(base64_arg "$content")"
-  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+  ssh_limited "$MACOS_VISIBLE_WRITE_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 content_b64="$2"
@@ -920,7 +952,8 @@ REMOTE_SH
 write_macos_visible_zero_file() {
   local path="$1"
   local bytes="$2"
-  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+  ssh_limited "$MACOS_VISIBLE_WRITE_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 bytes="$2"
@@ -1051,30 +1084,15 @@ REMOTE_SH
 
 ubuntu_visible_manifest() {
   local dir="$1"
-  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
+  ssh_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" \
+    "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
 probe_timeout="$2"
 root="$HOME/Iris Drive/$dir"
-run_limited() {
-  local limit="$1"
-  shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  ) &
-  local watchdog=$!
-  local status=0
-  wait "$pid" 2>/dev/null || status=$?
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
-}
-run_limited "$probe_timeout" python3 - "$root" "$probe_timeout" <<'PY'
+probe_script="$(mktemp -t iris-drive-visible-manifest.XXXXXX.py)"
+trap 'rm -f "$probe_script"' EXIT
+cat >"$probe_script" <<'PY'
 import hashlib
 import json
 import os
@@ -1114,34 +1132,43 @@ for current, dirs, files in os.walk(root):
 entries.sort(key=lambda entry: entry["path"])
 print(json.dumps({"entries": entries}, sort_keys=True))
 PY
+perl -e '
+  my $timeout = shift @ARGV;
+  my $pid = fork();
+  die "fork failed: $!" unless defined $pid;
+  if ($pid == 0) {
+    exec @ARGV or die "exec failed: $!";
+  }
+  my $timed_out = 0;
+  local $SIG{ALRM} = sub {
+    $timed_out = 1;
+    kill "TERM", $pid;
+  };
+  alarm $timeout;
+  waitpid($pid, 0);
+  my $status = $?;
+  alarm 0;
+  if ($timed_out) {
+    sleep 1;
+    kill "KILL", $pid;
+    waitpid($pid, 0);
+    exit 124;
+  }
+  exit($status == -1 ? 1 : ($status >> 8));
+' "$probe_timeout" python3 "$probe_script" "$root" "$probe_timeout"
 REMOTE_SH
 }
 
 macos_visible_manifest() {
   local dir="$1"
-  ssh "$MACOS_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
+  ssh_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
 probe_timeout="$2"
-run_limited() {
-  local limit="$1"
-  shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  ) &
-  local watchdog=$!
-  local status=0
-  wait "$pid" 2>/dev/null || status=$?
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
-}
-run_limited "$probe_timeout" python3 - "$HOME/Library/CloudStorage" "$dir" "$probe_timeout" <<'PY'
+probe_script="$(mktemp -t iris-drive-visible-manifest.XXXXXX.py)"
+trap 'rm -f "$probe_script"' EXIT
+cat >"$probe_script" <<'PY'
 import hashlib
 import json
 import os
@@ -1193,6 +1220,30 @@ for drive_root in roots:
     raise SystemExit(0)
 raise SystemExit(1)
 PY
+perl -e '
+  my $timeout = shift @ARGV;
+  my $pid = fork();
+  die "fork failed: $!" unless defined $pid;
+  if ($pid == 0) {
+    exec @ARGV or die "exec failed: $!";
+  }
+  my $timed_out = 0;
+  local $SIG{ALRM} = sub {
+    $timed_out = 1;
+    kill "TERM", $pid;
+  };
+  alarm $timeout;
+  waitpid($pid, 0);
+  my $status = $?;
+  alarm 0;
+  if ($timed_out) {
+    sleep 1;
+    kill "KILL", $pid;
+    waitpid($pid, 0);
+    exit 124;
+  }
+  exit($status == -1 ? 1 : ($status >> 8));
+' "$probe_timeout" python3 "$probe_script" "$HOME/Library/CloudStorage" "$dir" "$probe_timeout"
 REMOTE_SH
 }
 
