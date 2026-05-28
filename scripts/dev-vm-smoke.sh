@@ -47,7 +47,9 @@ HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_HEAVY_PROJECTION_SYNC_WA
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-30}"
+MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT:-$(scale_wait_timeout "$MACOS_VISIBLE_WRITE_TIMEOUT" 2)}"
 VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-30}"
+VISIBLE_MANIFEST_COMMAND_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_COMMAND_TIMEOUT:-$(scale_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 2)}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
 PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
@@ -897,11 +899,12 @@ write_macos_visible_file() {
   local content="$2"
   local content_b64
   content_b64="$(base64_arg "$content")"
-  run_limited "$MACOS_VISIBLE_WRITE_TIMEOUT" \
-    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+  run_limited "$MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT" \
+    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 content_b64="$2"
+write_timeout="$3"
 cloud_root="$HOME/Library/CloudStorage"
 drive_root=""
 if [[ -d "$cloud_root" ]]; then
@@ -916,11 +919,17 @@ fi
 }
 target="$drive_root/$path"
 mkdir -p "$(dirname "$target")"
-python3 - "$content_b64" "$target" <<'PY'
+python3 - "$content_b64" "$target" "$write_timeout" <<'PY'
 import base64
+import signal
 import sys
 
+def timeout(_signum, _frame):
+    raise TimeoutError("macOS visible write timed out")
+
 content = base64.b64decode(sys.argv[1]).decode("utf-8")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(int(sys.argv[3]))
 with open(sys.argv[2], "w", encoding="utf-8") as handle:
     handle.write(content + "\n")
 PY
@@ -930,11 +939,12 @@ REMOTE_SH
 write_macos_visible_zero_file() {
   local path="$1"
   local bytes="$2"
-  run_limited "$MACOS_VISIBLE_WRITE_TIMEOUT" \
-    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+  run_limited "$MACOS_VISIBLE_WRITE_COMMAND_TIMEOUT" \
+    ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 path="$1"
 bytes="$2"
+write_timeout="$3"
 cloud_root="$HOME/Library/CloudStorage"
 drive_root=""
 if [[ -d "$cloud_root" ]]; then
@@ -949,7 +959,23 @@ fi
 }
 target="$drive_root/$path"
 mkdir -p "$(dirname "$target")"
-head -c "$bytes" /dev/zero >"$target"
+python3 - "$bytes" "$target" "$write_timeout" <<'PY'
+import signal
+import sys
+
+def timeout(_signum, _frame):
+    raise TimeoutError("macOS visible zero write timed out")
+
+remaining = int(sys.argv[1])
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(int(sys.argv[3]))
+chunk = b"\0" * min(1024 * 1024, max(1, remaining))
+with open(sys.argv[2], "wb") as handle:
+    while remaining > 0:
+        data = chunk[:remaining]
+        handle.write(data)
+        remaining -= len(data)
+PY
 REMOTE_SH
 }
 
@@ -1027,17 +1053,24 @@ REMOTE_SH
 
 ubuntu_visible_manifest() {
   local dir="$1"
-  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" <<'REMOTE_SH'
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
+probe_timeout="$2"
 root="$HOME/Iris Drive/$dir"
-python3 - "$root" <<'PY'
+python3 - "$root" "$probe_timeout" <<'PY'
 import hashlib
 import json
 import os
+import signal
 import sys
 
 root = sys.argv[1]
+probe_timeout = int(sys.argv[2])
+def timeout(_signum, _frame):
+    raise TimeoutError("visible manifest probe timed out")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(probe_timeout)
 ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
 if not os.path.isdir(root):
     raise SystemExit(1)
@@ -1070,17 +1103,24 @@ REMOTE_SH
 
 macos_visible_manifest() {
   local dir="$1"
-  ssh "$MACOS_SSH_HOST" 'bash -se' "$dir" <<'REMOTE_SH'
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
 set -Eeuo pipefail
 dir="$1"
-python3 - "$HOME/Library/CloudStorage" "$dir" <<'PY'
+probe_timeout="$2"
+python3 - "$HOME/Library/CloudStorage" "$dir" "$probe_timeout" <<'PY'
 import hashlib
 import json
 import os
+import signal
 import sys
 
 cloud_root = sys.argv[1]
 relative = sys.argv[2]
+probe_timeout = int(sys.argv[3])
+def timeout(_signum, _frame):
+    raise TimeoutError("visible manifest probe timed out")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(probe_timeout)
 ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
 roots = []
 if os.path.isdir(cloud_root):
@@ -1190,9 +1230,9 @@ entries.sort(key=lambda entry: entry["path"])
 print(json.dumps({"entries": entries}, sort_keys=True))
 PY
 )"
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
+  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
   EXPECTED_JSON="$expected_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1238,9 +1278,9 @@ import sys
 print(json.dumps(sorted(sys.argv[1:])))
 PY
 )"
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
+  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
   EXPECTED_PATHS_JSON="$expected_paths_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1286,9 +1326,9 @@ heavy_projection_manifest_matches() {
   local ubuntu_json
   local macos_json
   local windows_json
-  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" macos_visible_manifest "$dir")" || return 1
-  windows_json="$(run_limited "$VISIBLE_MANIFEST_PROBE_TIMEOUT" windows_visible_manifest "$dir")" || return 1
+  ubuntu_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" macos_visible_manifest "$dir")" || return 1
+  windows_json="$(run_limited "$VISIBLE_MANIFEST_COMMAND_TIMEOUT" windows_visible_manifest "$dir")" || return 1
   FILE_COUNT="$file_count" \
     LARGE_BYTES="$large_bytes" \
     RUN_ID="$run_id" \
