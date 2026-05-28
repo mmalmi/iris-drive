@@ -28,7 +28,7 @@ render_android_launcher_png() {
   {
     cat <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
-  <g transform="translate(128 128) scale(0.75)">
+  <g transform="translate(192 192) scale(0.625)">
 EOF
     sed '1d;$d' "$SVG"
     cat <<'EOF'
