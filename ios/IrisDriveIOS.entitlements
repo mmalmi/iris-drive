@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.to.iris.drive</string>
+  </array>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:drive.iris.to</string>
+    <string>applinks:docs.iris.to</string>
+    <string>applinks:video.iris.to</string>
+    <string>applinks:maps.iris.to</string>
+    <string>applinks:boards.iris.to</string>
+    <string>applinks:git.iris.to</string>
+    <string>webcredentials:drive.iris.to</string>
+    <string>webcredentials:docs.iris.to</string>
+    <string>webcredentials:video.iris.to</string>
+    <string>webcredentials:maps.iris.to</string>
+    <string>webcredentials:boards.iris.to</string>
+    <string>webcredentials:git.iris.to</string>
+  </array>
+</dict>
+</plist>

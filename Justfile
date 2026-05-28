@@ -20,11 +20,15 @@ info:
     @echo "  just release"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
+    @echo "  just ios-xcodeproj"
+    @echo "  just ios-build"
+    @echo "  just ios-smoke"
     @echo "  just lab"
     @echo "  just lab-smoke"
     @echo "  just lab-test"
     @echo "  just e2e"
     @echo "  just e2e-3vms"
+    @echo "  just e2e-4devices"
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
@@ -95,6 +99,16 @@ macos-xcodeproj:
 macos-build:
     xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData CODE_SIGNING_ALLOWED=NO build
 
+ios-xcodeproj:
+    cd ios && xcodegen generate
+
+ios-build:
+    cd ios && xcodegen generate
+    ./scripts/ios-simulator-smoke.sh --build-only
+
+ios-smoke:
+    ./scripts/ios-simulator-smoke.sh
+
 dev-vms *args:
     ./scripts/dev-vm-update-run.sh {{args}}
 
@@ -114,6 +128,9 @@ e2e *args:
 e2e-3vms *args:
     ./scripts/e2e-everything-3vms.sh {{args}}
 
+e2e-4devices *args:
+    ./scripts/cross-vm-four-platform-e2e.sh {{args}}
+
 release:
     cargo build --workspace --release
 
@@ -122,6 +139,7 @@ test:
 
 structure:
     ./scripts/check-rust-file-length.sh
+    ./scripts/check-ios-e2e-kit.sh
 
 docker-cli-e2e:
     ./scripts/docker-cli-e2e.sh
