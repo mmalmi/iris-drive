@@ -1,0 +1,501 @@
+pub(crate) async fn apply_one_event(
+    _client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    event: &nostr_sdk::Event,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let kind = event.kind.as_u16();
+    if kind == iris_drive_core::nostr_events::KIND_APP_KEYS
+        && event.identifier() == Some(iris_drive_core::nostr_events::D_TAG_APP_KEYS)
+    {
+        let outcome = relay_sync::apply_remote_app_keys_event(&mut config, event)?;
+        println!(
+            "{}",
+            json!({
+                "event": "app_keys",
+                "event_id": event.id.to_hex(),
+                "outcome": format!("{outcome:?}"),
+            })
+        );
+        if let Some(sync) = fips_blocks.as_deref() {
+            sync.refresh_authorized_peers(&config).await;
+        }
+    } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        let parsed =
+            iris_drive_core::nostr_events::parse_drive_root_event_for_device(event, device.keys())
+                .ok();
+        let outcome =
+            relay_sync::apply_remote_drive_root_event(&mut config, event, Some(device.keys()))?;
+        let was_applied = matches!(outcome, relay_sync::DriveRootApply::Applied);
+        let stale_current_root = matches!(outcome, relay_sync::DriveRootApply::StaleTimestamp)
+            && parsed
+                .as_ref()
+                .is_some_and(|(device_pubkey, _, drive_id, root_ref)| {
+                    config
+                        .drive(drive_id)
+                        .and_then(|drive| drive.device_roots.get(device_pubkey))
+                        .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
+                });
+        let parsed_root_cid = parsed
+            .as_ref()
+            .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
+        let root_blocks_already_synced = parsed_root_cid
+            .as_deref()
+            .is_some_and(|root_cid| root_has_successful_block_sync(config_dir, root_cid));
+        let followup =
+            drive_root_followup_plan(was_applied, stale_current_root, root_blocks_already_synced);
+        let root_cid_to_pull = parsed_root_cid
+            .as_ref()
+            .filter(|_| followup.pull_blocks)
+            .cloned();
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "drive_root",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+                "root_cid": root_cid_to_pull.clone(),
+            }),
+        );
+        config.save(config_path_in(config_dir))?;
+        if let Some(sync) = fips_blocks.as_deref() {
+            sync.refresh_authorized_peers(&config).await;
+        }
+
+        spawn_root_apply_followup(
+            config_dir.to_path_buf(),
+            config.clone(),
+            root_cid_to_pull,
+            fips_blocks,
+            followup.materialize,
+            "materialized_drive_root",
+            mount_refresh,
+        );
+        return Ok(());
+    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
+        let Some(account_state) = config.account.clone() else {
+            return Ok(());
+        };
+        return apply_files_root_event(
+            config_dir,
+            event,
+            fips_blocks,
+            mount_refresh,
+            &mut config,
+            account_state,
+        );
+    } else {
+        // Unknown kind; ignore.
+        return Ok(());
+    }
+    config.save(config_path_in(config_dir))?;
+    Ok(())
+}
+
+pub(crate) fn apply_files_root_event(
+    config_dir: &std::path::Path,
+    event: &nostr_sdk::Event,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    config: &mut AppConfig,
+    account_state: AccountState,
+) -> Result<()> {
+    use iris_drive_core::relay_sync;
+    if !account_state.has_owner_signing_authority {
+        println!(
+            "{}",
+            json!({
+                "event": "files_root",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": "owner_key_unavailable",
+            })
+        );
+        return Ok(());
+    }
+    let account = Account::load(account_state, config_dir).context("loading owner account")?;
+    let owner_keys = account
+        .owner_key
+        .as_ref()
+        .map(iris_drive_core::OwnerKey::keys);
+    let outcome = relay_sync::apply_remote_files_root_event(config, event, owner_keys)?;
+    let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
+    let root_cid_to_pull = if was_applied {
+        config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+            .map(|root| root.root_cid.clone())
+    } else {
+        None
+    };
+    emit_daemon_status_event(
+        config_dir,
+        json!({
+            "event": "files_root",
+            "event_id": event.id.to_hex(),
+            "author": account_npub(&event.pubkey.to_hex()),
+            "outcome": files_root_apply_label(&outcome),
+            "root_cid": root_cid_to_pull.clone(),
+        }),
+    );
+    config.save(config_path_in(config_dir))?;
+    spawn_root_apply_followup(
+        config_dir.to_path_buf(),
+        config.clone(),
+        root_cid_to_pull,
+        fips_blocks,
+        was_applied,
+        "materialized_files_root",
+        mount_refresh,
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct DriveRootFollowupPlan {
+    pull_blocks: bool,
+    materialize: bool,
+}
+
+fn drive_root_followup_plan(
+    was_applied: bool,
+    stale_current_root: bool,
+    root_blocks_already_synced: bool,
+) -> DriveRootFollowupPlan {
+    DriveRootFollowupPlan {
+        pull_blocks: was_applied || stale_current_root,
+        materialize: was_applied || (stale_current_root && !root_blocks_already_synced),
+    }
+}
+
+fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
+    load_daemon_status(config_dir)
+        .and_then(|status| {
+            status
+                .get("block_sync_by_root")
+                .and_then(|roots| roots.get(root_cid))
+                .cloned()
+        })
+        .is_some()
+}
+
+fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<String> {
+    config
+        .drives
+        .iter()
+        .flat_map(|drive| drive.device_roots.values())
+        .filter(|root| !root.materialized_only)
+        .filter(|root| !root_has_successful_block_sync(config_dir, &root.root_cid))
+        .map(|root| root.root_cid.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn spawn_root_apply_followup(
+    config_dir: PathBuf,
+    config: AppConfig,
+    root_cid_to_pull: Option<String>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    should_materialize: bool,
+    materialize_event: &'static str,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+) {
+    if root_cid_to_pull.is_none() && !should_materialize {
+        return;
+    }
+    let expected_materialize_root_key =
+        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_materialize);
+
+    tokio::spawn(async move {
+        if let Some(root_cid) = root_cid_to_pull {
+            let mut last_error = None;
+            for delay_secs in event_block_pull_retry_delays(&config) {
+                if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref())
+                {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "root_apply_followup_skipped_stale",
+                            "root_cid": root_cid,
+                        })
+                    );
+                    return;
+                }
+                if *delay_secs > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(*delay_secs)).await;
+                    if root_apply_followup_is_stale(
+                        &config_dir,
+                        expected_materialize_root_key.as_ref(),
+                    ) {
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "root_apply_followup_skipped_stale",
+                                "root_cid": root_cid,
+                            })
+                        );
+                        return;
+                    }
+                }
+                match pull_blocks_for_root_bounded(
+                    &config_dir,
+                    &config,
+                    &root_cid,
+                    fips_blocks.as_deref(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        last_error = None;
+                        break;
+                    }
+                    Err(error) => {
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "block_download_retry",
+                                "root_cid": root_cid,
+                                "delay_secs": delay_secs,
+                                "error": error,
+                            })
+                        );
+                        last_error = Some(error);
+                    }
+                }
+            }
+            if let Some(error) = last_error {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "block_download_error",
+                        "root_cid": root_cid,
+                        "error": error,
+                        "materialize_skipped": should_materialize,
+                    })
+                );
+                return;
+            }
+        }
+
+        if should_materialize {
+            if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref()) {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "root_apply_materialize_skipped_stale",
+                        "root_key": root_apply_followup_key_label(expected_materialize_root_key.as_ref()),
+                    })
+                );
+                return;
+            }
+            let mut refreshed_windows_cloud = false;
+            if let Some(sync_root) = windows_cloud_projection_root() {
+                match refresh_windows_cloud_local_projection(&config_dir, &sync_root).await {
+                    Ok(report) => {
+                        refreshed_windows_cloud = true;
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "windows_cloud_projection_refreshed",
+                                "trigger": materialize_event,
+                                "root": sync_root.display().to_string(),
+                                "entry_count": report.entry_count,
+                                "removed_paths": report.removed_paths,
+                                "changed_paths": report.changed_paths,
+                            })
+                        );
+                    }
+                    Err(error) => println!(
+                        "{}",
+                        json!({
+                            "event": "windows_cloud_projection_refresh_error",
+                            "trigger": materialize_event,
+                            "root": sync_root.display().to_string(),
+                            "error": format!("{error:#}"),
+                        })
+                    ),
+                }
+            }
+            if let Some(tx) = mount_refresh {
+                if tx.send(materialize_event).await.is_err() {
+                    println!(
+                        "{}",
+                        json!({"event": "mount_refresh_error", "error": "mount refresh worker stopped"})
+                    );
+                }
+                return;
+            }
+            if refreshed_windows_cloud {
+                return;
+            }
+            println!(
+                "{}",
+                json!({"event": "mount_refresh_skipped", "reason": "no_virtual_mount"})
+            );
+        }
+    });
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn pull_blocks_for_root(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    root_cid_str: &str,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
+    let cid =
+        Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let mut attempted = false;
+    let mut fips_had_peers = false;
+    let mut errors = Vec::new();
+    if let Some(sync) = fips_blocks {
+        let connected_peers = sync.connected_peer_ids().await;
+        let mesh_peers = sync.mesh_peer_ids().await;
+        fips_had_peers = !connected_peers.is_empty() || !mesh_peers.is_empty();
+        if connected_peers.is_empty() && mesh_peers.is_empty() {
+            println!(
+                "{}",
+                json!({
+                    "event": "fips_download_skipped",
+                    "root_cid": root_cid_str,
+                    "reason": "no_connected_peers",
+                })
+            );
+        } else {
+            attempted = true;
+            match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await
+            {
+                Ok(report) => {
+                    record_block_sync(config_dir, root_cid_str, "fips", &report);
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "fips_downloaded",
+                            "root_cid": root_cid_str,
+                            "report": download_report_json(&report),
+                        })
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    errors.push(format!("fips: {error}"));
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "fips_download_error",
+                            "root_cid": root_cid_str,
+                            "error": error,
+                            "connected_peers": connected_peers,
+                            "mesh_peers": mesh_peers,
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    if should_try_blossom_download(config, attempted, fips_had_peers) {
+        attempted = true;
+        match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
+            Ok(report) => {
+                record_block_sync(config_dir, root_cid_str, "blossom", &report);
+                println!(
+                    "{}",
+                    json!({
+                        "event": "blossom_downloaded",
+                        "root_cid": root_cid_str,
+                        "report": download_report_json(&report),
+                    })
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                let error = error.to_string();
+                errors.push(format!("blossom: {error}"));
+                println!(
+                    "{}",
+                    json!({
+                        "event": "blossom_download_error",
+                        "root_cid": root_cid_str,
+                        "error": error,
+                    })
+                );
+            }
+        }
+    } else if !config.blossom_servers.is_empty() && attempted && fips_had_peers {
+        println!(
+            "{}",
+            json!({
+                "event": "blossom_download_skipped",
+                "root_cid": root_cid_str,
+                "reason": "fips_peers_available",
+            })
+        );
+    }
+
+    if attempted {
+        Err(anyhow::anyhow!(
+            "all block download transports failed for {root_cid_str}: {}",
+            errors.join("; ")
+        ))
+    } else {
+        Err(anyhow::anyhow!(
+            "no block download transport available for {root_cid_str}"
+        ))
+    }
+}
+
+fn should_try_blossom_download(
+    config: &AppConfig,
+    _fips_attempted: bool,
+    _fips_had_peers: bool,
+) -> bool {
+    !config.blossom_servers.is_empty()
+}
+
+pub(crate) async fn pull_blocks_for_root_bounded(
+    config_dir: &std::path::Path,
+    config: &AppConfig,
+    root_cid_str: &str,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> std::result::Result<(), String> {
+    let timeout_secs = event_block_pull_timeout_secs(config);
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        pull_blocks_for_root(config_dir, config, root_cid_str, fips_blocks),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("timed out after {timeout_secs}s")),
+    }
+}
+
+fn event_block_pull_retry_delays(config: &AppConfig) -> &'static [u64] {
+    if config.blossom_servers.is_empty() {
+        EVENT_BLOCK_PULL_RETRY_DELAYS
+    } else {
+        EVENT_BLOCK_PULL_WITH_BLOSSOM_RETRY_DELAYS
+    }
+}
+
+fn event_block_pull_timeout_secs(config: &AppConfig) -> u64 {
+    if config.blossom_servers.is_empty() {
+        EVENT_BLOCK_PULL_TIMEOUT_SECS
+    } else {
+        FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
+            + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
+            + EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS
+    }
+}

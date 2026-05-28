@@ -623,7 +623,12 @@ mod tests {
         let path = conflict_filename(&name, &"d".repeat(64));
         let component = path.rsplit('/').next().unwrap();
         assert!(component.len() <= 240, "{component}");
-        assert!(component.ends_with(".txt"));
+        assert_eq!(
+            std::path::Path::new(component)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("txt")
+        );
         assert!(component.contains(" (conflict from "));
     }
 
@@ -632,7 +637,12 @@ mod tests {
         let path = conflict_filename(&format!("{}.txt", "å".repeat(180)), "phone");
         let component = path.rsplit('/').next().unwrap();
         assert!(component.len() <= 240, "{component}");
-        assert!(component.ends_with(".txt"));
+        assert_eq!(
+            std::path::Path::new(component)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("txt")
+        );
     }
 
     #[test]

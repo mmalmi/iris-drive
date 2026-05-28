@@ -348,6 +348,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     assert_eq!(contents, vec!["owner edit", "peer edit"]);
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let cfg_dir = tempdir().unwrap();

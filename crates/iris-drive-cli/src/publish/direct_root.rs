@@ -1,0 +1,554 @@
+#[derive(Debug, Clone)]
+pub(crate) struct DirectRootEvent {
+    pub(crate) key: String,
+    event_id: String,
+    kind: u16,
+    json: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct DirectRootFrame {
+    key: String,
+    event_id: String,
+    event_json: String,
+}
+
+pub(crate) const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
+
+#[derive(Default)]
+pub(crate) struct DirectRootExchange {
+    cached_events: BTreeMap<String, DirectRootEvent>,
+    published_keys: BTreeMap<String, std::time::Instant>,
+    seen_keys: BTreeSet<String>,
+    subscribed_streams: BTreeSet<String>,
+    known_mesh_peers: BTreeSet<String>,
+    next_mesh_publish_seq: u64,
+}
+
+impl DirectRootExchange {
+    async fn subscribe_owner_stream(&mut self, owner_pubkey: &str, sync: Option<&FsFipsBlockSync>) {
+        let Some(sync) = sync else {
+            self.subscribed_streams.clear();
+            return;
+        };
+        let stream = direct_root_mesh_stream(owner_pubkey);
+        let peers_changed = self.refresh_known_mesh_peers(sync).await;
+        if self.subscribed_streams.insert(stream.clone()) || peers_changed {
+            let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_subscribe",
+                    "stream": stream,
+                    "selected_peers": subscribe_stats.selected_peers,
+                    "sent_peers": subscribe_stats.sent_peers,
+                })
+            );
+        }
+    }
+
+    async fn announce_current_state(
+        &mut self,
+        config_dir: &Path,
+        config: &AppConfig,
+        state: &AccountState,
+        fips_blocks: Option<&FsFipsBlockSync>,
+    ) -> Result<()> {
+        let Some(sync) = fips_blocks else {
+            return Ok(());
+        };
+        self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
+            .await;
+        let stream = direct_root_mesh_stream(&state.owner_pubkey);
+        let events = build_current_sync_events(config_dir, config, state).await?;
+        let now = std::time::Instant::now();
+        for event in events {
+            let event = self.event_for_publish(event);
+            let should_publish = self.should_publish_key(&event.key, now);
+            self.cache_event(event.clone());
+            if !should_publish {
+                continue;
+            }
+            let frame = DirectRootFrame {
+                key: event.key.clone(),
+                event_id: event.event_id.clone(),
+                event_json: event.json.clone(),
+            };
+            let bytes = serde_json::to_vec(&frame)?;
+            let selected_app_peers = sync.authorized_peer_ids().await.len();
+            let sent_app_peers = sync
+                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                .await?;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_app_publish",
+                    "topic": DIRECT_ROOT_APP_TOPIC,
+                    "root_key": event.key.clone(),
+                    "root_event_id": event.event_id.clone(),
+                    "kind": event.kind,
+                    "selected_peers": selected_app_peers,
+                    "sent_peers": sent_app_peers,
+                    "sent_bytes": bytes.len(),
+                })
+            );
+            let seq = self.next_mesh_publish_seq();
+            let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_publish",
+                    "stream": stream,
+                    "seq": seq,
+                    "root_key": event.key,
+                    "root_event_id": event.event_id,
+                    "kind": event.kind,
+                    "selected_peers": publish_stats.selected_peers,
+                    "sent_peers": publish_stats.sent_peers,
+                    "sent_bytes": publish_stats.sent_bytes,
+                })
+            );
+        }
+        Ok(())
+    }
+
+    async fn apply_direct_root_frame(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        frame: DirectRootFrame,
+    ) -> Result<bool> {
+        if self.seen_keys.contains(&frame.key) {
+            return Ok(false);
+        }
+        let event: Event =
+            serde_json::from_str(&frame.event_json).context("parsing direct root event")?;
+        if event.id.to_hex() != frame.event_id {
+            return Err(anyhow::anyhow!("direct root event id mismatch"));
+        }
+        self.seen_keys.insert(frame.key.clone());
+        if let Err(error) = apply_one_event(
+            client,
+            config_dir,
+            &event,
+            Some(sync.clone()),
+            mount_refresh.clone(),
+        )
+        .await
+        {
+            self.seen_keys.remove(&frame.key);
+            return Err(error);
+        }
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        if let Some(state) = config.account.as_ref() {
+            self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
+                .await?;
+        }
+        Ok(true)
+    }
+
+    pub(crate) async fn request_roots_from_new_peers(
+        &mut self,
+        config_dir: &Path,
+        sync: Option<&FsFipsBlockSync>,
+    ) {
+        let Some(sync) = sync else {
+            self.subscribed_streams.clear();
+            return;
+        };
+        let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+            return;
+        };
+        if let Some(state) = config.account.as_ref() {
+            self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
+                .await;
+        }
+    }
+
+    pub(crate) async fn drain_mesh_events(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    ) -> Result<()> {
+        for message in sync.drain_mesh_pubsub_events().await {
+            if !message
+                .stream_id
+                .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
+            {
+                continue;
+            }
+            let frame: DirectRootFrame =
+                serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
+            let root_key = frame.key.clone();
+            let root_event_id = frame.event_id.clone();
+            if !self
+                .apply_direct_root_frame(
+                    client,
+                    config_dir,
+                    sync.clone(),
+                    mount_refresh.clone(),
+                    frame,
+                )
+                .await?
+            {
+                continue;
+            }
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_event",
+                    "stream": message.stream_id,
+                    "peer": message.from_peer_id,
+                    "origin": message.origin_peer_id,
+                    "seq": message.seq,
+                    "root_key": root_key,
+                    "root_event_id": root_event_id,
+                })
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_app_message(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        message: iris_drive_core::FipsAppMessage,
+    ) -> Result<()> {
+        if message.topic != DIRECT_ROOT_APP_TOPIC {
+            return Ok(());
+        }
+        let frame: DirectRootFrame =
+            serde_json::from_slice(&message.data).context("parsing app root frame")?;
+        let root_key = frame.key.clone();
+        let root_event_id = frame.event_id.clone();
+        if !self
+            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, frame)
+            .await?
+        {
+            return Ok(());
+        }
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_app_event",
+                "topic": message.topic,
+                "peer": message.peer_id,
+                "root_key": root_key,
+                "root_event_id": root_event_id,
+            })
+        );
+        Ok(())
+    }
+
+    fn cache_event(&mut self, event: DirectRootEvent) {
+        self.seen_keys.insert(event.key.clone());
+        self.cached_events.insert(event.key.clone(), event);
+        while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(key) = self.cached_events.keys().next().cloned() else {
+                break;
+            };
+            self.cached_events.remove(&key);
+            self.published_keys.remove(&key);
+        }
+    }
+
+    fn event_for_publish(&self, event: DirectRootEvent) -> DirectRootEvent {
+        self.cached_events.get(&event.key).cloned().unwrap_or(event)
+    }
+
+    fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
+        if self.published_keys.get(key).is_some_and(|last| {
+            now.duration_since(*last)
+                < std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        }) {
+            return false;
+        }
+        self.published_keys.insert(key.to_string(), now);
+        true
+    }
+
+    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
+        let authorized_peers = sync.authorized_peer_ids().await;
+        let mesh_peers = sync.mesh_peer_ids().await;
+        self.refresh_known_root_peers(authorized_peers, mesh_peers)
+    }
+
+    fn refresh_known_root_peers(
+        &mut self,
+        authorized_peers: impl IntoIterator<Item = String>,
+        mesh_peers: impl IntoIterator<Item = String>,
+    ) -> bool {
+        let mut root_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        root_peers.extend(mesh_peers);
+        if root_peers != self.known_mesh_peers {
+            self.known_mesh_peers = root_peers;
+            self.published_keys.clear();
+            return true;
+        }
+        false
+    }
+
+    fn next_mesh_publish_seq(&mut self) -> u64 {
+        if self.next_mesh_publish_seq == 0 {
+            self.next_mesh_publish_seq = direct_root_initial_seq();
+        } else {
+            self.next_mesh_publish_seq = self.next_mesh_publish_seq.saturating_add(1);
+        }
+        self.next_mesh_publish_seq
+    }
+}
+
+pub(crate) async fn build_current_sync_events(
+    config_dir: &Path,
+    config: &AppConfig,
+    state: &AccountState,
+) -> Result<Vec<DirectRootEvent>> {
+    let mut events = Vec::new();
+
+    if state.has_owner_signing_authority
+        && let Some(snap) = state.app_keys.as_ref()
+    {
+        let account = Account::load(state.clone(), config_dir).context("loading account")?;
+        let owner_keys = account
+            .owner_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+            .keys();
+        let event = iris_drive_core::nostr_events::build_app_keys_event(owner_keys, snap)
+            .context("building AppKeys event")?;
+        events.push(direct_root_event(
+            format!(
+                "appkeys:{}:{}:{}:{}",
+                snap.owner_pubkey,
+                snap.created_at,
+                snap.dck_generation,
+                snap.devices
+                    .iter()
+                    .map(|device| device.pubkey.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            &event,
+        )?);
+    }
+
+    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        && let Some(root) = publishable_device_root(config_dir, drive, state).await?
+    {
+        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+        let authorized_devices = authorized_device_pubkeys(state);
+        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+            .context("loading device key")?;
+        let event = iris_drive_core::nostr_events::build_drive_root_event(
+            device.keys(),
+            &state.owner_pubkey,
+            &drive.drive_id,
+            &root,
+            &authorized_devices,
+        )
+        .context("building drive-root event")?;
+        events.push(direct_root_event(
+            format!(
+                "drive-root:{}:{}:{}:{}:{}",
+                state.device_pubkey,
+                drive.drive_id,
+                root.device_seq,
+                root.root_cid,
+                authorized_devices.join(",")
+            ),
+            &event,
+        )?);
+
+        if state.has_owner_signing_authority {
+            let account = Account::load(state.clone(), config_dir).context("loading account")?;
+            let owner_keys = account
+                .owner_key
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("owner key missing on disk"))?
+                .keys();
+            let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
+                owner_keys,
+                &drive.drive_id,
+                &root,
+            )
+            .context("building files-root event")?;
+            events.push(direct_root_event(
+                format!(
+                    "files-root:{}:{}:{}",
+                    state.owner_pubkey, drive.drive_id, root.root_cid
+                ),
+                &event,
+            )?);
+        }
+    }
+
+    Ok(events)
+}
+
+pub(crate) async fn publishable_device_root(
+    config_dir: &Path,
+    drive: &Drive,
+    state: &AccountState,
+) -> Result<Option<DeviceRootRef>> {
+    let Some(root) = drive.device_roots.get(&state.device_pubkey).cloned() else {
+        return Ok(None);
+    };
+    if !root.materialized_only {
+        return Ok(Some(root));
+    }
+    publishable_parent_root(config_dir, state, root).await
+}
+
+pub(crate) async fn publishable_parent_root(
+    config_dir: &Path,
+    state: &AccountState,
+    mut root: DeviceRootRef,
+) -> Result<Option<DeviceRootRef>> {
+    let daemon = Daemon::open(config_dir).context("opening daemon for publishable root lookup")?;
+    let mut seen = BTreeSet::new();
+    for _ in 0..32 {
+        if !seen.insert(root.root_cid.clone()) {
+            return Ok(None);
+        }
+        let cid = Cid::parse(&root.root_cid)
+            .with_context(|| format!("parsing root cid {}", root.root_cid))?;
+        let Some(meta) = iris_drive_core::indexer::read_root_meta(daemon.tree(), &cid)
+            .await
+            .with_context(|| format!("reading root metadata for {}", root.root_cid))?
+        else {
+            return Ok(None);
+        };
+        let Some(parent) = meta
+            .parents
+            .iter()
+            .find(|parent| parent.device_id == state.device_pubkey)
+        else {
+            return Ok(None);
+        };
+        let parent_cid = Cid::parse(&parent.root_cid)
+            .with_context(|| format!("parsing parent root cid {}", parent.root_cid))?;
+        let parent_root = match iris_drive_core::indexer::read_root_meta(daemon.tree(), &parent_cid)
+            .await
+            .with_context(|| format!("reading parent root metadata for {}", parent.root_cid))?
+        {
+            Some(parent_meta) => DeviceRootRef::from_meta(
+                parent.root_cid.clone(),
+                parent_meta.created_at,
+                &parent_meta,
+            ),
+            None => DeviceRootRef::legacy(
+                parent.root_cid.clone(),
+                root.published_at,
+                root.dck_generation,
+            ),
+        };
+        if !parent_root.materialized_only {
+            return Ok(Some(parent_root));
+        }
+        root = parent_root;
+    }
+    Ok(None)
+}
+
+pub(crate) fn direct_root_event(key: String, event: &Event) -> Result<DirectRootEvent> {
+    Ok(DirectRootEvent {
+        key,
+        event_id: event.id.to_hex(),
+        kind: event.kind.as_u16(),
+        json: serde_json::to_string(&event)?,
+    })
+}
+
+pub(crate) fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
+    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
+}
+
+pub(crate) async fn ensure_publishable_root_locally_available(
+    config_dir: &Path,
+    root_cid_str: &str,
+) -> Result<()> {
+    let root_cid =
+        Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
+    let mut last_error: Option<anyhow::Error> = None;
+    for delay_ms in
+        std::iter::once(0).chain(LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS.iter().copied())
+    {
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+        match collect_local_root_hashes(config_dir, &root_cid).await {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if delay_ms < *LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS.last().unwrap_or(&0)
+                    && local_root_availability_error_message_is_retryable(&format!(
+                        "{error:#}"
+                    )) =>
+            {
+                tracing::warn!(
+                    root_cid = root_cid_str,
+                    delay_ms,
+                    error = %error,
+                    "publishable root hit a transient local store read; retrying"
+                );
+                last_error = Some(error);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("root {root_cid_str} is not locally readable for publish")
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("root availability check did not run")))
+        .with_context(|| format!("root {root_cid_str} is not locally readable for publish"))
+}
+
+async fn collect_local_root_hashes(config_dir: &Path, root: &Cid) -> Result<usize> {
+    let daemon = Daemon::open(config_dir).context("opening daemon for local root availability")?;
+    daemon
+        .tree()
+        .list_directory(root)
+        .await
+        .context("reading local root directory")?;
+    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
+        .await
+        .context("walking local live-sync root blocks")?;
+    let store = daemon.tree().get_store().clone();
+    for hash in &hashes {
+        if !store
+            .has(hash)
+            .await
+            .with_context(|| format!("checking local block {}", to_hex(hash)))?
+        {
+            return Err(anyhow::anyhow!(
+                "local store is missing root block {}",
+                to_hex(hash)
+            ));
+        }
+    }
+    Ok(hashes.len())
+}
+
+fn local_root_availability_error_message_is_retryable(message: &str) -> bool {
+    let has_store_context = message.contains("Store error") || message.contains("IO error");
+    has_store_context
+        && (message.contains("os error 2")
+            || message.contains("No such file or directory")
+            || message.contains("The system cannot find the file specified"))
+}
+
+fn direct_root_initial_seq() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |duration| {
+            duration.as_millis().try_into().unwrap_or(u64::MAX - 1)
+        })
+        .max(1)
+}
