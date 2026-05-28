@@ -15,7 +15,7 @@ SMOKE_BASE_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-codex-lab-smoke}"
 SMOKE_ROOT="$SMOKE_BASE_ROOT"
 SMOKE_DIR="${IRIS_DRIVE_DEV_VM_SMOKE_DIR:-$SMOKE_ROOT/$RUN_ID}"
 SMOKE_CLEANUP_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_ROOT:-}"
-SMOKE_CLEAN_PREVIOUS_RUNS="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS:-1}"
+SMOKE_CLEAN_PREVIOUS_RUNS="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS:-0}"
 SMOKE_CLEAN_PREVIOUS_RUNS_WAIT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS_WAIT:-0}"
 TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
 MAX_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MAX_SYNC_WAIT_TIMEOUT:-30}"
@@ -42,6 +42,15 @@ scale_wait_timeout() {
   printf '%s\n' "$((value * multiplier))"
 }
 
+add_wait_timeout() {
+  local value="$1"
+  local increment="$2"
+  case "$value:$increment" in
+    *[!0-9:]* | :* | *:) printf '%s\n' "$value"; return 0 ;;
+  esac
+  printf '%s\n' "$((value + increment))"
+}
+
 SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
 MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
 WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
@@ -50,10 +59,12 @@ SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-180}"
 MACOS_VISIBLE_WRITE_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_SSH_TIMEOUT:-$(scale_wait_timeout "$MACOS_VISIBLE_WRITE_TIMEOUT" 2)}"
-VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-180}"
-VISIBLE_MANIFEST_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_SSH_TIMEOUT:-$(scale_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 2)}"
+VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-15}"
+VISIBLE_MANIFEST_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_SSH_TIMEOUT:-$(add_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 5)}"
+WINDOWS_PROBE_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_WINDOWS_PROBE_SSH_TIMEOUT:-20}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
+WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT:-$(add_wait_timeout "$WINDOWS_PROJECTION_STABILITY_SECONDS" 10)}"
 PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
 PROJECTION_STRESS_LARGE_BYTES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_LARGE_BYTES:-262144}"
 SMOKE_ONLY="${IRIS_DRIVE_DEV_VM_SMOKE_ONLY:-all}"
@@ -175,6 +186,12 @@ ps_single_quote() {
 
 win_ps() {
   ssh "$WINDOWS_SSH_HOST" \
+    'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
+}
+
+win_ps_limited() {
+  local timeout="$1"
+  ssh_limited "$timeout" "$WINDOWS_SSH_HOST" \
     'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
 
@@ -320,7 +337,7 @@ REMOTE_SH
 
 windows_provider_has() {
   local path="$1"
-  win_ps <<REMOTE_PS
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 \$IrisRepo = Join-Path \$HOME "src\\iris-drive"
 \$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
@@ -346,7 +363,7 @@ macos_provider_missing() {
 
 windows_disk_state() {
   local path="$1"
-  win_ps <<REMOTE_PS | tr -d '\r'
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS | tr -d '\r'
 \$ErrorActionPreference = "Stop"
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
 \$Exists = Test-Path -LiteralPath \$Path
@@ -538,7 +555,7 @@ wait_windows_file_has_content() {
   local expected="$2"
   local expected_b64
   expected_b64="$(base64_arg "$expected")"
-  win_ps <<REMOTE_PS
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 \$Path = Join-Path \$HOME ("Iris Drive\\$path")
 if (-not (Test-Path -LiteralPath \$Path -PathType Leaf)) {
@@ -566,7 +583,7 @@ windows_projection_stays_visible_during_local_create() {
   expected_ps+=")"
   local start
   start="$(date +%s)"
-  if win_ps <<REMOTE_PS
+  if win_ps_limited "$WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT" <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 function FullPath([string]\$Relative) {
   \$Native = \$Relative.Replace("/", [IO.Path]::DirectorySeparatorChar)
@@ -1403,7 +1420,9 @@ REMOTE_SH
 
 windows_visible_manifest() {
   local dir="$1"
-  win_ps <<REMOTE_PS | tr -d '\r'
+  local output
+  local status=0
+  output="$(win_ps_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" <<REMOTE_PS
 \$ErrorActionPreference = "Stop"
 \$Root = Join-Path \$HOME ("Iris Drive\\$dir")
 if (-not (Test-Path -LiteralPath \$Root -PathType Container)) {
@@ -1439,6 +1458,14 @@ Get-ChildItem -LiteralPath \$Root -Force -Recurse | Sort-Object FullName | ForEa
 }
 [pscustomobject]@{ entries = @(\$Entries) } | ConvertTo-Json -Depth 5 -Compress
 REMOTE_PS
+)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    if [[ "$status" -eq 124 ]]; then
+      log "windows visible manifest probe timed out after ${VISIBLE_MANIFEST_SSH_TIMEOUT}s"
+    fi
+    return "$status"
+  fi
+  printf '%s\n' "$output" | tr -d '\r'
 }
 
 visible_smoke_dir_matches() {
@@ -1624,6 +1651,33 @@ manifests = {
     "windows": json.loads(os.environ["WINDOWS_JSON"]),
 }
 
+def path_key(entry):
+    return entry.get("path", "")
+
+def summarize_manifest_diff(expected, actual, sample_size=12):
+    expected_by_path = {path_key(entry): entry for entry in expected.get("entries", [])}
+    actual_by_path = {path_key(entry): entry for entry in actual.get("entries", [])}
+    expected_paths = set(expected_by_path)
+    actual_paths = set(actual_by_path)
+    missing = sorted(expected_paths - actual_paths)
+    extra = sorted(actual_paths - expected_paths)
+    mismatched = sorted(
+        path for path in expected_paths & actual_paths
+        if expected_by_path[path] != actual_by_path[path]
+    )
+    samples = []
+    if missing:
+        samples.append(f"missing={missing[:sample_size]}")
+    if extra:
+        samples.append(f"extra={extra[:sample_size]}")
+    if mismatched:
+        samples.append(f"mismatched={mismatched[:sample_size]}")
+    counts = (
+        f"expected={len(expected_paths)} actual={len(actual_paths)} "
+        f"missing={len(missing)} extra={len(extra)} mismatched={len(mismatched)}"
+    )
+    return counts + (" " + " ".join(samples) if samples else "")
+
 for name, manifest in manifests.items():
     conflicts = [
         entry["path"]
@@ -1634,7 +1688,8 @@ for name, manifest in manifests.items():
         raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
     if manifest != expected:
         raise SystemExit(
-            f"{name} heavy projection manifest differs: expected={expected} actual={manifest}"
+            f"{name} heavy projection manifest differs: "
+            f"{summarize_manifest_diff(expected, manifest)}"
         )
 PY
 }

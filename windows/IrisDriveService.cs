@@ -157,14 +157,18 @@ public sealed class IrisDriveService
             return preparation;
         }
 
-        WindowsCloudFiles.RemoveStaleSyncedLocalItems(entries, previousState);
+        WindowsCloudFiles.RemoveStaleSyncedLocalItems(
+            entries,
+            previousState,
+            preparation.ProtectedLocalItemPaths);
         WindowsCloudFiles.NotifyShellEntriesChanged(entries, previousState);
         WindowsCloudFiles.WriteLocalState(
             DefaultConfigDirectory,
             entries,
             ReadProviderFile,
             previousState,
-            preparation.RefreshedPlaceholderPaths);
+            preparation.RefreshedPlaceholderPaths,
+            preparation.ProtectedLocalItemPaths);
         WriteProviderPathCache(entries);
         return preparation;
     }
