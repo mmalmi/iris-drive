@@ -6,7 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use hashtree_core::{
-    Cid, HashTree, HashTreeConfig, MemoryStore, NHashData, Store, nhash_encode_full, to_hex,
+    Cid, HashTree, HashTreeConfig, LinkType, MemoryStore, NHashData, Store, nhash_encode_full,
+    to_hex,
 };
 use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;

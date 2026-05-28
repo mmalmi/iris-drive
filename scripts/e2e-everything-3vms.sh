@@ -22,6 +22,8 @@ Per-hop sync timings are written to target/e2e-3vms-*-timings.jsonl.
 Environment:
   IRIS_DRIVE_E2E_SKIP_CARGO=1   Skip cargo test --workspace.
   IRIS_DRIVE_E2E_SKIP_DEPLOY=1  Skip scripts/dev-lab.sh and only run the VM e2e smoke.
+  IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
+                                  Override the FIPS roster wait before smoke.
 USAGE
 }
 
@@ -35,6 +37,10 @@ log() {
 }
 
 cd "$ROOT"
+
+if [[ -z "${IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT:-}" && -n "${IRIS_DRIVE_DEV_VM_MAX_SYNC_WAIT_TIMEOUT:-}" ]]; then
+  export IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT="$IRIS_DRIVE_DEV_VM_MAX_SYNC_WAIT_TIMEOUT"
+fi
 
 if [[ "${IRIS_DRIVE_E2E_SKIP_CARGO:-0}" != "1" ]]; then
   log "running Rust workspace tests"

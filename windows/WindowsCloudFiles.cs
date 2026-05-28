@@ -35,7 +35,7 @@ public sealed class DriveFolderPreparation
     public int SkippedLocalItemCount { get; }
 }
 
-public sealed record WindowsCloudFileEntry(string Path, string Kind, long Size)
+public sealed record WindowsCloudFileEntry(string Path, string Kind, long Size, string? Version)
 {
     public bool IsDirectory =>
         string.Equals(Kind, "directory", StringComparison.OrdinalIgnoreCase);
@@ -55,12 +55,21 @@ public sealed record WindowsCloudFileEntry(string Path, string Kind, long Size)
             sizeValue.TryGetInt64(out var parsedSize)
                 ? parsedSize
                 : 0;
+        var version = element.TryGetProperty("version", out var versionValue) &&
+            versionValue.ValueKind == JsonValueKind.String
+                ? versionValue.GetString()
+                : null;
 
-        return new WindowsCloudFileEntry(path, kind, size);
+        return new WindowsCloudFileEntry(path, kind, size, version);
     }
 }
 
-public sealed record WindowsCloudLocalStateEntry(string Path, string Kind, long Size, string? Sha256)
+public sealed record WindowsCloudLocalStateEntry(
+    string Path,
+    string Kind,
+    long Size,
+    string? Sha256,
+    string? ProviderVersion = null)
 {
     public bool IsDirectory =>
         string.Equals(Kind, "directory", StringComparison.OrdinalIgnoreCase);
@@ -78,8 +87,9 @@ public sealed record WindowsCloudLocalStateEntry(string Path, string Kind, long 
         var kind = TryGetString(element, "kind", "Kind") ?? "file";
         var size = TryGetInt64(element, "size", "Size") ?? 0;
         var sha256 = TryGetString(element, "sha256", "Sha256");
+        var providerVersion = TryGetString(element, "providerVersion", "ProviderVersion");
 
-        return new WindowsCloudLocalStateEntry(path, kind, size, sha256);
+        return new WindowsCloudLocalStateEntry(path, kind, size, sha256, providerVersion);
     }
 
     private static string? TryGetString(JsonElement element, string lowerName, string upperName)
@@ -694,8 +704,7 @@ public static partial class WindowsCloudFiles
             RemoveChangedSyncedLocalItems(
                 path,
                 entries,
-                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>(),
-                readFile);
+                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
             var population = PopulatePlaceholders(
                 path,
                 entries,
@@ -760,7 +769,8 @@ public static partial class WindowsCloudFiles
                         entry.Path,
                         "directory",
                         0,
-                        null));
+                        null,
+                        entry.Version));
                     continue;
                 }
 
@@ -775,7 +785,8 @@ public static partial class WindowsCloudFiles
                         entry.Path,
                         "file",
                         entry.Size,
-                        TryProviderFileSha256(entry.Path, readFile)));
+                        null,
+                        entry.Version));
                     continue;
                 }
 
@@ -786,7 +797,8 @@ public static partial class WindowsCloudFiles
                         entry.Path,
                         "file",
                         snapshot.Value.Size,
-                        snapshot.Value.Sha256));
+                        snapshot.Value.Sha256,
+                        entry.Version));
                 }
             }
             catch
@@ -861,8 +873,7 @@ public static partial class WindowsCloudFiles
 
     private static bool ProviderFileChangedSincePreviousState(
         WindowsCloudFileEntry entry,
-        IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath,
-        Func<string, byte[]> readFile)
+        IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath)
     {
         if (!previousByPath.TryGetValue(entry.Path, out var previous) ||
             previous.IsDirectory ||
@@ -871,14 +882,20 @@ public static partial class WindowsCloudFiles
             return true;
         }
 
+        if (!string.IsNullOrWhiteSpace(entry.Version))
+        {
+            return !string.Equals(
+                entry.Version,
+                previous.ProviderVersion,
+                StringComparison.Ordinal);
+        }
+
         if (string.IsNullOrWhiteSpace(previous.Sha256))
         {
             return false;
         }
 
-        var providerSha256 = TryProviderFileSha256(entry.Path, readFile);
-        return providerSha256 is not null &&
-            !string.Equals(providerSha256, previous.Sha256, StringComparison.Ordinal);
+        return false;
     }
 
     private static string? TryProviderFileSha256(string path, Func<string, byte[]> readFile)
@@ -898,6 +915,11 @@ public static partial class WindowsCloudFiles
         WindowsCloudFileEntry entry,
         Func<string, byte[]> readFile)
     {
+        if (!string.IsNullOrWhiteSpace(entry.Version))
+        {
+            return false;
+        }
+
         var providerSha256 = TryProviderFileSha256(entry.Path, readFile);
         if (providerSha256 is null)
         {
@@ -994,7 +1016,7 @@ public static partial class WindowsCloudFiles
                     continue;
                 }
 
-                if (!ProviderFileChangedSincePreviousState(entry, previousByPath, readFile) &&
+                if (!ProviderFileChangedSincePreviousState(entry, previousByPath) &&
                     !LocalPlaceholderContentDiffersFromProvider(itemFullPath, entry, readFile))
                 {
                     DebugLogPath(entry.Path, $"skip unchanged file placeholder {itemFullPath}");
@@ -1141,8 +1163,7 @@ public static partial class WindowsCloudFiles
     private static void RemoveChangedSyncedLocalItems(
         string syncRootPath,
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
-        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState,
-        Func<string, byte[]> readFile)
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
     {
         if (previousState.Count == 0)
         {
@@ -1183,13 +1204,11 @@ public static partial class WindowsCloudFiles
                 }
 
                 var providerChanged = providerEntry.Size != snapshot.Value.Size;
-                if (!providerChanged)
+                if (!providerChanged && !string.IsNullOrWhiteSpace(providerEntry.Version))
                 {
-                    var providerHash = Convert.ToHexString(SHA256.HashData(readFile(path)))
-                        .ToLowerInvariant();
                     providerChanged = !string.Equals(
-                        providerHash,
-                        snapshot.Value.Sha256,
+                        providerEntry.Version,
+                        previous.ProviderVersion,
                         StringComparison.Ordinal);
                 }
 
@@ -1822,7 +1841,7 @@ public static partial class WindowsCloudFiles
             var parent = ParentPath(path);
             while (!string.IsNullOrEmpty(parent))
             {
-                byPath.TryAdd(parent, new WindowsCloudFileEntry(parent, "directory", 0));
+                byPath.TryAdd(parent, new WindowsCloudFileEntry(parent, "directory", 0, null));
                 parent = ParentPath(parent);
             }
         }

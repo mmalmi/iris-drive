@@ -963,6 +963,12 @@ fn provider_commands_operate_on_virtual_root() {
     assert!(paths.contains(&"docs"));
     assert!(paths.contains(&"docs/note.txt"));
     assert_eq!(listed["file_count"], 1);
+    let original_note_version = entries
+        .iter()
+        .find(|entry| entry["path"] == "docs/note.txt")
+        .and_then(|entry| entry["version"].as_str())
+        .expect("provider list includes per-entry version");
+    assert!(!original_note_version.is_empty());
 
     let scratch = tempdir().unwrap();
     let original = scratch.path().join("note.txt");
@@ -988,6 +994,16 @@ fn provider_commands_operate_on_virtual_root() {
         .assert()
         .success();
     assert_eq!(std::fs::read(&created).unwrap(), b"from provider");
+    let relisted = run_json(cfg.path(), &["provider", "list"]);
+    let new_note_version = relisted["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["path"] == "docs/new.txt")
+        .and_then(|entry| entry["version"].as_str())
+        .expect("new provider file includes per-entry version");
+    assert!(!new_note_version.is_empty());
+    assert_ne!(original_note_version, new_note_version);
 
     idrive(cfg.path())
         .args(["provider", "rename", "docs/new.txt", "docs/renamed.txt"])

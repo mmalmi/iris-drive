@@ -1230,6 +1230,88 @@ if missing:
 PY
 }
 
+heavy_projection_manifest_matches() {
+  local dir="$1"
+  local file_count="$2"
+  local large_bytes="$3"
+  local run_id="$4"
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  macos_json="$(macos_visible_manifest "$dir")" || return 1
+  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  FILE_COUNT="$file_count" \
+    LARGE_BYTES="$large_bytes" \
+    RUN_ID="$run_id" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import hashlib
+import json
+import os
+
+file_count = int(os.environ["FILE_COUNT"])
+large_bytes = int(os.environ["LARGE_BYTES"])
+run_id = os.environ["RUN_ID"]
+zero_digest = hashlib.sha256(b"\0" * large_bytes).hexdigest()
+
+entries = []
+directories = set()
+
+def add_file(path, data=None, size=None, sha256=None):
+    parts = path.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        directories.add("/".join(parts[:index]))
+    if data is not None:
+        size = len(data)
+        sha256 = hashlib.sha256(data).hexdigest()
+    entries.append({
+        "path": path,
+        "kind": "file",
+        "size": size,
+        "sha256": sha256,
+    })
+
+for index in range(1, file_count + 1):
+    suffix = f"{index:03d}"
+    add_file(f"ubuntu/{suffix}.txt", f"stress ubuntu {suffix} {run_id}\n".encode())
+    add_file(f"windows/{suffix}.txt", f"stress windows {suffix} {run_id}\n".encode())
+    add_file(f"macos/{suffix}.txt", f"stress macos {suffix} {run_id}\n".encode())
+
+add_file("large/ubuntu-zero.bin", size=large_bytes, sha256=zero_digest)
+add_file("large/windows-zero.bin", size=large_bytes, sha256=zero_digest)
+add_file("large/macos-zero.bin", size=large_bytes, sha256=zero_digest)
+
+expected_entries = [
+    {"path": path, "kind": "directory", "size": 0, "sha256": None}
+    for path in directories
+]
+expected_entries.extend(entries)
+expected = {"entries": sorted(expected_entries, key=lambda entry: entry["path"])}
+
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+    "macos": json.loads(os.environ["MACOS_JSON"]),
+    "windows": json.loads(os.environ["WINDOWS_JSON"]),
+}
+
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != expected:
+        raise SystemExit(
+            f"{name} heavy projection manifest differs: expected={expected} actual={manifest}"
+        )
+PY
+}
+
 check_native_status_summaries() {
   log "checking native status summaries report files, bytes, and devices"
   local ubuntu_status
@@ -1366,7 +1448,8 @@ run_sync_smoke() {
   wait_for "macOS provider delete removes Ubuntu file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_delete_file"
   wait_for "Ubuntu directory monitor wakes for macOS delete" "$SYNC_WAIT_TIMEOUT" \
-    ubuntu_monitor_saw_any "$ubuntu_delete_monitor_token" "$(basename "$macos_delete_file")"
+    ubuntu_monitor_saw_any "$ubuntu_delete_monitor_token" \
+      "$(basename "$macos_delete_file")" "iris-drive-refresh" ".iris-drive-refresh"
   ubuntu_stop_directory_monitor "$ubuntu_delete_monitor_token"
   wait_for_quiet "macOS provider delete removes Windows disk file" \
     "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
@@ -1426,7 +1509,6 @@ run_sync_smoke() {
 
   log "checking heavy native projection stress converges on all OS surfaces"
   local stress_dir="$SMOKE_DIR/heavy-projection"
-  local -a stress_paths=()
   local i
   for i in $(seq 1 "$PROJECTION_STRESS_FILES"); do
     local suffix
@@ -1434,14 +1516,13 @@ run_sync_smoke() {
     write_ubuntu_file "$stress_dir/ubuntu/$suffix.txt" "stress ubuntu $suffix $RUN_ID"
     write_windows_file "$stress_dir/windows/$suffix.txt" "stress windows $suffix $RUN_ID"
     write_macos_visible_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
-    stress_paths+=("ubuntu/$suffix.txt" "windows/$suffix.txt" "macos/$suffix.txt")
   done
   write_ubuntu_zero_file "$stress_dir/large/ubuntu-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
   write_windows_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
   write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
-  stress_paths+=("large/ubuntu-zero.bin" "large/windows-zero.bin" "large/macos-zero.bin")
-  wait_for "heavy native projection manifests converge" "$SYNC_WAIT_TIMEOUT" \
-    visible_smoke_dir_converges_with_paths "$stress_dir" "${stress_paths[@]}"
+  wait_for "heavy native projection manifests converge with expected bytes" "$SYNC_WAIT_TIMEOUT" \
+    heavy_projection_manifest_matches \
+    "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
 
   delete_ubuntu_path "$SMOKE_DIR" || true
 }

@@ -172,6 +172,7 @@ struct ProviderListEntry {
     path: String,
     kind: &'static str,
     size: u64,
+    version: String,
 }
 
 pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -> Result<()> {
@@ -218,7 +219,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         match command {
             ProviderCmd::List => {
                 let phase = std::time::Instant::now();
-                let entries = provider_entries(&provider).await?;
+                let entries = provider_entries(daemon.tree(), &visible.root_cid).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command listed entries"
@@ -330,26 +331,36 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
 }
 
 async fn provider_entries(
-    provider: &HashTreeProviderFs<FsBlobStore>,
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
 ) -> Result<Vec<ProviderListEntry>> {
     let mut entries = Vec::new();
-    let mut stack = vec![String::new()];
-    while let Some(parent) = stack.pop() {
-        let mut children = provider.read_dir(&parent).await?;
-        children.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut stack = vec![(String::new(), root.clone())];
+    while let Some((parent, dir_cid)) = stack.pop() {
+        let mut children = tree.list_directory(&dir_cid).await?;
+        children.sort_by(|a, b| a.name.cmp(&b.name));
         for child in children {
-            let item = provider.item(&child.id).await?;
-            let kind = match item.kind {
-                ItemKind::Directory => {
-                    stack.push(child.id.clone());
+            let path = if parent.is_empty() {
+                child.name.clone()
+            } else {
+                format!("{parent}/{}", child.name)
+            };
+            let cid = Cid {
+                hash: child.hash,
+                key: child.key,
+            };
+            let kind = match child.link_type {
+                LinkType::Dir => {
+                    stack.push((path.clone(), cid.clone()));
                     "directory"
                 }
-                ItemKind::File => "file",
+                LinkType::Blob | LinkType::File => "file",
             };
             entries.push(ProviderListEntry {
-                path: child.id,
+                path,
                 kind,
-                size: item.size,
+                size: child.size,
+                version: cid.to_string(),
             });
         }
     }

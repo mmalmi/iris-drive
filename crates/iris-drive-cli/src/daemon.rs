@@ -940,7 +940,9 @@ async fn import_windows_cloud_root_changes_and_publish(
     for path in prune_ignored_provider_paths(&provider).await? {
         changed_paths.insert(path);
     }
-    let expected_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let expected_entries =
+        windows_cloud_provider_expected_entries(daemon.tree(), &provider.current_root().await)
+            .await?;
     let expected_paths: BTreeSet<String> = expected_entries
         .iter()
         .map(|entry| entry.path.clone())
@@ -1031,22 +1033,19 @@ async fn import_windows_cloud_root_changes_and_publish(
     }
 
     let root = provider.current_root().await;
-    let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let current_entries = windows_cloud_provider_expected_entries(daemon.tree(), &root).await?;
     let snapshot_protected_paths = BTreeSet::new();
-    // Protected paths prevent same-event cleanup from deleting a local edit
-    // before it is imported. Once the provider has absorbed the mutation, the
-    // local file is synced state and must be eligible for future remote deletes.
-    write_windows_cloud_local_state(
-        config_dir,
-        sync_root,
-        &current_entries,
-        &previous_local_state,
-        &snapshot_protected_paths,
-    );
     drop(provider);
     drop(daemon);
 
     if root == before {
+        write_windows_cloud_local_state(
+            config_dir,
+            sync_root,
+            &current_entries,
+            &previous_local_state,
+            &snapshot_protected_paths,
+        );
         return Ok(WindowsCloudImportOutcome::Unchanged);
     }
 
@@ -1061,6 +1060,17 @@ async fn import_windows_cloud_root_changes_and_publish(
     )
     .await
     .context("publishing Windows Cloud Files root")?;
+
+    // Write synced local-state only after the config root has advanced. If this
+    // cache wins the race against provider list, the Windows app can mistake a
+    // fresh local mutation for stale projection residue and prune it.
+    write_windows_cloud_local_state(
+        config_dir,
+        sync_root,
+        &current_entries,
+        &previous_local_state,
+        &snapshot_protected_paths,
+    );
 
     Ok(WindowsCloudImportOutcome::Changed {
         root_cid: root.to_string(),
@@ -1602,6 +1612,7 @@ struct WindowsCloudExpectedEntry {
     path: String,
     kind: &'static str,
     size: u64,
+    version: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -1625,26 +1636,36 @@ impl WindowsCloudLocalStateEntry {
 }
 
 async fn windows_cloud_provider_expected_entries(
-    provider: &HashTreeProviderFs<FsBlobStore>,
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
 ) -> Result<Vec<WindowsCloudExpectedEntry>> {
     let mut entries = Vec::new();
-    let mut stack = vec![String::new()];
-    while let Some(parent) = stack.pop() {
-        let mut children = provider.read_dir(&parent).await?;
-        children.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut stack = vec![(String::new(), root.clone())];
+    while let Some((parent, dir_cid)) = stack.pop() {
+        let mut children = tree.list_directory(&dir_cid).await?;
+        children.sort_by(|a, b| a.name.cmp(&b.name));
         for child in children {
-            let item = provider.item(&child.id).await?;
-            let kind = match item.kind {
-                ItemKind::Directory => {
-                    stack.push(child.id.clone());
+            let path = if parent.is_empty() {
+                child.name.clone()
+            } else {
+                format!("{parent}/{}", child.name)
+            };
+            let cid = Cid {
+                hash: child.hash,
+                key: child.key,
+            };
+            let kind = match child.link_type {
+                LinkType::Dir => {
+                    stack.push((path.clone(), cid.clone()));
                     "directory"
                 }
-                ItemKind::File => "file",
+                LinkType::Blob | LinkType::File => "file",
             };
             entries.push(WindowsCloudExpectedEntry {
-                path: child.id,
+                path,
                 kind,
-                size: item.size,
+                size: child.size,
+                version: cid.to_string(),
             });
         }
     }
@@ -1682,7 +1703,8 @@ async fn refresh_windows_cloud_local_projection(
         .await
         .context("building Windows Cloud Files projection root")?;
     let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
-    let current_entries = windows_cloud_provider_expected_entries(&provider).await?;
+    let current_entries =
+        windows_cloud_provider_expected_entries(daemon.tree(), &visible.root_cid).await?;
     let expected_paths: BTreeSet<String> = current_entries
         .iter()
         .map(|entry| entry.path.clone())
@@ -1979,11 +2001,39 @@ fn write_windows_cloud_local_state(
 ) {
     let state =
         snapshot_windows_cloud_local_state(sync_root, entries, previous_state, protected_paths);
-    let value = json!({ "entries": state });
+    let value = json!({ "entries": windows_cloud_local_state_json_entries(&state, entries) });
     if let Ok(raw) = serde_json::to_string(&value) {
         let _ = std::fs::create_dir_all(config_dir);
         let _ = std::fs::write(config_dir.join(WINDOWS_CLOUD_LOCAL_STATE_FILE), raw);
     }
+}
+
+fn windows_cloud_local_state_json_entries(
+    state: &[WindowsCloudLocalStateEntry],
+    entries: &[WindowsCloudExpectedEntry],
+) -> Vec<Value> {
+    let versions = entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry.version.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    state
+        .iter()
+        .map(|entry| {
+            let mut object = serde_json::Map::new();
+            object.insert("path".to_string(), json!(entry.path));
+            object.insert("kind".to_string(), json!(entry.kind));
+            object.insert("size".to_string(), json!(entry.size));
+            if let Some(sha256) = entry.sha256.as_deref() {
+                object.insert("sha256".to_string(), json!(sha256));
+            }
+            if let Some(version) = versions.get(entry.path.as_str())
+                && !version.trim().is_empty()
+            {
+                object.insert("providerVersion".to_string(), json!(version));
+            }
+            Value::Object(object)
+        })
+        .collect()
 }
 
 fn snapshot_windows_cloud_local_state(
@@ -2167,7 +2217,7 @@ fn windows_cloud_file_read_should_skip(error: &std::io::Error) -> bool {
     // the regular reparse-point bit is not enough to identify them.
     matches!(
         error.raw_os_error(),
-        Some(395 | 396 | 397 | 398 | 400 | 402)
+        Some(362 | 395 | 396 | 397 | 398 | 400 | 402 | 404)
     )
 }
 
@@ -3116,6 +3166,12 @@ mod tests {
         assert!(windows_cloud_file_read_should_skip(
             &std::io::Error::from_raw_os_error(395)
         ));
+        assert!(windows_cloud_file_read_should_skip(
+            &std::io::Error::from_raw_os_error(362)
+        ));
+        assert!(windows_cloud_file_read_should_skip(
+            &std::io::Error::from_raw_os_error(404)
+        ));
         assert!(!windows_cloud_file_read_should_skip(&std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "real missing file"
@@ -3440,11 +3496,13 @@ mod tests {
                 path: "smoke".to_string(),
                 kind: "directory",
                 size: 0,
+                version: "dir-v1".to_string(),
             },
             WindowsCloudExpectedEntry {
                 path: "smoke/from-windows.txt".to_string(),
                 kind: "file",
                 size: 4,
+                version: "file-v1".to_string(),
             },
         ];
 
@@ -3457,6 +3515,29 @@ mod tests {
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
         }));
+
+        let config_dir = tempfile::tempdir().unwrap();
+        write_windows_cloud_local_state(
+            config_dir.path(),
+            sync_root.path(),
+            &entries,
+            &[],
+            &BTreeSet::new(),
+        );
+        let raw = std::fs::read_to_string(config_dir.path().join(WINDOWS_CLOUD_LOCAL_STATE_FILE))
+            .unwrap();
+        let value: Value = serde_json::from_str(&raw).unwrap();
+        let provider_version = value
+            .get("entries")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry.get("path").and_then(Value::as_str) == Some("smoke/from-windows.txt")
+            })
+            .and_then(|entry| entry.get("providerVersion"))
+            .and_then(Value::as_str);
+        assert_eq!(provider_version, Some("file-v1"));
     }
 
     #[test]
@@ -3473,11 +3554,13 @@ mod tests {
                 path: "smoke".to_string(),
                 kind: "directory",
                 size: 0,
+                version: "dir-v1".to_string(),
             },
             WindowsCloudExpectedEntry {
                 path: "smoke/from-windows.txt".to_string(),
                 kind: "file",
                 size: 4,
+                version: "file-v1".to_string(),
             },
         ];
         let protected = BTreeSet::from(["smoke/from-windows.txt".to_string()]);
@@ -3579,6 +3662,7 @@ mod tests {
             path: "remote.txt".to_string(),
             kind: "file",
             size: 9,
+            version: "remote-v2".to_string(),
         }];
 
         let removed = windows_cloud_remove_changed_synced_local_files(
@@ -3619,6 +3703,7 @@ mod tests {
             path: "remote.txt".to_string(),
             kind: "file",
             size: 9,
+            version: "remote-v2".to_string(),
         }];
 
         let removed = windows_cloud_remove_changed_synced_local_files(
