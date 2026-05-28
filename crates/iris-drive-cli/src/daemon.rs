@@ -810,6 +810,7 @@ enum WindowsCloudRootChange {
         old_path: String,
         new_path: String,
     },
+    ValidateLocalState,
     Rescan {
         full: bool,
         recover_cached_deletes: bool,
@@ -860,6 +861,22 @@ fn start_windows_cloud_root_watch() -> Result<(
         full: true,
         recover_cached_deletes: windows_cloud_cached_delete_recovery_enabled(),
     });
+    let periodic_tx = tx.clone();
+    let _ = std::thread::Builder::new()
+        .name("windows-cloud-local-state-validate".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(
+                    WINDOWS_CLOUD_LOCAL_STATE_VALIDATE_INTERVAL_SECS,
+                ));
+                if periodic_tx
+                    .send(windows_cloud_periodic_validate_change())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
     Ok((
         Some(root.clone()),
@@ -870,6 +887,11 @@ fn start_windows_cloud_root_watch() -> Result<(
             "watching": true,
         })),
     ))
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_cloud_periodic_validate_change() -> WindowsCloudRootChange {
+    WindowsCloudRootChange::ValidateLocalState
 }
 
 #[cfg(windows)]
@@ -989,6 +1011,7 @@ async fn import_windows_cloud_root_changes_and_publish(
                     tombstone_paths.insert(old_path);
                 }
             }
+            WindowsCloudRootChange::ValidateLocalState => {}
             WindowsCloudRootChange::Rescan {
                 full,
                 recover_cached_deletes,
@@ -1090,7 +1113,9 @@ fn windows_cloud_protected_local_mutation_paths(
             WindowsCloudRootChange::Rename { new_path, .. } => {
                 windows_cloud_insert_path_and_ancestors(&mut protected, new_path);
             }
-            WindowsCloudRootChange::Delete(_) | WindowsCloudRootChange::Rescan { .. } => {}
+            WindowsCloudRootChange::Delete(_)
+            | WindowsCloudRootChange::ValidateLocalState
+            | WindowsCloudRootChange::Rescan { .. } => {}
         }
     }
     protected
@@ -1605,6 +1630,8 @@ fn windows_cloud_cleanup_marker_now_ms() -> u64 {
 
 const WINDOWS_CLOUD_LOCAL_STATE_FILE: &str = "windows-cloud-local-state.json";
 const WINDOWS_CLOUD_CLEANUP_DELETE_FILE: &str = "windows-cloud-cleanup-deletes.json";
+#[cfg_attr(not(windows), allow(dead_code))]
+const WINDOWS_CLOUD_LOCAL_STATE_VALIDATE_INTERVAL_SECS: u64 = 2;
 const WINDOWS_CLOUD_CLEANUP_DELETE_MARKER_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -3290,6 +3317,14 @@ mod tests {
                 .unwrap();
 
         assert_eq!(missing, vec!["remote-gone.txt".to_string()]);
+    }
+
+    #[test]
+    fn windows_cloud_periodic_validation_is_narrow_local_state_check() {
+        assert!(matches!(
+            windows_cloud_periodic_validate_change(),
+            WindowsCloudRootChange::ValidateLocalState
+        ));
     }
 
     #[test]

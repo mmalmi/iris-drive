@@ -3,6 +3,12 @@
 //! The shape follows Seafile's sync-auto-test and Syncthing's integration
 //! benches: run real clients, mutate one worktree at a time, wait for
 //! convergence, then compare on-disk contents instead of trusting status text.
+//!
+//! Development loop:
+//! - Rerun one failure:
+//!   `cargo test -p idrive --test daemon_sync_matrix <test-name> -- --exact --nocapture`
+//! - Stop the matrix after the first failure:
+//!   `cargo test -p idrive --test daemon_sync_matrix -- --fail-fast --nocapture`
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -27,6 +33,24 @@ static LIVE_DAEMON_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
 
 type DirSnapshot = BTreeMap<String, FileSnapshot>;
+
+fn current_test_name() -> String {
+    std::thread::current()
+        .name()
+        .unwrap_or("daemon_sync_matrix")
+        .to_string()
+}
+
+fn rerun_hint(test_name: &str) -> String {
+    format!(
+        "rerun this test: cargo test -p idrive --test daemon_sync_matrix {test_name} -- --exact --nocapture\n\
+         rerun matrix with fast fail: cargo test -p idrive --test daemon_sync_matrix -- --fail-fast --nocapture"
+    )
+}
+
+fn matrix_progress(label: impl AsRef<str>) {
+    eprintln!("[daemon-sync-matrix] {}", label.as_ref());
+}
 
 async fn live_daemon_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
     LIVE_DAEMON_TEST_LOCK.lock().await
@@ -393,6 +417,7 @@ impl Client {
 }
 
 struct SyncCluster {
+    test_name: String,
     relay: LocalNostrRelay,
     _blossom: LocalBlossomServer,
     clients: Vec<Client>,
@@ -429,6 +454,7 @@ impl SyncCluster {
     }
 
     async fn start_with_options(options: SyncClusterOptions) -> Self {
+        let test_name = current_test_name();
         assert!(
             options.clients.contains(&Client::Windows) && options.clients.contains(&Client::Ubuntu),
             "live daemon matrix expects at least windows + ubuntu clients"
@@ -524,6 +550,7 @@ impl SyncCluster {
             };
 
         Self {
+            test_name,
             relay,
             _blossom: blossom,
             clients: options.clients,
@@ -708,7 +735,13 @@ impl SyncCluster {
 
     fn assert_file(&self, client: Client, path: &str, expected: &[u8]) {
         let actual = std::fs::read(self.path(client).join(path)).unwrap();
-        assert_eq!(actual, expected, "{}", self.debug_state());
+        assert_eq!(
+            actual,
+            expected,
+            "{}\n{}",
+            self.debug_state(),
+            self.rerun_hint()
+        );
     }
 
     fn assert_missing(&self, client: Client, path: &str) {
@@ -716,7 +749,7 @@ impl SyncCluster {
             !self.path(client).join(path).exists(),
             "{} should be absent\n{}",
             path,
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
     }
 
@@ -727,14 +760,14 @@ impl SyncCluster {
             Some(expected_files),
             "{} status should report {expected_files} files\n{}",
             client.label(),
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
         assert_eq!(
             status["network"]["authorized_device_count"].as_u64(),
             Some(expected_devices),
             "{} status should report {expected_devices} authorized devices\n{}",
             client.label(),
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
     }
 
@@ -752,7 +785,7 @@ impl SyncCluster {
             Some(kind),
             "{} provider should contain {kind} {path}\n{}",
             client.label(),
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
     }
 
@@ -761,7 +794,7 @@ impl SyncCluster {
             self.provider_entry_kind(client, path).is_none(),
             "{} provider should not contain {path}\n{}",
             client.label(),
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
     }
 
@@ -818,7 +851,10 @@ impl SyncCluster {
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        panic!("timed out waiting for {label}\n{}", self.debug_state());
+        panic!(
+            "timed out waiting for {label}\n{}",
+            self.debug_state_with_rerun_hint()
+        );
     }
 
     async fn wait_for_visible_snapshot(&self, expected: &DirSnapshot, label: &str) {
@@ -848,7 +884,7 @@ impl SyncCluster {
         }
         panic!(
             "timed out waiting for {label}\nexpected visible: {expected:#?}\n{}",
-            self.debug_state()
+            self.debug_state_with_rerun_hint()
         );
     }
 
@@ -860,7 +896,10 @@ impl SyncCluster {
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        panic!("timed out waiting for {label}\n{}", self.debug_state());
+        panic!(
+            "timed out waiting for {label}\n{}",
+            self.debug_state_with_rerun_hint()
+        );
     }
 
     fn path(&self, client: Client) -> &Path {
@@ -994,6 +1033,14 @@ impl SyncCluster {
             let _ = writeln!(out, "{} log:\n{log}", client.label());
         }
         out
+    }
+
+    fn debug_state_with_rerun_hint(&self) -> String {
+        format!("{}\n{}", self.debug_state(), self.rerun_hint())
+    }
+
+    fn rerun_hint(&self) -> String {
+        rerun_hint(&self.test_name)
     }
 }
 

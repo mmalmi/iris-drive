@@ -69,12 +69,40 @@ async fn live_daemons_three_vm_match_seafile_release_operation_permutations() {
 
     for source in Client::THREE_VM {
         let prefix = format!("release/{}", source.label());
+        matrix_progress(format!(
+            "seafile permutations source={} add-delete-add",
+            source.label()
+        ));
         seafile_add_delete_add_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} create-update",
+            source.label()
+        ));
         seafile_create_update_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} rename",
+            source.label()
+        ));
         seafile_rename_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} delete",
+            source.label()
+        ));
         seafile_delete_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} case-rename",
+            source.label()
+        ));
         seafile_case_rename_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} empty-directory",
+            source.label()
+        ));
         seafile_empty_directory_sequence(&cluster, source, &prefix).await;
+        matrix_progress(format!(
+            "seafile permutations source={} single-operation",
+            source.label()
+        ));
         seafile_single_operation_sequence(&cluster, source, &prefix).await;
     }
 }
@@ -488,7 +516,7 @@ fn assert_visible_missing_all(cluster: &SyncCluster, path: &str) {
             !visible_dir_snapshot(cluster.path(client)).contains_key(path),
             "{} visible snapshot should not contain {path}\n{}",
             client.label(),
-            cluster.debug_state()
+            cluster.debug_state_with_rerun_hint()
         );
         cluster.assert_provider_missing(client, path);
     }
@@ -529,7 +557,10 @@ async fn wait_for_hashes_with_prefix_all(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    panic!("timed out waiting for {label}\n{}", cluster.debug_state());
+    panic!(
+        "timed out waiting for {label}\n{}",
+        cluster.debug_state_with_rerun_hint()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
