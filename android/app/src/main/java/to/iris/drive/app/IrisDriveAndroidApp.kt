@@ -66,17 +66,18 @@ private val IrisLightSurface = Color.White
 private val IrisLightInk = Color(0xFF172321)
 private val IrisLightMuted = Color(0xFF657370)
 private val IrisLightSoftTeal = Color(0xFFE7F4F0)
-private val IrisDarkBackground = Color(0xFF101815)
-private val IrisDarkSurface = Color(0xFF18231F)
-private val IrisDarkInk = Color(0xFFE7F0EC)
-private val IrisDarkMuted = Color(0xFFA9B8B3)
-private val IrisDarkSoftTeal = Color(0xFF143A3C)
+private val IrisDarkBackground = Color(0xFF0C0A09)
+private val IrisDarkSurface = Color(0xFF1C1917)
+private val IrisDarkSurfaceVariant = Color(0xFF44403C)
+private val IrisDarkInk = Color(0xFFF5F5F4)
+private val IrisDarkMuted = Color(0xFFD6D3D1)
 private val IrisTeal = Color(0xFF167C80)
+private val IrisDarkTeal = Color(0xFF5EEAD4)
 private val IrisAmber = Color(0xFFF5A524)
 private val IrisDanger = Color(0xFFB42318)
-private val IrisDarkDanger = Color(0xFFFFB4AB)
+private val IrisDarkDanger = Color(0xFFFB7185)
 private val IrisErrorContainer = Color(0xFFFEE4E2)
-private val IrisDarkErrorContainer = Color(0xFF5F1815)
+private val IrisDarkErrorContainer = Color(0xFF4C0519)
 
 private val Background: Color
     @Composable get() = MaterialTheme.colorScheme.background
@@ -203,20 +204,22 @@ private fun IrisDriveTheme(content: @Composable () -> Unit) {
 
 internal fun irisDriveColorScheme(darkTheme: Boolean) = if (darkTheme) {
     darkColorScheme(
-        primary = IrisTeal,
-        secondary = IrisAmber,
+        primary = IrisDarkInk,
+        secondary = IrisDarkTeal,
+        tertiary = IrisDarkDanger,
         background = IrisDarkBackground,
         surface = IrisDarkSurface,
-        primaryContainer = IrisDarkSoftTeal,
+        surfaceVariant = IrisDarkSurfaceVariant,
+        primaryContainer = IrisDarkSurfaceVariant,
         error = IrisDarkDanger,
         errorContainer = IrisDarkErrorContainer,
-        onPrimary = Color.White,
-        onSecondary = Color(0xFF211600),
+        onPrimary = Color(0xFF111827),
+        onSecondary = Color(0xFF042F2E),
         onBackground = IrisDarkInk,
         onSurface = IrisDarkInk,
         onSurfaceVariant = IrisDarkMuted,
         onPrimaryContainer = IrisDarkInk,
-        onErrorContainer = IrisDarkDanger,
+        onErrorContainer = Color(0xFFFFD9E2),
     )
 } else {
     lightColorScheme(

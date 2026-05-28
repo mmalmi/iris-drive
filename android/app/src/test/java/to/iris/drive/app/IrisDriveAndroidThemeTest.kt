@@ -12,9 +12,11 @@ class IrisDriveAndroidThemeTest {
         val dark = irisDriveColorScheme(darkTheme = true)
 
         assertEquals(Color(0xFF167C80), light.primary)
-        assertEquals(light.primary, dark.primary)
+        assertEquals(Color(0xFFF5F5F4), dark.primary)
+        assertEquals(Color(0xFF5EEAD4), dark.secondary)
         assertEquals(Color(0xFFF7FAF8), light.background)
-        assertEquals(Color(0xFF101815), dark.background)
+        assertEquals(Color(0xFF0C0A09), dark.background)
+        assertEquals(Color(0xFF1C1917), dark.surface)
         assertNotEquals(light.surface, dark.surface)
         assertNotEquals(light.onSurface, dark.onSurface)
     }
