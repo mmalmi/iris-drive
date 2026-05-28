@@ -189,6 +189,47 @@ async fn live_daemons_sync_windows_create_edit_rename_delete_to_ubuntu_peer() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_linked_devices_see_each_others_edits_after_authorization() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start(Duration::from_millis(250)).await;
+    cluster.wait_until_authorized().await;
+
+    cluster
+        .write(
+            Client::Windows,
+            "linked/windows-note.txt",
+            b"created after device authorization on windows",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Windows, "authorized windows edit")
+        .await;
+    cluster.assert_file(
+        Client::Ubuntu,
+        "linked/windows-note.txt",
+        b"created after device authorization on windows",
+    );
+
+    cluster
+        .write(
+            Client::Ubuntu,
+            "linked/ubuntu-note.txt",
+            b"created after device authorization on ubuntu",
+        )
+        .await;
+    cluster
+        .wait_for_convergence_from(Client::Ubuntu, "authorized ubuntu edit")
+        .await;
+    cluster.assert_file(
+        Client::Windows,
+        "linked/ubuntu-note.txt",
+        b"created after device authorization on ubuntu",
+    );
+    cluster.assert_status_counts(Client::Windows, 2, 2);
+    cluster.assert_status_counts(Client::Ubuntu, 2, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_sync_when_relay_drops_root_events_after_fips_connect() {
     let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start(Duration::ZERO).await;

@@ -478,7 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Secret key required")
             return
         }
-        let args = setupArguments(command: "restore", label: "", extra: [secret])
+        let args = setupArguments(command: "restore", label: "", extra: [secret, "--force"])
         finishSetup(arguments: args)
     }
 
@@ -488,7 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Owner key required")
             return
         }
-        let args = setupArguments(command: "link", label: "", extra: [owner])
+        let args = setupArguments(command: "link", label: "", extra: [owner, "--force"])
         finishSetup(arguments: args)
     }
 

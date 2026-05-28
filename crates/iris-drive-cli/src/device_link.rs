@@ -8,9 +8,13 @@ pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> 
             owner_or_invite,
             admin_device,
             label,
-        } => {
-            cmd_link_with_admin_device(config_dir, &owner_or_invite, admin_device.as_deref(), label)
-        }
+        } => cmd_link_with_admin_device(
+            config_dir,
+            &owner_or_invite,
+            admin_device.as_deref(),
+            false,
+            label,
+        ),
         DevicesCmd::Requests => cmd_devices_requests(config_dir),
         DevicesCmd::Approve { request, label } => cmd_approve(config_dir, &request, label),
         DevicesCmd::List => cmd_roster(config_dir),

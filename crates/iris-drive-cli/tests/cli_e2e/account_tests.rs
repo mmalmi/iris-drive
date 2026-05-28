@@ -58,6 +58,36 @@ fn restore_uses_provided_device_nsec_and_grants_admin_authority() {
 }
 
 #[test]
+fn macos_login_restore_can_replace_existing_local_setup_with_force() {
+    let original_dir = tempdir().unwrap();
+    idrive(original_dir.path()).arg("init").assert().success();
+    let nsec = std::fs::read_to_string(original_dir.path().join("key"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let original = run_json(original_dir.path(), &["whoami"]);
+    let original_device = original["device_npub"].as_str().unwrap();
+
+    let macos_dir = tempdir().unwrap();
+    let stale = run_json(
+        macos_dir.path(),
+        &["init", "--label", "stale macOS profile"],
+    );
+    assert_ne!(stale["device_npub"].as_str(), Some(original_device));
+
+    idrive(macos_dir.path())
+        .args(["restore", &nsec])
+        .assert()
+        .failure()
+        .stderr(contains("already initialized"));
+
+    let restored = run_json(macos_dir.path(), &["restore", &nsec, "--force"]);
+    assert_eq!(restored["device_npub"].as_str(), Some(original_device));
+    assert_eq!(restored["has_owner_signing_authority"], true);
+    assert_eq!(restored["authorization_state"], "authorized");
+}
+
+#[test]
 fn link_creates_awaiting_device_with_no_owner_key() {
     let dir = tempdir().unwrap();
     // Use the test owner's npub from a separate init.
@@ -95,6 +125,31 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     );
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists()); // never on a linked device
+}
+
+#[test]
+fn macos_login_link_can_replace_existing_local_setup_with_force() {
+    let owner_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+
+    let macos_dir = tempdir().unwrap();
+    run_json(
+        macos_dir.path(),
+        &["init", "--label", "stale macOS profile"],
+    );
+
+    idrive(macos_dir.path())
+        .args(["link", owner_npub])
+        .assert()
+        .failure()
+        .stderr(contains("already initialized"));
+
+    let linked = run_json(macos_dir.path(), &["link", owner_npub, "--force"]);
+    assert_eq!(linked["owner_npub"].as_str(), Some(owner_npub));
+    assert_eq!(linked["has_owner_signing_authority"], false);
+    assert_eq!(linked["authorization_state"], "awaiting_approval");
+    assert!(linked["device_link_request"]["url"].as_str().is_some());
 }
 
 #[test]

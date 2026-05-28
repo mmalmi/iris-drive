@@ -24,9 +24,10 @@ pub(crate) fn cmd_init(
 pub(crate) fn cmd_restore(
     config_dir: &std::path::Path,
     nsec: &str,
+    force: bool,
     label: Option<String>,
 ) -> Result<()> {
-    if already_initialized(config_dir) {
+    if already_initialized(config_dir) && !force {
         return Err(anyhow::anyhow!(
             "already initialized; remove {} first if you really want to overwrite",
             config_dir.display()
@@ -39,18 +40,20 @@ pub(crate) fn cmd_restore(
 pub(crate) fn cmd_link(
     config_dir: &std::path::Path,
     owner: &str,
+    force: bool,
     label: Option<String>,
 ) -> Result<()> {
-    cmd_link_with_admin_device(config_dir, owner, None, label)
+    cmd_link_with_admin_device(config_dir, owner, None, force, label)
 }
 
 pub(crate) fn cmd_link_with_admin_device(
     config_dir: &std::path::Path,
     owner: &str,
     admin_device: Option<&str>,
+    force: bool,
     label: Option<String>,
 ) -> Result<()> {
-    if already_initialized(config_dir) {
+    if already_initialized(config_dir) && !force {
         return Err(anyhow::anyhow!(
             "already initialized; remove {} first if you really want to overwrite",
             config_dir.display()

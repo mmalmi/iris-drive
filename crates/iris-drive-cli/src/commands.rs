@@ -60,6 +60,9 @@ pub(crate) enum Command {
     Restore {
         /// Owner secret key as nsec1... or 64-char hex.
         nsec: String,
+        /// Replace an existing local setup.
+        #[arg(long)]
+        force: bool,
         /// Human-readable device label.
         #[arg(long)]
         label: Option<String>,
@@ -71,6 +74,9 @@ pub(crate) enum Command {
     Link {
         /// Owner pubkey as npub1... or 64-char hex.
         owner: String,
+        /// Replace an existing local setup.
+        #[arg(long)]
+        force: bool,
         /// Human-readable device label.
         #[arg(long)]
         label: Option<String>,
