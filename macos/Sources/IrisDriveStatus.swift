@@ -109,7 +109,7 @@ struct IrisDriveFipsStatus: Equatable {
         if enabled || running {
             return "Stale"
         }
-        return "Stopped"
+        return "Paused"
     }
 
     var rosterText: String {

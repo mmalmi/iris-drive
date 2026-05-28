@@ -565,9 +565,9 @@ struct IrisDriveControlPanel: View {
 
             Section("Sync & advanced") {
                 HStack(spacing: 10) {
-                    Button("Start") { controller.startSync() }
+                    Button("Resume") { controller.startSync() }
                         .disabled(status.daemonRunning)
-                    Button("Stop") { controller.stopSync() }
+                    Button("Pause") { controller.stopSync() }
                         .disabled(!status.daemonRunning)
                 }
                 Button("Copy snapshot link") { controller.copyDriveLink() }

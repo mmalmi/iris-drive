@@ -75,7 +75,7 @@ class IrisDriveSyncService : Service() {
             .setContentText("Sync service active")
             .setOngoing(true)
             .setContentIntent(openAppIntent)
-            .addAction(R.drawable.ic_drive, "Stop", stopIntent)
+            .addAction(R.drawable.ic_drive, "Pause", stopIntent)
             .build()
     }
 

@@ -142,7 +142,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var syncStateTitle: String {
-        syncRunning ? "Sync running" : "Sync paused"
+        syncRunning ? "Sync on" : "Sync paused"
     }
 
     var snapshotLink: String {
@@ -379,7 +379,7 @@ final class IrisDriveMobileModel: ObservableObject {
     func startSync() {
         guard hasLocalProfile else { return }
         syncRunning = true
-        statusTitle = "Sync running"
+        statusTitle = "Sync on"
         statusDetail = "Foreground sync is active."
         persist()
         load()
@@ -396,7 +396,7 @@ final class IrisDriveMobileModel: ObservableObject {
     func restartSync() {
         guard hasLocalProfile else { return }
         syncRunning = true
-        statusTitle = "Sync restarted"
+        statusTitle = "Sync on"
         statusDetail = "Foreground sync is active."
         persist()
         load()

@@ -4,7 +4,7 @@ use super::*;
 pub(crate) fn start_daemon(model: &AppRef) {
     let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
     if ensure_daemon_running(model, &status) {
-        model.ui.notice.set_text("Sync already running");
+        model.ui.notice.set_text("Sync is already on");
         return;
     }
     model.ui.notice.set_text("Could not start sync");
@@ -24,7 +24,7 @@ pub(crate) fn ensure_daemon_running(model: &AppRef, status: &Value) -> bool {
     match spawn_daemon() {
         Ok(child) => {
             *model.daemon.borrow_mut() = Some(child);
-            model.ui.notice.set_text("Sync started");
+            model.ui.notice.set_text("Sync resumed");
             true
         }
         Err(error) => {
@@ -245,7 +245,7 @@ pub(crate) fn stop_daemon(model: &AppRef) {
     }
 
     if stopped {
-        model.ui.notice.set_text("Sync stopped");
+        model.ui.notice.set_text("Sync paused");
     }
     refresh(model);
 }

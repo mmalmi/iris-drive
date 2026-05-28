@@ -122,8 +122,8 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Collapsed;
         MainRoot.Visibility = Visibility.Visible;
         DriveTitle.Text = "My Drive";
-        DriveMessage.Text = "Starting sync";
-        StatusPill.Text = "Starting";
+        DriveMessage.Text = "Turning sync on";
+        StatusPill.Text = "Sync on";
         FilesValue.Text = "0";
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
@@ -144,14 +144,14 @@ public partial class MainWindow : Window
         AwaitingOwnerBox.Text = status.OwnerNpub ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? "";
         DeviceRequestBox.Text = status.DeviceLinkRequestUrl ?? "";
-        SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync stopped");
+        SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync paused");
     }
 
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
     {
         DriveTitle.Text = status.DriveName;
-        DriveMessage.Text = syncRunning ? "Running" : "Stopped";
-        StatusPill.Text = syncRunning ? "Running" : "Stopped";
+        DriveMessage.Text = syncRunning ? "Sync on" : "Paused";
+        StatusPill.Text = syncRunning ? "On" : "Paused";
         FilesValue.Text = (status.FileCount > 0 ? status.FileCount : status.TopLevelEntries)
             .ToString(CultureInfo.InvariantCulture);
         StorageValue.Text = FormatBytes(status.LocalBlockBytes);
@@ -189,7 +189,7 @@ public partial class MainWindow : Window
     {
         DriveTitle.Text = "My Drive";
         DriveMessage.Text = "Unavailable";
-        StatusPill.Text = "Stopped";
+        StatusPill.Text = "Paused";
         FilesValue.Text = "0";
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
@@ -467,7 +467,7 @@ public partial class MainWindow : Window
         try
         {
             daemon = service.StartDaemonProcess();
-            NoticeText.Text = "Sync started";
+            NoticeText.Text = "Sync resumed";
             return true;
         }
         catch (Exception error)
@@ -513,7 +513,7 @@ public partial class MainWindow : Window
 
         if (stopped)
         {
-            NoticeText.Text = "Sync stopped";
+            NoticeText.Text = "Sync paused";
         }
     }
 
@@ -1031,7 +1031,7 @@ public partial class MainWindow : Window
         menu.Items.Add("Show Iris Drive", null, (_, _) => ShowFromTray());
         menu.Items.Add("Open Drive Folder", null, (_, _) => OpenDriveMount());
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Start Sync", null, async (_, _) =>
+        menu.Items.Add("Resume Sync", null, async (_, _) =>
         {
             if (currentStatus is not null)
             {
@@ -1039,7 +1039,7 @@ public partial class MainWindow : Window
             }
             await RefreshAsync();
         });
-        menu.Items.Add("Stop Sync", null, async (_, _) =>
+        menu.Items.Add("Pause Sync", null, async (_, _) =>
         {
             StopDaemon();
             await RefreshAsync();

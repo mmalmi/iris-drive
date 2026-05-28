@@ -27,8 +27,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let open_snapshot_button =
         action_button("document-open-symbolic", "Open Snapshot", "Open snapshot");
     let init_button = text_button("Initialize");
-    let stop_button = action_button("process-stop-symbolic", "Stop", "Stop sync");
-    let start_button = action_button("media-playback-start-symbolic", "Start", "Start sync");
+    let stop_button = action_button("media-playback-pause-symbolic", "Pause", "Pause sync");
+    let start_button = action_button("media-playback-start-symbolic", "Resume", "Resume sync");
 
     let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     shell.add_css_class("iris-shell");
@@ -101,14 +101,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let drive_title = gtk::Label::new(Some("My Drive"));
     drive_title.add_css_class("title-2");
     drive_title.set_xalign(0.0);
-    let drive_message = gtk::Label::new(Some("Starting sync"));
+    let drive_message = gtk::Label::new(Some("Turning sync on"));
     drive_message.add_css_class("iris-muted");
     drive_message.set_xalign(0.0);
     drive_labels.append(&drive_title);
     drive_labels.append(&drive_message);
     drive_header.append(&drive_labels);
 
-    let status_pill = gtk::Label::new(Some("Stopped"));
+    let status_pill = gtk::Label::new(Some("Paused"));
     status_pill.add_css_class("iris-status-pill");
     drive_header.append(&status_pill);
     dashboard.append(&drive_header);

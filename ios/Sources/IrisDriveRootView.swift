@@ -278,13 +278,15 @@ private struct DriveHomeView: View {
                 Button {
                     model.startSync()
                 } label: {
-                    Label("Start sync", systemImage: "play.fill")
+                    Label("Resume sync", systemImage: "play.fill")
                 }
+                .disabled(model.syncRunning)
                 Button {
                     model.stopSync()
                 } label: {
-                    Label("Stop sync", systemImage: "stop.fill")
+                    Label("Pause sync", systemImage: "pause.fill")
                 }
+                .disabled(!model.syncRunning)
             }
         }
         .navigationTitle("My Drive")

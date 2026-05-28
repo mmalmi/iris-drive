@@ -23,15 +23,15 @@ pub(crate) fn refresh(model: &AppRef) {
             model
                 .ui
                 .drive_message
-                .set_text(if sync_running { "Running" } else { "Stopped" });
+                .set_text(if sync_running { "Sync on" } else { "Paused" });
             model
                 .ui
                 .status_pill
-                .set_text(if sync_running { "Running" } else { "Stopped" });
+                .set_text(if sync_running { "On" } else { "Paused" });
             model
                 .ui
                 .status
-                .set_text(if sync_running { "Syncing" } else { "Ready" });
+                .set_text(if sync_running { "Sync on" } else { "Paused" });
             model.ui.folder.set_text(&drive_mount_text(&json));
             let account = account_json(&json);
             let owner_npub = find_string(account, &["owner_npub"]);
@@ -72,7 +72,7 @@ pub(crate) fn refresh(model: &AppRef) {
             set_view_mode(model, true, daemon_is_running(model));
             model.ui.drive_title.set_text("My Drive");
             model.ui.drive_message.set_text("Unavailable");
-            model.ui.status_pill.set_text("Stopped");
+            model.ui.status_pill.set_text("Paused");
             model.ui.status.set_text("Unavailable");
             model
                 .ui

@@ -228,7 +228,7 @@ pub(crate) fn fips_state_text(fips: &Value) -> String {
     } else if enabled || running {
         "Stale".to_string()
     } else {
-        "Stopped".to_string()
+        "Paused".to_string()
     }
 }
 

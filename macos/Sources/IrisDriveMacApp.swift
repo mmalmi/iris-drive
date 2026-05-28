@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        updateStatus("Stopping sync")
+        updateStatus("Pausing sync")
         stopSync()
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
@@ -365,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terminateDaemonProcess(daemon)
         self.daemon = nil
         setDaemonRunning(false)
-        updateStatus("Sync stopped")
+        updateStatus("Sync paused")
     }
 
     private func terminateDaemonProcess(_ process: Process) {
@@ -626,7 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(.separator())
         let startItem = NSMenuItem(
-            title: "Start Sync",
+            title: "Resume Sync",
             action: #selector(startSync),
             keyEquivalent: ""
         )
@@ -635,7 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(startItem)
 
         let stopItem = NSMenuItem(
-            title: "Stop Sync",
+            title: "Pause Sync",
             action: #selector(stopSync),
             keyEquivalent: ""
         )
@@ -780,7 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
-            updateStatus("Starting sync")
+            updateStatus("Turning sync on")
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
             startDaemon(idrive, paths: paths)
         } catch {
@@ -929,7 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if externalDaemonMode {
             NSLog("Iris Drive external daemon mode enabled; app will not spawn bundled idrive")
             setDaemonRunning(true)
-            updateStatus("Sync running")
+            updateStatus("Sync on")
             startStatusRefreshTimer(interval: 10.0)
             startExternalDaemonStatusWatcher(paths: paths)
             refreshStatus()
@@ -950,7 +950,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             daemon = process
             NSLog("Iris Drive sync daemon started")
             setDaemonRunning(true)
-            updateStatus("Sync running")
+            updateStatus("Sync on")
             prepareFileProviderRuntime(paths: paths, idrive: idrive)
             startStatusRefreshTimer(interval: 5.0)
             refreshStatus()
@@ -1190,7 +1190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.daemon = nil
                 self.setDaemonRunning(false)
                 if self.userRequestedSyncStop {
-                    self.updateStatus("Sync stopped")
+                    self.updateStatus("Sync paused")
                 } else {
                     self.updateStatus("Restarting sync")
                     self.scheduleDaemonRestart(paths: self.runtimePathsForMenu ?? self.runtimePaths())
@@ -1414,7 +1414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.lastEvent = event
                 switch event {
                 case "subscribed":
-                    self.updateStatus("Sync running")
+                    self.updateStatus("Sync on")
                     status.relays = json["relays"] as? [String] ?? status.relays
                     if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
                         status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
@@ -1443,7 +1443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case "initial_import":
                     self.updateStatus("Imported drive")
                 case "initial_publish":
-                    self.updateStatus("Sync running")
+                    self.updateStatus("Sync on")
                 case "auto_published":
                     self.updateStatus("Published")
                 case "app_keys":
@@ -1460,7 +1460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                      "mount_refresh_skipped":
                     self.signalFileProviderDomain()
                 case "shutdown":
-                    self.updateStatus("Sync stopped")
+                    self.updateStatus("Sync paused")
                 case "initial_publish_error", "auto_publish_error", "apply_error":
                     self.updateStatus("Sync needs attention")
                 default:

@@ -488,7 +488,7 @@ public sealed record FipsDiagnostics(
         !string.IsNullOrWhiteSpace(Error) ? "Error" :
         Enabled && Fresh ? "Running" :
         Enabled || Running ? "Stale" :
-        "Stopped";
+        "Paused";
 
     public string RosterText => $"{RosterConnectedPeerCount}/{RosterPeerCount} direct";
 

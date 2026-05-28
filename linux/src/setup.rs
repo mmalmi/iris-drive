@@ -48,7 +48,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     notice.set_text(if sync_running {
         "Waiting for approval"
     } else {
-        "Sync stopped"
+        "Sync paused"
     });
 
     let copy = primary_button("Copy request");

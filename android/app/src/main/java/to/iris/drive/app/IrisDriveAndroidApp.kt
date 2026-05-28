@@ -572,19 +572,19 @@ private fun SyncPanel(
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
 ) {
-    CardSection(title = "Sync", trailing = if (state.sync.running) "running" else "paused") {
-        StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "running" else "paused" })
+    CardSection(title = "Sync", trailing = if (state.sync.running) "on" else "paused") {
+        StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "on" else "paused" })
         StatRow("Account", state.account?.authorizationState ?: "not linked")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onStartSync) {
+            Button(onClick = onStartSync, enabled = !state.sync.running) {
                 Icon(painterResource(R.drawable.ic_play), contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text("Start")
+                Text("Resume")
             }
-            OutlinedButton(onClick = onStopSync) {
+            OutlinedButton(onClick = onStopSync, enabled = state.sync.running) {
                 Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text("Stop")
+                Text("Pause")
             }
         }
     }

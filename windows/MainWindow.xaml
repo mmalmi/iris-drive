@@ -196,14 +196,14 @@
           </Button>
           <Button x:Name="StopButton" Click="Stop_Click" Margin="0,0,8,8">
             <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE71A;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Stop" />
+              <TextBlock Text="&#xE769;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Pause" />
             </StackPanel>
           </Button>
           <Button x:Name="StartButton" Click="Start_Click" Margin="0,0,8,8">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE768;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Start" />
+              <TextBlock Text="Resume" />
             </StackPanel>
           </Button>
         </WrapPanel>
@@ -223,14 +223,14 @@
                          Foreground="{StaticResource IrisTextBrush}" />
               <StackPanel Grid.Column="1">
                 <TextBlock x:Name="DriveTitle" Text="My Drive" FontSize="23" FontWeight="SemiBold" />
-                <TextBlock x:Name="DriveMessage" Text="Starting sync" Foreground="{StaticResource IrisMutedBrush}" />
+                <TextBlock x:Name="DriveMessage" Text="Turning sync on" Foreground="{StaticResource IrisMutedBrush}" />
               </StackPanel>
               <Border Grid.Column="2"
                       Background="{StaticResource IrisSuccessBrush}"
                       CornerRadius="12"
                       Padding="10,5"
                       VerticalAlignment="Top">
-                <TextBlock x:Name="StatusPill" Text="Stopped" Foreground="White" FontWeight="SemiBold" />
+                <TextBlock x:Name="StatusPill" Text="Paused" Foreground="White" FontWeight="SemiBold" />
               </Border>
             </Grid>
 

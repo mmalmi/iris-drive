@@ -183,7 +183,7 @@ impl ksni::Tray for IrisDriveTray {
         ksni::ToolTip {
             icon_name: "iris-drive".to_string(),
             title: "Iris Drive".to_string(),
-            description: "Sync active".to_string(),
+            description: "Sync on".to_string(),
             ..Default::default()
         }
     }
@@ -210,14 +210,14 @@ impl ksni::Tray for IrisDriveTray {
             tray_menu_item(
                 &self.sender,
                 TrayCommand::StartSync,
-                "Start Sync",
+                "Resume Sync",
                 "media-playback-start",
             ),
             tray_menu_item(
                 &self.sender,
                 TrayCommand::StopSync,
-                "Stop Sync",
-                "media-playback-stop",
+                "Pause Sync",
+                "media-playback-pause",
             ),
             ksni::MenuItem::Separator,
             tray_menu_item(&self.sender, TrayCommand::Quit, "Quit", "application-exit"),
