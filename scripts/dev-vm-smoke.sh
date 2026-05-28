@@ -15,6 +15,8 @@ SMOKE_BASE_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-codex-lab-smoke}"
 SMOKE_ROOT="$SMOKE_BASE_ROOT"
 SMOKE_DIR="${IRIS_DRIVE_DEV_VM_SMOKE_DIR:-$SMOKE_ROOT/$RUN_ID}"
 SMOKE_CLEANUP_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_ROOT:-}"
+SMOKE_CLEAN_PREVIOUS_RUNS="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS:-1}"
+SMOKE_CLEAN_PREVIOUS_RUNS_WAIT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS_WAIT:-0}"
 TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
 MAX_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MAX_SYNC_WAIT_TIMEOUT:-30}"
 
@@ -861,6 +863,116 @@ cleanup_previous_smoke_root() {
     die "current smoke dir cleanup incomplete after ${elapsed}s: $remnant_text"
   fi
   log "warning after ${elapsed}s: smoke root still has local remnants: $remnant_text"
+}
+
+previous_smoke_run_dirs() {
+  local provider_file
+  provider_file="$(mktemp -t iris-drive-provider-list.XXXXXX.json)"
+  if ! ssh "$UBUNTU_SSH_HOST" 'bash -se' >"$provider_file" <<'REMOTE_SH'
+set -Eeuo pipefail
+"$HOME/src/iris-drive/target/debug/idrive" provider list
+REMOTE_SH
+  then
+    rm -f "$provider_file"
+    return 1
+  fi
+  PROVIDER_JSON_FILE="$provider_file" SMOKE_ROOT="$SMOKE_ROOT" SMOKE_DIR="$SMOKE_DIR" python3 <<'PY'
+import json
+import os
+import re
+
+def clean(path):
+    return "/".join(part for part in path.replace("\\", "/").split("/") if part)
+
+root = clean(os.environ["SMOKE_ROOT"])
+current = clean(os.environ["SMOKE_DIR"])
+if not root:
+    raise SystemExit(0)
+
+preserve = None
+prefix = root + "/"
+if current == root:
+    preserve = root
+elif current.startswith(prefix):
+    preserve = prefix + current[len(prefix):].split("/", 1)[0]
+
+try:
+    with open(os.environ["PROVIDER_JSON_FILE"], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+runs = set()
+for entry in data.get("entries", []):
+    path = clean(str(entry.get("path", "")))
+    if not path.startswith(prefix):
+        continue
+    run = path[len(prefix):].split("/", 1)[0]
+    if not re.fullmatch(r"\d{8}-\d{6}", run):
+        continue
+    run_path = f"{root}/{run}"
+    if run_path != preserve:
+        runs.add(run_path)
+
+for run_path in sorted(runs):
+    print(run_path)
+PY
+  local status=$?
+  rm -f "$provider_file"
+  return "$status"
+}
+
+cleanup_previous_smoke_runs() {
+  case "$SMOKE_CLEAN_PREVIOUS_RUNS" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) return 0 ;;
+  esac
+
+  local candidates
+  if ! candidates="$(previous_smoke_run_dirs)"; then
+    log "warning: could not list previous native smoke runs"
+    return 0
+  fi
+  [[ -n "$candidates" ]] || return 0
+
+  local count
+  count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+  log "cleaning $count previous native smoke run(s) under $SMOKE_ROOT"
+  local start
+  start="$(date +%s)"
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    delete_ubuntu_path "$path" || true
+    delete_ubuntu_provider_path "$path" >/dev/null 2>&1 || true
+    delete_windows_path "$path" || true
+    delete_windows_provider_path "$path" >/dev/null 2>&1 || true
+    delete_macos_provider_path "$path" >/dev/null 2>&1 || true
+  done <<<"$candidates"
+
+  case "$SMOKE_CLEAN_PREVIOUS_RUNS_WAIT" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "previous smoke runs cleanup" "$elapsed" "queued"
+      log "queued in ${elapsed}s: previous smoke runs cleanup"
+      return 0
+      ;;
+  esac
+
+  while (( $(date +%s) - start < SMOKE_CLEANUP_TIMEOUT )); do
+    if [[ -z "$(previous_smoke_run_dirs || true)" ]]; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "previous smoke runs cleanup" "$elapsed" "ok"
+      log "ok in ${elapsed}s: previous smoke runs cleanup"
+      return 0
+    fi
+    sleep 1
+  done
+
+  local elapsed=$(( $(date +%s) - start ))
+  record_timing "previous smoke runs cleanup" "$elapsed" "warning"
+  log "warning after ${elapsed}s: previous smoke runs still visible in provider list"
 }
 
 write_windows_zero_file() {
@@ -1791,6 +1903,7 @@ check_provider_noise
 case "$SMOKE_ONLY" in
   all)
     cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
     SMOKE_ACTIVE_PHASE="sync"
     run_sync_smoke
     SMOKE_ACTIVE_PHASE="heavy-projection"
@@ -1801,12 +1914,14 @@ case "$SMOKE_ONLY" in
     ;;
   sync)
     cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
     SMOKE_ACTIVE_PHASE="sync"
     run_sync_smoke
     delete_ubuntu_path "$SMOKE_DIR" || true
     ;;
   heavy|heavy-projection)
     cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
     SMOKE_ACTIVE_PHASE="heavy-projection"
     run_heavy_projection_stress
     delete_ubuntu_path "$SMOKE_DIR" || true

@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
+    private var fileProviderSignalWorkItem: DispatchWorkItem?
     private var fileProviderRepairInFlight = false
     private var fileProviderReimportInFlight = false
     private var lastFileProviderRepairAt = Date.distantPast
@@ -1595,6 +1596,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func signalFileProviderDomain() {
+        guard fileProviderIntegrationEnabled else { return }
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.signalFileProviderDomain()
+            }
+            return
+        }
+        guard fileProviderSignalWorkItem == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.fileProviderSignalWorkItem = nil
+            self?.performFileProviderDomainSignal()
+        }
+        fileProviderSignalWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func performFileProviderDomainSignal() {
         guard fileProviderIntegrationEnabled else { return }
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else { return }
