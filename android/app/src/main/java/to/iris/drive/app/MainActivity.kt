@@ -50,7 +50,6 @@ class MainActivity : ComponentActivity() {
 
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
-                onRefresh = ::refresh,
                 onCreateProfile = { deviceLabel ->
                     dispatch(NativeActions.createProfile(deviceLabel))
                 },
