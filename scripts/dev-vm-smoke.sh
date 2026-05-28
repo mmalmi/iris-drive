@@ -54,6 +54,8 @@ SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
 WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
 PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
 PROJECTION_STRESS_LARGE_BYTES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_LARGE_BYTES:-262144}"
+SMOKE_ONLY="${IRIS_DRIVE_DEV_VM_SMOKE_ONLY:-all}"
+SMOKE_ACTIVE_PHASE="$SMOKE_ONLY"
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
 
@@ -61,8 +63,22 @@ log() {
   printf '[dev-vm-smoke] %s\n' "$*" >&2
 }
 
+print_failure_context() {
+  log "recent timings from $TIMINGS_FILE"
+  if [[ -s "$TIMINGS_FILE" ]]; then
+    tail -20 "$TIMINGS_FILE" >&2
+  else
+    log "no timings recorded yet"
+  fi
+  log "rerun this smoke phase:"
+  log "  IRIS_DRIVE_E2E_SKIP_CARGO=1 IRIS_DRIVE_E2E_SKIP_DEPLOY=1 scripts/e2e-everything-3vms.sh --smoke-only $SMOKE_ACTIVE_PHASE"
+  log "rerun all native smoke phases:"
+  log "  IRIS_DRIVE_E2E_SKIP_CARGO=1 IRIS_DRIVE_E2E_SKIP_DEPLOY=1 scripts/e2e-everything-3vms.sh --smoke-only all"
+}
+
 die() {
   printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
+  print_failure_context
   exit 1
 }
 
@@ -1705,7 +1721,9 @@ run_sync_smoke() {
     "$(basename "$ubuntu_edit_windows_hydrated")" "new ubuntu bytes $RUN_ID" \
     "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
   check_native_status_summaries
+}
 
+run_heavy_projection_stress() {
   log "checking heavy native projection stress converges on all OS surfaces"
   local stress_dir="$SMOKE_DIR/heavy-projection"
   local i
@@ -1722,8 +1740,6 @@ run_sync_smoke() {
   wait_for "heavy native projection manifests converge with expected bytes" "$HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT" \
     heavy_projection_manifest_matches \
     "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
-
-  delete_ubuntu_path "$SMOKE_DIR" || true
 }
 
 run_macos_open_smoke() {
@@ -1772,8 +1788,36 @@ REMOTE_SWIFT
 check_revisions
 check_fips_online
 check_provider_noise
-cleanup_previous_smoke_root
-run_sync_smoke
-run_macos_open_smoke
+case "$SMOKE_ONLY" in
+  all)
+    cleanup_previous_smoke_root
+    SMOKE_ACTIVE_PHASE="sync"
+    run_sync_smoke
+    SMOKE_ACTIVE_PHASE="heavy-projection"
+    run_heavy_projection_stress
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
+  sync)
+    cleanup_previous_smoke_root
+    SMOKE_ACTIVE_PHASE="sync"
+    run_sync_smoke
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    ;;
+  heavy|heavy-projection)
+    cleanup_previous_smoke_root
+    SMOKE_ACTIVE_PHASE="heavy-projection"
+    run_heavy_projection_stress
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    ;;
+  macos-ui)
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
+  *)
+    die "unknown IRIS_DRIVE_DEV_VM_SMOKE_ONLY=$SMOKE_ONLY (expected all, sync, heavy-projection, or macos-ui)"
+    ;;
+esac
 log "timings written to $TIMINGS_FILE"
 log "ok"

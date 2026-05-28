@@ -8,7 +8,7 @@
 //! - Rerun one failure:
 //!   `cargo test -p idrive --test daemon_sync_matrix <test-name> -- --exact --nocapture`
 //! - Stop the matrix after the first failure:
-//!   `cargo test -p idrive --test daemon_sync_matrix -- --fail-fast --nocapture`
+//!   `cargo nextest run -p idrive --test daemon_sync_matrix --fail-fast`
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -44,7 +44,7 @@ fn current_test_name() -> String {
 fn rerun_hint(test_name: &str) -> String {
     format!(
         "rerun this test: cargo test -p idrive --test daemon_sync_matrix {test_name} -- --exact --nocapture\n\
-         rerun matrix with fast fail: cargo test -p idrive --test daemon_sync_matrix -- --fail-fast --nocapture"
+         rerun matrix with fast fail: cargo nextest run -p idrive --test daemon_sync_matrix --fail-fast"
     )
 }
 

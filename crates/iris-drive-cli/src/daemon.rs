@@ -690,10 +690,88 @@ fn current_device_root_key(config: &AppConfig) -> Option<String> {
     ))
 }
 
+fn merged_drive_roots_key(config: &AppConfig) -> Option<String> {
+    let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
+    let mut key = format!("drive:{}", drive.drive_id);
+    for (device_pubkey, root) in &drive.device_roots {
+        key.push('|');
+        key.push_str(device_pubkey);
+        key.push(':');
+        key.push_str(&root.root_cid);
+        key.push(':');
+        key.push_str(&root.device_seq.to_string());
+    }
+    Some(key)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RootApplyFollowupKey {
+    DeviceRoots(Vec<(String, String, u64)>),
+    MergedDriveRoots(String),
+}
+
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
     if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
         *last_root_key = current_device_root_key(&config);
     }
+}
+
+fn root_apply_followup_key(
+    config: &AppConfig,
+    root_cid_to_pull: Option<&str>,
+    should_materialize: bool,
+) -> Option<RootApplyFollowupKey> {
+    if let Some(root_cid) = root_cid_to_pull
+        && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+    {
+        let roots = drive
+            .device_roots
+            .iter()
+            .filter(|(_, root)| root.root_cid == root_cid)
+            .map(|(device, root)| (device.clone(), root.root_cid.clone(), root.device_seq))
+            .collect::<Vec<_>>();
+        if !roots.is_empty() {
+            return Some(RootApplyFollowupKey::DeviceRoots(roots));
+        }
+    }
+    if should_materialize {
+        return merged_drive_roots_key(config).map(RootApplyFollowupKey::MergedDriveRoots);
+    }
+    None
+}
+
+fn root_apply_followup_is_stale(
+    config_dir: &Path,
+    expected_root_key: Option<&RootApplyFollowupKey>,
+) -> bool {
+    let Some(expected_root_key) = expected_root_key else {
+        return false;
+    };
+    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        return false;
+    };
+    match expected_root_key {
+        RootApplyFollowupKey::DeviceRoots(roots) => {
+            let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
+                return true;
+            };
+            roots.iter().any(|(device, root_cid, device_seq)| {
+                drive
+                    .device_roots
+                    .get(device)
+                    .is_none_or(|root| root.root_cid != *root_cid || root.device_seq != *device_seq)
+            })
+        }
+        RootApplyFollowupKey::MergedDriveRoots(expected) => {
+            merged_drive_roots_key(&config).as_deref() != Some(expected.as_str())
+        }
+    }
+}
+
+fn root_apply_followup_key_label(expected_root_key: Option<&RootApplyFollowupKey>) -> String {
+    expected_root_key
+        .map(|key| format!("{key:?}"))
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn root_update_debounce_duration(watch_debounce_ms: u64) -> std::time::Duration {
@@ -2807,13 +2885,39 @@ pub(crate) fn spawn_root_apply_followup(
     if root_cid_to_pull.is_none() && !should_materialize {
         return;
     }
+    let expected_materialize_root_key =
+        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_materialize);
 
     tokio::spawn(async move {
         if let Some(root_cid) = root_cid_to_pull {
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
+                if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref())
+                {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "root_apply_followup_skipped_stale",
+                            "root_cid": root_cid,
+                        })
+                    );
+                    return;
+                }
                 if *delay_secs > 0 {
                     tokio::time::sleep(std::time::Duration::from_secs(*delay_secs)).await;
+                    if root_apply_followup_is_stale(
+                        &config_dir,
+                        expected_materialize_root_key.as_ref(),
+                    ) {
+                        println!(
+                            "{}",
+                            json!({
+                                "event": "root_apply_followup_skipped_stale",
+                                "root_cid": root_cid,
+                            })
+                        );
+                        return;
+                    }
                 }
                 match pull_blocks_for_root_bounded(
                     &config_dir,
@@ -2856,6 +2960,16 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if should_materialize {
+            if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref()) {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "root_apply_materialize_skipped_stale",
+                        "root_key": root_apply_followup_key_label(expected_materialize_root_key.as_ref()),
+                    })
+                );
+                return;
+            }
             let mut refreshed_windows_cloud = false;
             if let Some(sync_root) = windows_cloud_projection_root() {
                 match refresh_windows_cloud_local_projection(&config_dir, &sync_root).await {
@@ -3177,6 +3291,85 @@ mod tests {
             root_update_debounce_duration(2_500),
             std::time::Duration::from_millis(2_500)
         );
+    }
+
+    #[test]
+    fn stale_root_apply_followup_detects_superseded_device_root() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut drive = Drive {
+            owner_pubkey: "owner".to_string(),
+            drive_id: PRIMARY_DRIVE_ID.to_string(),
+            display_name: "My Drive".to_string(),
+            role: DriveRole::Owner,
+            device_roots: BTreeMap::new(),
+            last_root_cid: None,
+            key_hex: None,
+        };
+        drive.device_roots.insert(
+            "device-a".to_string(),
+            DeviceRootRef::legacy("root-a", 10, 1),
+        );
+        drive.device_roots.insert(
+            "device-b".to_string(),
+            DeviceRootRef::legacy("remote-root-a", 11, 1),
+        );
+        let mut config = AppConfig {
+            account: Some(AccountState {
+                owner_pubkey: "owner".to_string(),
+                device_pubkey: "device-a".to_string(),
+                has_owner_signing_authority: true,
+                authorization_state: iris_drive_core::DeviceAuthorizationState::Authorized,
+                device_label: None,
+                app_keys: None,
+            }),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+        config
+            .save(config_path_in(config_dir.path()))
+            .expect("save initial config");
+        let stale_key = root_apply_followup_key(&config, Some("remote-root-a"), true)
+            .expect("initial followup key");
+
+        config
+            .drives
+            .get_mut(0)
+            .unwrap()
+            .device_roots
+            .get_mut("device-a")
+            .unwrap()
+            .root_cid = "root-b".to_string();
+        config
+            .save(config_path_in(config_dir.path()))
+            .expect("save unrelated local update");
+        assert!(!root_apply_followup_is_stale(
+            config_dir.path(),
+            Some(&stale_key)
+        ));
+
+        config
+            .drives
+            .get_mut(0)
+            .unwrap()
+            .device_roots
+            .get_mut("device-b")
+            .unwrap()
+            .root_cid = "remote-root-b".to_string();
+        config
+            .save(config_path_in(config_dir.path()))
+            .expect("save updated config");
+        let current_key = root_apply_followup_key(&config, Some("remote-root-b"), true)
+            .expect("updated followup key");
+
+        assert!(root_apply_followup_is_stale(
+            config_dir.path(),
+            Some(&stale_key)
+        ));
+        assert!(!root_apply_followup_is_stale(
+            config_dir.path(),
+            Some(&current_key)
+        ));
+        assert!(!root_apply_followup_is_stale(config_dir.path(), None));
     }
 
     #[tokio::test]
