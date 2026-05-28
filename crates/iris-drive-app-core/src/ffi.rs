@@ -1,7 +1,17 @@
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+
 use crate::actions::NativeAppAction;
-use crate::state::{NativeAppState, UiSyncRoot};
+use crate::state::{
+    NativeAppState, UiAccount, UiBackup, UiDevice, UiPaths, UiSyncRoot, UiSyncStatus,
+};
+
+const DEFAULT_DEVICE_LABEL: &str = "This device";
+const DEFAULT_ROOT_STATUS: &str = "pending provider hookup";
+static NEXT_SYNTHETIC_PUBKEY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
@@ -63,8 +73,18 @@ struct NativeAppRuntime {
 
 impl NativeAppRuntime {
     fn new(data_dir: String, app_version: String) -> Self {
+        let mut state = NativeAppState::default();
+        state.ui.relays = default_relays();
+        state.ui.backups = default_backups();
+        state.ui.paths = paths_for(&data_dir);
+        state.ui.sync = UiSyncStatus {
+            running: false,
+            status: "paused".to_owned(),
+        };
+        update_snapshot_link(&mut state);
+
         Self {
-            state: NativeAppState::default(),
+            state,
             data_dir,
             app_version,
         }
@@ -79,8 +99,195 @@ impl NativeAppRuntime {
         self.state.error.clear();
         match action {
             NativeAppAction::Refresh => {}
+            NativeAppAction::CreateProfile { device_label } => {
+                self.create_profile(&device_label);
+            }
+            NativeAppAction::RestoreProfile {
+                secret,
+                device_label,
+            } => {
+                self.restore_profile(&secret, &device_label);
+            }
+            NativeAppAction::LinkDevice {
+                owner_pubkey,
+                device_label,
+            } => {
+                self.link_device(&owner_pubkey, &device_label);
+            }
+            NativeAppAction::ApproveDevice { request, label } => {
+                self.approve_device(&request, &label);
+            }
+            NativeAppAction::RevokeDevice { device_pubkey } => {
+                self.revoke_device(&device_pubkey);
+            }
+            NativeAppAction::AddRelay { url } => self.add_relay(&url),
+            NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
+            NativeAppAction::ResetRelays => self.state.ui.relays = default_relays(),
+            NativeAppAction::StartSync | NativeAppAction::RestartSync => {
+                self.set_sync_running(true);
+            }
+            NativeAppAction::StopSync => self.set_sync_running(false),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
+        }
+        update_snapshot_link(&mut self.state);
+    }
+
+    fn create_profile(&mut self, device_label: &str) {
+        let owner_pubkey = generated_pubkey();
+        let device_pubkey = generated_pubkey();
+        let device_label = label_or_default(device_label);
+        self.state.ui.account = Some(UiAccount {
+            owner_pubkey: owner_pubkey.clone(),
+            device_pubkey: device_pubkey.clone(),
+            device_label: device_label.clone(),
+            authorization_state: "authorized".to_owned(),
+            has_owner_signing_authority: true,
+            device_link_request: format!(
+                "iris-drive://device-link?owner={owner_pubkey}&device={device_pubkey}"
+            ),
+        });
+        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Authorized")];
+    }
+
+    fn restore_profile(&mut self, secret: &str, device_label: &str) {
+        if secret.trim().is_empty() {
+            "owner secret is required".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let owner_pubkey = generated_pubkey();
+        let device_pubkey = generated_pubkey();
+        let device_label = label_or_default(device_label);
+        self.state.ui.account = Some(UiAccount {
+            owner_pubkey: owner_pubkey.clone(),
+            device_pubkey: device_pubkey.clone(),
+            device_label: device_label.clone(),
+            authorization_state: "authorized".to_owned(),
+            has_owner_signing_authority: true,
+            device_link_request: format!(
+                "iris-drive://device-link?owner={owner_pubkey}&device={device_pubkey}"
+            ),
+        });
+        self.state.ui.devices = vec![local_device(device_pubkey, device_label, "Authorized")];
+    }
+
+    fn link_device(&mut self, owner_pubkey: &str, device_label: &str) {
+        let owner_pubkey = owner_pubkey.trim();
+        if owner_pubkey.is_empty() {
+            "owner public key is required".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let device_pubkey = generated_pubkey();
+        let device_label = label_or_default(device_label);
+        self.state.ui.account = Some(UiAccount {
+            owner_pubkey: owner_pubkey.to_owned(),
+            device_pubkey: device_pubkey.clone(),
+            device_label: device_label.clone(),
+            authorization_state: "awaiting_approval".to_owned(),
+            has_owner_signing_authority: false,
+            device_link_request: format!(
+                "iris-drive://device-link?owner={owner_pubkey}&device={device_pubkey}"
+            ),
+        });
+        self.state.ui.devices = vec![local_device(
+            device_pubkey,
+            device_label,
+            "Awaiting approval",
+        )];
+    }
+
+    fn approve_device(&mut self, request: &str, label: &str) {
+        if !self.can_manage_devices() {
+            "owner profile is required to approve devices".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let request = request.trim();
+        if request.is_empty() {
+            "device request is required".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let device_pubkey = request_device_pubkey(request);
+        let label = label_or(label, "Linked device");
+        let device = UiDevice {
+            pubkey: device_pubkey.clone(),
+            label,
+            state: "Authorized".to_owned(),
+            detail: request.to_owned(),
+            is_online: self.state.ui.sync.running,
+            can_revoke: true,
+        };
+        match self
+            .state
+            .ui
+            .devices
+            .iter_mut()
+            .find(|existing| existing.pubkey == device_pubkey)
+        {
+            Some(existing) => *existing = device,
+            None => self.state.ui.devices.push(device),
+        }
+    }
+
+    fn revoke_device(&mut self, device_pubkey: &str) {
+        let device_pubkey = device_pubkey.trim();
+        if device_pubkey.is_empty() {
+            "device public key is required".clone_into(&mut self.state.error);
+            return;
+        }
+        if self
+            .state
+            .ui
+            .account
+            .as_ref()
+            .is_some_and(|account| account.device_pubkey == device_pubkey)
+        {
+            "cannot revoke this device from itself".clone_into(&mut self.state.error);
+            return;
+        }
+
+        let before = self.state.ui.devices.len();
+        self.state
+            .ui
+            .devices
+            .retain(|device| device.pubkey != device_pubkey);
+        if before == self.state.ui.devices.len() {
+            self.state.error = format!("device not found: {device_pubkey}");
+        }
+    }
+
+    fn add_relay(&mut self, url: &str) {
+        let url = url.trim();
+        if url.is_empty() {
+            "relay URL is required".clone_into(&mut self.state.error);
+            return;
+        }
+        if !self.state.ui.relays.iter().any(|existing| existing == url) {
+            self.state.ui.relays.push(url.to_owned());
+        }
+    }
+
+    fn remove_relay(&mut self, url: &str) {
+        let url = url.trim();
+        let before = self.state.ui.relays.len();
+        self.state.ui.relays.retain(|relay| relay != url);
+        if before == self.state.ui.relays.len() {
+            self.state.error = format!("relay not found: {url}");
+        }
+    }
+
+    fn set_sync_running(&mut self, running: bool) {
+        self.state.ui.sync = UiSyncStatus {
+            running,
+            status: if running { "running" } else { "paused" }.to_owned(),
+        };
+        for device in &mut self.state.ui.devices {
+            if !device.can_revoke {
+                device.is_online = running;
+            }
         }
     }
 
@@ -99,7 +306,7 @@ impl NativeAppRuntime {
         let root = UiSyncRoot {
             name: name.to_owned(),
             local_path: local_path.to_owned(),
-            status: "pending provider hookup".to_owned(),
+            status: DEFAULT_ROOT_STATUS.to_owned(),
         };
         match self
             .state
@@ -124,6 +331,94 @@ impl NativeAppRuntime {
             self.state.error = format!("sync root not found: {name}");
         }
     }
+
+    fn can_manage_devices(&self) -> bool {
+        self.state
+            .ui
+            .account
+            .as_ref()
+            .is_some_and(|account| account.has_owner_signing_authority)
+    }
+}
+
+fn paths_for(data_dir: &str) -> UiPaths {
+    UiPaths {
+        data_dir: data_dir.to_owned(),
+        config_path: path_join(data_dir, "config.toml"),
+        blocks_dir: path_join(data_dir, "blocks"),
+    }
+}
+
+fn path_join(data_dir: &str, child: &str) -> String {
+    if data_dir.is_empty() {
+        child.to_owned()
+    } else {
+        Path::new(data_dir).join(child).display().to_string()
+    }
+}
+
+fn default_relays() -> Vec<String> {
+    DEFAULT_RELAYS
+        .iter()
+        .map(|relay| (*relay).to_owned())
+        .collect()
+}
+
+fn default_backups() -> Vec<UiBackup> {
+    DEFAULT_BLOSSOM_SERVERS
+        .iter()
+        .map(|server| UiBackup {
+            label: "Blossom fallback".to_owned(),
+            state: "configured".to_owned(),
+            detail: (*server).to_owned(),
+        })
+        .collect()
+}
+
+fn generated_pubkey() -> String {
+    let next = NEXT_SYNTHETIC_PUBKEY.fetch_add(1, Ordering::Relaxed);
+    format!("pubkey-{next:016x}")
+}
+
+fn local_device(pubkey: String, label: String, state: &str) -> UiDevice {
+    UiDevice {
+        pubkey: pubkey.clone(),
+        label,
+        state: state.to_owned(),
+        detail: pubkey,
+        is_online: false,
+        can_revoke: false,
+    }
+}
+
+fn label_or_default(value: &str) -> String {
+    label_or(value, DEFAULT_DEVICE_LABEL)
+}
+
+fn label_or(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn request_device_pubkey(request: &str) -> String {
+    request
+        .split(['&', '?'])
+        .find_map(|part| part.strip_prefix("device="))
+        .unwrap_or(request)
+        .to_owned()
+}
+
+fn update_snapshot_link(state: &mut NativeAppState) {
+    let owner = state
+        .ui
+        .account
+        .as_ref()
+        .map_or("local", |account| account.owner_pubkey.as_str());
+    state.ui.snapshot_link = format!("https://drive.iris.to/snapshot/{owner}");
 }
 
 #[cfg(test)]
@@ -168,5 +463,80 @@ mod tests {
 
         assert!(state.ui.roots.is_empty());
         assert_eq!(state.error, "root name is required");
+    }
+
+    #[test]
+    fn profile_actions_populate_mobile_parity_state() {
+        let app = FfiApp::new("/tmp/iris-drive".to_owned(), "test".to_owned());
+
+        let state = app.dispatch(NativeAppAction::CreateProfile {
+            device_label: "Pixel".to_owned(),
+        });
+
+        let account = state.ui.account.as_ref().expect("account exists");
+        assert_eq!(account.device_label, "Pixel");
+        assert_eq!(account.authorization_state, "authorized");
+        assert!(account.has_owner_signing_authority);
+        assert_eq!(state.ui.devices.len(), 1);
+        assert_eq!(state.ui.devices[0].label, "Pixel");
+        assert!(state.ui.snapshot_link.contains(&account.owner_pubkey));
+        assert!(!state.ui.relays.is_empty());
+        assert!(!state.ui.backups.is_empty());
+        assert_eq!(state.ui.paths.data_dir, "/tmp/iris-drive");
+
+        let state = app.dispatch(NativeAppAction::StartSync);
+        assert!(state.ui.sync.running);
+        assert_eq!(state.ui.sync.status, "running");
+
+        let state = app.dispatch(NativeAppAction::StopSync);
+        assert!(!state.ui.sync.running);
+        assert_eq!(state.ui.sync.status, "paused");
+    }
+
+    #[test]
+    fn link_action_tracks_pending_approval() {
+        let app = FfiApp::new("/tmp/iris-drive".to_owned(), "test".to_owned());
+
+        let state = app.dispatch(NativeAppAction::LinkDevice {
+            owner_pubkey: "owner-pubkey".to_owned(),
+            device_label: "iPhone".to_owned(),
+        });
+
+        let account = state.ui.account.expect("account exists");
+        assert_eq!(account.owner_pubkey, "owner-pubkey");
+        assert_eq!(account.device_label, "iPhone");
+        assert_eq!(account.authorization_state, "awaiting_approval");
+        assert!(!account.has_owner_signing_authority);
+        assert!(account.device_link_request.contains("device="));
+    }
+
+    #[test]
+    fn owner_can_approve_and_revoke_linked_devices() {
+        let app = FfiApp::new("/tmp/iris-drive".to_owned(), "test".to_owned());
+
+        let _ = app.dispatch(NativeAppAction::CreateProfile {
+            device_label: "Mac".to_owned(),
+        });
+        let state = app.dispatch(NativeAppAction::ApproveDevice {
+            request: "iris-drive://device-link?owner=owner&device=device-b".to_owned(),
+            label: "Phone".to_owned(),
+        });
+
+        assert!(state.ui.devices.iter().any(|device| {
+            device.pubkey == "device-b" && device.label == "Phone" && device.can_revoke
+        }));
+
+        let state = app.dispatch(NativeAppAction::RevokeDevice {
+            device_pubkey: "device-b".to_owned(),
+        });
+
+        assert!(
+            !state
+                .ui
+                .devices
+                .iter()
+                .any(|device| device.pubkey == "device-b")
+        );
+        assert!(state.error.is_empty());
     }
 }

@@ -9,21 +9,21 @@ equivalent to desktop.
 
 | Capability | Linux GTK | macOS SwiftUI | Windows WPF | iOS SwiftUI | Android Compose |
 | --- | --- | --- | --- | --- | --- |
-| First-run create profile | Yes | Yes | Yes | UI scaffold | No; app shell only |
-| Restore owner profile | Yes | Yes | Yes | UI scaffold | No; app shell only |
-| Link request handoff | Yes | Yes | Yes | UI scaffold | No; app shell only |
-| Copy owner/device keys | Yes | Yes | Yes | UI scaffold | No |
-| Approve linked device from request link | Yes | Yes | Yes | UI scaffold | No |
-| Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop |
+| First-run create profile | Yes | Yes | Yes | UI scaffold | App-core create flow |
+| Restore owner profile | Yes | Yes | Yes | UI scaffold | App-core restore flow |
+| Link request handoff | Yes | Yes | Yes | UI scaffold | App-core link flow + deep link |
+| Copy owner/device keys | Yes | Yes | Yes | UI scaffold | App-core UI flow |
+| Approve linked device from request link | Yes | Yes | Yes | UI scaffold | App-core UI flow + deep link |
+| Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain | SAF DocumentsProvider |
-| Copy/open snapshot link | Yes | Yes | Yes | UI scaffold | No |
-| Devices list and auth state | Yes | Yes | Yes | UI scaffold | No |
-| Device online/sync status | Yes | Planned | Yes | Local-only scaffold | No |
-| Owner device revoke control | Yes | Planned | Yes | UI scaffold | No |
-| Relay add/reset controls | Yes | Yes | Yes | UI scaffold | No |
+| Copy/open snapshot link | Yes | Yes | Yes | UI scaffold | App-core UI flow |
+| Devices list and auth state | Yes | Yes | Yes | UI scaffold | App-core UI flow |
+| Device online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
+| Owner device revoke control | Yes | Planned | Yes | UI scaffold | App-core UI flow |
+| Relay add/reset controls | Yes | Yes | Yes | UI scaffold | App-core UI flow |
 | Direct FIPS block sync | Yes | Yes | Yes | Harness daemon peer; app pending | Harness daemon peer; app pending |
-| Blossom fallback server list | Yes | Yes | Yes | UI scaffold | No |
+| Blossom fallback server list | Yes | Yes | Yes | UI scaffold | Read-only list |
 | Hashtree config/block/root paths | Yes | Yes | Yes | App-group/runtime path only | App files path only |
 | Tray/menu-bar control | Yes | Yes | Yes | N/A | N/A |
 | Close to tray/menu-bar | Yes | Yes | Yes | N/A | N/A |

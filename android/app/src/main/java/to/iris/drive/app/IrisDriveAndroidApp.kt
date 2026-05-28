@@ -1,16 +1,16 @@
 package to.iris.drive.app
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,14 +41,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.BackupState
+import to.iris.drive.app.core.DeviceState
 import to.iris.drive.app.core.SyncRoot
+
+private const val DocumentsProviderAuthority = "to.iris.drive.documents"
+private const val ProviderRoot = "content://to.iris.drive.documents/root"
 
 private val Background = Color(0xFFF7FAF8)
 private val Ink = Color(0xFF172321)
@@ -62,14 +70,33 @@ private val Danger = Color(0xFFB42318)
 internal fun IrisDriveAndroidApp(
     stateFlow: StateFlow<AppState>,
     onRefresh: () -> Unit,
+    onCreateProfile: (String) -> Unit,
+    onRestoreProfile: (String, String) -> Unit,
+    onLinkDevice: (String, String) -> Unit,
+    onApproveDevice: (String, String) -> Unit,
+    onRevokeDevice: (String) -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
     onAddRoot: (String, String) -> Unit,
     onRemoveRoot: (String) -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
+    onRestartSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsStateWithLifecycle()
+    var addRootOpen by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
+    val copyText: (String) -> Unit = { value ->
+        clipboard.setText(AnnotatedString(value))
+    }
+    val openUri: (String) -> Unit = { value ->
+        runCatching { uriHandler.openUri(value) }
+    }
+    val account = state.account
+
     IrisDriveTheme {
-        var addRootOpen by remember { mutableStateOf(false) }
         Scaffold(
             containerColor = Background,
             topBar = {
@@ -79,32 +106,43 @@ internal fun IrisDriveAndroidApp(
                 )
             },
         ) { padding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (state.error.isNotBlank()) {
-                    item { Notice(state.error) }
-                }
-                item {
-                    SyncPanel(onStartSync = onStartSync, onStopSync = onStopSync)
-                }
-                item {
-                    ProviderPanel()
-                }
-                item {
-                    SectionHeader("Roots", "${state.roots.size}")
-                }
-                if (state.roots.isEmpty()) {
-                    item { EmptyRoots(onAddRoot = { addRootOpen = true }) }
-                } else {
-                    items(state.roots, key = { it.name }) { root ->
-                        RootRow(root = root, onRemoveRoot = onRemoveRoot)
-                    }
-                }
+            if (account == null) {
+                SetupContent(
+                    padding = padding,
+                    error = state.error,
+                    onCreateProfile = { label ->
+                        onCreateProfile(label)
+                        onAddRoot("My Drive", ProviderRoot)
+                    },
+                    onRestoreProfile = { secret, label ->
+                        onRestoreProfile(secret, label)
+                        onAddRoot("My Drive", ProviderRoot)
+                    },
+                    onLinkDevice = { owner, label ->
+                        onLinkDevice(owner, label)
+                        onAddRoot("My Drive", ProviderRoot)
+                    },
+                )
+            } else {
+                DriveContent(
+                    padding = padding,
+                    state = state,
+                    onStartSync = onStartSync,
+                    onStopSync = onStopSync,
+                    onRestartSync = onRestartSync,
+                    onCopyOwnerKey = { copyText(account.ownerPubkey) },
+                    onCopyDeviceKey = { copyText(account.devicePubkey) },
+                    onCopyLinkRequest = { copyText(account.deviceLinkRequest) },
+                    onCopySnapshotLink = { copyText(state.snapshotLink) },
+                    onOpenSnapshotLink = { openUri(state.snapshotLink) },
+                    onApproveDevice = onApproveDevice,
+                    onRevokeDevice = onRevokeDevice,
+                    onAddRelay = onAddRelay,
+                    onRemoveRelay = onRemoveRelay,
+                    onResetRelays = onResetRelays,
+                    onRemoveRoot = onRemoveRoot,
+                    onAddRoot = { addRootOpen = true },
+                )
             }
         }
         if (addRootOpen) {
@@ -164,9 +202,195 @@ private fun AppTopBar(onRefresh: () -> Unit, onAddRoot: () -> Unit) {
 }
 
 @Composable
-private fun SyncPanel(onStartSync: () -> Unit, onStopSync: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader("Sync", "service")
+private fun SetupContent(
+    padding: PaddingValues,
+    error: String,
+    onCreateProfile: (String) -> Unit,
+    onRestoreProfile: (String, String) -> Unit,
+    onLinkDevice: (String, String) -> Unit,
+) {
+    var deviceLabel by remember { mutableStateOf("Android device") }
+    var restoreSecret by remember { mutableStateOf("") }
+    var linkOwner by remember { mutableStateOf("") }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (error.isNotBlank()) {
+            item { Notice(error) }
+        }
+        item {
+            CardSection(title = "Iris Drive", trailing = "setup") {
+                Image(
+                    painter = painterResource(id = R.drawable.brand_icon),
+                    contentDescription = "Iris Drive",
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .size(96.dp),
+                )
+                OutlinedTextField(
+                    value = deviceLabel,
+                    onValueChange = { deviceLabel = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Device label") },
+                )
+            }
+        }
+        item {
+            CardSection(title = "Create Profile", trailing = "owner") {
+                Button(onClick = { onCreateProfile(deviceLabel) }) {
+                    Icon(painterResource(R.drawable.ic_add), contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Create profile")
+                }
+            }
+        }
+        item {
+            CardSection(title = "Sign In", trailing = "restore") {
+                OutlinedTextField(
+                    value = restoreSecret,
+                    onValueChange = { restoreSecret = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Secret key") },
+                )
+                Button(
+                    onClick = { onRestoreProfile(restoreSecret, deviceLabel) },
+                    enabled = restoreSecret.isNotBlank(),
+                ) {
+                    Text("Sign in")
+                }
+            }
+        }
+        item {
+            CardSection(title = "Link Device", trailing = "request") {
+                OutlinedTextField(
+                    value = linkOwner,
+                    onValueChange = { linkOwner = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Owner public key") },
+                )
+                OutlinedButton(
+                    onClick = { onLinkDevice(linkOwner, deviceLabel) },
+                    enabled = linkOwner.isNotBlank(),
+                ) {
+                    Text("Link this device")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DriveContent(
+    padding: PaddingValues,
+    state: AppState,
+    onStartSync: () -> Unit,
+    onStopSync: () -> Unit,
+    onRestartSync: () -> Unit,
+    onCopyOwnerKey: () -> Unit,
+    onCopyDeviceKey: () -> Unit,
+    onCopyLinkRequest: () -> Unit,
+    onCopySnapshotLink: () -> Unit,
+    onOpenSnapshotLink: () -> Unit,
+    onApproveDevice: (String, String) -> Unit,
+    onRevokeDevice: (String) -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
+    onRemoveRoot: (String) -> Unit,
+    onAddRoot: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            StatusPanel(state = state)
+        }
+        item {
+            SyncPanel(
+                isRunning = state.sync.running,
+                onStartSync = onStartSync,
+                onStopSync = onStopSync,
+                onRestartSync = onRestartSync,
+            )
+        }
+        item {
+            ProviderPanel(
+                snapshotLink = state.snapshotLink.ifBlank { "https://drive.iris.to/snapshot/local" },
+                onCopySnapshotLink = onCopySnapshotLink,
+                onOpenSnapshotLink = onOpenSnapshotLink,
+            )
+        }
+        item {
+            DevicesPanel(
+                devices = state.devices,
+                canApprove = state.account?.hasOwnerSigningAuthority == true,
+                onApproveDevice = onApproveDevice,
+                onRevokeDevice = onRevokeDevice,
+            )
+        }
+        item {
+            BackupsPanel(backups = state.backups)
+        }
+        item {
+            SettingsPanel(
+                state = state,
+                onCopyOwnerKey = onCopyOwnerKey,
+                onCopyDeviceKey = onCopyDeviceKey,
+                onCopyLinkRequest = onCopyLinkRequest,
+                onAddRelay = onAddRelay,
+                onRemoveRelay = onRemoveRelay,
+                onResetRelays = onResetRelays,
+            )
+        }
+        item {
+            SectionHeader("Roots", "${state.roots.size}")
+        }
+        if (state.roots.isEmpty()) {
+            item { EmptyRoots(onAddRoot = onAddRoot) }
+        } else {
+            items(state.roots, key = { it.name }) { root ->
+                RootRow(root = root, onRemoveRoot = onRemoveRoot)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPanel(state: AppState) {
+    val account = state.account
+    CardSection(title = "My Drive", trailing = state.sync.status.ifBlank { "paused" }) {
+        Text(account?.deviceLabel ?: "This device", fontWeight = FontWeight.SemiBold)
+        Text(account?.authorizationState ?: "not linked", color = Muted)
+        Text(
+            if (state.sync.running) "Foreground sync is active" else "Foreground sync is paused",
+            color = if (state.sync.running) Teal else Muted,
+        )
+    }
+}
+
+@Composable
+private fun SyncPanel(
+    isRunning: Boolean,
+    onStartSync: () -> Unit,
+    onStopSync: () -> Unit,
+    onRestartSync: () -> Unit,
+) {
+    CardSection(title = "Sync", trailing = if (isRunning) "running" else "paused") {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onStartSync) {
                 Icon(painterResource(R.drawable.ic_play), contentDescription = null)
@@ -178,14 +402,22 @@ private fun SyncPanel(onStartSync: () -> Unit, onStopSync: () -> Unit) {
                 Spacer(Modifier.size(8.dp))
                 Text("Stop")
             }
+            OutlinedButton(onClick = onRestartSync) {
+                Icon(painterResource(R.drawable.ic_refresh), contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Restart")
+            }
         }
     }
 }
 
 @Composable
-private fun ProviderPanel() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader("Files", "DocumentsProvider")
+private fun ProviderPanel(
+    snapshotLink: String,
+    onCopySnapshotLink: () -> Unit,
+    onOpenSnapshotLink: () -> Unit,
+) {
+    CardSection(title = "Files", trailing = "DocumentsProvider") {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -195,16 +427,163 @@ private fun ProviderPanel() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
                 Spacer(Modifier.size(12.dp))
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("Iris Drive", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "to.iris.drive.documents",
-                        color = Muted,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    Text(DocumentsProviderAuthority, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(snapshotLink, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCopySnapshotLink) {
+                Text("Copy snapshot link")
+            }
+            OutlinedButton(onClick = onOpenSnapshotLink) {
+                Text("Open snapshot link")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DevicesPanel(
+    devices: List<DeviceState>,
+    canApprove: Boolean,
+    onApproveDevice: (String, String) -> Unit,
+    onRevokeDevice: (String) -> Unit,
+) {
+    var request by remember { mutableStateOf("") }
+    var label by remember { mutableStateOf("") }
+
+    CardSection(title = "Devices", trailing = "${devices.size}") {
+        devices.forEach { device ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Icon(
+                    painterResource(R.drawable.ic_drive),
+                    contentDescription = null,
+                    tint = if (device.isOnline) Teal else Muted,
+                )
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(device.label, fontWeight = FontWeight.SemiBold)
+                    Text(device.state, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (device.canRevoke) {
+                    IconButton(onClick = { onRevokeDevice(device.pubkey) }) {
+                        Icon(
+                            painterResource(R.drawable.ic_delete),
+                            contentDescription = "Revoke ${device.label}",
+                            tint = Danger,
+                        )
+                    }
+                }
+            }
+        }
+        OutlinedTextField(
+            value = request,
+            onValueChange = { request = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Device request") },
+        )
+        OutlinedTextField(
+            value = label,
+            onValueChange = { label = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Label") },
+        )
+        Button(
+            onClick = {
+                onApproveDevice(request, label)
+                request = ""
+                label = ""
+            },
+            enabled = canApprove && request.isNotBlank(),
+        ) {
+            Text("Approve Device")
+        }
+    }
+}
+
+@Composable
+private fun BackupsPanel(backups: List<BackupState>) {
+    CardSection(title = "Backups", trailing = "${backups.size}") {
+        if (backups.isEmpty()) {
+            Text("No fallback servers configured", color = Muted)
+        }
+        backups.forEach { backup ->
+            Text(backup.label, fontWeight = FontWeight.SemiBold)
+            Text(backup.state, color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(backup.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SettingsPanel(
+    state: AppState,
+    onCopyOwnerKey: () -> Unit,
+    onCopyDeviceKey: () -> Unit,
+    onCopyLinkRequest: () -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
+) {
+    var relayInput by remember { mutableStateOf("") }
+    val account = state.account
+
+    CardSection(title = "Settings", trailing = "network") {
+        Text("Relays", fontWeight = FontWeight.SemiBold)
+        state.relays.forEach { relay ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(relay, color = Muted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { onRemoveRelay(relay) }) {
+                    Icon(painterResource(R.drawable.ic_delete), contentDescription = "Remove relay")
+                }
+            }
+        }
+        OutlinedTextField(
+            value = relayInput,
+            onValueChange = { relayInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Relay URL") },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = {
+                    onAddRelay(relayInput)
+                    relayInput = ""
+                },
+                enabled = relayInput.isNotBlank(),
+            ) {
+                Text("Add relay")
+            }
+            OutlinedButton(onClick = onResetRelays) {
+                Text("Reset relay")
+            }
+        }
+        Text("Owner key", fontWeight = FontWeight.SemiBold)
+        Text(account?.ownerPubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Device key", fontWeight = FontWeight.SemiBold)
+        Text(account?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCopyOwnerKey) {
+                Text("Copy owner key")
+            }
+            OutlinedButton(onClick = onCopyDeviceKey) {
+                Text("Copy device key")
+            }
+        }
+        OutlinedButton(onClick = onCopyLinkRequest) {
+            Text("Copy link request")
+        }
+        Text("Data path", fontWeight = FontWeight.SemiBold)
+        Text(state.paths.dataDir, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(state.paths.configPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(state.paths.blocksDir, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -223,20 +602,9 @@ private fun RootRow(root: SyncRoot, onRemoveRoot: (String) -> Unit) {
             Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    root.name,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(root.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(root.status, color = Muted, style = MaterialTheme.typography.bodySmall)
-                Text(
-                    root.localPath,
-                    color = Muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Text(root.localPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = { onRemoveRoot(root.name) }) {
                 Icon(
@@ -285,6 +653,25 @@ private fun Notice(text: String) {
 }
 
 @Composable
+private fun CardSection(
+    title: String,
+    trailing: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(Color.White)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            SectionHeader(title, trailing)
+            content()
+        }
+    }
+}
+
+@Composable
 private fun SectionHeader(title: String, trailing: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -302,7 +689,7 @@ private fun AddRootDialog(
     onAdd: (String, String) -> Unit,
 ) {
     var name by remember { mutableStateOf("My Drive") }
-    var path by remember { mutableStateOf("content://to.iris.drive.documents/root") }
+    var path by remember { mutableStateOf(ProviderRoot) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Root") },

@@ -3,6 +3,7 @@ package to.iris.drive.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -36,22 +37,56 @@ class MainActivity : ComponentActivity() {
                 rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
                 ) { granted ->
-                    if (granted) startSyncService()
+                    if (granted) {
+                        dispatch(NativeActions.startSync())
+                        startSyncService()
+                    }
                 }
 
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 onRefresh = ::refresh,
+                onCreateProfile = { deviceLabel ->
+                    dispatch(NativeActions.createProfile(deviceLabel))
+                },
+                onRestoreProfile = { secret, deviceLabel ->
+                    dispatch(NativeActions.restoreProfile(secret, deviceLabel))
+                },
+                onLinkDevice = { ownerPubkey, deviceLabel ->
+                    dispatch(NativeActions.linkDevice(ownerPubkey, deviceLabel))
+                },
+                onApproveDevice = { request, label ->
+                    dispatch(NativeActions.approveDevice(request, label))
+                },
+                onRevokeDevice = { devicePubkey ->
+                    dispatch(NativeActions.revokeDevice(devicePubkey))
+                },
+                onAddRelay = { url -> dispatch(NativeActions.addRelay(url)) },
+                onRemoveRelay = { url -> dispatch(NativeActions.removeRelay(url)) },
+                onResetRelays = { dispatch(NativeActions.resetRelays()) },
                 onAddRoot = { name, path -> dispatch(NativeActions.addRoot(name, path)) },
                 onRemoveRoot = { name -> dispatch(NativeActions.removeRoot(name)) },
                 onStartSync = {
                     if (needsNotificationPermission()) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
+                        dispatch(NativeActions.startSync())
                         startSyncService()
                     }
                 },
-                onStopSync = ::stopSyncService,
+                onStopSync = {
+                    dispatch(NativeActions.stopSync())
+                    stopSyncService()
+                },
+                onRestartSync = {
+                    dispatch(NativeActions.restartSync())
+                    stopSyncService()
+                    if (needsNotificationPermission()) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        startSyncService()
+                    }
+                },
             )
         }
     }
@@ -117,7 +152,12 @@ class MainActivity : ComponentActivity() {
             ) != PackageManager.PERMISSION_GRANTED
 
     private fun handleDebugIntent(intent: Intent?) {
+        val uri = intent?.data
+        if (uri != null && isDeviceLinkUri(uri)) {
+            dispatch(NativeActions.approveDevice(uri.toString(), "Android"))
+        }
         when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
+            "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
             "add-root" -> dispatch(
                 NativeActions.addRoot(
                     "Android smoke",
@@ -127,6 +167,10 @@ class MainActivity : ComponentActivity() {
             "refresh" -> refresh()
         }
     }
+
+    private fun isDeviceLinkUri(uri: Uri): Boolean =
+        (uri.scheme == "iris-drive" && uri.host == "device-link") ||
+            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/device-link")
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"

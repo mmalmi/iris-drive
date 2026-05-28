@@ -20,4 +20,9 @@ require_contains "iOS simulator smoke"
 require_contains "Android adb smoke"
 require_contains "just e2e-5devices"
 
+if grep -F "No; app shell only" "$PARITY" >/dev/null; then
+  echo "docs/PARITY.md still contains app-shell-only mobile gaps" >&2
+  exit 1
+fi
+
 echo "PLATFORM_PARITY_MATRIX_OK"
