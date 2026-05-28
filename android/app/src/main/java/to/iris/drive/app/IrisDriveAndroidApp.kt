@@ -2,6 +2,7 @@ package to.iris.drive.app
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -58,13 +60,40 @@ private const val DocumentsProviderAuthority = "to.iris.drive.documents"
 private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
 private const val DefaultSetupDeviceLabel = "Android device"
 
-private val Background = Color(0xFFF7FAF8)
-private val Ink = Color(0xFF172321)
-private val Muted = Color(0xFF657370)
-private val Teal = Color(0xFF167C80)
-private val SoftTeal = Color(0xFFE7F4F0)
-private val Amber = Color(0xFFF5A524)
-private val Danger = Color(0xFFB42318)
+private val IrisLightBackground = Color(0xFFF7FAF8)
+private val IrisLightSurface = Color.White
+private val IrisLightInk = Color(0xFF172321)
+private val IrisLightMuted = Color(0xFF657370)
+private val IrisLightSoftTeal = Color(0xFFE7F4F0)
+private val IrisDarkBackground = Color(0xFF101815)
+private val IrisDarkSurface = Color(0xFF18231F)
+private val IrisDarkInk = Color(0xFFE7F0EC)
+private val IrisDarkMuted = Color(0xFFA9B8B3)
+private val IrisDarkSoftTeal = Color(0xFF143A3C)
+private val IrisTeal = Color(0xFF167C80)
+private val IrisAmber = Color(0xFFF5A524)
+private val IrisDanger = Color(0xFFB42318)
+private val IrisDarkDanger = Color(0xFFFFB4AB)
+private val IrisErrorContainer = Color(0xFFFEE4E2)
+private val IrisDarkErrorContainer = Color(0xFF5F1815)
+
+private val Background: Color
+    @Composable get() = MaterialTheme.colorScheme.background
+
+private val Ink: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurface
+
+private val Muted: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+private val Teal: Color
+    @Composable get() = MaterialTheme.colorScheme.primary
+
+private val SoftTeal: Color
+    @Composable get() = MaterialTheme.colorScheme.primaryContainer
+
+private val Danger: Color
+    @Composable get() = MaterialTheme.colorScheme.error
 
 private enum class SetupRoute {
     Welcome,
@@ -160,19 +189,47 @@ internal fun IrisDriveAndroidApp(
 
 @Composable
 private fun IrisDriveTheme(content: @Composable () -> Unit) {
+    val darkTheme = isSystemInDarkTheme()
+
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Teal,
-            secondary = Amber,
-            background = Background,
-            surface = Color.White,
-            error = Danger,
-            onPrimary = Color.White,
-            onSecondary = Ink,
-            onBackground = Ink,
-            onSurface = Ink,
-        ),
+        colorScheme = irisDriveColorScheme(darkTheme = darkTheme),
         content = content,
+    )
+}
+
+internal fun irisDriveColorScheme(darkTheme: Boolean) = if (darkTheme) {
+    darkColorScheme(
+        primary = IrisTeal,
+        secondary = IrisAmber,
+        background = IrisDarkBackground,
+        surface = IrisDarkSurface,
+        primaryContainer = IrisDarkSoftTeal,
+        error = IrisDarkDanger,
+        errorContainer = IrisDarkErrorContainer,
+        onPrimary = Color.White,
+        onSecondary = Color(0xFF211600),
+        onBackground = IrisDarkInk,
+        onSurface = IrisDarkInk,
+        onSurfaceVariant = IrisDarkMuted,
+        onPrimaryContainer = IrisDarkInk,
+        onErrorContainer = IrisDarkDanger,
+    )
+} else {
+    lightColorScheme(
+        primary = IrisTeal,
+        secondary = IrisAmber,
+        background = IrisLightBackground,
+        surface = IrisLightSurface,
+        primaryContainer = IrisLightSoftTeal,
+        error = IrisDanger,
+        errorContainer = IrisErrorContainer,
+        onPrimary = Color.White,
+        onSecondary = IrisLightInk,
+        onBackground = IrisLightInk,
+        onSurface = IrisLightInk,
+        onSurfaceVariant = IrisLightMuted,
+        onPrimaryContainer = IrisLightInk,
+        onErrorContainer = IrisDanger,
     )
 }
 
@@ -192,7 +249,7 @@ private fun AppTopBar(onAddRoot: () -> Unit) {
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.White,
+            containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = Ink,
             actionIconContentColor = Teal,
         ),
@@ -659,7 +716,7 @@ private fun SettingsPanel(
 private fun RootRow(root: SyncRoot, onRemoveRoot: (String) -> Unit) {
     Card(
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Row(
             modifier = Modifier
@@ -713,7 +770,7 @@ private fun Notice(text: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFFEE4E2), RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
             .padding(12.dp),
     ) {
         Text(text, color = Danger)
@@ -726,7 +783,10 @@ private fun CardSection(
     trailing: String,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(Color.White)) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
