@@ -19,13 +19,15 @@ public sealed class DriveFolderPreparation
         bool nativeSyncRootReady,
         string? warning,
         int placeholderCount = 0,
-        int skippedLocalItemCount = 0)
+        int skippedLocalItemCount = 0,
+        IReadOnlyCollection<string>? refreshedPlaceholderPaths = null)
     {
         Path = path;
         NativeSyncRootReady = nativeSyncRootReady;
         Warning = warning;
         PlaceholderCount = placeholderCount;
         SkippedLocalItemCount = skippedLocalItemCount;
+        RefreshedPlaceholderPaths = refreshedPlaceholderPaths ?? Array.Empty<string>();
     }
 
     public string Path { get; }
@@ -33,6 +35,7 @@ public sealed class DriveFolderPreparation
     public string? Warning { get; }
     public int PlaceholderCount { get; }
     public int SkippedLocalItemCount { get; }
+    public IReadOnlyCollection<string> RefreshedPlaceholderPaths { get; }
 }
 
 public sealed record WindowsCloudFileEntry(string Path, string Kind, long Size, string? Version)
@@ -264,7 +267,8 @@ public static partial class WindowsCloudFiles
         string configDirectory,
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         Func<string, byte[]> readFile,
-        IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null)
+        IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null,
+        IReadOnlyCollection<string>? refreshedPlaceholderPaths = null)
     {
         try
         {
@@ -272,7 +276,8 @@ public static partial class WindowsCloudFiles
             var state = SnapshotLocalState(
                 entries,
                 readFile,
-                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>());
+                previousState ?? Array.Empty<WindowsCloudLocalStateEntry>(),
+                refreshedPlaceholderPaths ?? Array.Empty<string>());
             var json = JsonSerializer.Serialize(new { entries = state });
             File.WriteAllText(Path.Combine(configDirectory, LocalStateFileName), json);
         }
@@ -598,8 +603,9 @@ public static partial class WindowsCloudFiles
                 {
                     if (Directory.Exists(fullPath) && !ExistingPlaceholder(fullPath))
                     {
-                        MarkProviderCleanupDelete(path);
-                        removedAny |= TryDeleteDirectory(fullPath, recursive: false);
+                        removedAny |= TryProviderCleanupDelete(
+                            path,
+                            () => TryDeleteDirectory(fullPath, recursive: false));
                     }
 
                     continue;
@@ -621,8 +627,7 @@ public static partial class WindowsCloudFiles
                 }
 
                 ClearReadOnlyAttribute(fullPath);
-                MarkProviderCleanupDelete(path);
-                removedAny |= TryDeleteFile(fullPath);
+                removedAny |= TryProviderCleanupDelete(path, () => TryDeleteFile(fullPath));
             }
             catch
             {
@@ -726,7 +731,8 @@ public static partial class WindowsCloudFiles
                 nativeSyncRootReady: true,
                 warning,
                 population.PlaceholderCount,
-                population.SkippedLocalItemCount);
+                population.SkippedLocalItemCount,
+                population.RefreshedPaths);
         }
         catch (DllNotFoundException error)
         {
@@ -752,15 +758,23 @@ public static partial class WindowsCloudFiles
     private static IReadOnlyList<WindowsCloudLocalStateEntry> SnapshotLocalState(
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         Func<string, byte[]> readFile,
-        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
+        IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState,
+        IReadOnlyCollection<string> refreshedPlaceholderPaths)
     {
         var state = new List<WindowsCloudLocalStateEntry>();
         var currentPaths = new HashSet<string>(StringComparer.Ordinal);
         var placeholderEntries = PlaceholderEntries(entries).ToArray();
+        var previousByPath = previousState
+            .GroupBy(entry => NormalizeVirtualPath(entry.Path), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        var refreshedPaths = new HashSet<string>(
+            refreshedPlaceholderPaths.Select(NormalizeVirtualPath),
+            StringComparer.Ordinal);
         foreach (var entry in placeholderEntries)
         {
             currentPaths.Add(entry.Path);
             var fullPath = Path.Combine(SyncRootPath, FromVirtualPath(entry.Path));
+            previousByPath.TryGetValue(entry.Path, out var previous);
             try
             {
                 if (Directory.Exists(fullPath))
@@ -786,7 +800,7 @@ public static partial class WindowsCloudFiles
                         "file",
                         entry.Size,
                         null,
-                        entry.Version));
+                        SnapshotProviderVersion(entry, previous, refreshedPaths, true, null)));
                     continue;
                 }
 
@@ -798,7 +812,7 @@ public static partial class WindowsCloudFiles
                         "file",
                         snapshot.Value.Size,
                         snapshot.Value.Sha256,
-                        entry.Version));
+                        SnapshotProviderVersion(entry, previous, refreshedPaths, false, snapshot)));
                 }
             }
             catch
@@ -871,6 +885,41 @@ public static partial class WindowsCloudFiles
         }
     }
 
+    private static string? SnapshotProviderVersion(
+        WindowsCloudFileEntry entry,
+        WindowsCloudLocalStateEntry? previous,
+        IReadOnlySet<string> refreshedPlaceholderPaths,
+        bool isPlaceholder,
+        LocalFileSnapshot? localSnapshot)
+    {
+        if (entry.IsDirectory ||
+            previous is null ||
+            previous.IsDirectory ||
+            string.IsNullOrWhiteSpace(previous.ProviderVersion) ||
+            string.Equals(previous.ProviderVersion, entry.Version, StringComparison.Ordinal) ||
+            refreshedPlaceholderPaths.Contains(entry.Path))
+        {
+            return entry.Version;
+        }
+
+        if (isPlaceholder)
+        {
+            DebugLogPath(entry.Path, "preserve previous provider version until placeholder refresh succeeds");
+            return previous.ProviderVersion;
+        }
+
+        if (localSnapshot is { } snapshot &&
+            !string.IsNullOrWhiteSpace(previous.Sha256) &&
+            previous.Size == snapshot.Size &&
+            string.Equals(previous.Sha256, snapshot.Sha256, StringComparison.Ordinal))
+        {
+            DebugLogPath(entry.Path, "preserve previous provider version until local refresh succeeds");
+            return previous.ProviderVersion;
+        }
+
+        return entry.Version;
+    }
+
     private static bool ProviderFileChangedSincePreviousState(
         WindowsCloudFileEntry entry,
         IReadOnlyDictionary<string, WindowsCloudLocalStateEntry> previousByPath)
@@ -915,15 +964,33 @@ public static partial class WindowsCloudFiles
         WindowsCloudFileEntry entry,
         Func<string, byte[]> readFile)
     {
-        if (!string.IsNullOrWhiteSpace(entry.Version))
+        var providerSha256 = TryProviderContentSha256FromVersion(entry);
+        if (providerSha256 is not null)
+        {
+            try
+            {
+                var attributes = File.GetAttributes(fullPath);
+                if ((attributes & FileAttributes.Offline) != 0)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(entry.Version))
         {
             return false;
         }
-
-        var providerSha256 = TryProviderFileSha256(entry.Path, readFile);
-        if (providerSha256 is null)
+        else
         {
-            return false;
+            providerSha256 = TryProviderFileSha256(entry.Path, readFile);
+            if (providerSha256 is null)
+            {
+                return false;
+            }
         }
 
         try
@@ -940,6 +1007,26 @@ public static partial class WindowsCloudFiles
         {
             return false;
         }
+    }
+
+    private static string? TryProviderContentSha256FromVersion(WindowsCloudFileEntry entry)
+    {
+        if (entry.IsDirectory || string.IsNullOrWhiteSpace(entry.Version))
+        {
+            return null;
+        }
+
+        var separator = entry.Version.LastIndexOf(':');
+        var candidate = separator >= 0
+            ? entry.Version[(separator + 1)..]
+            : entry.Version;
+        candidate = candidate.Trim();
+        if (candidate.Length != 64 || candidate.Any(ch => !Uri.IsHexDigit(ch)))
+        {
+            return null;
+        }
+
+        return candidate.ToLowerInvariant();
     }
 
     private static LocalFileSnapshot? SnapshotLocalFile(string fullPath)
@@ -963,6 +1050,7 @@ public static partial class WindowsCloudFiles
         var placeholderEntries = PlaceholderEntries(entries).ToArray();
         var pendingDeletes = PendingProviderDeletePaths();
         var pendingPreserves = PendingProviderPreservePaths();
+        var refreshedPaths = new HashSet<string>(StringComparer.Ordinal);
         var locallyMissingMaterialized = MissingMaterializedLocalPaths(
             syncRootPath,
             placeholderEntries,
@@ -1025,9 +1113,8 @@ public static partial class WindowsCloudFiles
 
                 try
                 {
-                    MarkProviderCleanupDelete(entry.Path);
                     ClearReadOnlyAttribute(itemFullPath);
-                    if (!TryDeleteFile(itemFullPath))
+                    if (!TryProviderCleanupDelete(entry.Path, () => TryDeleteFile(itemFullPath)))
                     {
                         failedPlaceholderCount++;
                         DebugLogPath(entry.Path, $"failed to delete existing file placeholder {itemFullPath}");
@@ -1035,6 +1122,7 @@ public static partial class WindowsCloudFiles
                     }
 
                     CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
+                    refreshedPaths.Add(entry.Path);
                     DebugLogPath(entry.Path, $"recreated existing file placeholder {itemFullPath}");
                     placeholderCount++;
                 }
@@ -1072,6 +1160,7 @@ public static partial class WindowsCloudFiles
             try
             {
                 CreatePlaceholder(parentFullPath, FileName(entry.Path), entry);
+                refreshedPaths.Add(entry.Path);
                 DebugLogPath(entry.Path, $"created exists={File.Exists(itemFullPath) || Directory.Exists(itemFullPath)} attrs={SafeAttributes(itemFullPath)}");
                 placeholderCount++;
             }
@@ -1100,7 +1189,8 @@ public static partial class WindowsCloudFiles
         return new PlaceholderPopulationReport(
             placeholderCount,
             skippedLocalItems,
-            failedPlaceholderCount);
+            failedPlaceholderCount,
+            refreshedPaths.ToArray());
     }
 
     private static HashSet<string> MissingMaterializedLocalPaths(
@@ -1218,8 +1308,7 @@ public static partial class WindowsCloudFiles
                 }
 
                 ClearReadOnlyAttribute(fullPath);
-                MarkProviderCleanupDelete(path);
-                removedAny |= TryDeleteFile(fullPath);
+                removedAny |= TryProviderCleanupDelete(path, () => TryDeleteFile(fullPath));
             }
             catch
             {
@@ -1447,6 +1536,33 @@ public static partial class WindowsCloudFiles
         DebugLogPath(normalized, "provider cleanup delete pending");
     }
 
+    private static bool TryProviderCleanupDelete(string path, Func<bool> delete)
+    {
+        MarkProviderCleanupDelete(path);
+        var removed = delete();
+        if (!removed)
+        {
+            ClearProviderCleanupDelete(path);
+        }
+
+        return removed;
+    }
+
+    private static void ClearProviderCleanupDelete(string path)
+    {
+        var normalized = NormalizeVirtualPath(path);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return;
+        }
+
+        lock (PendingProviderMutationLock)
+        {
+            PendingProviderCleanupDeletes.Remove(normalized);
+            PersistProviderCleanupDeletesLocked();
+        }
+    }
+
     private static bool TryConsumeProviderCleanupDelete(string path)
     {
         var normalized = NormalizeVirtualPath(path);
@@ -1461,10 +1577,10 @@ public static partial class WindowsCloudFiles
         {
             loadedFromDisk = LoadProviderCleanupDeletesLocked();
             PrunePendingProviderMutations(DateTimeOffset.UtcNow);
+            // Cloud Files can coalesce a child cleanup delete into a parent
+            // notification, but a parent marker must not hide later user deletes.
             matches = PendingProviderCleanupDeletes.Keys
-                .Where(existing =>
-                    PathContainsOrEquals(existing, normalized) ||
-                    PathContainsOrEquals(normalized, existing))
+                .Where(existing => PathContainsOrEquals(normalized, existing))
                 .ToArray();
             foreach (var match in matches)
             {
@@ -1642,16 +1758,11 @@ public static partial class WindowsCloudFiles
             try
             {
                 ClearReadOnlyAttribute(fullPath);
-                MarkProviderCleanupDelete(relative);
-                var removed = false;
-                if (Directory.Exists(fullPath))
-                {
-                    removed = TryDeleteDirectory(fullPath, recursive: false);
-                }
-                else
-                {
-                    removed = TryDeleteFile(fullPath);
-                }
+                var removed = TryProviderCleanupDelete(
+                    relative,
+                    () => Directory.Exists(fullPath)
+                        ? TryDeleteDirectory(fullPath, recursive: false)
+                        : TryDeleteFile(fullPath));
 
                 if (removed)
                 {
@@ -2112,7 +2223,8 @@ public static partial class WindowsCloudFiles
     private readonly record struct PlaceholderPopulationReport(
         int PlaceholderCount,
         int SkippedLocalItemCount,
-        int FailedPlaceholderCount);
+        int FailedPlaceholderCount,
+        IReadOnlyCollection<string> RefreshedPaths);
 
     private readonly record struct LocalFileSnapshot(long Size, string Sha256);
 

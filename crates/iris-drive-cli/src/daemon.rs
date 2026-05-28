@@ -1621,6 +1621,7 @@ struct WindowsCloudLocalStateEntry {
     kind: String,
     size: u64,
     sha256: Option<String>,
+    provider_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -1769,11 +1770,15 @@ fn windows_cloud_local_state_entry_from_json(value: &Value) -> Option<WindowsClo
     let sha256 = windows_cloud_json_string(value, "sha256", "Sha256")
         .filter(|hash| !hash.trim().is_empty())
         .map(str::to_string);
+    let provider_version = windows_cloud_json_string(value, "providerVersion", "ProviderVersion")
+        .filter(|version| !version.trim().is_empty())
+        .map(str::to_string);
     Some(WindowsCloudLocalStateEntry {
         path,
         kind,
         size,
         sha256,
+        provider_version,
     })
 }
 
@@ -2026,7 +2031,11 @@ fn windows_cloud_local_state_json_entries(
             if let Some(sha256) = entry.sha256.as_deref() {
                 object.insert("sha256".to_string(), json!(sha256));
             }
-            if let Some(version) = versions.get(entry.path.as_str())
+            let provider_version = entry
+                .provider_version
+                .as_deref()
+                .or_else(|| versions.get(entry.path.as_str()).copied());
+            if let Some(version) = provider_version
                 && !version.trim().is_empty()
             {
                 object.insert("providerVersion".to_string(), json!(version));
@@ -2044,6 +2053,14 @@ fn snapshot_windows_cloud_local_state(
 ) -> Vec<WindowsCloudLocalStateEntry> {
     let mut state = Vec::new();
     let mut current_paths = BTreeSet::new();
+    let previous_by_path = previous_state
+        .iter()
+        .filter_map(|entry| {
+            normalize_provider_path(&entry.path)
+                .ok()
+                .map(|path| (path, entry))
+        })
+        .collect::<BTreeMap<_, _>>();
     for entry in entries {
         if iris_drive_core::path_has_ignored_component(&entry.path) {
             continue;
@@ -2053,6 +2070,7 @@ fn snapshot_windows_cloud_local_state(
         }
         current_paths.insert(entry.path.clone());
         let full_path = windows_cloud_full_path(sync_root, &entry.path);
+        let previous = previous_by_path.get(&entry.path).copied();
         if entry.kind == "directory" {
             if full_path.is_dir() {
                 state.push(WindowsCloudLocalStateEntry {
@@ -2060,6 +2078,7 @@ fn snapshot_windows_cloud_local_state(
                     kind: "directory".to_string(),
                     size: 0,
                     sha256: None,
+                    provider_version: Some(entry.version.clone()),
                 });
             }
             continue;
@@ -2073,6 +2092,9 @@ fn snapshot_windows_cloud_local_state(
                 kind: "file".to_string(),
                 size: entry.size,
                 sha256: None,
+                provider_version: windows_cloud_snapshot_provider_version(
+                    entry, previous, true, None,
+                ),
             });
             continue;
         }
@@ -2081,7 +2103,13 @@ fn snapshot_windows_cloud_local_state(
                 path: entry.path.clone(),
                 kind: "file".to_string(),
                 size: snapshot.size,
-                sha256: Some(snapshot.sha256),
+                sha256: Some(snapshot.sha256.clone()),
+                provider_version: windows_cloud_snapshot_provider_version(
+                    entry,
+                    previous,
+                    false,
+                    Some(&snapshot),
+                ),
             });
         }
     }
@@ -2097,6 +2125,40 @@ fn snapshot_windows_cloud_local_state(
     }
     state.sort_by(|a, b| a.path.cmp(&b.path));
     state
+}
+
+fn windows_cloud_snapshot_provider_version(
+    entry: &WindowsCloudExpectedEntry,
+    previous: Option<&WindowsCloudLocalStateEntry>,
+    is_reparse_point: bool,
+    local_snapshot: Option<&WindowsCloudLocalFileSnapshot>,
+) -> Option<String> {
+    let current = (!entry.version.trim().is_empty()).then_some(entry.version.clone());
+    let Some(previous) = previous else {
+        return current;
+    };
+    if entry.kind != "file" || previous.is_directory() {
+        return current;
+    }
+    let Some(previous_version) = previous.provider_version.as_deref() else {
+        return current;
+    };
+    if previous_version.trim().is_empty() || current.as_deref() == Some(previous_version) {
+        return current;
+    }
+
+    if is_reparse_point {
+        return Some(previous_version.to_string());
+    }
+
+    if let (Some(previous_hash), Some(local)) = (previous.sha256.as_deref(), local_snapshot)
+        && previous.size == local.size
+        && previous_hash == local.sha256
+    {
+        return Some(previous_version.to_string());
+    }
+
+    current
 }
 
 fn windows_cloud_retained_stale_local_state(
@@ -2124,6 +2186,7 @@ fn windows_cloud_retained_stale_local_state(
                     kind: previous.kind.clone(),
                     size: previous.size,
                     sha256: previous.sha256.clone(),
+                    provider_version: previous.provider_version.clone(),
                 });
             }
             continue;
@@ -2143,6 +2206,7 @@ fn windows_cloud_retained_stale_local_state(
                 kind: previous.kind.clone(),
                 size: previous.size,
                 sha256: previous.sha256.clone(),
+                provider_version: previous.provider_version.clone(),
             });
         }
     }
@@ -3239,12 +3303,14 @@ mod tests {
                 kind: "file".to_string(),
                 size: 7,
                 sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+                provider_version: None,
             },
             WindowsCloudLocalStateEntry {
                 path: "renames/dst.txt".to_string(),
                 kind: "file".to_string(),
                 size: 7,
                 sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+                provider_version: None,
             },
         ];
         let protected_paths = BTreeSet::from(["renames/dst.txt".to_string()]);
@@ -3266,18 +3332,21 @@ mod tests {
             kind: "file".to_string(),
             size: 7,
             sha256: Some(to_hex(&hashtree_core::sha256(b"renamed"))),
+            provider_version: None,
         };
         let placeholder = WindowsCloudLocalStateEntry {
             path: "renames/src.txt".to_string(),
             kind: "file".to_string(),
             size: 7,
             sha256: None,
+            provider_version: None,
         };
         let directory = WindowsCloudLocalStateEntry {
             path: "renames".to_string(),
             kind: "directory".to_string(),
             size: 0,
             sha256: None,
+            provider_version: None,
         };
 
         assert!(windows_cloud_previous_local_state_reparse_counts_as_missing(&materialized, true));
@@ -3384,7 +3453,7 @@ mod tests {
         let config_dir = tempfile::tempdir().unwrap();
         std::fs::write(
             config_dir.path().join(WINDOWS_CLOUD_LOCAL_STATE_FILE),
-            r#"{"entries":[{"Path":"remote.txt","Kind":"file","Size":4,"Sha256":"abcd"},{"Path":".Trash-1000/nope","Kind":"file","Size":1,"Sha256":"eeee"}]}"#,
+            r#"{"entries":[{"Path":"remote.txt","Kind":"file","Size":4,"Sha256":"abcd","ProviderVersion":"remote-v1"},{"Path":".Trash-1000/nope","Kind":"file","Size":1,"Sha256":"eeee"}]}"#,
         )
         .unwrap();
 
@@ -3397,8 +3466,31 @@ mod tests {
                 kind: "file".to_string(),
                 size: 4,
                 sha256: Some("abcd".to_string()),
+                provider_version: Some("remote-v1".to_string()),
             }]
         );
+    }
+
+    #[test]
+    fn windows_cloud_local_state_keeps_old_provider_version_for_unreplaced_placeholder() {
+        let previous = WindowsCloudLocalStateEntry {
+            path: "remote.txt".to_string(),
+            kind: "file".to_string(),
+            size: 4,
+            sha256: None,
+            provider_version: Some("remote-v1".to_string()),
+        };
+        let current = WindowsCloudExpectedEntry {
+            path: "remote.txt".to_string(),
+            kind: "file",
+            size: 4,
+            version: "remote-v2".to_string(),
+        };
+
+        let provider_version =
+            windows_cloud_snapshot_provider_version(&current, Some(&previous), true, None);
+
+        assert_eq!(provider_version.as_deref(), Some("remote-v1"));
     }
 
     #[test]
@@ -3411,6 +3503,7 @@ mod tests {
             kind: "file".to_string(),
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            provider_version: None,
         }];
 
         let removed = windows_cloud_remove_stale_synced_local_items(
@@ -3434,6 +3527,7 @@ mod tests {
             kind: "file".to_string(),
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            provider_version: None,
         }];
 
         let removed = windows_cloud_remove_stale_synced_local_items(
@@ -3460,12 +3554,14 @@ mod tests {
                 kind: "directory".to_string(),
                 size: 0,
                 sha256: None,
+                provider_version: None,
             },
             WindowsCloudLocalStateEntry {
                 path: "smoke/from-windows.txt".to_string(),
                 kind: "file".to_string(),
                 size: 4,
                 sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+                provider_version: None,
             },
         ];
         let protected = BTreeSet::from(["smoke".to_string()]);
@@ -3514,6 +3610,7 @@ mod tests {
             kind: "file".to_string(),
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            provider_version: Some("file-v1".to_string()),
         }));
 
         let config_dir = tempfile::tempdir().unwrap();
@@ -3585,12 +3682,14 @@ mod tests {
                 kind: "directory".to_string(),
                 size: 0,
                 sha256: None,
+                provider_version: None,
             },
             WindowsCloudLocalStateEntry {
                 path: "smoke/from-windows.txt".to_string(),
                 kind: "file".to_string(),
                 size: 4,
                 sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+                provider_version: None,
             },
         ];
         let protected = BTreeSet::from(["smoke/from-windows.txt".to_string()]);
@@ -3610,6 +3709,7 @@ mod tests {
             kind: "file".to_string(),
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            provider_version: None,
         }];
 
         let retained = windows_cloud_retained_stale_local_state(
@@ -3631,6 +3731,7 @@ mod tests {
             kind: "file".to_string(),
             size: 4,
             sha256: Some(to_hex(&hashtree_core::sha256(b"same"))),
+            provider_version: None,
         }];
 
         let retained = windows_cloud_retained_stale_local_state(
@@ -3657,6 +3758,7 @@ mod tests {
             kind: "file".to_string(),
             size: 9,
             sha256: Some(to_hex(&hashtree_core::sha256(b"old bytes"))),
+            provider_version: None,
         }];
         let entries = vec![WindowsCloudExpectedEntry {
             path: "remote.txt".to_string(),
@@ -3698,6 +3800,7 @@ mod tests {
             kind: "file".to_string(),
             size: 9,
             sha256: Some(to_hex(&hashtree_core::sha256(b"old bytes"))),
+            provider_version: None,
         }];
         let entries = vec![WindowsCloudExpectedEntry {
             path: "remote.txt".to_string(),

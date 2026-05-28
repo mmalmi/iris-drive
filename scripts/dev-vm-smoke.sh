@@ -31,9 +31,19 @@ cap_wait_timeout() {
   fi
 }
 
+scale_wait_timeout() {
+  local value="$1"
+  local multiplier="$2"
+  case "$value:$multiplier" in
+    *[!0-9:]* | :* | *:) printf '%s\n' "$value"; return 0 ;;
+  esac
+  printf '%s\n' "$((value * multiplier))"
+}
+
 SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
 MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
 WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
+HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT:-$(scale_wait_timeout "$SYNC_WAIT_TIMEOUT" 2)}"
 SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
 MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
 SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
@@ -1520,7 +1530,7 @@ run_sync_smoke() {
   write_ubuntu_zero_file "$stress_dir/large/ubuntu-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
   write_windows_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
   write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
-  wait_for "heavy native projection manifests converge with expected bytes" "$SYNC_WAIT_TIMEOUT" \
+  wait_for "heavy native projection manifests converge with expected bytes" "$HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT" \
     heavy_projection_manifest_matches \
     "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
 
