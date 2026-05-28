@@ -263,7 +263,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "failed to create bare git repo: $BareRepo"
 }
 REMOTE_PS
-      } | ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+      } | ssh "$host" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
       ;;
     *)
       {
@@ -2214,7 +2214,7 @@ try {
   Write-Log "status read failed after launch: $_"
 }
 REMOTE_PS
-  } | ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  } | ssh "$host" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
 
 remote_status_json() {
