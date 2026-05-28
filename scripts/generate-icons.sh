@@ -19,6 +19,27 @@ render_png() {
   rsvg-convert -w "$size" -h "$size" "$SVG" -o "$output"
 }
 
+render_android_launcher_png() {
+  local size="$1"
+  local output="$2"
+  local tmp
+
+  tmp="$(mktemp)"
+  {
+    cat <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
+  <g transform="translate(128 128) scale(0.75)">
+EOF
+    sed '1d;$d' "$SVG"
+    cat <<'EOF'
+  </g>
+</svg>
+EOF
+  } >"$tmp"
+  rsvg-convert -w "$size" -h "$size" "$tmp" -o "$output"
+  rm -f "$tmp"
+}
+
 generate_macos_icons() {
   if [[ ! -d "$MACOS_APPICON" ]]; then
     echo "skipping macOS icons; missing $MACOS_APPICON"
@@ -108,8 +129,9 @@ generate_android_icons() {
     read -r density size <<<"$spec"
     dir="$res_dir/$density"
     mkdir -p "$dir"
-    render_png "$size" "$dir/ic_launcher.png"
-    render_png "$size" "$dir/ic_launcher_round.png"
+    render_android_launcher_png "$size" "$dir/ic_launcher.png"
+    render_android_launcher_png "$size" "$dir/ic_launcher_round.png"
+    render_android_launcher_png "$size" "$dir/ic_launcher_foreground.png"
   done
 
   echo "generated Android launcher icons"
