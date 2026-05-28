@@ -603,11 +603,40 @@ enum FileProviderStorage {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
 
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+        var output = Data()
+        var errorOutput = Data()
+        let outputGroup = DispatchGroup()
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            output = stdout.fileHandleForReading.readDataToEndOfFile()
+            outputGroup.leave()
+        }
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+            outputGroup.leave()
+        }
+
+        try process.run()
+        let deadline = Date().addingTimeInterval(15)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+            Thread.sleep(forTimeInterval: 0.2)
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+            outputGroup.wait()
+            debugLog("idrive timed out args=\(arguments.joined(separator: " "))")
+            throw providerError("idrive command timed out")
+        }
+
+        process.waitUntilExit()
+        outputGroup.wait()
+
         if process.terminationStatus != 0 {
             let message = String(data: errorOutput, encoding: .utf8) ?? "idrive provider failed"
             debugLog(
