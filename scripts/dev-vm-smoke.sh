@@ -244,24 +244,30 @@ probe_timeout="$2"
 run_limited() {
   local limit="$1"
   shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  ) &
-  local watchdog=$!
-  local status=0
-  if wait "$pid"; then
-    status=0
-  else
-    status=$?
-  fi
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
 }
 
 enumerate_parent_chain() {
@@ -917,20 +923,30 @@ mkdir -p "$(dirname "$target")"
 run_limited() {
   local limit="$1"
   shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  ) &
-  local watchdog=$!
-  local status=0
-  wait "$pid" 2>/dev/null || status=$?
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
 }
 run_limited "$write_timeout" python3 - "$content_b64" "$target" "$write_timeout" <<'PY'
 import base64
@@ -975,20 +991,30 @@ mkdir -p "$(dirname "$target")"
 run_limited() {
   local limit="$1"
   shift
-  "$@" &
-  local pid=$!
-  (
-    sleep "$limit"
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-    sleep 1
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  ) &
-  local watchdog=$!
-  local status=0
-  wait "$pid" 2>/dev/null || status=$?
-  kill "$watchdog" >/dev/null 2>&1 || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
 }
 run_limited "$write_timeout" python3 - "$bytes" "$target" "$write_timeout" <<'PY'
 import signal
