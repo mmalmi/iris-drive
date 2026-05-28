@@ -102,6 +102,9 @@ enum FileProviderStorage {
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
     private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
+    private static let providerListCacheTTL: TimeInterval = 1.0
+    private static let providerListCacheLock = NSLock()
+    private static var providerListCache: (loadedAt: Date, list: ProviderList)?
     private static var configuredRuntime: Runtime?
 
     struct Runtime: Decodable {
@@ -431,6 +434,7 @@ enum FileProviderStorage {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination = joinedPath(parent: parent, name: template.filename)
         NSLog("Iris Drive FileProvider create path=\(destination)")
+        invalidateProviderListCache()
         if (template.contentType ?? .data).conforms(to: .folder) {
             _ = try runIDrive(arguments: ["provider", "mkdir", destination])
         } else if let contents {
@@ -440,6 +444,7 @@ enum FileProviderStorage {
             _ = try runIDrive(arguments: ["provider", "write", destination, empty.path])
         }
         let item = optimisticItem(for: destination, template: template, contents: contents)
+        invalidateProviderListCache()
         NSLog("Iris Drive FileProvider created path=\(destination) optimistic=true")
         return item
     }
@@ -473,6 +478,7 @@ enum FileProviderStorage {
         }
         let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
         let destination = joinedPath(parent: parent, name: name)
+        invalidateProviderListCache()
         if destination != original {
             _ = try runIDrive(arguments: ["provider", "rename", original, destination])
         }
@@ -480,6 +486,7 @@ enum FileProviderStorage {
             _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
         }
         let updated = optimisticItem(for: destination, template: item, contents: contents)
+        invalidateProviderListCache()
         NSLog("Iris Drive FileProvider modified path=\(destination) optimistic=true")
         return updated
     }
@@ -489,7 +496,9 @@ enum FileProviderStorage {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
         NSLog("Iris Drive FileProvider delete path=\(path)")
+        invalidateProviderListCache()
         _ = try runIDrive(arguments: ["provider", "delete", path])
+        invalidateProviderListCache()
     }
 
     static func contentsURL(for identifier: NSFileProviderItemIdentifier) throws -> URL {
@@ -545,6 +554,10 @@ enum FileProviderStorage {
     }
 
     private static func providerList() -> ProviderList {
+        if let cached = cachedProviderList() {
+            debugLog("provider list cached anchor=\(cached.anchor ?? "nil") entries=\(cached.entries.count)")
+            return cached
+        }
         var lastError: Error?
         for (attempt, delay) in ([0.0] + providerListRetryDelays).enumerated() {
             if delay > 0 {
@@ -553,6 +566,7 @@ enum FileProviderStorage {
             do {
                 let data = try runIDrive(arguments: ["provider", "list"])
                 let list = try JSONDecoder().decode(ProviderList.self, from: data)
+                storeProviderListCache(list)
                 debugLog("provider list ok anchor=\(list.anchor ?? "nil") entries=\(list.entries.count)")
                 return list
             } catch {
@@ -564,6 +578,29 @@ enum FileProviderStorage {
             debugLog("provider list failed after retries: \(lastError)")
         }
         return ProviderList(anchor: nil, entries: [])
+    }
+
+    private static func cachedProviderList() -> ProviderList? {
+        providerListCacheLock.lock()
+        defer { providerListCacheLock.unlock() }
+        guard let cached = providerListCache,
+              Date().timeIntervalSince(cached.loadedAt) <= providerListCacheTTL
+        else {
+            return nil
+        }
+        return cached.list
+    }
+
+    private static func storeProviderListCache(_ list: ProviderList) {
+        providerListCacheLock.lock()
+        providerListCache = (Date(), list)
+        providerListCacheLock.unlock()
+    }
+
+    private static func invalidateProviderListCache() {
+        providerListCacheLock.lock()
+        providerListCache = nil
+        providerListCacheLock.unlock()
     }
 
     private static func fileSize(at url: URL?) -> Int {
