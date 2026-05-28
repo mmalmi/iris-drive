@@ -45,6 +45,7 @@ pub enum IndexError {
     ConflictRecord(String),
 }
 
+#[must_use]
 pub fn should_ignore_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     IGNORED_NAMES

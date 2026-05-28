@@ -334,7 +334,7 @@ impl Daemon {
         };
         let tombstone_paths = scoped_tombstone_paths
             .as_ref()
-            .map_or(tombstone_paths, |paths| Some(paths));
+            .map_or(tombstone_paths, Some);
         let root_cid = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
             let root_cid = layer_history_and_meta_on_root_with_tombstone_base_and_paths(
