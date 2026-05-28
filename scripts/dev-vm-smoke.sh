@@ -882,7 +882,25 @@ fi
 }
 target="$drive_root/$path"
 mkdir -p "$(dirname "$target")"
-python3 - "$content_b64" "$target" "$write_timeout" <<'PY'
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$limit"
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  ) &
+  local watchdog=$!
+  local status=0
+  wait "$pid" 2>/dev/null || status=$?
+  kill "$watchdog" >/dev/null 2>&1 || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
+}
+run_limited "$write_timeout" python3 - "$content_b64" "$target" "$write_timeout" <<'PY'
 import base64
 import signal
 import sys
@@ -921,7 +939,25 @@ fi
 }
 target="$drive_root/$path"
 mkdir -p "$(dirname "$target")"
-python3 - "$bytes" "$target" "$write_timeout" <<'PY'
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$limit"
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  ) &
+  local watchdog=$!
+  local status=0
+  wait "$pid" 2>/dev/null || status=$?
+  kill "$watchdog" >/dev/null 2>&1 || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
+}
+run_limited "$write_timeout" python3 - "$bytes" "$target" "$write_timeout" <<'PY'
 import signal
 import sys
 
@@ -1020,7 +1056,25 @@ set -Eeuo pipefail
 dir="$1"
 probe_timeout="$2"
 root="$HOME/Iris Drive/$dir"
-python3 - "$root" "$probe_timeout" <<'PY'
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$limit"
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  ) &
+  local watchdog=$!
+  local status=0
+  wait "$pid" 2>/dev/null || status=$?
+  kill "$watchdog" >/dev/null 2>&1 || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
+}
+run_limited "$probe_timeout" python3 - "$root" "$probe_timeout" <<'PY'
 import hashlib
 import json
 import os
@@ -1069,7 +1123,25 @@ macos_visible_manifest() {
 set -Eeuo pipefail
 dir="$1"
 probe_timeout="$2"
-python3 - "$HOME/Library/CloudStorage" "$dir" "$probe_timeout" <<'PY'
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$limit"
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  ) &
+  local watchdog=$!
+  local status=0
+  wait "$pid" 2>/dev/null || status=$?
+  kill "$watchdog" >/dev/null 2>&1 || true
+  wait "$watchdog" 2>/dev/null || true
+  return "$status"
+}
+run_limited "$probe_timeout" python3 - "$HOME/Library/CloudStorage" "$dir" "$probe_timeout" <<'PY'
 import hashlib
 import json
 import os
