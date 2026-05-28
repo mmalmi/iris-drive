@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 struct IrisDriveRootView: View {
@@ -43,6 +44,9 @@ struct IrisDriveRootView: View {
 private struct SetupWelcomeView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var ownerPublicKey = ""
+    @State private var createUsername = ""
+    @State private var showCreatePhoto = false
+    @State private var selectedProfilePhoto: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
@@ -62,14 +66,61 @@ private struct SetupWelcomeView: View {
 
                 Section {
                     TextField("Device label", text: $model.deviceLabel)
-                    Button {
-                        model.createProfile()
-                    } label: {
-                        Label("Create profile", systemImage: "plus")
+                        .textInputAutocapitalization(.words)
+                    TextField("Username (optional)", text: $createUsername)
+                        .textInputAutocapitalization(.words)
+                    if showCreatePhoto {
+                        PhotosPicker(selection: $selectedProfilePhoto, matching: .images) {
+                            Label(
+                                selectedProfilePhoto == nil ? "Choose photo" : "Photo selected",
+                                systemImage: "photo"
+                            )
+                        }
+                        Button {
+                            model.createProfile(
+                                username: createUsername,
+                                profilePhotoName: selectedProfilePhoto == nil
+                                    ? ""
+                                    : "selected-profile-photo"
+                            )
+                        } label: {
+                            Label(
+                                selectedProfilePhoto == nil ? "Later" : "Create profile",
+                                systemImage: "plus"
+                            )
+                        }
+                    } else {
+                        Button {
+                            let username = createUsername.trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            )
+                            if username.isEmpty {
+                                model.createProfile(username: "", profilePhotoName: "")
+                            } else {
+                                showCreatePhoto = true
+                            }
+                        } label: {
+                            Label(
+                                createUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    ? "Create profile"
+                                    : "Continue",
+                                systemImage: "plus"
+                            )
+                        }
                     }
                 }
 
                 Section {
+                    SecureField("Restore secret", text: $model.restoreSecret)
+                    Button {
+                        model.restoreProfile()
+                    } label: {
+                        Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    .disabled(
+                        model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+
                     TextField("Owner public key", text: $ownerPublicKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -79,17 +130,9 @@ private struct SetupWelcomeView: View {
                     } label: {
                         Label("Link this device", systemImage: "link")
                     }
-                    .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Section {
-                    SecureField("Restore secret", text: $model.restoreSecret)
-                    Button {
-                        model.restoreProfile()
-                    } label: {
-                        Label("Restore profile", systemImage: "key.fill")
-                    }
-                    .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
                 }
             }
             .navigationTitle("Setup")
@@ -130,6 +173,11 @@ private struct DriveHomeView: View {
                     Label("Refresh Files provider", systemImage: "folder.badge.gearshape")
                 }
                 Button {
+                    model.openDriveFolder()
+                } label: {
+                    Label("Open drive folder", systemImage: "folder")
+                }
+                Button {
                     model.copySnapshotLink()
                 } label: {
                     Label("Copy snapshot link", systemImage: "doc.on.doc")
@@ -157,6 +205,24 @@ private struct DriveHomeView: View {
                     model.restartSync()
                 } label: {
                     Label("Restart sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+
+            Section("Roots") {
+                ForEach(model.roots) { root in
+                    DisclosureGroup {
+                        Text(root.path)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(root.name)
+                            Text(root.status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }
@@ -201,13 +267,26 @@ private struct DevicesView: View {
                     .swipeActions {
                         if device.canRevoke {
                             Button(role: .destructive) {
-                                model.revokeDevice(label: device.label)
+                                model.revokeDevice(id: device.id)
                             } label: {
                                 Label("Revoke", systemImage: "trash")
                             }
                         }
                     }
                 }
+            }
+
+            Section("Link Request") {
+                Text(model.deviceLinkRequest.isEmpty ? "Create or link a profile first." : model.deviceLinkRequest)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button {
+                    model.copyLinkRequest()
+                } label: {
+                    Label("Copy link request", systemImage: "link")
+                }
+                .disabled(model.deviceLinkRequest.isEmpty)
             }
 
             Section("Approve Device") {
@@ -261,6 +340,8 @@ private struct SettingsView: View {
             Section("Account") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
+                LabeledContent("Owner", value: model.ownerPublicKey)
+                LabeledContent("Device", value: model.devicePublicKey)
                 Button {
                     model.copyOwnerKey()
                 } label: {
@@ -271,23 +352,47 @@ private struct SettingsView: View {
                 } label: {
                     Label("Copy device key", systemImage: "doc.on.doc")
                 }
+                Button {
+                    model.copyLinkRequest()
+                } label: {
+                    Label("Copy link request", systemImage: "link")
+                }
                 SecureField("Restore secret", text: $model.restoreSecret)
                 Button {
                     model.restoreProfile()
                 } label: {
-                    Label("Restore profile", systemImage: "key.fill")
+                    Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
                 .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             Section("Network") {
-                TextField("Relay", text: $model.relay)
+                ForEach(model.relays, id: \.self) { relay in
+                    HStack {
+                        Text(relay)
+                        Spacer()
+                        Button(role: .destructive) {
+                            model.removeRelay(relay)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove relay")
+                    }
+                }
+                TextField("Relay URL", text: $model.relayInput)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .onSubmit { model.persist() }
+                    .onSubmit { model.addRelay() }
                 Button {
-                    model.resetRelay()
+                    model.addRelay()
+                } label: {
+                    Label("Add relay", systemImage: "plus")
+                }
+                .disabled(model.relayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    model.resetRelays()
                 } label: {
                     Label("Reset relay", systemImage: "arrow.counterclockwise")
                 }
@@ -300,6 +405,8 @@ private struct SettingsView: View {
             Section("Advanced") {
                 LabeledContent("App group", value: IrisDriveSharedContainer.appGroupIdentifier)
                 LabeledContent("Runtime path", value: model.sharedContainerPath)
+                LabeledContent("Config path", value: model.configPath)
+                LabeledContent("Blocks path", value: model.blocksPath)
                 Button(role: .destructive) {
                     model.resetLocalState()
                 } label: {
