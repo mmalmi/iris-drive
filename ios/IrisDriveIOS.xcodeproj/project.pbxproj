@@ -14,6 +14,7 @@
 		85A10B7EC9033C5254EC2898 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */; };
 		8989E7E7F47C867023FF1D63 /* IrisDriveFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4257294BF467D6B229B52DBD /* IrisDriveFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A24658800A09D2C8CE9C0311 /* FileProviderStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4711B533A555343A234B3E03 /* FileProviderStorage.swift */; };
+		A2D69683D223341A6401A814 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A63880B58F406AD06ACD2A66 /* Assets.xcassets */; };
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
 /* End PBXBuildFile section */
 
@@ -49,6 +50,7 @@
 		4257294BF467D6B229B52DBD /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		4711B533A555343A234B3E03 /* FileProviderStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderStorage.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		A63880B58F406AD06ACD2A66 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		C789203391687925DEAB3576 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
@@ -78,6 +80,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		5D4ACC90757B9F0220701EA0 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A63880B58F406AD06ACD2A66 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		7A1D5291928F47D312DCDA64 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -92,6 +102,7 @@
 			isa = PBXGroup;
 			children = (
 				3F04BE704FC717FE46900774 /* FileProvider */,
+				5D4ACC90757B9F0220701EA0 /* Resources */,
 				7A1D5291928F47D312DCDA64 /* Sources */,
 				5A5970F457E3C18DF858E1F2 /* Products */,
 			);
@@ -105,6 +116,7 @@
 			buildConfigurationList = 11F4CB1D9A89A6AFE0B7AD6A /* Build configuration list for PBXNativeTarget "IrisDriveIOS" */;
 			buildPhases = (
 				0CF58CA18CE5D022712279B0 /* Sources */,
+				50731F699E6027C4EBEE36FF /* Resources */,
 				F75FD7DE45CD5A4AF7F43FA6 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -172,6 +184,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		50731F699E6027C4EBEE36FF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A2D69683D223341A6401A814 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0CF58CA18CE5D022712279B0 /* Sources */ = {
@@ -357,7 +380,7 @@
 		8D06D5D3C6F78A254512FE86 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = IrisDriveIOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;
@@ -377,7 +400,7 @@
 		EE0E225E69A7ACD160EA710A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = IrisDriveIOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;

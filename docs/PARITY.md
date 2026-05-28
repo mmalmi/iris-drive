@@ -1,30 +1,34 @@
-# Desktop GUI parity
+# Platform GUI parity
 
-Linux is the current behavior reference for the desktop control panel. macOS and
-Windows should expose the same user-visible sync controls even when their OS
-file-provider backends differ.
+Linux is the current behavior reference for the native control panel. macOS,
+Windows, iOS, and Android should expose the same user-visible sync controls
+where the platform allows it, even when their OS file-provider backends differ.
+`UI scaffold` means the shell exposes the control and state shape, but still
+needs the full mobile app-core/idrive backend hookup before it is production
+equivalent to desktop.
 
-| Capability | Linux GTK | macOS SwiftUI | Windows WPF |
-| --- | --- | --- | --- |
-| First-run create profile | Yes | Yes | Yes |
-| Restore owner profile | Yes | Yes | Yes |
-| Link request handoff | Yes | Yes | Yes |
-| Copy owner/device keys | Yes | Yes | Yes |
-| Approve linked device from request link | Yes | Yes | Yes |
-| Start/stop/restart sync daemon | Yes | Yes | Yes |
-| Auto-scan local drive folder | No; mount publishes writes | No | No |
-| Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders |
-| Copy/open snapshot link | Yes | Yes | Yes |
-| Devices list and auth state | Yes | Yes | Yes |
-| Device online/sync status | Yes | Planned | Yes |
-| Owner device revoke control | Yes | Planned | Yes |
-| Relay add/reset controls | Yes | Yes | Yes |
-| Direct FIPS block sync | Yes | Yes | Yes |
-| Blossom fallback server list | Yes | Yes | Yes |
-| Hashtree config/block/root paths | Yes | Yes | Yes |
-| Tray/menu-bar control | Yes | Yes | Yes |
-| Close to tray/menu-bar | Yes | Yes | Yes |
-| Native OS file-provider mount | FUSE mount | FileProvider scaffold | Cloud Files read hydration |
+| Capability | Linux GTK | macOS SwiftUI | Windows WPF | iOS SwiftUI | Android Compose |
+| --- | --- | --- | --- | --- | --- |
+| First-run create profile | Yes | Yes | Yes | UI scaffold | No; app shell only |
+| Restore owner profile | Yes | Yes | Yes | UI scaffold | No; app shell only |
+| Link request handoff | Yes | Yes | Yes | UI scaffold | No; app shell only |
+| Copy owner/device keys | Yes | Yes | Yes | UI scaffold | No |
+| Approve linked device from request link | Yes | Yes | Yes | UI scaffold | No |
+| Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop |
+| Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
+| Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain | SAF DocumentsProvider |
+| Copy/open snapshot link | Yes | Yes | Yes | UI scaffold | No |
+| Devices list and auth state | Yes | Yes | Yes | UI scaffold | No |
+| Device online/sync status | Yes | Planned | Yes | Local-only scaffold | No |
+| Owner device revoke control | Yes | Planned | Yes | UI scaffold | No |
+| Relay add/reset controls | Yes | Yes | Yes | UI scaffold | No |
+| Direct FIPS block sync | Yes | Yes | Yes | Harness daemon peer; app pending | Harness daemon peer; app pending |
+| Blossom fallback server list | Yes | Yes | Yes | UI scaffold | No |
+| Hashtree config/block/root paths | Yes | Yes | Yes | App-group/runtime path only | App files path only |
+| Tray/menu-bar control | Yes | Yes | Yes | N/A | N/A |
+| Close to tray/menu-bar | Yes | Yes | Yes | N/A | N/A |
+| Native OS file-provider surface | FUSE mount | FileProvider domain | Cloud Files read hydration | FileProvider extension/domain | DocumentsProvider scaffold |
+| Multidevice e2e label | `ubuntu` | `macos` | `windows` | `ios` provider-command peer + simulator smoke | `android` provider-command peer + adb smoke |
 
 ## Desktop test target
 
@@ -57,3 +61,29 @@ panel build.
 Block replication now tries direct hashtree-over-FIPS transfer between
 authorized Iris Drive instances first. Blossom remains configured as a
 fallback/cache path, not the primary sync transport.
+
+## Mobile test target
+
+iOS has a buildable SwiftUI shell plus a FileProvider extension registered by
+the containing app. The local iOS simulator smoke is:
+
+```bash
+just ios-smoke
+```
+
+Android has a buildable Jetpack Compose shell plus a SAF `DocumentsProvider`
+registered as `to.iris.drive.documents`. The local Android adb smoke is:
+
+```bash
+just android-smoke
+```
+
+For the full desktop + mobile lab, use:
+
+```bash
+just e2e-5devices
+```
+
+That runs the iOS simulator smoke, runs the Android adb smoke on the configured
+Android host, then includes both mobile host labels as daemon peers in the
+shared multidevice sync harness.

@@ -12,6 +12,7 @@ info:
     @echo "  just run"
     @echo "  just dev"
     @echo "  just run-linux"
+    @echo "  just run-android"
     @echo "  just run-cli --help"
     @echo
     @echo "Build"
@@ -20,6 +21,9 @@ info:
     @echo "  just release"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
+    @echo "  just android-build"
+    @echo "  just android-install"
+    @echo "  just android-smoke"
     @echo "  just ios-xcodeproj"
     @echo "  just ios-build"
     @echo "  just ios-smoke"
@@ -29,6 +33,7 @@ info:
     @echo "  just e2e"
     @echo "  just e2e-3vms"
     @echo "  just e2e-4devices"
+    @echo "  just e2e-5devices"
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
@@ -49,6 +54,9 @@ run:
 
 run-linux:
     ./tools/run-linux
+
+run-android:
+    ./tools/run-android install
 
 dev:
     @case "$(uname -s)" in \
@@ -99,6 +107,15 @@ macos-xcodeproj:
 macos-build:
     xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData CODE_SIGNING_ALLOWED=NO build
 
+android-build:
+    ./tools/run-android build
+
+android-install:
+    ./tools/run-android install
+
+android-smoke:
+    ./scripts/mobile-android-smoke.sh
+
 ios-xcodeproj:
     cd ios && xcodegen generate
 
@@ -131,6 +148,9 @@ e2e-3vms *args:
 e2e-4devices *args:
     ./scripts/cross-vm-four-platform-e2e.sh {{args}}
 
+e2e-5devices *args:
+    ./scripts/cross-vm-five-platform-e2e.sh {{args}}
+
 release:
     cargo build --workspace --release
 
@@ -138,8 +158,10 @@ test:
     cargo test --workspace
 
 structure:
-    ./scripts/check-rust-file-length.sh
+    ./scripts/check-platform-parity-matrix.sh
+    ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
+    ./scripts/check-rust-file-length.sh
 
 docker-cli-e2e:
     ./scripts/docker-cli-e2e.sh

@@ -25,8 +25,8 @@ render. Native shells follow the same Rust-core / native-front pattern used in
 
 ## Status
 
-Early working sync engine with macOS, Linux, and Windows desktop control
-panels. The CLI can initialize an account, import a source directory once,
+Early working sync engine with macOS, Linux, Windows desktop control panels,
+and an Android shell scaffold with a SAF DocumentsProvider. The CLI can initialize an account, import a source directory once,
 publish private drive roots, replicate blocks directly over FIPS between
 authorized devices, fall back to Blossom, mirror encrypted backup blobs to
 Blossom, filesystem, or LMDB targets, and run a long-lived daemon with virtual
@@ -84,7 +84,7 @@ crates/
   iris-drive-app-core/    UniFFI bridge + native app state/actions
   iris-drive-mac/         Rust macOS menu-bar dev wrapper
 macos/ linux/ windows/   desktop native shells
-android/ ios/            mobile shell placeholders
+android/ ios/            mobile native shells
 docs/                   protocol notes, experiments
 ```
 

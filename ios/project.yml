@@ -30,7 +30,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: IrisDriveIOS.entitlements
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Drive
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: IrisDriveFileProvider
 

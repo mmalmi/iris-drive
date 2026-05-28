@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Iris Drive</string>
+    <string name="documents_provider_authority">to.iris.drive.documents</string>
+    <string name="sync_notification_channel">Iris Drive sync</string>
+</resources>

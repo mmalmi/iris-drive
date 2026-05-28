@@ -23,12 +23,15 @@ require_contains() {
 
 require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
+require_file ios/Sources/IrisDriveMobileModel.swift
 require_file ios/FileProvider/FileProviderExtension.swift
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
 
 require_contains ios/project.yml "IrisDriveIOS"
 require_contains ios/project.yml "IrisDriveFileProvider"
+require_contains ios/Sources/IrisDriveIOSApp.swift "ensureFileProviderDomain"
+require_contains ios/Sources/IrisDriveMobileModel.swift "NSFileProviderManager.add"
 require_contains scripts/ios-simulator-smoke.sh "xcrun simctl"
 require_contains scripts/cross-vm-four-platform-e2e.sh "IRIS_DRIVE_E2E_IOS_HOST"
 require_contains Justfile "ios-build"

@@ -1,0 +1,99 @@
+package to.iris.drive.app.sync
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import to.iris.drive.app.MainActivity
+import to.iris.drive.app.R
+
+class IrisDriveSyncService : Service() {
+    override fun onCreate() {
+        super.onCreate()
+        ensureNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopForegroundCompat()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        startForegroundCompat()
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startForegroundCompat() {
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val openAppIntent =
+            PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        val stopIntent =
+            PendingIntent.getService(
+                this,
+                1,
+                Intent(this, IrisDriveSyncService::class.java).setAction(ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_drive)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText("Sync service active")
+            .setOngoing(true)
+            .setContentIntent(openAppIntent)
+            .addAction(R.drawable.ic_drive, "Stop", stopIntent)
+            .build()
+    }
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java)
+        val channel =
+            NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.sync_notification_channel),
+                NotificationManager.IMPORTANCE_LOW,
+            )
+        manager.createNotificationChannel(channel)
+    }
+
+    companion object {
+        const val ACTION_STOP = "to.iris.drive.action.STOP_SYNC"
+        private const val CHANNEL_ID = "iris-drive-sync"
+        private const val NOTIFICATION_ID = 17321
+    }
+}

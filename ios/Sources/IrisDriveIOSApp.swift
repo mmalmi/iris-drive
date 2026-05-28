@@ -7,6 +7,9 @@ struct IrisDriveIOSApp: App {
     var body: some Scene {
         WindowGroup {
             IrisDriveRootView(model: model)
+                .onAppear {
+                    model.ensureFileProviderDomainIfProfileExists()
+                }
                 .onOpenURL { url in
                     model.handle(url: url)
                 }

@@ -4,34 +4,95 @@ struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
     var body: some View {
-        TabView {
-            NavigationStack {
-                DriveHomeView(model: model)
-            }
-            .tabItem {
-                Label("My Drive", systemImage: "externaldrive.fill")
-            }
+        if model.ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            SetupWelcomeView(model: model)
+        } else {
+            TabView {
+                NavigationStack {
+                    DriveHomeView(model: model)
+                }
+                .tabItem {
+                    Label("My Drive", systemImage: "externaldrive.fill")
+                }
 
-            NavigationStack {
-                DevicesView(model: model)
-            }
-            .tabItem {
-                Label("Devices", systemImage: "person.2.fill")
-            }
+                NavigationStack {
+                    DevicesView(model: model)
+                }
+                .tabItem {
+                    Label("Devices", systemImage: "person.2.fill")
+                }
 
-            NavigationStack {
-                BackupsView(model: model)
-            }
-            .tabItem {
-                Label("Backups", systemImage: "lock.shield.fill")
-            }
+                NavigationStack {
+                    BackupsView(model: model)
+                }
+                .tabItem {
+                    Label("Backups", systemImage: "lock.shield.fill")
+                }
 
-            NavigationStack {
-                SettingsView(model: model)
+                NavigationStack {
+                    SettingsView(model: model)
+                }
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
             }
-            .tabItem {
-                Label("Settings", systemImage: "gearshape.fill")
+        }
+    }
+}
+
+private struct SetupWelcomeView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var ownerPublicKey = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(spacing: 14) {
+                        Image("BrandIcon")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 96, height: 96)
+                        Text("Iris Drive")
+                            .font(.title.bold())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                }
+
+                Section {
+                    TextField("Device label", text: $model.deviceLabel)
+                    Button {
+                        model.createProfile()
+                    } label: {
+                        Label("Create profile", systemImage: "plus")
+                    }
+                }
+
+                Section {
+                    TextField("Owner public key", text: $ownerPublicKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        model.ownerPublicKey = ownerPublicKey
+                        model.linkDevice()
+                    } label: {
+                        Label("Link this device", systemImage: "link")
+                    }
+                    .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Section {
+                    SecureField("Restore secret", text: $model.restoreSecret)
+                    Button {
+                        model.restoreProfile()
+                    } label: {
+                        Label("Restore profile", systemImage: "key.fill")
+                    }
+                    .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
+            .navigationTitle("Setup")
         }
     }
 }
@@ -61,18 +122,42 @@ private struct DriveHomeView: View {
                 .padding(.vertical, 8)
             }
 
-            Section {
+            Section("Files") {
+                LabeledContent("Provider", value: model.fileProviderStatus)
                 Button {
-                    model.createProfile()
+                    model.ensureFileProviderDomain()
                 } label: {
-                    Label("Create profile", systemImage: "plus")
+                    Label("Refresh Files provider", systemImage: "folder.badge.gearshape")
                 }
                 Button {
-                    model.linkDevice()
+                    model.copySnapshotLink()
                 } label: {
-                    Label("Link this device", systemImage: "link")
+                    Label("Copy snapshot link", systemImage: "doc.on.doc")
                 }
-                .disabled(model.ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    model.openSnapshotLink()
+                } label: {
+                    Label("Open snapshot link", systemImage: "safari")
+                }
+            }
+
+            Section("Sync") {
+                LabeledContent("State", value: model.syncStateTitle)
+                Button {
+                    model.startSync()
+                } label: {
+                    Label("Start sync", systemImage: "play.fill")
+                }
+                Button {
+                    model.stopSync()
+                } label: {
+                    Label("Stop sync", systemImage: "stop.fill")
+                }
+                Button {
+                    model.restartSync()
+                } label: {
+                    Label("Restart sync", systemImage: "arrow.triangle.2.circlepath")
+                }
             }
         }
         .navigationTitle("My Drive")
@@ -113,7 +198,29 @@ private struct DevicesView: View {
                             }
                         }
                     }
+                    .swipeActions {
+                        if device.canRevoke {
+                            Button(role: .destructive) {
+                                model.revokeDevice(label: device.label)
+                            } label: {
+                                Label("Revoke", systemImage: "trash")
+                            }
+                        }
+                    }
                 }
+            }
+
+            Section("Approve Device") {
+                TextField("Device request", text: $model.approveDeviceKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("Label", text: $model.approveDeviceLabel)
+                Button {
+                    model.approveDevice()
+                } label: {
+                    Label("Approve device", systemImage: "checkmark.circle")
+                }
+                .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .navigationTitle("Devices")
@@ -154,6 +261,16 @@ private struct SettingsView: View {
             Section("Account") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
+                Button {
+                    model.copyOwnerKey()
+                } label: {
+                    Label("Copy owner key", systemImage: "doc.on.doc")
+                }
+                Button {
+                    model.copyDeviceKey()
+                } label: {
+                    Label("Copy device key", systemImage: "doc.on.doc")
+                }
                 SecureField("Restore secret", text: $model.restoreSecret)
                 Button {
                     model.restoreProfile()
@@ -169,6 +286,11 @@ private struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.persist() }
+                Button {
+                    model.resetRelay()
+                } label: {
+                    Label("Reset relay", systemImage: "arrow.counterclockwise")
+                }
                 Toggle("Sync over cellular", isOn: $model.syncOverCellular)
                     .onChange(of: model.syncOverCellular) { _, _ in
                         model.persist()
