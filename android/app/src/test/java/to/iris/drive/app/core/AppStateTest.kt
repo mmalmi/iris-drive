@@ -14,7 +14,8 @@ class AppStateTest {
                 deviceLabel = "Pixel",
                 authorizationState = "authorized",
                 hasOwnerSigningAuthority = true,
-                deviceLinkRequest = "iris-drive://device-link?owner=owner&device=device-a",
+                deviceLinkRequest = "",
+                deviceLinkInvite = "iris-drive://link-device?owner=owner&admin=device-a&secret=join-secret",
             ),
             roots = listOf(
                 SyncRoot(

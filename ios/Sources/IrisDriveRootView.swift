@@ -200,11 +200,12 @@ private struct SignInSetupView: View {
 private struct LinkDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var ownerPublicKey = ""
+    @State private var scannerPresented = false
 
     var body: some View {
         Form {
             Section {
-                TextField("Owner public key", text: $ownerPublicKey)
+                TextField("Owner public key or invite link", text: $ownerPublicKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button {
@@ -214,9 +215,19 @@ private struct LinkDeviceSetupView: View {
                     Label("Link device", systemImage: "link")
                 }
                 .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    scannerPresented = true
+                } label: {
+                    Label("Scan invite QR", systemImage: "qrcode.viewfinder")
+                }
             }
         }
         .navigationTitle("Link this device")
+        .sheet(isPresented: $scannerPresented) {
+            QRCodeScannerSheet { code in
+                ownerPublicKey = code
+            }
+        }
     }
 }
 
@@ -306,6 +317,7 @@ private struct DriveFolderBrowser: UIViewControllerRepresentable {
 
 private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var scannerPresented = false
 
     var body: some View {
         List {
@@ -357,21 +369,42 @@ private struct DevicesView: View {
                 }
             }
 
-            Section("Link Request") {
-                Text(model.deviceLinkRequest.isEmpty ? "Create or link a profile first." : model.deviceLinkRequest)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Button {
-                    model.copyLinkRequest()
-                } label: {
-                    Label("Copy link request", systemImage: "link")
+            if !model.deviceLinkInvite.isEmpty {
+                Section("Invite Device") {
+                    QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkInvite))
+                        .frame(width: 260, height: 260)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Text(model.deviceLinkInvite)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button {
+                        model.copyLinkInvite()
+                    } label: {
+                        Label("Copy invite link", systemImage: "link")
+                    }
                 }
-                .disabled(model.deviceLinkRequest.isEmpty)
+            }
+
+            if !model.deviceLinkRequest.isEmpty {
+                Section("Link Request") {
+                    QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkRequest))
+                        .frame(width: 260, height: 260)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Text(model.deviceLinkRequest)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button {
+                        model.copyLinkRequest()
+                    } label: {
+                        Label("Copy link request", systemImage: "link")
+                    }
+                }
             }
 
             Section("Approve Device") {
-                TextField("Device request", text: $model.approveDeviceKey)
+                TextField("Device request or Device ID", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Label", text: $model.approveDeviceLabel)
@@ -381,9 +414,20 @@ private struct DevicesView: View {
                     Label("Approve device", systemImage: "checkmark.circle")
                 }
                 .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    scannerPresented = true
+                } label: {
+                    Label("Scan request QR", systemImage: "qrcode.viewfinder")
+                }
+                .disabled(!model.hasOwnerAuthority)
             }
         }
         .navigationTitle("Devices")
+        .sheet(isPresented: $scannerPresented) {
+            QRCodeScannerSheet { code in
+                model.approveDeviceKey = code
+            }
+        }
     }
 }
 
@@ -496,6 +540,42 @@ private struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+    }
+}
+
+private struct QrCodeView: View {
+    let matrix: QrMatrix
+
+    var body: some View {
+        GeometryReader { proxy in
+            Canvas { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+                guard matrix.width > 0, matrix.cells.count >= matrix.width * matrix.width else {
+                    return
+                }
+                let quiet = 3
+                let modules = matrix.width + quiet * 2
+                let cell = min(size.width, size.height) / CGFloat(modules)
+                let origin = CGPoint(
+                    x: (size.width - cell * CGFloat(modules)) / 2,
+                    y: (size.height - cell * CGFloat(modules)) / 2
+                )
+                for y in 0..<matrix.width {
+                    for x in 0..<matrix.width where matrix.cells[y * matrix.width + x] {
+                        let rect = CGRect(
+                            x: origin.x + CGFloat(x + quiet) * cell,
+                            y: origin.y + CGFloat(y + quiet) * cell,
+                            width: cell,
+                            height: cell
+                        )
+                        context.fill(Path(rect), with: .color(.black))
+                    }
+                }
+            }
+            .background(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
     }
 }
 

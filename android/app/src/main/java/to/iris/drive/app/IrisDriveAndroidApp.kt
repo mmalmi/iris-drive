@@ -1,6 +1,7 @@
 package to.iris.drive.app
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
@@ -46,14 +48,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.DeviceState
+import to.iris.drive.app.core.NativeCore
 
 private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
 
@@ -254,8 +260,20 @@ private fun SetupContent(
     var restoreSecret by remember { mutableStateOf("") }
     var linkOwner by remember { mutableStateOf("") }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
+    var showLinkScanner by remember { mutableStateOf(false) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedPhoto = uri?.lastPathSegment.orEmpty()
+    }
+
+    if (showLinkScanner) {
+        QrScannerDialog(
+            onDismiss = { showLinkScanner = false },
+            onScanned = { code ->
+                linkOwner = code
+                showLinkScanner = false
+                null
+            },
+        )
     }
 
     Box(
@@ -356,12 +374,16 @@ private fun SetupContent(
                         onValueChange = { linkOwner = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("Owner public key") },
+                        label = { Text("Owner public key or invite link") },
                     )
                     SetupPrimaryButton(
                         text = "Link device",
                         onClick = { onLinkDevice(linkOwner) },
                         enabled = linkOwner.isNotBlank(),
+                    )
+                    SetupSecondaryButton(
+                        text = "Scan invite QR",
+                        onClick = { showLinkScanner = true },
                     )
                 }
             }
@@ -481,7 +503,10 @@ private fun DriveContent(
         item {
             DevicesPanel(
                 devices = state.devices,
+                linkRequest = state.account?.deviceLinkRequest.orEmpty(),
+                linkInvite = state.account?.deviceLinkInvite.orEmpty(),
                 canApprove = state.account?.hasOwnerSigningAuthority == true,
+                onCopyLinkRequest = onCopyLinkRequest,
                 onApproveDevice = onApproveDevice,
                 onRevokeDevice = onRevokeDevice,
                 onAppointAdmin = onAppointAdmin,
@@ -604,7 +629,10 @@ private fun ProviderPanel(
 @Composable
 private fun DevicesPanel(
     devices: List<DeviceState>,
+    linkRequest: String,
+    linkInvite: String,
     canApprove: Boolean,
+    onCopyLinkRequest: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
@@ -612,8 +640,33 @@ private fun DevicesPanel(
 ) {
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
+    var showRequestScanner by remember { mutableStateOf(false) }
+
+    if (showRequestScanner) {
+        QrScannerDialog(
+            onDismiss = { showRequestScanner = false },
+            onScanned = { code ->
+                request = code
+                showRequestScanner = false
+                null
+            },
+        )
+    }
 
     CardSection(title = "Devices", trailing = "${devices.size}") {
+        if (linkInvite.isNotBlank()) {
+            Text("Invite device", fontWeight = FontWeight.SemiBold)
+            QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
+            Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (linkRequest.isNotBlank()) {
+            Text("Link request", fontWeight = FontWeight.SemiBold)
+            QrCode(linkRequest, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
+            Text(linkRequest, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            OutlinedButton(onClick = onCopyLinkRequest) {
+                Text("Copy link request")
+            }
+        }
         devices.forEach { device ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Icon(
@@ -656,7 +709,7 @@ private fun DevicesPanel(
             onValueChange = { request = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Device request") },
+            label = { Text("Device request or Device ID") },
         )
         OutlinedTextField(
             value = label,
@@ -665,15 +718,23 @@ private fun DevicesPanel(
             singleLine = true,
             label = { Text("Label") },
         )
-        Button(
-            onClick = {
-                onApproveDevice(request, label)
-                request = ""
-                label = ""
-            },
-            enabled = canApprove && request.isNotBlank(),
-        ) {
-            Text("Approve Device")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = {
+                    onApproveDevice(request, label)
+                    request = ""
+                    label = ""
+                },
+                enabled = canApprove && request.isNotBlank(),
+            ) {
+                Text("Approve Device")
+            }
+            OutlinedButton(
+                onClick = { showRequestScanner = true },
+                enabled = canApprove,
+            ) {
+                Text("Scan QR")
+            }
         }
     }
 }
@@ -688,6 +749,42 @@ private fun BackupsPanel(backups: List<BackupState>) {
             Text(backup.label, fontWeight = FontWeight.SemiBold)
             Text(backup.state, color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(backup.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun QrCode(
+    value: String,
+    modifier: Modifier = Modifier,
+    side: Dp = 180.dp,
+) {
+    val qr = remember(value) {
+        runCatching { JSONObject(NativeCore.qrMatrixJson(value)) }.getOrElse { JSONObject() }
+    }
+    val width = qr.optInt("width")
+    val cells = qr.optJSONArray("cells")
+    Canvas(
+        modifier = modifier
+            .size(side)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White),
+    ) {
+        drawRect(Color.White)
+        if (width <= 0 || cells == null) return@Canvas
+        val quiet = 3
+        val modules = width + quiet * 2
+        val cell = size.minDimension / modules
+        for (y in 0 until width) {
+            for (x in 0 until width) {
+                if (cells.optBoolean(y * width + x)) {
+                    drawRect(
+                        color = Color(0xFF111827),
+                        topLeft = androidx.compose.ui.geometry.Offset((x + quiet) * cell, (y + quiet) * cell),
+                        size = Size(cell, cell),
+                    )
+                }
+            }
         }
     }
 }

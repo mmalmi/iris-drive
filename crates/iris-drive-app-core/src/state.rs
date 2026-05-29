@@ -27,6 +27,7 @@ pub struct UiAccount {
     pub authorization_state: String,
     pub has_owner_signing_authority: bool,
     pub device_link_request: String,
+    pub device_link_invite: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

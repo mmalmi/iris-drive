@@ -31,6 +31,8 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.productivity</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Scan Iris Drive device-link QR codes.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
   <true/>
   <key>UILaunchScreen</key>

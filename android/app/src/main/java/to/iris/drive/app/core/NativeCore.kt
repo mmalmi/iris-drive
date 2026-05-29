@@ -13,4 +13,5 @@ internal object NativeCore {
     external fun stateJson(handle: Long): String
     external fun refreshJson(handle: Long): String
     external fun dispatchJson(handle: Long, actionJson: String): String
+    external fun qrMatrixJson(text: String): String
 }

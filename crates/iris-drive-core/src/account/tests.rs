@@ -90,11 +90,18 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     let owner = acct.state.owner_pubkey.clone();
+    let link_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
 
     assert!(
         acct.state
-            .record_inbound_device_link_request(&owner, &device, Some(" phone ".to_string()), 10,)
+            .record_inbound_device_link_request(
+                &owner,
+                &device,
+                Some(" phone ".to_string()),
+                &link_secret,
+                10,
+            )
             .unwrap()
     );
     assert_eq!(acct.state.inbound_device_link_requests.len(), 1);
@@ -106,12 +113,24 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     assert!(
         !acct
             .state
-            .record_inbound_device_link_request(&owner, &device, Some("phone".to_string()), 9,)
+            .record_inbound_device_link_request(
+                &owner,
+                &device,
+                Some("phone".to_string()),
+                &link_secret,
+                9,
+            )
             .unwrap()
     );
     assert!(
         acct.state
-            .record_inbound_device_link_request(&owner, &device, Some("tablet".to_string()), 11,)
+            .record_inbound_device_link_request(
+                &owner,
+                &device,
+                Some("tablet".to_string()),
+                &link_secret,
+                11,
+            )
             .unwrap()
     );
     assert_eq!(acct.state.inbound_device_link_requests.len(), 1);
@@ -119,6 +138,28 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
         acct.state.inbound_device_link_requests[0].label.as_deref(),
         Some("tablet")
     );
+}
+
+#[test]
+fn inbound_device_link_request_requires_link_secret() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    let owner = acct.state.owner_pubkey.clone();
+    let device = fresh_device_pubkey();
+
+    assert!(
+        !acct
+            .state
+            .record_inbound_device_link_request(
+                &owner,
+                &device,
+                Some("phone".to_string()),
+                "wrong-secret",
+                10,
+            )
+            .unwrap()
+    );
+    assert!(acct.state.inbound_device_link_requests.is_empty());
 }
 
 #[test]
@@ -380,6 +421,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     let linked_state = AccountState {
         owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey.clone(),
+        device_link_secret: "linked-secret".into(),
         has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Authorized,
         device_label: Some("phone".into()),
@@ -419,6 +461,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
     let linked_state = AccountState {
         owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey,
+        device_link_secret: "linked-secret".into(),
         has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Revoked,
         device_label: None,

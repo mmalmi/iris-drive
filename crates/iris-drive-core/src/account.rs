@@ -17,10 +17,12 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::app_keys::{
     AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
@@ -80,6 +82,8 @@ pub const MAX_INBOUND_DEVICE_LINK_REQUESTS: usize = 32;
 #[serde(deny_unknown_fields)]
 pub struct PendingDeviceLinkRequest {
     pub admin_device_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub link_secret: String,
     pub requested_at: u64,
 }
 
@@ -89,6 +93,8 @@ pub struct InboundDeviceLinkRequest {
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub link_secret: String,
     pub requested_at: u64,
 }
 
@@ -100,6 +106,8 @@ pub struct AccountState {
     /// The name is kept for config/wire compatibility.
     pub owner_pubkey: String,
     pub device_pubkey: String,
+    #[serde(default = "default_device_link_secret")]
+    pub device_link_secret: String,
     /// Historical field name. In the current model this is true when the
     /// current device is an admin in the latest accepted roster.
     pub has_owner_signing_authority: bool,
@@ -195,6 +203,7 @@ impl AccountState {
     pub fn queue_outbound_device_link_request(
         &mut self,
         admin_device_pubkey: String,
+        link_secret: String,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
         if !is_pubkey_hex(&admin_device_pubkey) {
@@ -205,6 +214,7 @@ impl AccountState {
         }
         let next = PendingDeviceLinkRequest {
             admin_device_pubkey,
+            link_secret: link_secret.trim().to_string(),
             requested_at,
         };
         let changed = self.outbound_device_link_request.as_ref() != Some(&next);
@@ -217,9 +227,15 @@ impl AccountState {
         owner_pubkey: &str,
         device_pubkey: &str,
         label: Option<String>,
+        link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
         if owner_pubkey != self.owner_pubkey || !self.can_manage_devices() {
+            return Ok(false);
+        }
+        let link_secret = link_secret.trim();
+        let expected_secret = self.device_link_secret.trim();
+        if !expected_secret.is_empty() && link_secret != expected_secret {
             return Ok(false);
         }
         if !is_pubkey_hex(device_pubkey) {
@@ -247,9 +263,13 @@ impl AccountState {
             .find(|request| request.device_pubkey == device_pubkey)
         {
             let next_requested_at = existing.requested_at.max(requested_at);
-            if existing.requested_at != next_requested_at || existing.label != label {
+            if existing.requested_at != next_requested_at
+                || existing.label != label
+                || existing.link_secret != link_secret
+            {
                 existing.requested_at = next_requested_at;
                 existing.label = label;
+                existing.link_secret = link_secret.to_string();
                 changed = true;
             }
         } else {
@@ -257,6 +277,7 @@ impl AccountState {
                 .push(InboundDeviceLinkRequest {
                     device_pubkey: device_pubkey.to_string(),
                     label,
+                    link_secret: link_secret.to_string(),
                     requested_at,
                 });
             changed = true;
@@ -297,6 +318,7 @@ impl Account {
         let mut state = AccountState {
             owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
+            device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
@@ -346,6 +368,7 @@ impl Account {
         let mut state = AccountState {
             owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
+            device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
@@ -401,6 +424,7 @@ impl Account {
         let state = AccountState {
             owner_pubkey: owner_pubkey_hex,
             device_pubkey: device.pubkey_hex(),
+            device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label,
@@ -673,6 +697,10 @@ fn generate_dck() -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(keys.secret_key().as_secret_bytes());
     out
+}
+
+fn default_device_link_secret() -> String {
+    URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
 }
 
 fn wrap_dck_for_devices(

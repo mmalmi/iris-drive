@@ -8,12 +8,21 @@ use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString};
 #[cfg(target_os = "android")]
 use jni::sys::{jlong, jstring};
+use qrcode::QrCode;
 use serde::Serialize;
 
 use crate::{FfiApp, NativeAppAction, NativeAppState};
 
 pub struct IrisDriveAppHandle {
     app: Arc<FfiApp>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QrMatrixResult {
+    width: usize,
+    cells: Vec<bool>,
+    error: String,
 }
 
 #[unsafe(no_mangle)]
@@ -80,6 +89,16 @@ pub extern "C" fn iris_drive_app_dispatch_json(
         },
     );
     json_string(&state)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_qr_matrix_json(text: *const c_char) -> *mut c_char {
+    let result = qr_matrix(&c_string_lossy(text)).unwrap_or_else(|error| QrMatrixResult {
+        width: 0,
+        cells: Vec::new(),
+        error,
+    });
+    json_string(&result)
 }
 
 /// # Safety
@@ -180,6 +199,22 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_dispatchJson(
     jni_json_string(env, &state)
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_qrMatrixJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    let result = qr_matrix(&text).unwrap_or_else(|error| QrMatrixResult {
+        width: 0,
+        cells: Vec::new(),
+        error,
+    });
+    jni_json_string(env, &result)
+}
+
 fn app_from_handle(
     handle: *const IrisDriveAppHandle,
 ) -> Result<&'static IrisDriveAppHandle, &'static str> {
@@ -263,6 +298,30 @@ fn into_c_string(value: &str) -> *mut c_char {
     }
 }
 
+fn qr_matrix(text: &str) -> Result<QrMatrixResult, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(QrMatrixResult {
+            width: 0,
+            cells: Vec::new(),
+            error: String::new(),
+        });
+    }
+
+    let code = QrCode::new(trimmed.as_bytes()).map_err(|error| error.to_string())?;
+    let width = code.width();
+    let cells = code
+        .to_colors()
+        .into_iter()
+        .map(|color| matches!(color, qrcode::Color::Dark))
+        .collect();
+    Ok(QrMatrixResult {
+        width,
+        cells,
+        error: String::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::{CStr, CString};
@@ -271,7 +330,7 @@ mod tests {
 
     use super::{
         iris_drive_app_dispatch_json, iris_drive_app_free, iris_drive_app_new,
-        iris_drive_app_state_json, iris_drive_string_free,
+        iris_drive_app_state_json, iris_drive_qr_matrix_json, iris_drive_string_free,
     };
 
     #[test]
@@ -295,6 +354,22 @@ mod tests {
         );
 
         unsafe { iris_drive_app_free(handle) };
+    }
+
+    #[test]
+    fn c_abi_returns_qr_matrix_for_link_text() {
+        let link = CString::new("iris-drive://device-link?device=npub1demo&secret=test")
+            .expect("link CString");
+        let qr_json = take_string(iris_drive_qr_matrix_json(link.as_ptr()));
+        let qr: Value = serde_json::from_str(&qr_json).expect("QR JSON");
+
+        assert!(qr["width"].as_u64().unwrap_or_default() > 0);
+        assert!(
+            qr["cells"]
+                .as_array()
+                .is_some_and(|cells| !cells.is_empty())
+        );
+        assert_eq!(qr["error"], "");
     }
 
     fn take_string(ptr: *mut std::ffi::c_char) -> String {

@@ -51,6 +51,7 @@ internal data class AccountState(
     val authorizationState: String,
     val hasOwnerSigningAuthority: Boolean,
     val deviceLinkRequest: String,
+    val deviceLinkInvite: String,
 )
 
 internal data class DeviceState(
@@ -179,6 +180,7 @@ private fun JSONObject.toAccount(): AccountState =
         authorizationState = optString("authorization_state"),
         hasOwnerSigningAuthority = optBoolean("has_owner_signing_authority"),
         deviceLinkRequest = optString("device_link_request"),
+        deviceLinkInvite = optString("device_link_invite"),
     )
 
 private fun JSONObject.toPaths(): PathState =

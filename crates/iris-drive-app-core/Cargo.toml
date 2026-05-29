@@ -16,6 +16,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 anyhow.workspace = true
 iris-drive-core.workspace = true
 nostr-sdk.workspace = true
+qrcode = { version = "0.14", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -13,15 +13,18 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    let link_secret = account.state.device_link_secret.clone();
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         owner_pubkey: account.state.owner_pubkey.clone(),
         device_pubkey: linked_device.clone(),
+        link_secret: link_secret.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_device_approval_request(
             &account.state.owner_pubkey,
             &linked_device,
+            &link_secret,
             Some(" phone "),
         ),
     };
@@ -43,6 +46,54 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     assert_eq!(inbound[0].device_pubkey, linked_device);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
     assert_eq!(inbound[0].requested_at, 123);
+}
+
+#[tokio::test]
+async fn device_link_app_message_ignores_wrong_link_secret() {
+    let config_dir = tempdir().unwrap();
+    let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
+    let mut config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    let frame = DeviceLinkRequestFrame {
+        schema: 1,
+        owner_pubkey: account.state.owner_pubkey.clone(),
+        device_pubkey: linked_device.clone(),
+        link_secret: "wrong-secret".into(),
+        label: Some("phone".into()),
+        requested_at: 123,
+        url: encode_device_approval_request(
+            &account.state.owner_pubkey,
+            &linked_device,
+            "wrong-secret",
+            Some("phone"),
+        ),
+    };
+    let message = iris_drive_core::FipsAppMessage {
+        peer_id: account_npub(&linked_device),
+        topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
+        data: serde_json::to_vec(&frame).unwrap(),
+    };
+
+    assert!(
+        handle_device_link_app_message(config_dir.path(), &message, None, &mut BTreeSet::new())
+            .await
+            .unwrap()
+    );
+
+    let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+    assert!(
+        saved
+            .account
+            .unwrap()
+            .inbound_device_link_requests
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -103,7 +154,11 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
 
     let mut requested = joiner.state.clone();
     requested
-        .queue_outbound_device_link_request(admin.state.device_pubkey.clone(), 123)
+        .queue_outbound_device_link_request(
+            admin.state.device_pubkey.clone(),
+            admin.state.device_link_secret.clone(),
+            123,
+        )
         .unwrap();
     let mut config = AppConfig {
         account: Some(requested),

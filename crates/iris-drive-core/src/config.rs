@@ -569,6 +569,7 @@ dck_generation = 1
             account: Some(AccountState {
                 owner_pubkey: "owner".into(),
                 device_pubkey: "device-a".into(),
+                device_link_secret: "link-secret".into(),
                 has_owner_signing_authority: false,
                 authorization_state: crate::account::DeviceAuthorizationState::Authorized,
                 device_label: None,

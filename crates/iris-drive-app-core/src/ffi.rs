@@ -182,8 +182,8 @@ impl NativeAppRuntime {
     }
 
     fn link_device(&mut self, owner_pubkey: &str, device_label: &str) {
-        let owner_pubkey = match normalize_pubkey(owner_pubkey) {
-            Ok(owner) => owner,
+        let target = match resolve_device_link_target(owner_pubkey) {
+            Ok(target) => target,
             Err(error) => {
                 self.state.error = error;
                 return;
@@ -195,7 +195,7 @@ impl NativeAppRuntime {
         }
         let mut account = match Account::link(
             Path::new(&self.data_dir),
-            owner_pubkey,
+            target.owner_hex,
             label_option(device_label),
         ) {
             Ok(account) => account,
@@ -204,11 +204,19 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let admin_device = account.state.owner_pubkey.clone();
-        if let Err(error) = account
-            .state
-            .queue_outbound_device_link_request(admin_device, unix_now_seconds())
-        {
+        let admin_device = target
+            .admin_device_hex
+            .unwrap_or_else(|| account.state.owner_pubkey.clone());
+        let link_secret = if target.link_secret.trim().is_empty() {
+            account.state.device_link_secret.clone()
+        } else {
+            target.link_secret
+        };
+        if let Err(error) = account.state.queue_outbound_device_link_request(
+            admin_device,
+            link_secret,
+            unix_now_seconds(),
+        ) {
             self.state.error = format!("queueing device link request: {error}");
             return;
         }
@@ -488,11 +496,8 @@ impl NativeAppRuntime {
             device_label: account.device_label.clone().unwrap_or_default(),
             authorization_state: authorization_state_label(account).to_owned(),
             has_owner_signing_authority: account.has_owner_signing_authority,
-            device_link_request: encode_device_approval_request(
-                &account.owner_pubkey,
-                &account.device_pubkey,
-                account.device_label.as_deref(),
-            ),
+            device_link_request: device_link_request_url(account),
+            device_link_invite: device_link_invite_url(account),
         });
         self.state.ui.devices = devices_from_account(account, self.state.ui.sync.running);
         self.refresh_device_actions();
@@ -708,9 +713,48 @@ fn devices_from_account(
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceLinkTarget {
+    owner_hex: String,
+    admin_device_hex: Option<String>,
+    link_secret: String,
+}
+
+fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {
+    if state.can_manage_devices()
+        || state.authorization_state != DeviceAuthorizationState::AwaitingApproval
+    {
+        return String::new();
+    }
+    encode_device_approval_request(
+        &state.owner_pubkey,
+        &state.device_pubkey,
+        state
+            .outbound_device_link_request
+            .as_ref()
+            .and_then(|request| {
+                (!request.link_secret.trim().is_empty()).then_some(request.link_secret.as_str())
+            })
+            .unwrap_or(state.device_link_secret.as_str()),
+        state.device_label.as_deref(),
+    )
+}
+
+fn device_link_invite_url(state: &iris_drive_core::AccountState) -> String {
+    if !state.can_manage_devices() {
+        return String::new();
+    }
+    encode_device_link_invite(
+        &state.owner_pubkey,
+        &state.device_pubkey,
+        &state.device_link_secret,
+    )
+}
+
 fn encode_device_approval_request(
     owner_hex: &str,
     device_hex: &str,
+    link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
@@ -718,11 +762,57 @@ fn encode_device_approval_request(
         account_npub(owner_hex),
         account_npub(device_hex)
     );
+    if !link_secret.trim().is_empty() {
+        url.push_str("&secret=");
+        url.push_str(&percent_encode_component(link_secret.trim()));
+    }
     if let Some(label) = label.and_then(label_option) {
         url.push_str("&label=");
-        url.push_str(&label.replace(' ', "%20"));
+        url.push_str(&percent_encode_component(&label));
     }
     url
+}
+
+fn encode_device_link_invite(owner_hex: &str, admin_device_hex: &str, link_secret: &str) -> String {
+    format!(
+        "iris-drive://link-device?owner={}&admin={}&secret={}",
+        account_npub(owner_hex),
+        account_npub(admin_device_hex),
+        percent_encode_component(link_secret.trim())
+    )
+}
+
+fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
+    if let Some(target) = decode_device_link_invite(input)? {
+        return Ok(target);
+    }
+    Ok(DeviceLinkTarget {
+        owner_hex: normalize_pubkey(input)?,
+        admin_device_hex: None,
+        link_secret: String::new(),
+    })
+}
+
+fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, String> {
+    if !(request.starts_with("iris-drive://link-device")
+        || request.starts_with("https://drive.iris.to/link-device"))
+    {
+        return Ok(None);
+    }
+    let query = request.split_once('?').map_or("", |(_, query)| query);
+    let owner = query_value(query, "owner")
+        .ok_or_else(|| "device link invite is missing owner".to_owned())?;
+    let admin = query_value(query, "admin")
+        .or_else(|| query_value(query, "admin_device"))
+        .ok_or_else(|| "device link invite is missing admin".to_owned())?;
+    let link_secret = query_value(query, "secret")
+        .or_else(|| query_value(query, "link_secret"))
+        .ok_or_else(|| "device link invite is missing secret".to_owned())?;
+    Ok(Some(DeviceLinkTarget {
+        owner_hex: normalize_pubkey(&owner)?,
+        admin_device_hex: Some(normalize_pubkey(&admin)?),
+        link_secret,
+    }))
 }
 
 fn decode_device_approval_request(
@@ -736,7 +826,7 @@ fn decode_device_approval_request(
             .ok_or_else(|| "device request is missing owner".to_owned())?;
         let device = query_value(query, "device")
             .ok_or_else(|| "device request is missing device".to_owned())?;
-        let label = query_value(query, "label").map(|label| label.replace("%20", " "));
+        let label = query_value(query, "label");
         return Ok((normalize_pubkey(&owner)?, normalize_pubkey(&device)?, label));
     }
     let device = normalize_pubkey(request)?;
@@ -746,8 +836,65 @@ fn decode_device_approval_request(
 fn query_value(query: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|part| {
         let (key, value) = part.split_once('=')?;
-        (key == name && !value.is_empty()).then(|| value.to_owned())
+        (key == name && !value.is_empty()).then(|| percent_decode_component(value))
     })
+}
+
+fn percent_encode_component(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(hex_digit(byte >> 4));
+            encoded.push(hex_digit(byte & 0x0f));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let Some(hi) = bytes.get(index + 1).copied().and_then(hex_value) else {
+                output.push(bytes[index]);
+                index += 1;
+                continue;
+            };
+            let Some(lo) = bytes.get(index + 2).copied().and_then(hex_value) else {
+                output.push(bytes[index]);
+                index += 1;
+                continue;
+            };
+            output.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).unwrap_or_default()
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'A' + value - 10) as char,
+        _ => '0',
+    }
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn unix_now_seconds() -> u64 {
@@ -824,6 +971,13 @@ mod tests {
         assert_eq!(account.device_label, "Pixel");
         assert_eq!(account.authorization_state, "authorized");
         assert!(account.has_owner_signing_authority);
+        assert!(account.device_link_request.is_empty());
+        assert!(
+            account
+                .device_link_invite
+                .contains("iris-drive://link-device?")
+        );
+        assert!(account.device_link_invite.contains("secret="));
         assert_eq!(state.ui.devices.len(), 1);
         assert_eq!(state.ui.devices[0].label, "Pixel");
         assert_eq!(state.ui.devices[0].role, "admin");
@@ -863,7 +1017,8 @@ mod tests {
         assert_eq!(account.device_label, "iPhone");
         assert_eq!(account.authorization_state, "awaiting_approval");
         assert!(!account.has_owner_signing_authority);
-        assert!(account.device_link_request.contains("device="));
+        assert!(account.device_link_request.contains("device=npub1"));
+        assert!(account.device_link_request.contains("secret="));
         assert_eq!(state.ui.devices[0].role, "member");
     }
 

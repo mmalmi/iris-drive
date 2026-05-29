@@ -62,13 +62,18 @@ pub(crate) fn cmd_link_with_admin_device(
     let target = resolve_device_link_target_with_admin(owner, admin_device)?;
     let mut account =
         Account::link(config_dir, target.owner_hex, label).context("linking device")?;
+    let link_secret = if target.link_secret.trim().is_empty() {
+        account.state.device_link_secret.clone()
+    } else {
+        target.link_secret
+    };
     if let Some(admin_device_hex) = target
         .admin_device_hex
         .or_else(|| Some(account.state.owner_pubkey.clone()))
     {
         account
             .state
-            .queue_outbound_device_link_request(admin_device_hex, unix_now_seconds())
+            .queue_outbound_device_link_request(admin_device_hex, link_secret, unix_now_seconds())
             .context("queueing device link request")?;
     }
     finish_account_init(config_dir, &account, None)
@@ -322,6 +327,7 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
 pub(crate) struct DeviceApprovalRequest {
     owner_hex: String,
     device_hex: String,
+    link_secret: String,
     label: Option<String>,
 }
 
@@ -329,12 +335,14 @@ pub(crate) struct DeviceApprovalRequest {
 pub(crate) struct DeviceLinkTarget {
     owner_hex: String,
     admin_device_hex: Option<String>,
+    link_secret: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeviceLinkInvite {
     owner_hex: String,
     admin_device_hex: String,
+    link_secret: String,
 }
 
 pub(crate) fn resolve_device_approval_input(
@@ -371,6 +379,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
         return Ok(DeviceLinkTarget {
             owner_hex: invite.owner_hex,
             admin_device_hex: Some(invite.admin_device_hex),
+            link_secret: invite.link_secret,
         });
     }
 
@@ -380,6 +389,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
     Ok(DeviceLinkTarget {
         owner_hex: normalize_pubkey(input).context("parsing owner pubkey")?,
         admin_device_hex,
+        link_secret: String::new(),
     })
 }
 
@@ -393,6 +403,13 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     let url = encode_device_approval_request(
         &state.owner_pubkey,
         &state.device_pubkey,
+        state
+            .outbound_device_link_request
+            .as_ref()
+            .and_then(|request| {
+                (!request.link_secret.trim().is_empty()).then_some(request.link_secret.as_str())
+            })
+            .unwrap_or(state.device_link_secret.as_str()),
         state.device_label.as_deref(),
     );
 
@@ -417,7 +434,11 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
     if !state.can_manage_devices() {
         return Value::Null;
     }
-    let url = encode_device_link_invite(&state.owner_pubkey, &state.device_pubkey);
+    let url = encode_device_link_invite(
+        &state.owner_pubkey,
+        &state.device_pubkey,
+        &state.device_link_secret,
+    );
     json!({
         "url": url,
         "web_url": device_link_web_url(&url),
@@ -435,6 +456,7 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
                 "url": encode_device_approval_request(
                     &state.owner_pubkey,
                     &request.device_pubkey,
+                    &request.link_secret,
                     request.label.as_deref(),
                 ),
                 "owner_npub": account_npub(&state.owner_pubkey),
@@ -449,6 +471,7 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
 pub(crate) fn encode_device_approval_request(
     owner_hex: &str,
     device_hex: &str,
+    link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
@@ -456,6 +479,10 @@ pub(crate) fn encode_device_approval_request(
         account_npub(owner_hex),
         account_npub(device_hex)
     );
+    if !link_secret.trim().is_empty() {
+        url.push_str("&secret=");
+        url.push_str(&percent_encode_component(link_secret.trim()));
+    }
     if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
         url.push_str("&label=");
         url.push_str(&percent_encode_component(label));
@@ -463,11 +490,16 @@ pub(crate) fn encode_device_approval_request(
     url
 }
 
-pub(crate) fn encode_device_link_invite(owner_hex: &str, admin_device_hex: &str) -> String {
+pub(crate) fn encode_device_link_invite(
+    owner_hex: &str,
+    admin_device_hex: &str,
+    link_secret: &str,
+) -> String {
     format!(
-        "iris-drive://link-device?owner={}&admin={}",
+        "iris-drive://link-device?owner={}&admin={}&secret={}",
         account_npub(owner_hex),
-        account_npub(admin_device_hex)
+        account_npub(admin_device_hex),
+        percent_encode_component(link_secret.trim())
     )
 }
 
@@ -487,6 +519,7 @@ pub(crate) fn decode_device_link_invite(input: &str) -> Result<Option<DeviceLink
 
     let mut owner = None;
     let mut admin = None;
+    let mut link_secret = None;
     for pair in query.split('&') {
         if pair.is_empty() {
             continue;
@@ -497,16 +530,20 @@ pub(crate) fn decode_device_link_invite(input: &str) -> Result<Option<DeviceLink
         match key.as_str() {
             "owner" if !value.trim().is_empty() => owner = Some(value),
             "admin" | "admin_device" if !value.trim().is_empty() => admin = Some(value),
+            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
             _ => {}
         }
     }
 
     let owner = owner.ok_or_else(|| anyhow::anyhow!("device link invite is missing owner"))?;
     let admin = admin.ok_or_else(|| anyhow::anyhow!("device link invite is missing admin"))?;
+    let link_secret =
+        link_secret.ok_or_else(|| anyhow::anyhow!("device link invite is missing secret"))?;
 
     Ok(Some(DeviceLinkInvite {
         owner_hex: normalize_pubkey(&owner).context("parsing invite owner")?,
         admin_device_hex: normalize_pubkey(&admin).context("parsing invite admin device")?,
+        link_secret: link_secret.trim().to_string(),
     }))
 }
 
@@ -518,6 +555,7 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
 
     let mut owner = None;
     let mut device = None;
+    let mut link_secret = None;
     let mut label = None;
     for pair in query.split('&') {
         if pair.is_empty() {
@@ -529,6 +567,7 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
         match key.as_str() {
             "owner" if !value.trim().is_empty() => owner = Some(value),
             "device" if !value.trim().is_empty() => device = Some(value),
+            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
             "label" if !value.trim().is_empty() => label = Some(value),
             _ => {}
         }
@@ -540,6 +579,7 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
     Ok(Some(DeviceApprovalRequest {
         owner_hex: normalize_pubkey(&owner).context("parsing request owner")?,
         device_hex: normalize_pubkey(&device).context("parsing request device")?,
+        link_secret: link_secret.unwrap_or_default().trim().to_string(),
         label,
     }))
 }
@@ -581,6 +621,8 @@ struct DeviceLinkRequestFrame {
     schema: u32,
     owner_pubkey: String,
     device_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    link_secret: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     requested_at: u64,
@@ -648,15 +690,22 @@ pub(crate) async fn send_pending_device_link_request(
     }
 
     sync.refresh_authorized_peers(&config).await;
+    let link_secret = if pending.link_secret.trim().is_empty() {
+        state.device_link_secret.clone()
+    } else {
+        pending.link_secret.clone()
+    };
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         owner_pubkey: state.owner_pubkey.clone(),
         device_pubkey: state.device_pubkey.clone(),
+        link_secret: link_secret.clone(),
         label: state.device_label.clone(),
         requested_at: pending.requested_at,
         url: encode_device_approval_request(
             &state.owner_pubkey,
             &state.device_pubkey,
+            &link_secret,
             state.device_label.as_deref(),
         ),
     };
@@ -821,6 +870,13 @@ async fn handle_device_link_request_app_message(
     let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing link request owner")?;
     let device_hex =
         normalize_pubkey(&frame.device_pubkey).context("parsing link request device")?;
+    let link_secret = if frame.link_secret.trim().is_empty() {
+        decode_device_approval_request(&frame.url)?
+            .map(|request| request.link_secret)
+            .unwrap_or_default()
+    } else {
+        frame.link_secret
+    };
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -832,6 +888,7 @@ async fn handle_device_link_request_app_message(
             &owner_hex,
             &device_hex,
             frame.label,
+            &link_secret,
             frame.requested_at,
         )
         .context("recording inbound device link request")?;

@@ -123,6 +123,18 @@ fn link_creates_awaiting_device_with_no_owner_key() {
             .unwrap()
             .starts_with("iris-drive://device-link?")
     );
+    assert!(
+        v["device_link_request"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("device=npub1")
+    );
+    assert!(
+        v["device_link_request"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("secret=")
+    );
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists()); // never on a linked device
 }
@@ -159,6 +171,7 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let invite_url = owner["device_link_invite"]["url"].as_str().unwrap();
+    assert!(invite_url.contains("secret="));
     let owner_npub = owner["owner_npub"].as_str().unwrap();
     let admin_device_npub = owner["device_npub"].as_str().unwrap();
 
@@ -187,6 +200,15 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
             .admin_device_pubkey
             .as_str(),
         owner_state.device_pubkey.as_str()
+    );
+    assert_eq!(
+        state
+            .outbound_device_link_request
+            .as_ref()
+            .unwrap()
+            .link_secret
+            .as_str(),
+        owner_state.device_link_secret.as_str()
     );
 }
 
@@ -333,6 +355,7 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     let invite = run_json(owner_dir.path(), &["devices", "invite"]);
     let invite_url = invite["url"].as_str().unwrap();
     assert!(invite_url.starts_with("iris-drive://link-device?"));
+    assert!(invite_url.contains("secret="));
 
     let linked = run_json(
         linked_dir.path(),
@@ -341,6 +364,8 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["device_link_request"]["url"].as_str().unwrap();
     assert!(request_url.starts_with("iris-drive://device-link?"));
+    assert!(request_url.contains("device=npub1"));
+    assert!(request_url.contains("secret="));
     assert_eq!(
         linked["device_link_request"]["sent_over_fips"],
         serde_json::Value::Bool(true)

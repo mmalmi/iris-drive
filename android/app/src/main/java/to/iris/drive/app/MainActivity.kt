@@ -193,8 +193,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDebugIntent(intent: Intent?) {
         val uri = intent?.data
-        if (uri != null && isDeviceLinkUri(uri)) {
+        if (uri != null && isDeviceApprovalUri(uri)) {
             dispatch(NativeActions.approveDevice(uri.toString(), "Android"))
+        } else if (uri != null && isLinkDeviceUri(uri)) {
+            dispatch(NativeActions.linkDevice(uri.toString(), "Android"))
         }
         when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
@@ -229,9 +231,13 @@ class MainActivity : ComponentActivity() {
             DOCUMENTS_ROOT_DOCUMENT_ID,
         ).toString()
 
-    private fun isDeviceLinkUri(uri: Uri): Boolean =
+    private fun isDeviceApprovalUri(uri: Uri): Boolean =
         (uri.scheme == "iris-drive" && uri.host == "device-link") ||
             (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/device-link")
+
+    private fun isLinkDeviceUri(uri: Uri): Boolean =
+        (uri.scheme == "iris-drive" && uri.host == "link-device") ||
+            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/link-device")
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"

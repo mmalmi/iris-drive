@@ -82,6 +82,7 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
         account: Some(AccountState {
             owner_pubkey: "owner".to_string(),
             device_pubkey: "device-a".to_string(),
+            device_link_secret: "link-secret".to_string(),
             has_owner_signing_authority: true,
             authorization_state: iris_drive_core::DeviceAuthorizationState::Authorized,
             device_label: None,

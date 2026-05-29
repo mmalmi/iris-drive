@@ -381,6 +381,7 @@ fn discovery_scope_uses_iris_drive_overlay() {
         account: Some(crate::AccountState {
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "bb".repeat(32),
+            device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
             device_label: None,
@@ -463,6 +464,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
         account: Some(crate::AccountState {
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "dd".repeat(32),
+            device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::Authorized,
             device_label: None,
@@ -518,6 +520,7 @@ fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
         account: Some(crate::AccountState {
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "dd".repeat(32),
+            device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
             device_label: None,
@@ -525,6 +528,7 @@ fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
             app_keys_event: None,
             outbound_device_link_request: Some(crate::account::PendingDeviceLinkRequest {
                 admin_device_pubkey: admin_pubkey,
+                link_secret: "link-secret".into(),
                 requested_at: 42,
             }),
             inbound_device_link_requests: Vec::new(),

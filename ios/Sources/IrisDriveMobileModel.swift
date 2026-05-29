@@ -158,6 +158,10 @@ final class IrisDriveMobileModel: ObservableObject {
         lastState?.ui.account?.deviceLinkRequest ?? ""
     }
 
+    var deviceLinkInvite: String {
+        lastState?.ui.account?.deviceLinkInvite ?? ""
+    }
+
     var hasLocalProfile: Bool {
         !ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -367,6 +371,14 @@ final class IrisDriveMobileModel: ObservableObject {
         UIPasteboard.general.string = deviceLinkRequest
     }
 
+    func copyLinkInvite() {
+        UIPasteboard.general.string = deviceLinkInvite
+    }
+
+    func qrMatrix(for value: String) -> QrMatrix {
+        nativeCore.qrMatrix(text: value)
+    }
+
     func copySnapshotLink() {
         UIPasteboard.general.string = snapshotLink
     }
@@ -420,6 +432,13 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func handle(url: URL) {
+        if isLinkDevice(url) {
+            ownerPublicKey = url.absoluteString
+            linkDevice()
+            ensureFileProviderDomainIfProfileExists()
+            return
+        }
+
         guard isDeviceLink(url) else {
             statusTitle = "Iris link opened"
             statusDetail = url.absoluteString
@@ -655,6 +674,11 @@ final class IrisDriveMobileModel: ObservableObject {
     private func isDeviceLink(_ url: URL) -> Bool {
         (url.scheme == "iris-drive" && url.host == "device-link")
             || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/device-link")
+    }
+
+    private func isLinkDevice(_ url: URL) -> Bool {
+        (url.scheme == "iris-drive" && url.host == "link-device")
+            || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/link-device")
     }
 
     private func queryValue(_ name: String, in url: URL) -> String? {

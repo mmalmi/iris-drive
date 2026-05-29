@@ -21,6 +21,9 @@ private func irisDriveAppDispatchJson(
     _ actionJson: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_qr_matrix_json")
+private func irisDriveQrMatrixJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_string_free")
 private func irisDriveStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
@@ -51,6 +54,18 @@ final class IrisDriveNativeCore {
         actionJson.withCString { pointer in
             takeString(irisDriveAppDispatchJson(handle, pointer))
         }
+    }
+
+    func qrMatrix(text: String) -> QrMatrix {
+        let json = text.withCString { pointer in
+            takeString(irisDriveQrMatrixJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let matrix = try? JSONDecoder().decode(QrMatrix.self, from: data)
+        else {
+            return QrMatrix()
+        }
+        return matrix
     }
 
     private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
@@ -106,6 +121,7 @@ struct NativeAccount: Codable {
     var authorizationState: String
     var hasOwnerSigningAuthority: Bool
     var deviceLinkRequest: String
+    var deviceLinkInvite: String
 
     enum CodingKeys: String, CodingKey {
         case ownerPubkey = "owner_pubkey"
@@ -114,7 +130,14 @@ struct NativeAccount: Codable {
         case authorizationState = "authorization_state"
         case hasOwnerSigningAuthority = "has_owner_signing_authority"
         case deviceLinkRequest = "device_link_request"
+        case deviceLinkInvite = "device_link_invite"
     }
+}
+
+struct QrMatrix: Codable, Equatable {
+    var width: Int = 0
+    var cells: [Bool] = []
+    var error: String = ""
 }
 
 struct NativeDevice: Codable {
