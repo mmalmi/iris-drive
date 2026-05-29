@@ -848,10 +848,6 @@ private fun SettingsPanel(
         OutlinedButton(onClick = onCopyLinkRequest) {
             Text("Copy link request")
         }
-        Text("Data path", fontWeight = FontWeight.SemiBold)
-        Text(state.paths.dataDir, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(state.paths.configPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(state.paths.blocksDir, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

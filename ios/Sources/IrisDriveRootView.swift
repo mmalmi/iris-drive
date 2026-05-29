@@ -528,10 +528,6 @@ private struct SettingsView: View {
             }
 
             Section("Advanced") {
-                LabeledContent("App group", value: IrisDriveSharedContainer.appGroupIdentifier)
-                LabeledContent("Runtime path", value: model.sharedContainerPath)
-                LabeledContent("Config path", value: model.configPath)
-                LabeledContent("Blocks path", value: model.blocksPath)
                 Button(role: .destructive) {
                     model.resetLocalState()
                 } label: {
