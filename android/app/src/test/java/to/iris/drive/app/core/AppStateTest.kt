@@ -20,7 +20,7 @@ class AppStateTest {
                 SyncRoot(
                     name = "My Drive",
                     localPath = "content://to.iris.drive.documents/document/root",
-                    status = "SAF provider root",
+                    status = "ready",
                 ),
             ),
             devices = listOf(
@@ -51,8 +51,6 @@ class AppStateTest {
             ),
         )
 
-        assertEquals(1, state.topLevelEntries)
-        assertEquals(1, state.publishedDeviceRoots)
         assertEquals(2, state.authorizedDeviceCount)
         assertEquals("admin", state.devices[0].role)
         assertTrue(state.devices[0].isCurrentDevice)

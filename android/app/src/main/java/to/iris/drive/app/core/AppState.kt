@@ -17,17 +17,11 @@ internal data class AppState(
     val fileCount: Int
         get() = 0
 
-    val topLevelEntries: Int
-        get() = roots.size
-
     val visibleFileBytes: Long
         get() = 0
 
     val authorizedDeviceCount: Int
         get() = devices.count { it.state.equals("authorized", ignoreCase = true) || it.role == "admin" }
-
-    val publishedDeviceRoots: Int
-        get() = if (account == null) 0 else roots.size
 
     companion object {
         fun fromJson(jsonText: String): AppState {

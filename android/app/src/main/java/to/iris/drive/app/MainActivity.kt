@@ -79,7 +79,6 @@ class MainActivity : ComponentActivity() {
                 onRemoveRelay = { url -> dispatch(NativeActions.removeRelay(url)) },
                 onResetRelays = { dispatch(NativeActions.resetRelays()) },
                 onAddRoot = { name, path -> dispatch(NativeActions.addRoot(name, path)) },
-                onRemoveRoot = { name -> dispatch(NativeActions.removeRoot(name)) },
                 onStartSync = {
                     if (needsNotificationPermission()) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

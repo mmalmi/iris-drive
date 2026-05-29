@@ -79,9 +79,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var driveBrowserInitialURL: URL?
     @Published var authorizationState = "Not linked"
     @Published var authorizedDeviceCount = 0
-    @Published var publishedDeviceRoots = 0
     @Published var fileCount = 0
-    @Published var topLevelEntries = 0
     @Published var visibleFileBytes: UInt64 = 0
 
     private let defaults = UserDefaults.standard
@@ -154,10 +152,6 @@ final class IrisDriveMobileModel: ObservableObject {
     var snapshotLink: String {
         lastState?.ui.snapshotLink
             ?? "https://drive.iris.to/snapshot/\(ownerPublicKey.isEmpty ? "local" : ownerPublicKey)"
-    }
-
-    var rootStatus: String {
-        roots.first?.status ?? (hasLocalProfile ? "Local provider root" : "No local root")
     }
 
     var deviceLinkRequest: String {
@@ -525,10 +519,8 @@ final class IrisDriveMobileModel: ObservableObject {
             )
         }
         authorizedDeviceCount = devices.filter { $0.state == "Authorized" || $0.state == "Admin" }.count
-        publishedDeviceRoots = hasLocalProfile ? max(1, state.ui.roots.count) : 0
         let stats = loadProviderStats()
         fileCount = stats.fileCount
-        topLevelEntries = stats.topLevelEntries
         visibleFileBytes = stats.visibleFileBytes
         backups = state.ui.backups.map { backup in
             IrisDriveBackup(
@@ -646,7 +638,6 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func loadProviderStats() -> (
         fileCount: Int,
-        topLevelEntries: Int,
         visibleFileBytes: UInt64
     ) {
         let url = IrisDriveSharedContainer.baseDirectory
@@ -654,12 +645,11 @@ final class IrisDriveMobileModel: ObservableObject {
         guard let data = try? Data(contentsOf: url),
               let state = try? JSONDecoder().decode(ProviderState.self, from: data)
         else {
-            return (0, 0, 0)
+            return (0, 0)
         }
         let fileEntries = state.entries.filter { $0.kind != "directory" }
-        let topLevelEntries = state.entries.filter { !$0.path.contains("/") }.count
         let visibleFileBytes = fileEntries.reduce(UInt64(0)) { $0 + $1.size }
-        return (fileEntries.count, topLevelEntries, visibleFileBytes)
+        return (fileEntries.count, visibleFileBytes)
     }
 
     private func isDeviceLink(_ url: URL) -> Bool {

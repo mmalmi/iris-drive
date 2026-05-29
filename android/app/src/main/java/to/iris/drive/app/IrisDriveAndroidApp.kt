@@ -21,12 +21,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -56,9 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.DeviceState
-import to.iris.drive.app.core.SyncRoot
 
-private const val DocumentsProviderAuthority = "to.iris.drive.documents"
 private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
@@ -122,12 +118,10 @@ internal fun IrisDriveAndroidApp(
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
     onAddRoot: (String, String) -> Unit,
-    onRemoveRoot: (String) -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsState()
-    var addRootOpen by remember { mutableStateOf(false) }
     val account = state.account
 
     IrisDriveTheme {
@@ -135,7 +129,7 @@ internal fun IrisDriveAndroidApp(
             containerColor = Background,
             topBar = {
                 if (account != null) {
-                    AppTopBar(onAddRoot = { addRootOpen = true })
+                    AppTopBar()
                 }
             },
         ) { padding ->
@@ -175,19 +169,8 @@ internal fun IrisDriveAndroidApp(
                     onAddRelay = onAddRelay,
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
-                    onRemoveRoot = onRemoveRoot,
-                    onAddRoot = { addRootOpen = true },
                 )
             }
-        }
-        if (addRootOpen) {
-            AddRootDialog(
-                onDismiss = { addRootOpen = false },
-                onAdd = { name, path ->
-                    addRootOpen = false
-                    onAddRoot(name, path)
-                },
-            )
         }
     }
 }
@@ -242,17 +225,12 @@ internal fun irisDriveColorScheme(darkTheme: Boolean) = if (darkTheme) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppTopBar(onAddRoot: () -> Unit) {
+private fun AppTopBar() {
     TopAppBar(
         title = {
             Column {
                 Text("Iris Drive", fontWeight = FontWeight.SemiBold)
                 Text("Android", color = Muted, style = MaterialTheme.typography.labelMedium)
-            }
-        },
-        actions = {
-            FilledIconButton(onClick = onAddRoot) {
-                Icon(painterResource(R.drawable.ic_add), contentDescription = "Add root")
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -467,8 +445,6 @@ private fun DriveContent(
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
-    onRemoveRoot: (String) -> Unit,
-    onAddRoot: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -526,7 +502,6 @@ private fun DriveContent(
                 onResetRelays = onResetRelays,
             )
         }
-        item { RootsPanel(roots = state.roots, onAddRoot = onAddRoot, onRemoveRoot = onRemoveRoot) }
     }
 }
 
@@ -545,7 +520,6 @@ private fun StatusPanel(state: AppState) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Iris Drive", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
                 Text(statusText, color = if (state.sync.running) Teal else Muted, fontWeight = FontWeight.SemiBold)
-                Text(account?.authorizationState ?: "not linked", color = Muted)
             }
         }
         Text(
@@ -559,10 +533,8 @@ private fun StatusPanel(state: AppState) {
 private fun SummaryPanel(state: AppState) {
     CardSection(title = "Summary", trailing = "${state.fileCount} files") {
         StatRow("Files", state.fileCount.toString())
-        StatRow("Top level", state.topLevelEntries.toString())
         StatRow("Storage", byteString(state.visibleFileBytes))
-        StatRow("Authorized devices", state.authorizedDeviceCount.toString())
-        StatRow("Published roots", state.publishedDeviceRoots.toString())
+        StatRow("Devices", state.authorizedDeviceCount.toString())
     }
 }
 
@@ -574,7 +546,6 @@ private fun SyncPanel(
 ) {
     CardSection(title = "Sync", trailing = if (state.sync.running) "on" else "paused") {
         StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "on" else "paused" })
-        StatRow("Account", state.account?.authorizationState ?: "not linked")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onStartSync, enabled = !state.sync.running) {
                 Icon(painterResource(R.drawable.ic_play), contentDescription = null)
@@ -598,10 +569,7 @@ private fun ProviderPanel(
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
 ) {
-    val rootStatus = state.roots.firstOrNull()?.status ?: "SAF provider root"
-    CardSection(title = "Files", trailing = "DocumentsProvider") {
-        StatRow("Provider", DocumentsProviderAuthority)
-        StatRow("Root", rootStatus)
+    CardSection(title = "Files", trailing = "files") {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -613,8 +581,7 @@ private fun ProviderPanel(
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Iris Drive", fontWeight = FontWeight.SemiBold)
-                    Text(DocumentsProviderAuthority, color = Muted, style = MaterialTheme.typography.bodySmall)
-                    Text(snapshotLink, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Available in Android Files", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -792,73 +759,6 @@ private fun SettingsPanel(
 }
 
 @Composable
-private fun RootRow(root: SyncRoot, onRemoveRoot: (String) -> Unit) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
-            Spacer(Modifier.size(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(root.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(root.status, color = Muted, style = MaterialTheme.typography.bodySmall)
-                Text(root.localPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            IconButton(onClick = { onRemoveRoot(root.name) }) {
-                Icon(
-                    painterResource(R.drawable.ic_delete),
-                    contentDescription = "Remove ${root.name}",
-                    tint = Danger,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RootsPanel(
-    roots: List<SyncRoot>,
-    onAddRoot: () -> Unit,
-    onRemoveRoot: (String) -> Unit,
-) {
-    CardSection(title = "Roots", trailing = "${roots.size}") {
-        if (roots.isEmpty()) {
-            Text("No roots", color = Muted)
-        } else {
-            roots.forEach { root ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
-                    Spacer(Modifier.size(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(root.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(root.status, color = Muted, style = MaterialTheme.typography.bodySmall)
-                        Text(root.localPath, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton(onClick = { onRemoveRoot(root.name) }) {
-                        Icon(
-                            painterResource(R.drawable.ic_delete),
-                            contentDescription = "Remove ${root.name}",
-                            tint = Danger,
-                        )
-                    }
-                }
-            }
-        }
-        OutlinedButton(onClick = onAddRoot) {
-            Icon(painterResource(R.drawable.ic_add), contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Add root")
-        }
-    }
-}
-
-@Composable
 private fun Notice(text: String) {
     Box(
         modifier = Modifier
@@ -930,45 +830,4 @@ private fun byteString(bytes: Long): String {
     } else {
         String.format("%.1f %s", value, units[index])
     }
-}
-
-@Composable
-private fun AddRootDialog(
-    onDismiss: () -> Unit,
-    onAdd: (String, String) -> Unit,
-) {
-    var name by remember { mutableStateOf("My Drive") }
-    var path by remember { mutableStateOf(ProviderRoot) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add Root") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Name") },
-                )
-                OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Path") },
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onAdd(name, path) }) {
-                Text("Add")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
 }

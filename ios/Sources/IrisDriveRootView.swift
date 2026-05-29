@@ -247,14 +247,11 @@ private struct DriveHomeView: View {
 
             Section("Summary") {
                 LabeledContent("Files", value: "\(model.fileCount)")
-                LabeledContent("Top level", value: "\(model.topLevelEntries)")
                 LabeledContent("Storage", value: byteString(model.visibleFileBytes))
-                LabeledContent("Authorized devices", value: "\(model.authorizedDeviceCount)")
-                LabeledContent("Published roots", value: "\(model.publishedDeviceRoots)")
+                LabeledContent("Devices", value: "\(model.authorizedDeviceCount)")
             }
 
             Section("Files") {
-                LabeledContent("Root", value: model.rootStatus)
                 Button {
                     model.openDriveFolder()
                 } label: {
@@ -274,7 +271,6 @@ private struct DriveHomeView: View {
 
             Section("Sync") {
                 LabeledContent("State", value: model.syncStateTitle)
-                LabeledContent("Account", value: model.authorizationState)
                 Button {
                     model.startSync()
                 } label: {
@@ -290,16 +286,6 @@ private struct DriveHomeView: View {
             }
         }
         .navigationTitle("My Drive")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    model.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .accessibilityLabel("Refresh")
-            }
-        }
     }
 }
 
