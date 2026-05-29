@@ -1319,9 +1319,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     account["has_owner_signing_authority"] as? Bool ?? false
                 status.authorizationState = account["authorization_state"] as? String
                 status.rosterSize = Self.intValue(account["roster_size"]) ?? 0
+                status.deviceLinkInviteURL =
+                    (account["device_link_invite"] as? [String: Any])?["url"] as? String
+                status.inboundDeviceLinkRequests =
+                    (account["inbound_device_link_requests"] as? [[String: Any]] ?? [])
+                    .map(IrisDriveDeviceLinkRequestStatus.init(json:))
             } else {
                 status.ownerNpub = nil
                 status.deviceNpub = nil
+                status.deviceLinkInviteURL = nil
+                status.inboundDeviceLinkRequests = []
                 status.hasOwnerSigningAuthority = false
                 status.authorizationState = nil
                 status.rosterSize = 0

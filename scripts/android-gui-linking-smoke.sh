@@ -79,14 +79,14 @@ if [[ -z "$serial" ]]; then
 fi
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
-owner_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["owner_npub"])' <<<"$owner_json")"
+owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
 
 "$ADB" -s "$serial" wait-for-device
 "$ADB" -s "$serial" install -r "$APK_PATH" >/dev/null
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
 "$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" link-device \
-  --es "$DEBUG_OWNER_EXTRA" "$owner_npub" >/dev/null
+  --es "$DEBUG_OWNER_EXTRA" "$owner_invite" >/dev/null
 
 if ! wait_for_debug_state \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \

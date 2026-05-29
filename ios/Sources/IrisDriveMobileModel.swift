@@ -15,6 +15,14 @@ struct IrisDriveDevice: Identifiable, Equatable {
     var canDemoteAdmin: Bool
 }
 
+struct IrisDriveDeviceLinkRequest: Identifiable, Equatable {
+    var id: String { devicePubkey }
+    var devicePubkey: String
+    var label: String
+    var requestedAt: UInt64
+    var requestLink: String
+}
+
 struct IrisDriveBackup: Identifiable, Equatable {
     var id: String { detail }
     var label: String
@@ -73,6 +81,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var approveDeviceKey = ""
     @Published var approveDeviceLabel = ""
     @Published var devices: [IrisDriveDevice] = []
+    @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
     @Published var roots: [IrisDriveRoot] = []
     @Published var isDriveBrowserPresented = false
@@ -447,21 +456,16 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        let owner = queryValue("owner", in: url)
         let device = queryValue("device", in: url)
         if hasOwnerAuthority, device != nil {
             approveDevice(request: url.absoluteString, label: "Linked device")
             return
         }
-        if let owner, !owner.isEmpty {
-            ownerPublicKey = owner
-            linkDevice()
-            ensureFileProviderDomainIfProfileExists()
-            return
-        }
 
-        statusTitle = "Invalid device link"
-        statusDetail = device ?? url.absoluteString
+        statusTitle = hasOwnerAuthority ? "Invalid device request" : "Device request link"
+        statusDetail = hasOwnerAuthority
+            ? (device ?? url.absoluteString)
+            : "Open this request on an owner device, or scan an invite link to join."
     }
 
     func handleDebugLaunchEnvironment() {
@@ -504,6 +508,7 @@ final class IrisDriveMobileModel: ObservableObject {
             devicePublicKey = "local-device"
             authorizationState = "Not linked"
             devices = []
+            inboundDeviceLinkRequests = []
             roots = []
             backups = []
             relays = defaultRelays
@@ -537,6 +542,14 @@ final class IrisDriveMobileModel: ObservableObject {
                 canDemoteAdmin: device.canDemoteAdmin
             )
         }
+        inboundDeviceLinkRequests = state.ui.account?.inboundDeviceLinkRequests.map { request in
+            IrisDriveDeviceLinkRequest(
+                devicePubkey: request.devicePubkey,
+                label: request.label,
+                requestedAt: request.requestedAt,
+                requestLink: request.requestLink
+            )
+        } ?? []
         authorizedDeviceCount = devices.filter { $0.state == "Authorized" || $0.state == "Admin" }.count
         let stats = loadProviderStats()
         fileCount = stats.fileCount
@@ -678,7 +691,9 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func isLinkDevice(_ url: URL) -> Bool {
         (url.scheme == "iris-drive" && url.host == "link-device")
+            || (url.scheme == "iris-drive" && url.host == "invite")
             || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/link-device")
+            || (url.scheme == "https" && url.host == "drive.iris.to" && url.path.starts(with: "/invite/"))
     }
 
     private func queryValue(_ name: String, in url: URL) -> String? {

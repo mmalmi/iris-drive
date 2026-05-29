@@ -228,12 +228,12 @@ pub(crate) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum DevicesCmd {
-    /// Print a link-device invite URL for this owner-capable device.
+    /// Print an invite URL for this owner-capable device.
     Invite,
     /// Request linking this device using an owner/admin invite URL or owner pubkey.
     #[command(alias = "ask", alias = "connect", alias = "link")]
     Request {
-        /// Link-device invite URL from an owner-capable device, or an owner npub/hex.
+        /// Invite URL from an owner-capable device, or an owner npub/hex.
         owner_or_invite: String,
         /// Admin device pubkey for manual pairing when no invite URL is available.
         #[arg(long, alias = "admin")]

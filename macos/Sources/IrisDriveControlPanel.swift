@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
@@ -210,7 +211,7 @@ struct IrisDriveControlPanel: View {
             }
         case .link:
             setupForm(title: "Link this device") {
-                TextField("Owner public key", text: $setupOwner)
+                TextField("Owner public key or invite link", text: $setupOwner)
                 setupSubmit("Link device") {
                     controller.linkDevice(owner: setupOwner)
                 }
@@ -432,10 +433,42 @@ struct IrisDriveControlPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add a device")
                 .font(.title3.weight(.semibold))
-            Text("Paste the public key shown on the other device when you link it.")
+            if let invite = status.deviceLinkInviteURL, !invite.isEmpty {
+                Text("Invite device")
+                    .font(.headline)
+                IrisDriveQRCodeView(value: invite)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Button {
+                    irisDriveCopyToPasteboard(invite)
+                } label: {
+                    Label("Copy invite link", systemImage: "link")
+                }
+            }
+            if !status.inboundDeviceLinkRequests.isEmpty {
+                Text("Device requests")
+                    .font(.headline)
+                ForEach(status.inboundDeviceLinkRequests) { request in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(request.label?.isEmpty == false ? request.label! : "New device")
+                                .font(.subheadline.weight(.semibold))
+                            Text(request.deviceNpub)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Approve") {
+                            controller.approveDevice(request.requestURL, label: request.label ?? "")
+                        }
+                    }
+                }
+            }
+            Text("Paste the Device ID shown on the other device when you link it manually.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("Device public key", text: $approveDeviceKey)
+            TextField("Device ID", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
             TextField("Name (optional)", text: $approveDeviceLabel)
@@ -747,6 +780,39 @@ struct IrisDriveControlPanel: View {
 func irisDriveCopyToPasteboard(_ value: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(value, forType: .string)
+}
+
+private struct IrisDriveQRCodeView: View {
+    let value: String
+
+    var body: some View {
+        if let image = Self.makeImage(value) {
+            Image(nsImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .padding(10)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.15))
+        }
+    }
+
+    private static func makeImage(_ value: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else {
+            return nil
+        }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        let representation = NSCIImageRep(ciImage: scaled)
+        let image = NSImage(size: representation.size)
+        image.addRepresentation(representation)
+        return image
+    }
 }
 
 private let irisDriveTimestampFormatter: DateFormatter = {

@@ -9,7 +9,8 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 
 use crate::actions::NativeAppAction;
 use crate::state::{
-    NativeAppState, UiAccount, UiBackup, UiDevice, UiPaths, UiState, UiSyncRoot, UiSyncStatus,
+    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiPaths, UiState,
+    UiSyncRoot, UiSyncStatus,
 };
 
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
@@ -498,6 +499,7 @@ impl NativeAppRuntime {
             has_owner_signing_authority: account.has_owner_signing_authority,
             device_link_request: device_link_request_url(account),
             device_link_invite: device_link_invite_url(account),
+            inbound_device_link_requests: inbound_device_link_requests(account),
         });
         self.state.ui.devices = devices_from_account(account, self.state.ui.sync.running);
         self.refresh_device_actions();
@@ -744,11 +746,33 @@ fn device_link_invite_url(state: &iris_drive_core::AccountState) -> String {
     if !state.can_manage_devices() {
         return String::new();
     }
-    encode_device_link_invite(
+    iris_drive_core::device_link_invite::encode_device_link_invite(
         &state.owner_pubkey,
         &state.device_pubkey,
         &state.device_link_secret,
     )
+    .unwrap_or_default()
+}
+
+fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<UiDeviceLinkRequest> {
+    if !state.can_manage_devices() {
+        return Vec::new();
+    }
+    state
+        .inbound_device_link_requests
+        .iter()
+        .map(|request| UiDeviceLinkRequest {
+            device_pubkey: account_npub(&request.device_pubkey),
+            label: request.label.clone().unwrap_or_default(),
+            requested_at: request.requested_at,
+            request_link: encode_device_approval_request(
+                &state.owner_pubkey,
+                &request.device_pubkey,
+                &request.link_secret,
+                request.label.as_deref(),
+            ),
+        })
+        .collect()
 }
 
 fn encode_device_approval_request(
@@ -773,15 +797,6 @@ fn encode_device_approval_request(
     url
 }
 
-fn encode_device_link_invite(owner_hex: &str, admin_device_hex: &str, link_secret: &str) -> String {
-    format!(
-        "iris-drive://link-device?owner={}&admin={}&secret={}",
-        account_npub(owner_hex),
-        account_npub(admin_device_hex),
-        percent_encode_component(link_secret.trim())
-    )
-}
-
 fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
     if let Some(target) = decode_device_link_invite(input)? {
         return Ok(target);
@@ -794,25 +809,15 @@ fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
 }
 
 fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, String> {
-    if !(request.starts_with("iris-drive://link-device")
-        || request.starts_with("https://drive.iris.to/link-device"))
-    {
-        return Ok(None);
-    }
-    let query = request.split_once('?').map_or("", |(_, query)| query);
-    let owner = query_value(query, "owner")
-        .ok_or_else(|| "device link invite is missing owner".to_owned())?;
-    let admin = query_value(query, "admin")
-        .or_else(|| query_value(query, "admin_device"))
-        .ok_or_else(|| "device link invite is missing admin".to_owned())?;
-    let link_secret = query_value(query, "secret")
-        .or_else(|| query_value(query, "link_secret"))
-        .ok_or_else(|| "device link invite is missing secret".to_owned())?;
-    Ok(Some(DeviceLinkTarget {
-        owner_hex: normalize_pubkey(&owner)?,
-        admin_device_hex: Some(normalize_pubkey(&admin)?),
-        link_secret,
-    }))
+    iris_drive_core::device_link_invite::parse_device_link_invite(request)
+        .map(|target| {
+            target.map(|target| DeviceLinkTarget {
+                owner_hex: target.owner_hex,
+                admin_device_hex: Some(target.admin_device_hex),
+                link_secret: target.link_secret,
+            })
+        })
+        .map_err(|error| error.to_string())
 }
 
 fn decode_device_approval_request(
@@ -914,8 +919,10 @@ fn update_snapshot_link(state: &mut NativeAppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::FfiApp;
+    use super::{FfiApp, normalize_pubkey};
     use crate::NativeAppAction;
+    use iris_drive_core::AppConfig;
+    use iris_drive_core::paths::config_path_in;
 
     #[test]
     fn dispatch_adds_updates_and_removes_roots() {
@@ -975,9 +982,10 @@ mod tests {
         assert!(
             account
                 .device_link_invite
-                .contains("iris-drive://link-device?")
+                .starts_with("iris-drive://invite/")
         );
-        assert!(account.device_link_invite.contains("secret="));
+        assert!(!account.device_link_invite.contains("local-owner"));
+        assert!(!account.device_link_invite.contains("device-"));
         assert_eq!(state.ui.devices.len(), 1);
         assert_eq!(state.ui.devices[0].label, "Pixel");
         assert_eq!(state.ui.devices[0].role, "admin");
@@ -1002,13 +1010,15 @@ mod tests {
         let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
             device_label: "Owner".to_owned(),
         });
-        let owner_npub = owner.ui.account.unwrap().owner_pubkey;
+        let owner_account = owner.ui.account.unwrap();
+        let owner_npub = owner_account.owner_pubkey.clone();
+        let invite = owner_account.device_link_invite.clone();
 
         let dir = tempfile::tempdir().unwrap();
         let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
 
         let state = app.dispatch(NativeAppAction::LinkDevice {
-            owner_pubkey: owner_npub.clone(),
+            owner_pubkey: invite,
             device_label: "iPhone".to_owned(),
         });
 
@@ -1019,6 +1029,8 @@ mod tests {
         assert!(!account.has_owner_signing_authority);
         assert!(account.device_link_request.contains("device=npub1"));
         assert!(account.device_link_request.contains("secret="));
+        assert!(!account.device_link_request.contains("local-owner"));
+        assert!(!account.device_link_request.contains("device=device-"));
         assert_eq!(state.ui.devices[0].role, "member");
     }
 
@@ -1084,5 +1096,63 @@ mod tests {
                 .any(|device| device.pubkey == linked_device)
         );
         assert!(state.error.is_empty());
+    }
+
+    #[test]
+    fn owner_state_surfaces_inbound_requests_for_accept_flow() {
+        let owner_dir = tempfile::tempdir().unwrap();
+        let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+        let owner = app.dispatch(NativeAppAction::CreateProfile {
+            device_label: "Mac".to_owned(),
+        });
+        let invite = owner.ui.account.unwrap().device_link_invite;
+
+        let linked_dir = tempfile::tempdir().unwrap();
+        let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+        let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+            owner_pubkey: invite,
+            device_label: "Phone".to_owned(),
+        });
+        let linked_device = linked.ui.account.unwrap().device_pubkey;
+        let linked_device_hex = normalize_pubkey(&linked_device).unwrap();
+
+        let config_path = config_path_in(owner_dir.path());
+        let mut config = AppConfig::load_or_default(&config_path).unwrap();
+        let state = config.account.as_mut().unwrap();
+        let owner_hex = state.owner_pubkey.clone();
+        let link_secret = state.device_link_secret.clone();
+        state
+            .record_inbound_device_link_request(
+                &owner_hex,
+                &linked_device_hex,
+                Some("Phone".to_owned()),
+                &link_secret,
+                42,
+            )
+            .unwrap();
+        config.save(&config_path).unwrap();
+
+        let refreshed = app.refresh();
+        let account = refreshed.ui.account.unwrap();
+        assert_eq!(account.inbound_device_link_requests.len(), 1);
+        let request = &account.inbound_device_link_requests[0];
+        assert_eq!(request.device_pubkey, linked_device);
+        assert_eq!(request.label, "Phone");
+        assert_eq!(request.requested_at, 42);
+        assert!(
+            request
+                .request_link
+                .starts_with("iris-drive://device-link?")
+        );
+        assert!(request.request_link.contains("secret="));
+
+        let approved = app.dispatch(NativeAppAction::ApproveDevice {
+            request: request.request_link.clone(),
+            label: String::new(),
+        });
+        assert!(approved.error.is_empty());
+        assert!(approved.ui.devices.iter().any(|device| {
+            device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
+        }));
     }
 }

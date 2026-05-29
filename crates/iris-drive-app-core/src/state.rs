@@ -28,6 +28,15 @@ pub struct UiAccount {
     pub has_owner_signing_authority: bool,
     pub device_link_request: String,
     pub device_link_invite: String,
+    pub inbound_device_link_requests: Vec<UiDeviceLinkRequest>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiDeviceLinkRequest {
+    pub device_pubkey: String,
+    pub label: String,
+    pub requested_at: u64,
+    pub request_link: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

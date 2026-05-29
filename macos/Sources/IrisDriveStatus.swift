@@ -14,6 +14,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var ownerNpub: String?
     @Published var deviceNpub: String?
+    @Published var deviceLinkInviteURL: String?
+    @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
     @Published var hasOwnerSigningAuthority = false
     @Published var authorizationState: String?
     @Published var rosterSize = 0
@@ -46,6 +48,22 @@ final class IrisDriveStatus: ObservableObject {
             return nil
         }
         return snapshotURL
+    }
+}
+
+struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
+    let id: String
+    let deviceNpub: String
+    let label: String?
+    let requestedAt: Int?
+    let requestURL: String
+
+    init(json: [String: Any]) {
+        deviceNpub = json["device_npub"] as? String ?? UUID().uuidString
+        id = deviceNpub
+        label = json["label"] as? String
+        requestedAt = (json["requested_at"] as? NSNumber)?.intValue
+        requestURL = json["url"] as? String ?? deviceNpub
     }
 }
 

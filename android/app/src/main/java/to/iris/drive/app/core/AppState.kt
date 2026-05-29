@@ -52,6 +52,14 @@ internal data class AccountState(
     val hasOwnerSigningAuthority: Boolean,
     val deviceLinkRequest: String,
     val deviceLinkInvite: String,
+    val inboundDeviceLinkRequests: List<DeviceLinkRequestState>,
+)
+
+internal data class DeviceLinkRequestState(
+    val devicePubkey: String,
+    val label: String,
+    val requestedAt: Long,
+    val requestLink: String,
 )
 
 internal data class DeviceState(
@@ -181,7 +189,25 @@ private fun JSONObject.toAccount(): AccountState =
         hasOwnerSigningAuthority = optBoolean("has_owner_signing_authority"),
         deviceLinkRequest = optString("device_link_request"),
         deviceLinkInvite = optString("device_link_invite"),
+        inboundDeviceLinkRequests = optJSONArray("inbound_device_link_requests").toDeviceLinkRequests(),
     )
+
+private fun JSONArray?.toDeviceLinkRequests(): List<DeviceLinkRequestState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                DeviceLinkRequestState(
+                    devicePubkey = item.optString("device_pubkey"),
+                    label = item.optString("label"),
+                    requestedAt = item.optLong("requested_at"),
+                    requestLink = item.optString("request_link"),
+                ),
+            )
+        }
+    }
+}
 
 private fun JSONObject.toPaths(): PathState =
     PathState(

@@ -237,7 +237,9 @@ class MainActivity : ComponentActivity() {
 
     private fun isLinkDeviceUri(uri: Uri): Boolean =
         (uri.scheme == "iris-drive" && uri.host == "link-device") ||
-            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/link-device")
+            (uri.scheme == "iris-drive" && uri.host == "invite") ||
+            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/link-device") ||
+            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path?.startsWith("/invite/") == true)
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"

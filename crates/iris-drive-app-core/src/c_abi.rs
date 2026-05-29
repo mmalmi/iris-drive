@@ -358,8 +358,7 @@ mod tests {
 
     #[test]
     fn c_abi_returns_qr_matrix_for_link_text() {
-        let link = CString::new("iris-drive://device-link?device=npub1demo&secret=test")
-            .expect("link CString");
+        let link = CString::new("iris-drive://invite/test").expect("link CString");
         let qr_json = take_string(iris_drive_qr_matrix_json(link.as_ptr()));
         let qr: Value = serde_json::from_str(&qr_json).expect("QR JSON");
 

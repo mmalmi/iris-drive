@@ -171,7 +171,7 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let invite_url = owner["device_link_invite"]["url"].as_str().unwrap();
-    assert!(invite_url.contains("secret="));
+    assert!(invite_url.starts_with("iris-drive://invite/"));
     let owner_npub = owner["owner_npub"].as_str().unwrap();
     let admin_device_npub = owner["device_npub"].as_str().unwrap();
 
@@ -351,11 +351,19 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
-    run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let admin_device_npub = owner["device_npub"].as_str().unwrap();
     let invite = run_json(owner_dir.path(), &["devices", "invite"]);
     let invite_url = invite["url"].as_str().unwrap();
-    assert!(invite_url.starts_with("iris-drive://link-device?"));
-    assert!(invite_url.contains("secret="));
+    assert!(invite_url.starts_with("iris-drive://invite/"));
+    assert!(!invite_url.contains("local-owner"));
+    assert!(!invite_url.contains("device-"));
+    assert_eq!(invite["owner_npub"].as_str(), Some(owner_npub));
+    assert_eq!(
+        invite["admin_device_npub"].as_str(),
+        Some(admin_device_npub)
+    );
 
     let linked = run_json(
         linked_dir.path(),
@@ -364,8 +372,15 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["device_link_request"]["url"].as_str().unwrap();
     assert!(request_url.starts_with("iris-drive://device-link?"));
+    assert!(request_url.contains(&format!("owner={owner_npub}")));
     assert!(request_url.contains("device=npub1"));
     assert!(request_url.contains("secret="));
+    assert!(!request_url.contains("local-owner"));
+    assert!(!request_url.contains("device=device-"));
+    assert_eq!(
+        linked["device_link_request"]["admin_device_npub"].as_str(),
+        Some(admin_device_npub)
+    );
     assert_eq!(
         linked["device_link_request"]["sent_over_fips"],
         serde_json::Value::Bool(true)

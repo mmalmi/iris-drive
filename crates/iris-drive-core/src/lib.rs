@@ -3,6 +3,7 @@ pub mod app_keys;
 pub mod block_sync;
 pub mod blossom_sync;
 pub mod config;
+pub mod device_link_invite;
 pub mod fips_sync;
 
 /// Convenience constructor: a `BlossomClient` wired with the given

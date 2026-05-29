@@ -15,7 +15,8 @@ class AppStateTest {
                 authorizationState = "authorized",
                 hasOwnerSigningAuthority = true,
                 deviceLinkRequest = "",
-                deviceLinkInvite = "iris-drive://link-device?owner=owner&admin=device-a&secret=join-secret",
+                deviceLinkInvite = "iris-drive://invite/test",
+                inboundDeviceLinkRequests = emptyList(),
             ),
             roots = listOf(
                 SyncRoot(

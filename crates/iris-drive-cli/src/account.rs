@@ -338,13 +338,6 @@ pub(crate) struct DeviceLinkTarget {
     link_secret: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeviceLinkInvite {
-    owner_hex: String,
-    admin_device_hex: String,
-    link_secret: String,
-}
-
 pub(crate) fn resolve_device_approval_input(
     input: &str,
     expected_owner_hex: &str,
@@ -434,11 +427,13 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
     if !state.can_manage_devices() {
         return Value::Null;
     }
-    let url = encode_device_link_invite(
+    let Ok(url) = iris_drive_core::device_link_invite::encode_device_link_invite(
         &state.owner_pubkey,
         &state.device_pubkey,
         &state.device_link_secret,
-    );
+    ) else {
+        return Value::Null;
+    };
     json!({
         "url": url,
         "web_url": device_link_web_url(&url),
@@ -490,61 +485,14 @@ pub(crate) fn encode_device_approval_request(
     url
 }
 
-pub(crate) fn encode_device_link_invite(
-    owner_hex: &str,
-    admin_device_hex: &str,
-    link_secret: &str,
-) -> String {
-    format!(
-        "iris-drive://link-device?owner={}&admin={}&secret={}",
-        account_npub(owner_hex),
-        account_npub(admin_device_hex),
-        percent_encode_component(link_secret.trim())
-    )
-}
-
 pub(crate) fn device_link_web_url(invite_url: &str) -> String {
-    invite_url.replacen(
-        "iris-drive://link-device",
-        "https://drive.iris.to/link-device",
-        1,
-    )
+    iris_drive_core::device_link_invite::device_link_invite_web_url(invite_url)
 }
 
-pub(crate) fn decode_device_link_invite(input: &str) -> Result<Option<DeviceLinkInvite>> {
-    let trimmed = input.trim();
-    let Some(query) = device_link_invite_query(trimmed) else {
-        return Ok(None);
-    };
-
-    let mut owner = None;
-    let mut admin = None;
-    let mut link_secret = None;
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = percent_decode_component(raw_key)?;
-        let value = percent_decode_component(raw_value)?;
-        match key.as_str() {
-            "owner" if !value.trim().is_empty() => owner = Some(value),
-            "admin" | "admin_device" if !value.trim().is_empty() => admin = Some(value),
-            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
-            _ => {}
-        }
-    }
-
-    let owner = owner.ok_or_else(|| anyhow::anyhow!("device link invite is missing owner"))?;
-    let admin = admin.ok_or_else(|| anyhow::anyhow!("device link invite is missing admin"))?;
-    let link_secret =
-        link_secret.ok_or_else(|| anyhow::anyhow!("device link invite is missing secret"))?;
-
-    Ok(Some(DeviceLinkInvite {
-        owner_hex: normalize_pubkey(&owner).context("parsing invite owner")?,
-        admin_device_hex: normalize_pubkey(&admin).context("parsing invite admin device")?,
-        link_secret: link_secret.trim().to_string(),
-    }))
+pub(crate) fn decode_device_link_invite(
+    input: &str,
+) -> Result<Option<iris_drive_core::device_link_invite::ParsedDeviceLinkInvite>> {
+    iris_drive_core::device_link_invite::parse_device_link_invite(input)
 }
 
 pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<DeviceApprovalRequest>> {
@@ -582,16 +530,6 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
         link_secret: link_secret.unwrap_or_default().trim().to_string(),
         label,
     }))
-}
-
-pub(crate) fn device_link_invite_query(input: &str) -> Option<&str> {
-    if let Some(rest) = input.strip_prefix("iris-drive://link-device") {
-        return rest.strip_prefix('?');
-    }
-    if let Some(rest) = input.strip_prefix("https://drive.iris.to/link-device") {
-        return rest.strip_prefix('?');
-    }
-    None
 }
 
 pub(crate) fn device_approval_query(input: &str) -> Option<&str> {

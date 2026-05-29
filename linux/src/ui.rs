@@ -170,7 +170,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let approve_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     approve_box.set_hexpand(true);
     approve_box.append(&field_title("Approve device"));
-    let approve_device_entry = setup_entry("Device request link");
+    let approve_device_entry = setup_entry("Device ID");
     approve_device_entry.set_hexpand(true);
     let approve_label_entry = setup_entry("Device label");
     approve_label_entry.set_hexpand(true);

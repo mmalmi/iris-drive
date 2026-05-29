@@ -318,7 +318,7 @@ pub(crate) fn render_restore_profile(model: &AppRef) {
 
 pub(crate) fn render_link_device(model: &AppRef) {
     let container = setup_container(model, "Link this device");
-    let owner = setup_entry("Owner public key");
+    let owner = setup_entry("Owner public key or invite link");
     container.append(&owner);
 
     let notice = setup_notice();
@@ -330,7 +330,7 @@ pub(crate) fn render_link_device(model: &AppRef) {
         submit.connect_clicked(move |button| {
             let owner_value = owner.text().trim().to_string();
             if owner_value.is_empty() {
-                notice.set_text("Owner public key is required.");
+                notice.set_text("Owner public key or invite link is required.");
                 return;
             }
             button.set_sensitive(false);

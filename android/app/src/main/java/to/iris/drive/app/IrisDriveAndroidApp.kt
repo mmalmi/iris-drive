@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
+import to.iris.drive.app.core.DeviceLinkRequestState
 import to.iris.drive.app.core.DeviceState
 import to.iris.drive.app.core.NativeCore
 
@@ -164,7 +165,7 @@ internal fun IrisDriveAndroidApp(
                     onStopSync = onStopSync,
                     onCopyOwnerKey = { onCopyText("Owner key", account.ownerPubkey) },
                     onCopyDeviceKey = { onCopyText("Device key", account.devicePubkey) },
-                    onCopyLinkRequest = { onCopyText("Link request", account.deviceLinkRequest) },
+                    onCopyLinkInvite = { onCopyText("Invite link", account.deviceLinkInvite) },
                     onCopySnapshotLink = { onCopyText("Snapshot link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
@@ -456,7 +457,7 @@ private fun DriveContent(
     onStopSync: () -> Unit,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
-    onCopyLinkRequest: () -> Unit,
+    onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
     onOpenDriveFolder: () -> Unit,
@@ -503,10 +504,10 @@ private fun DriveContent(
         item {
             DevicesPanel(
                 devices = state.devices,
-                linkRequest = state.account?.deviceLinkRequest.orEmpty(),
                 linkInvite = state.account?.deviceLinkInvite.orEmpty(),
+                inboundRequests = state.account?.inboundDeviceLinkRequests.orEmpty(),
                 canApprove = state.account?.hasOwnerSigningAuthority == true,
-                onCopyLinkRequest = onCopyLinkRequest,
+                onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
                 onRevokeDevice = onRevokeDevice,
                 onAppointAdmin = onAppointAdmin,
@@ -521,7 +522,6 @@ private fun DriveContent(
                 state = state,
                 onCopyOwnerKey = onCopyOwnerKey,
                 onCopyDeviceKey = onCopyDeviceKey,
-                onCopyLinkRequest = onCopyLinkRequest,
                 onAddRelay = onAddRelay,
                 onRemoveRelay = onRemoveRelay,
                 onResetRelays = onResetRelays,
@@ -629,10 +629,10 @@ private fun ProviderPanel(
 @Composable
 private fun DevicesPanel(
     devices: List<DeviceState>,
-    linkRequest: String,
     linkInvite: String,
+    inboundRequests: List<DeviceLinkRequestState>,
     canApprove: Boolean,
-    onCopyLinkRequest: () -> Unit,
+    onCopyLinkInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
@@ -640,31 +640,28 @@ private fun DevicesPanel(
 ) {
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
-    var showRequestScanner by remember { mutableStateOf(false) }
-
-    if (showRequestScanner) {
-        QrScannerDialog(
-            onDismiss = { showRequestScanner = false },
-            onScanned = { code ->
-                request = code
-                showRequestScanner = false
-                null
-            },
-        )
-    }
 
     CardSection(title = "Devices", trailing = "${devices.size}") {
         if (linkInvite.isNotBlank()) {
             Text("Invite device", fontWeight = FontWeight.SemiBold)
             QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
             Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            OutlinedButton(onClick = onCopyLinkInvite) {
+                Text("Copy invite link")
+            }
         }
-        if (linkRequest.isNotBlank()) {
-            Text("Link request", fontWeight = FontWeight.SemiBold)
-            QrCode(linkRequest, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
-            Text(linkRequest, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            OutlinedButton(onClick = onCopyLinkRequest) {
-                Text("Copy link request")
+        inboundRequests.forEach { inbound ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
+                    Text(inbound.devicePubkey, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Button(
+                    onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
+                    enabled = canApprove,
+                ) {
+                    Text("Approve")
+                }
             }
         }
         devices.forEach { device ->
@@ -709,7 +706,7 @@ private fun DevicesPanel(
             onValueChange = { request = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Device request or Device ID") },
+            label = { Text("Device ID") },
         )
         OutlinedTextField(
             value = label,
@@ -728,12 +725,6 @@ private fun DevicesPanel(
                 enabled = canApprove && request.isNotBlank(),
             ) {
                 Text("Approve Device")
-            }
-            OutlinedButton(
-                onClick = { showRequestScanner = true },
-                enabled = canApprove,
-            ) {
-                Text("Scan QR")
             }
         }
     }
@@ -794,7 +785,6 @@ private fun SettingsPanel(
     state: AppState,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
-    onCopyLinkRequest: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
@@ -844,9 +834,6 @@ private fun SettingsPanel(
             OutlinedButton(onClick = onCopyDeviceKey) {
                 Text("Copy device key")
             }
-        }
-        OutlinedButton(onClick = onCopyLinkRequest) {
-            Text("Copy link request")
         }
     }
 }

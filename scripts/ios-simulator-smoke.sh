@@ -165,10 +165,10 @@ xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
-owner_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["owner_npub"])' <<<"$owner_json")"
+owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
 
 SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
-  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_npub" \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
   xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
 
 CONTAINER="$(app_group_container)"

@@ -1281,15 +1281,47 @@ done
 echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
 owner_npub="$(jq -r '.owner_npub' <<<"$owner_json")"
+owner_admin_npub="$(jq -r '.device_npub' <<<"$owner_json")"
+invite_json="$(idrive_cmd "$owner_label" devices invite)"
+invite_url="$(jq -r '.url' <<<"$invite_json")"
+invite_owner_npub="$(jq -r '.owner_npub' <<<"$invite_json")"
+invite_admin_npub="$(jq -r '.admin_device_npub' <<<"$invite_json")"
+if [[ "$invite_url" != iris-drive://invite/* ]]; then
+  echo "owner invite did not use canonical iris-drive://invite/ URL: $invite_url" >&2
+  exit 1
+fi
+if [[ "$invite_owner_npub" != "$owner_npub" || "$invite_admin_npub" != "$owner_admin_npub" ]]; then
+  echo "owner invite metadata does not match owner/admin device" >&2
+  exit 1
+fi
 
 for label in "${LABELS[@]}"; do
   if [[ "$label" == "$owner_label" ]]; then
     continue
   fi
-  echo "linking $label"
-  link_json="$(idrive_cmd "$label" link "$owner_npub" --label "$label")"
+  echo "requesting invite-based link for $label"
+  link_json="$(idrive_cmd "$label" devices request "$invite_url" --label "$label")"
+  linked_device_npub="$(jq -r '.device_npub' <<<"$link_json")"
   request_url="$(jq -r '.device_link_request.url' <<<"$link_json")"
-  idrive_cmd "$owner_label" approve "$request_url" --label "$label" >/dev/null
+  request_owner_npub="$(jq -r '.device_link_request.owner_npub' <<<"$link_json")"
+  request_admin_npub="$(jq -r '.device_link_request.admin_device_npub' <<<"$link_json")"
+  if [[ "$request_url" != iris-drive://device-link\?* ]]; then
+    echo "$label did not create a device-link request URL: $request_url" >&2
+    exit 1
+  fi
+  if [[ "$request_owner_npub" != "$owner_npub" || "$request_admin_npub" != "$owner_admin_npub" ]]; then
+    echo "$label request metadata does not match invite owner/admin" >&2
+    exit 1
+  fi
+  if [[ "$request_url" != *"owner=$owner_npub"* || "$request_url" != *"device=$linked_device_npub"* || "$request_url" != *"secret="* ]]; then
+    echo "$label request URL is missing owner/device/secret: $request_url" >&2
+    exit 1
+  fi
+  if [[ "$request_url" == *"local-owner"* || "$request_url" == *"device=device-"* ]]; then
+    echo "$label request URL leaked placeholder ids: $request_url" >&2
+    exit 1
+  fi
+  idrive_cmd "$owner_label" devices approve "$request_url" --label "$label" >/dev/null
 done
 
 if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then

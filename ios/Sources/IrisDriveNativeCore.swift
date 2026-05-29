@@ -122,6 +122,7 @@ struct NativeAccount: Codable {
     var hasOwnerSigningAuthority: Bool
     var deviceLinkRequest: String
     var deviceLinkInvite: String
+    var inboundDeviceLinkRequests: [NativeDeviceLinkRequest]
 
     enum CodingKeys: String, CodingKey {
         case ownerPubkey = "owner_pubkey"
@@ -131,6 +132,21 @@ struct NativeAccount: Codable {
         case hasOwnerSigningAuthority = "has_owner_signing_authority"
         case deviceLinkRequest = "device_link_request"
         case deviceLinkInvite = "device_link_invite"
+        case inboundDeviceLinkRequests = "inbound_device_link_requests"
+    }
+}
+
+struct NativeDeviceLinkRequest: Codable {
+    var devicePubkey: String
+    var label: String
+    var requestedAt: UInt64
+    var requestLink: String
+
+    enum CodingKeys: String, CodingKey {
+        case devicePubkey = "device_pubkey"
+        case label
+        case requestedAt = "requested_at"
+        case requestLink = "request_link"
     }
 }
 

@@ -317,7 +317,6 @@ private struct DriveFolderBrowser: UIViewControllerRepresentable {
 
 private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var scannerPresented = false
 
     var body: some View {
         List {
@@ -369,6 +368,26 @@ private struct DevicesView: View {
                 }
             }
 
+            if !model.inboundDeviceLinkRequests.isEmpty {
+                Section("Device Requests") {
+                    ForEach(model.inboundDeviceLinkRequests) { request in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(request.label.isEmpty ? "New device" : request.label)
+                                .font(.headline)
+                            Text(request.devicePubkey)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Button {
+                                model.approveDevice(request: request.requestLink, label: request.label)
+                            } label: {
+                                Label("Approve device", systemImage: "checkmark.circle")
+                            }
+                        }
+                    }
+                }
+            }
+
             if !model.deviceLinkInvite.isEmpty {
                 Section("Invite Device") {
                     QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkInvite))
@@ -386,25 +405,8 @@ private struct DevicesView: View {
                 }
             }
 
-            if !model.deviceLinkRequest.isEmpty {
-                Section("Link Request") {
-                    QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkRequest))
-                        .frame(width: 260, height: 260)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Text(model.deviceLinkRequest)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button {
-                        model.copyLinkRequest()
-                    } label: {
-                        Label("Copy link request", systemImage: "link")
-                    }
-                }
-            }
-
-            Section("Approve Device") {
-                TextField("Device request or Device ID", text: $model.approveDeviceKey)
+            Section("Add Manually") {
+                TextField("Device ID", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Label", text: $model.approveDeviceLabel)
@@ -414,20 +416,9 @@ private struct DevicesView: View {
                     Label("Approve device", systemImage: "checkmark.circle")
                 }
                 .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button {
-                    scannerPresented = true
-                } label: {
-                    Label("Scan request QR", systemImage: "qrcode.viewfinder")
-                }
-                .disabled(!model.hasOwnerAuthority)
             }
         }
         .navigationTitle("Devices")
-        .sheet(isPresented: $scannerPresented) {
-            QRCodeScannerSheet { code in
-                model.approveDeviceKey = code
-            }
-        }
     }
 }
 
@@ -476,11 +467,6 @@ private struct SettingsView: View {
                     model.copyDeviceKey()
                 } label: {
                     Label("Copy device key", systemImage: "doc.on.doc")
-                }
-                Button {
-                    model.copyLinkRequest()
-                } label: {
-                    Label("Copy link request", systemImage: "link")
                 }
                 SecureField("Restore secret", text: $model.restoreSecret)
                 Button {
