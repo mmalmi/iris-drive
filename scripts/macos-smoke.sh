@@ -148,10 +148,21 @@ request_create_profile() {
   /usr/bin/swift - >/dev/null <<'SWIFT'
 import Foundation
 
+let environment = ProcessInfo.processInfo.environment
+var userInfo = [String: Any]()
+if let username = environment["IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME"],
+   !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    userInfo["username"] = username
+}
+if let profilePhotoPath = environment["IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE_PHOTO"],
+   !profilePhotoPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    userInfo["profilePhotoPath"] = profilePhotoPath
+}
+
 DistributedNotificationCenter.default().postNotificationName(
     Notification.Name("to.iris.drive.e2eCreateProfile"),
     object: nil,
-    userInfo: nil,
+    userInfo: userInfo.isEmpty ? nil : userInfo,
     deliverImmediately: true
 )
 RunLoop.current.run(until: Date().addingTimeInterval(0.2))
@@ -239,6 +250,14 @@ if run_create_profile_smoke; then
   status_json="$("$APP_PATH/Contents/MacOS/idrive" --config-dir "$SMOKE_CONFIG_DIR" status)"
   if [[ "$status_json" != *'"initialized":true'* ]]; then
     echo "FAIL: Create profile initialized key material but status is not initialized." >&2
+    echo "$status_json" >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+
+  if [[ -n "${IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME:-}" ]] &&
+    [[ "$status_json" != *"\"username\":\"$IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME\""* ]]; then
+    echo "FAIL: Create profile did not save the requested username." >&2
     echo "$status_json" >&2
     show_recent_logs >&2
     exit 1

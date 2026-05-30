@@ -134,8 +134,8 @@ struct IrisDriveControlPanel: View {
                 .frame(width: setupControlWidth)
                 .controlSize(.large)
                 .buttonBorderShape(.roundedRectangle(radius: 5))
-            if !status.message.isEmpty {
-                Text(status.message)
+            if let setupStatusMessage {
+                Text(setupStatusMessage)
                     .font(.callout)
                     .foregroundStyle(setupStatusColor)
                     .frame(width: setupControlWidth)
@@ -251,8 +251,20 @@ struct IrisDriveControlPanel: View {
         URL(fileURLWithPath: setupPhotoPath).lastPathComponent
     }
 
+    private var setupStatusMessage: String? {
+        let message = status.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return nil }
+        let lowercased = message.lowercased()
+        if lowercased == "setting up"
+            || lowercased.contains("failed")
+            || lowercased.hasSuffix("required") {
+            return message
+        }
+        return nil
+    }
+
     private var setupStatusColor: Color {
-        status.message.localizedCaseInsensitiveContains("failed") ? .red : .secondary
+        (setupStatusMessage ?? "").localizedCaseInsensitiveContains("failed") ? .red : .secondary
     }
 
     private func chooseProfilePhoto() {
