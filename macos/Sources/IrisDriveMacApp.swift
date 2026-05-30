@@ -16,6 +16,8 @@ private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
     Notification.Name("to.iris.drive.showDriveFolder")
+private let irisDriveE2ECreateProfileNotification =
+    Notification.Name("to.iris.drive.e2eCreateProfile")
 private let irisDriveAssociatedHosts: Set<String> = [
     "drive.iris.to",
     "docs.iris.to",
@@ -82,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         installSingleInstanceNotificationObserver()
+        installE2ENotificationObserverIfEnabled()
         installStatusItem()
         installWindowObserver()
         observeWindows()
@@ -165,6 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: irisDriveShowDriveFolderNotification,
             object: nil
         )
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: irisDriveE2ECreateProfileNotification,
+            object: nil
+        )
     }
 
     func applicationShouldHandleReopen(
@@ -228,6 +236,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showDriveFolder()
     }
 
+    @objc private func handleE2ECreateProfileNotification(_ notification: Notification) {
+        guard e2eNotificationsEnabled else {
+            return
+        }
+        let username = notification.userInfo?["username"] as? String ?? ""
+        let profilePhotoPath = notification.userInfo?["profilePhotoPath"] as? String ?? ""
+        NSLog("Iris Drive e2e create profile requested")
+        createProfile(username: username, profilePhotoPath: profilePhotoPath)
+    }
+
     private func isIrisWebURL(_ url: URL) -> Bool {
         guard url.scheme == "https",
               let host = url.host?.lowercased()
@@ -256,6 +274,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: irisDriveShowDriveFolderNotification,
             object: nil
         )
+    }
+
+    private func installE2ENotificationObserverIfEnabled() {
+        guard e2eNotificationsEnabled else {
+            return
+        }
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleE2ECreateProfileNotification),
+            name: irisDriveE2ECreateProfileNotification,
+            object: nil
+        )
+        NSLog("Iris Drive e2e notifications enabled")
     }
 
     private func handOffToExistingInstanceIfNeeded() -> Bool {
@@ -862,6 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
                 _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
                 self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
+                NSLog("Iris Drive setup succeeded")
                 self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
                 DispatchQueue.main.async {
                     self.userRequestedSyncStop = false
@@ -1285,6 +1317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environmentFlag("IRIS_DRIVE_ENABLE_FILEPROVIDER_REIMPORT")
     }
 
+    private var e2eNotificationsEnabled: Bool {
+        environmentFlag("IRIS_DRIVE_ENABLE_E2E_NOTIFICATIONS")
+    }
+
     private var fileProviderIntegrationEnabled: Bool {
         guard !environmentFlag("IRIS_DRIVE_DISABLE_FILEPROVIDER") else {
             return false
@@ -1294,13 +1330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func environmentFlag(_ name: String) -> Bool {
-        guard let value = ProcessInfo.processInfo.environment[name]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        else {
-            return false
-        }
-        return ["1", "true", "yes", "on"].contains(value)
+        irisDriveEnvironmentFlag(name)
     }
 
     private func fileProviderApplicationSupportFallbackDirectory() -> URL {
@@ -2159,10 +2189,22 @@ private func irisDriveAppGroupIdentifiers() -> [String] {
     if let teamIdentifier = currentProcessTeamIdentifier() {
         identifiers.append("\(teamIdentifier).\(irisDriveAppGroupName)")
     }
-    identifiers.append(irisDriveLegacyAppGroupIdentifier)
+    if irisDriveEnvironmentFlag("IRIS_DRIVE_ENABLE_LEGACY_APP_GROUP") {
+        identifiers.append(irisDriveLegacyAppGroupIdentifier)
+    }
 
     var seen = Set<String>()
     return identifiers.filter { seen.insert($0).inserted }
+}
+
+private func irisDriveEnvironmentFlag(_ name: String) -> Bool {
+    guard let value = ProcessInfo.processInfo.environment[name]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    else {
+        return false
+    }
+    return ["1", "true", "yes", "on"].contains(value)
 }
 
 private func ensureFileProviderDomainRegistered(

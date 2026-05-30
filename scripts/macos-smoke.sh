@@ -14,7 +14,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PROCESS_NAME="Iris Drive"
 APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"
-SMOKE_APP_DATA="$ROOT/macos/.build/SmokeAppData"
+SMOKE_HOME="$SMOKE_DIR/home"
+if [[ "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
+  SMOKE_APP_DATA="$SMOKE_HOME/Library/Application Support/Iris Drive"
+else
+  SMOKE_APP_DATA="$ROOT/macos/.build/SmokeAppData"
+fi
+SMOKE_CONFIG_DIR="$SMOKE_APP_DATA/Config"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 APP_PATH=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
@@ -22,6 +28,13 @@ APP_STDERR="$SMOKE_DIR/app.stderr.log"
 
 run_ui_smoke() {
   case "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_create_profile_smoke() {
+  case "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}" in
     1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
     *) return 1 ;;
   esac
@@ -118,6 +131,33 @@ wait_for_log() {
   return 1
 }
 
+wait_for_file() {
+  local path="$1"
+  local seconds="$2"
+
+  for _ in $(seq 1 "$((seconds * 10))"); do
+    if [[ -f "$path" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+request_create_profile() {
+  /usr/bin/swift - >/dev/null <<'SWIFT'
+import Foundation
+
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("to.iris.drive.e2eCreateProfile"),
+    object: nil,
+    userInfo: nil,
+    deliverImmediately: true
+)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+SWIFT
+}
+
 request_show_drive_folder() {
   /usr/bin/swift - >/dev/null <<'SWIFT'
 import Foundation
@@ -140,17 +180,29 @@ fi
 
 terminate_app_process
 rm -rf "$SMOKE_APP_DATA"
-mkdir -p "$SMOKE_APP_DATA/Config"
-"$APP_PATH/Contents/MacOS/idrive" \
-  --config-dir "$SMOKE_APP_DATA/Config" \
-  init --force --label "macOS smoke" >/dev/null
+if run_create_profile_smoke; then
+  mkdir -p "$SMOKE_HOME"
+else
+  mkdir -p "$SMOKE_CONFIG_DIR"
+  "$APP_PATH/Contents/MacOS/idrive" \
+    --config-dir "$SMOKE_CONFIG_DIR" \
+    init --force --label "macOS smoke" >/dev/null
+fi
 
 open_args=(
   -j
-  --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA"
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
 )
+if run_create_profile_smoke; then
+  open_args+=(
+    --env "CFFIXED_USER_HOME=$SMOKE_HOME"
+    --env "HOME=$SMOKE_HOME"
+    --env "IRIS_DRIVE_ENABLE_E2E_NOTIFICATIONS=1"
+  )
+else
+  open_args+=(--env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA")
+fi
 open "${open_args[@]}" "$APP_PATH"
 
 if ! wait_for_process "$APP_PROCESS_NAME" 10; then
@@ -165,16 +217,50 @@ if ! wait_for_log "Iris Drive menu bar item installed" 10; then
   exit 1
 fi
 
-if ! wait_for_log "Iris Drive control panel updated" 10; then
-  echo "FAIL: Iris Drive did not load control panel status." >&2
-  show_recent_logs >&2
-  exit 1
-fi
+if run_create_profile_smoke; then
+  if ! wait_for_log "Iris Drive local profile not found" 10; then
+    echo "FAIL: Iris Drive did not enter first-run setup." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
 
-if ! wait_for_daemon 10; then
-  echo "FAIL: bundled idrive daemon did not start." >&2
-  show_recent_logs >&2
-  exit 1
+  if ! request_create_profile; then
+    echo "FAIL: could not request Create profile." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+
+  if ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
+    echo "FAIL: Create profile did not initialize a local profile." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+
+  status_json="$("$APP_PATH/Contents/MacOS/idrive" --config-dir "$SMOKE_CONFIG_DIR" status)"
+  if [[ "$status_json" != *'"initialized":true'* ]]; then
+    echo "FAIL: Create profile initialized key material but status is not initialized." >&2
+    echo "$status_json" >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+
+  if ! wait_for_daemon 10; then
+    echo "FAIL: bundled idrive daemon did not start after Create profile." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+else
+  if ! wait_for_log "Iris Drive control panel updated" 10; then
+    echo "FAIL: Iris Drive did not load control panel status." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+
+  if ! wait_for_daemon 10; then
+    echo "FAIL: bundled idrive daemon did not start." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
 fi
 
 if run_ui_smoke; then
@@ -193,7 +279,9 @@ if run_ui_smoke; then
 fi
 
 echo "MACOS_SMOKE_OK"
-if run_ui_smoke; then
+if run_create_profile_smoke; then
+  echo "app launched into first-run setup, Create profile initialized a local profile, and bundled daemon started"
+elif run_ui_smoke; then
   echo "app launched, menu bar item installed, bundled daemon started, and Show Drive Folder opened the drive folder"
 else
   echo "app launched hidden, menu bar item installed, control panel status loaded, and bundled daemon started"

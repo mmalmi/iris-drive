@@ -303,7 +303,7 @@ sign_helper() {
   if [[ "$mode" == "development" ]]; then
     codesign --force --sign "$identity" --entitlements "$(idrive_helper_entitlements)" "$helper" >&2
   else
-    codesign --force --sign - --entitlements "$(idrive_helper_entitlements)" "$helper" >&2
+    codesign --force --sign - "$helper" >&2
   fi
 }
 

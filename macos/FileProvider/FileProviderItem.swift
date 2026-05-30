@@ -856,10 +856,22 @@ enum FileProviderStorage {
         if let teamIdentifier = currentProcessTeamIdentifier() {
             identifiers.append("\(teamIdentifier).\(appGroupName)")
         }
-        identifiers.append(legacyAppGroupIdentifier)
+        if environmentFlag("IRIS_DRIVE_ENABLE_LEGACY_APP_GROUP") {
+            identifiers.append(legacyAppGroupIdentifier)
+        }
 
         var seen = Set<String>()
         return identifiers.filter { seen.insert($0).inserted }
+    }
+
+    private static func environmentFlag(_ name: String) -> Bool {
+        guard let value = ProcessInfo.processInfo.environment[name]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        else {
+            return false
+        }
+        return ["1", "true", "yes", "on"].contains(value)
     }
 
     private static func currentProcessTeamIdentifier() -> String? {
