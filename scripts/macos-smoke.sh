@@ -47,9 +47,11 @@ fi
 SMOKE_CONFIG_DIR="$SMOKE_APP_DATA/Config"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 APP_PATH=""
+IDRIVE_CLI=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
 USER_JOURNEY_OPENED_DRIVE_FOLDER=0
+OWNER_DAEMON_PID=""
 
 run_ui_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
@@ -182,6 +184,10 @@ terminate_app_process() {
 }
 
 cleanup() {
+  if [[ -n "$OWNER_DAEMON_PID" ]]; then
+    kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
+    wait "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$APP_PATH" ]]; then
     terminate_app_process
     pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
@@ -270,6 +276,21 @@ wait_for_file() {
       return 0
     fi
     sleep 0.1
+  done
+  return 1
+}
+
+wait_for_linked_authorized() {
+  local seconds="$1"
+  local status_json authorization_state
+
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    status_json="$("$IDRIVE_CLI" --config-dir "$SMOKE_CONFIG_DIR" status 2>/dev/null || true)"
+    authorization_state="$(printf '%s' "$status_json" | json_get account.authorization_state 2>/dev/null || true)"
+    if [[ "$authorization_state" == "authorized" ]]; then
+      return 0
+    fi
+    sleep 0.2
   done
   return 1
 }
@@ -447,6 +468,48 @@ drive_link_device_gui() {
   drive_setup_gui link "$1"
 }
 
+wait_for_control_panel_text() {
+  local expected="$1"
+  local seconds="$2"
+
+  /usr/bin/osascript - "$APP_PROCESS_NAME" "$expected" "$seconds" >/dev/null <<'APPLESCRIPT'
+on setupGroup(appName)
+  tell application "System Events"
+    tell process appName
+      return group 1 of window 1
+    end tell
+  end tell
+end setupGroup
+
+on setupStaticTextExists(appName, expected)
+  tell application "System Events"
+    tell process appName
+      try
+        repeat with textItem in static texts of my setupGroup(appName)
+          try
+            if (value of textItem as text) is expected then return true
+          end try
+        end repeat
+      end try
+    end tell
+  end tell
+  return false
+end setupStaticTextExists
+
+on run argv
+  set appName to item 1 of argv
+  set expected to item 2 of argv
+  set timeoutSeconds to item 3 of argv as integer
+  set deadline to (current date) + timeoutSeconds
+  repeat while (current date) is less than deadline
+    if my setupStaticTextExists(appName, expected) then return
+    delay 0.2
+  end repeat
+  error "Timed out waiting for control panel text: " & expected
+end run
+APPLESCRIPT
+}
+
 request_show_drive_folder() {
   /usr/bin/swift - >/dev/null <<'SWIFT'
 import Foundation
@@ -461,8 +524,61 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
+app_group_identifier() {
+  local app_path="$1"
+
+  codesign -d --entitlements :- "$app_path" 2>/dev/null \
+    | python3 -c '
+import plistlib
+import sys
+
+try:
+    entitlements = plistlib.loads(sys.stdin.buffer.read())
+except Exception:
+    sys.exit(0)
+groups = entitlements.get("com.apple.security.application-groups") or []
+if groups:
+    print(groups[0])
+'
+}
+
+configure_smoke_app_data() {
+  local app_group
+  local smoke_name
+
+  if [[ -n "${IRIS_DRIVE_MACOS_SMOKE_APP_DATA:-}" ]]; then
+    SMOKE_APP_DATA="$IRIS_DRIVE_MACOS_SMOKE_APP_DATA"
+    SMOKE_CONFIG_DIR="$SMOKE_APP_DATA/Config"
+    return
+  fi
+
+  app_group="$(app_group_identifier "$APP_PATH")"
+  if [[ -n "$app_group" ]]; then
+    smoke_name="$(basename "$SMOKE_DIR")"
+    SMOKE_APP_DATA="$HOME/Library/Group Containers/$app_group/Iris Drive Smoke/$smoke_name"
+    SMOKE_CONFIG_DIR="$SMOKE_APP_DATA/Config"
+  fi
+}
+
+resolve_idrive_cli() {
+  if [[ -n "${IRIS_DRIVE_MACOS_SMOKE_IDRIVE:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_MACOS_SMOKE_IDRIVE"
+    return 0
+  fi
+
+  local target_dir
+  target_dir="$(cargo metadata --no-deps --format-version 1 \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+  if [[ -x "$target_dir/debug/idrive" ]]; then
+    printf '%s\n' "$target_dir/debug/idrive"
+    return 0
+  fi
+
+  printf '%s\n' "$APP_PATH/Contents/MacOS/idrive"
+}
+
 run_user_journey() {
-  local idrive="$APP_PATH/Contents/MacOS/idrive"
+  local idrive="$IDRIVE_CLI"
   local owner_config_dir="$SMOKE_DIR/owner/Config"
   local source_dir="$SMOKE_DIR/source"
   local backup_dir="$SMOKE_DIR/filesystem-backup"
@@ -480,9 +596,21 @@ run_user_journey() {
     echo "$owner_json" >&2
     return 1
   }
+  "$idrive" --config-dir "$owner_config_dir" daemon --watch-interval 0 \
+    >"$SMOKE_DIR/owner-daemon.stdout.log" 2>"$SMOKE_DIR/owner-daemon.stderr.log" &
+  OWNER_DAEMON_PID="$!"
+  sleep 1
+  if ! kill -0 "$OWNER_DAEMON_PID" >/dev/null 2>&1; then
+    echo "FAIL: owner daemon did not start for link journey." >&2
+    return 1
+  fi
 
   if ! request_show_control_panel || ! drive_link_device_gui "$owner_npub"; then
     echo "FAIL: could not complete the Link this device GUI journey." >&2
+    return 1
+  fi
+  if ! wait_for_control_panel_text "Waiting for approval" 10; then
+    echo "FAIL: Link this device completed the GUI login before admin approval." >&2
     return 1
   fi
 
@@ -540,6 +668,11 @@ run_user_journey() {
     echo "$roster_json" >&2
     return 1
   fi
+  if ! wait_for_linked_authorized 40; then
+    echo "FAIL: linked GUI device did not become authorized after owner approval." >&2
+    "$idrive" --config-dir "$SMOKE_CONFIG_DIR" status >&2 || true
+    return 1
+  fi
 
   if ! wait_for_daemon 10; then
     echo "FAIL: bundled idrive daemon did not start after Link this device." >&2
@@ -553,9 +686,21 @@ run_user_journey() {
   if wait_for_log "Iris Drive mounted drive folder opened" 10 ||
     wait_for_log "Iris Drive mounted drive folder revealed" 1; then
     USER_JOURNEY_OPENED_DRIVE_FOLDER=1
+    if require_drive_folder_open &&
+      ! wait_for_log "Iris Drive FileProvider domain state userEnabled=true" 10; then
+      echo "FAIL: FileProvider domain did not report userEnabled=true." >&2
+      return 1
+    fi
+    if wait_for_log "Iris Drive FileProvider domain state userEnabled=false" 1; then
+      echo "FAIL: FileProvider domain is disabled in macOS." >&2
+      return 1
+    fi
   elif wait_for_log "Iris Drive FileProvider open failed: disabled for this signing mode" 1 &&
     ! require_drive_folder_open; then
     echo "WARN: Show Drive Folder requested, but this app is not FileProvider-capable in its signing mode." >&2
+  elif wait_for_log "Iris Drive FileProvider domain state userEnabled=false" 1; then
+    echo "FAIL: FileProvider domain is disabled in macOS." >&2
+    return 1
   else
     echo "FAIL: Show Drive Folder did not open the drive folder during user journey." >&2
     return 1
@@ -612,10 +757,16 @@ run_user_journey() {
 
 APP_PATH="${IRIS_DRIVE_MACOS_SMOKE_APP_PATH:-}"
 if [[ -z "$APP_PATH" ]]; then
-  APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
+  APP_PATH="$("$ROOT/scripts/macos-dev-app.sh" build)"
 fi
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: macOS app was not built." >&2
+  exit 1
+fi
+configure_smoke_app_data
+IDRIVE_CLI="$(resolve_idrive_cli)"
+if [[ -z "$IDRIVE_CLI" || ! -x "$IDRIVE_CLI" ]]; then
+  echo "FAIL: idrive CLI was not built." >&2
   exit 1
 fi
 
@@ -625,7 +776,7 @@ if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir -p "$SMOKE_HOME"
 else
   mkdir -p "$SMOKE_CONFIG_DIR"
-  "$APP_PATH/Contents/MacOS/idrive" \
+  "$IDRIVE_CLI" \
     --config-dir "$SMOKE_CONFIG_DIR" \
     init --force --label "macOS smoke" >/dev/null
 fi
@@ -641,8 +792,12 @@ if run_create_profile_smoke || run_user_journey_smoke; then
   open_args+=(
     --env "CFFIXED_USER_HOME=$SMOKE_HOME"
     --env "HOME=$SMOKE_HOME"
+    --env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA"
     --env "IRIS_DRIVE_ENABLE_E2E_NOTIFICATIONS=1"
   )
+  if require_drive_folder_open; then
+    open_args+=(--env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true")
+  fi
 else
   open_args+=(--env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA")
 fi
@@ -693,7 +848,7 @@ if run_create_profile_smoke || run_user_journey_smoke; then
   fi
 
   if run_create_profile_smoke; then
-    status_json="$("$APP_PATH/Contents/MacOS/idrive" --config-dir "$SMOKE_CONFIG_DIR" status)"
+    status_json="$("$IDRIVE_CLI" --config-dir "$SMOKE_CONFIG_DIR" status)"
     if [[ "$status_json" != *'"initialized":true'* ]]; then
       echo "FAIL: Create profile initialized key material but status is not initialized." >&2
       echo "$status_json" >&2

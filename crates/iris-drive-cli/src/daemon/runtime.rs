@@ -43,9 +43,24 @@ pub(crate) fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
-    let embedded_hashtree =
-        EmbeddedHashtreeHost::start(config_dir, &config).context("starting embedded hashtree")?;
-    let embedded_hashtree_status = embedded_hashtree.status_payload();
+    let (embedded_hashtree, embedded_hashtree_status) =
+        match EmbeddedHashtreeHost::start(config_dir, &config) {
+            Ok(host) => {
+                let status = host.status_payload();
+                (Some(host), status)
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                println!(
+                    "{}",
+                    json!({
+                        "event": "embedded_hashtree_unavailable",
+                        "error": error,
+                    })
+                );
+                (None, json!({"running": false, "error": error}))
+            }
+        };
 
     runtime.block_on(async {
         let mut block_config = config.clone();
@@ -96,15 +111,21 @@ pub(crate) fn cmd_daemon(
                     })))
                 }
             };
-        let gateway_enabled = enable_gateway && config.local_nhash_resolver_enabled;
+        let gateway_enabled =
+            enable_gateway && config.local_nhash_resolver_enabled && embedded_hashtree.is_some();
         let gateway_disabled_by = if !enable_gateway {
             Some("cli")
         } else if !config.local_nhash_resolver_enabled {
             Some("settings")
+        } else if embedded_hashtree.is_none() {
+            Some("embedded_hashtree")
         } else {
             None
         };
         let gateway = if gateway_enabled {
+            let embedded_hashtree = embedded_hashtree
+                .as_ref()
+                .expect("gateway is only enabled when embedded hashtree started");
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
                 GatewayServer::bind_with_tree_and_htree_daemon(
@@ -134,7 +155,9 @@ pub(crate) fn cmd_daemon(
                     "http://{}:{port}/",
                     iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
                 ),
-                "hashtree_base_url": embedded_hashtree.status().base_url.clone(),
+                "hashtree_base_url": embedded_hashtree
+                    .as_ref()
+                    .map(|host| host.status().base_url.clone()),
             })
         } else {
             json!({

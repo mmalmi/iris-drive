@@ -135,7 +135,10 @@ fn link_action_tracks_pending_approval() {
     assert!(account.device_link_request.contains("secret="));
     assert!(!account.device_link_request.contains("local-owner"));
     assert!(!account.device_link_request.contains("device=device-"));
-    assert_eq!(state.ui.devices[0].role, "member");
+    assert!(
+        state.ui.devices.is_empty(),
+        "pending devices should not appear in the authorized-device roster"
+    );
 }
 
 #[test]
@@ -153,8 +156,9 @@ fn owner_can_approve_and_revoke_linked_devices() {
         owner_pubkey: owner_npub,
         device_label: "Phone".to_owned(),
     });
-    let request = linked.ui.account.unwrap().device_link_request;
-    let linked_device = linked.ui.devices[0].pubkey.clone();
+    let linked_account = linked.ui.account.unwrap();
+    let request = linked_account.device_link_request;
+    let linked_device = linked_account.device_pubkey;
     let state = app.dispatch(NativeAppAction::ApproveDevice {
         request,
         label: "Phone".to_owned(),

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 enum IrisDriveEnvironment {
     static func flag(_ name: String) -> Bool {
@@ -51,5 +52,63 @@ enum IrisDriveAppGroup {
 
         var seen = Set<String>()
         return identifiers.filter { seen.insert($0).inserted }
+    }
+}
+
+enum IrisDriveCodeSigning {
+    static func currentTeamIdentifier() -> String? {
+        if let entitlement = currentEntitlementString("com.apple.developer.team-identifier") {
+            return entitlement
+        }
+        return currentStaticCodeTeamIdentifier()
+    }
+
+    static func currentEntitlementValue(_ name: String) -> Any? {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(task, name as CFString, nil)
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func currentEntitlementString(_ name: String) -> String? {
+        guard let value = currentEntitlementValue(name) as? String else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func currentStaticCodeTeamIdentifier() -> String? {
+        guard let executableURL = Bundle.main.executableURL else {
+            return nil
+        }
+
+        var staticCode: SecStaticCode?
+        let createStatus = SecStaticCodeCreateWithPath(
+            executableURL as CFURL,
+            SecCSFlags(),
+            &staticCode
+        )
+        guard createStatus == errSecSuccess, let staticCode else {
+            return nil
+        }
+
+        var signingInfo: CFDictionary?
+        let copyStatus = SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInfo
+        )
+        guard copyStatus == errSecSuccess,
+              let info = signingInfo as? [String: Any],
+              let value = info[kSecCodeInfoTeamIdentifier as String] as? String
+        else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -54,8 +54,29 @@ class AppStateTest {
         )
 
         assertEquals(2, state.authorizedDeviceCount)
+        assertTrue(state.isSetupComplete)
         assertEquals("admin", state.devices[0].role)
         assertTrue(state.devices[0].isCurrentDevice)
         assertTrue(state.devices[1].canAppointAdmin)
+    }
+
+    @Test
+    fun pendingApprovalDoesNotCompleteSetup() {
+        val state = AppState(
+            account = AccountState(
+                ownerPubkey = "owner",
+                devicePubkey = "device-a",
+                deviceLabel = "Pixel",
+                authorizationState = "awaiting_approval",
+                hasOwnerSigningAuthority = false,
+                deviceLinkRequest = "iris-drive://device-link?device=device-a",
+                deviceLinkInvite = "",
+                inboundDeviceLinkRequests = emptyList(),
+            ),
+        )
+
+        assertTrue(state.isAwaitingApproval)
+        assertEquals(false, state.isSetupComplete)
+        assertEquals(0, state.authorizedDeviceCount)
     }
 }

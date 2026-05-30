@@ -53,7 +53,7 @@ private enum IrisDriveSyncState {
 }
 
 private let setupControlWidth: CGFloat = 340
-private let setupButtonMinHeight: CGFloat = 44
+let setupButtonMinHeight: CGFloat = 44
 
 struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
@@ -77,7 +77,7 @@ struct IrisDriveControlPanel: View {
 
     var body: some View {
         Group {
-            if !status.initialized {
+            if !status.setupComplete {
                 setup
             } else {
                 controlPanel
@@ -149,7 +149,10 @@ struct IrisDriveControlPanel: View {
 
     @ViewBuilder
     private var setupContent: some View {
-        switch setupMode {
+        if status.awaitingApproval {
+            AwaitingApprovalSetupView(status: status, controller: controller)
+        } else {
+            switch setupMode {
         case .welcome:
             VStack(spacing: 12) {
                 Button {
@@ -232,6 +235,7 @@ struct IrisDriveControlPanel: View {
                 }
                 .disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
         }
     }
 
@@ -1097,7 +1101,17 @@ private struct PeerRow: View {
     }
 
     private var roleLabel: String {
-        peer.role == "admin" ? "Admin" : "Member"
+        if !peer.authorized {
+            switch peer.authorizationState {
+            case "revoked":
+                return "Revoked"
+            case "awaiting_approval":
+                return "Awaiting approval"
+            default:
+                return "Not authorized"
+            }
+        }
+        return peer.role == "admin" ? "Admin" : "Member"
     }
 }
 

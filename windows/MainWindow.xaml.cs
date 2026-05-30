@@ -94,13 +94,20 @@ public partial class MainWindow : Window
             }
 
             var syncRunning = EnsureDaemonRunning(status);
-            ScheduleDriveFolderRefresh(status);
             if (status.IsAwaitingLinkedApproval)
             {
                 RenderAwaitingApproval(status, syncRunning, null);
                 return;
             }
+            if (!status.IsSetupComplete)
+            {
+                SetupRoot.Visibility = Visibility.Visible;
+                MainRoot.Visibility = Visibility.Collapsed;
+                SetupNotice.Text = status.AuthorizationState ?? "Setup needed";
+                return;
+            }
 
+            ScheduleDriveFolderRefresh(status);
             SetupRoot.Visibility = Visibility.Collapsed;
             MainRoot.Visibility = Visibility.Visible;
             RenderStatus(status, syncRunning, null);
@@ -552,13 +559,13 @@ public partial class MainWindow : Window
 
     private async Task OpenDriveMountAsync()
     {
-        if (currentStatus is { Initialized: true } status && !EnsureDaemonRunning(status))
+        if (currentStatus is { IsSetupComplete: true } status && !EnsureDaemonRunning(status))
         {
             NoticeText.Text = "Could not start sync";
             return;
         }
 
-        if (currentStatus is { Initialized: true })
+        if (currentStatus is { IsSetupComplete: true })
         {
             await Task.Delay(500);
             try
@@ -571,7 +578,7 @@ public partial class MainWindow : Window
             }
         }
 
-        if (currentStatus is { Initialized: true })
+        if (currentStatus is { IsSetupComplete: true })
         {
             try
             {
@@ -607,7 +614,7 @@ public partial class MainWindow : Window
 
     private void ScheduleDriveFolderRefresh(IrisDriveStatusData status)
     {
-        if (!status.Initialized || string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
+        if (!status.IsSetupComplete || string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
         {
             return;
         }

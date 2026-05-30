@@ -2084,6 +2084,8 @@ set IRIS_DRIVE_FIPS_UDP_BIND_ADDR=$env:IRIS_DRIVE_FIPS_UDP_BIND_ADDR
 set IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR
 set IRIS_DRIVE_FIPS_UDP_PUBLIC=$env:IRIS_DRIVE_FIPS_UDP_PUBLIC
 set IRIS_DRIVE_FIPS_ENABLE_WEBRTC=$env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC
+set IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$env:IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP
+set IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$env:IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING
 set IRIS_DRIVE_FIPS_STATIC_PEERS=$env:IRIS_DRIVE_FIPS_STATIC_PEERS
 set IRIS_DRIVE_WINDOWS_CLOUD_DEBUG=$env:IRIS_DRIVE_WINDOWS_CLOUD_DEBUG
 cd /d "$PublishDir"
@@ -2101,18 +2103,32 @@ cd /d "$PublishDir"
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
 
+  $DirectProcess = $null
   for ($i = 0; $i -lt 40; $i++) {
-    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($Task -and $Task.State -eq "Ready" -and $i -gt 2) {
-      if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
-      throw "idrive daemon exited during startup"
-    }
     try {
       $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
       if ($Status.network.fips.enabled -and $Status.network.fips.running) {
-        return $Process
+        return
       }
     } catch {}
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($Task -and $Task.State -eq "Ready" -and $i -gt 2 -and -not $DirectProcess) {
+      $RunningDaemon = Get-CimInstance Win32_Process |
+        Where-Object {
+          $_.Name -eq "idrive.exe" -and
+          ((([string]$_.CommandLine).Contains($ConfigDir)) -or
+           (([string]$_.ExecutablePath) -eq $Idrive))
+        } |
+        Select-Object -First 1
+      if (-not $RunningDaemon) {
+        Write-Log "scheduled daemon task did not start idrive; starting in SSH session"
+        $DirectProcess = Start-Process -FilePath $Idrive -ArgumentList @("--config-dir", $ConfigDir, "daemon", "--watch-debounce-ms", "100") -WorkingDirectory $PublishDir -RedirectStandardOutput $DaemonOut -RedirectStandardError $DaemonErr -PassThru
+      }
+    }
+    if ($DirectProcess -and $DirectProcess.HasExited) {
+      if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
+      throw "idrive daemon exited during startup"
+    }
     Start-Sleep -Milliseconds 500
   }
   if (Test-Path $DaemonErr) { Get-Content -Tail 120 $DaemonErr | ForEach-Object { [Console]::Error.WriteLine($_) } }

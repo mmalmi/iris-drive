@@ -164,6 +164,13 @@ fn link_creates_awaiting_device_with_no_owner_key() {
             .unwrap()
             .contains("secret=")
     );
+    let status = run_json(dir.path(), &["status"]);
+    let peers = status["peers"].as_array().unwrap();
+    assert!(
+        peers.is_empty(),
+        "pending devices should not appear in roster"
+    );
+    assert_eq!(status["network"]["authorized_device_count"], 0);
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists()); // never on a linked device
 }

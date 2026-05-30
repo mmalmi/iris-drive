@@ -137,37 +137,46 @@ internal fun IrisDriveAndroidApp(
         Scaffold(
             containerColor = Background,
             topBar = {
-                if (account != null) {
+                if (state.isSetupComplete) {
                     AppTopBar()
                 }
             },
         ) { padding ->
-            if (account == null) {
-                SetupContent(
-                    padding = padding,
-                    error = state.error,
-                    onCreateProfile = {
-                        onCreateProfile("")
-                        onAddRoot("My Drive", ProviderRoot)
-                    },
-                    onRestoreProfile = { secret ->
-                        onRestoreProfile(secret, "")
-                        onAddRoot("My Drive", ProviderRoot)
-                    },
-                    onLinkDevice = { owner ->
-                        onLinkDevice(owner, "")
-                        onAddRoot("My Drive", ProviderRoot)
-                    },
+            if (!state.isSetupComplete) {
+                if (state.isAwaitingApproval && account != null) {
+                    AwaitingApprovalContent(
+                        padding = padding,
+                        state = state,
+                        onCopyText = onCopyText,
+                        onLogout = onLogout,
+                    )
+                } else {
+                    SetupContent(
+                        padding = padding,
+                        error = state.error,
+                        onCreateProfile = {
+                            onCreateProfile("")
+                            onAddRoot("My Drive", ProviderRoot)
+                        },
+                        onRestoreProfile = { secret ->
+                            onRestoreProfile(secret, "")
+                            onAddRoot("My Drive", ProviderRoot)
+                        },
+                        onLinkDevice = { owner ->
+                            onLinkDevice(owner, "")
+                        },
                 )
+                }
             } else {
+                val activeAccount = account ?: return@Scaffold
                 DriveContent(
                     padding = padding,
                     state = state,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyOwnerKey = { onCopyText("Owner key", account.ownerPubkey) },
-                    onCopyDeviceKey = { onCopyText("Device key", account.devicePubkey) },
-                    onCopyLinkInvite = { onCopyText("Invite link", account.deviceLinkInvite) },
+                    onCopyOwnerKey = { onCopyText("Owner key", activeAccount.ownerPubkey) },
+                    onCopyDeviceKey = { onCopyText("Device key", activeAccount.devicePubkey) },
+                    onCopyLinkInvite = { onCopyText("Invite link", activeAccount.deviceLinkInvite) },
                     onCopySnapshotLink = { onCopyText("Snapshot link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
@@ -180,6 +189,48 @@ internal fun IrisDriveAndroidApp(
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AwaitingApprovalContent(
+    padding: PaddingValues,
+    state: AppState,
+    onCopyText: (String, String) -> Unit,
+    onLogout: () -> Unit,
+) {
+    val account = state.account ?: return
+    Box(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            SetupBrand()
+            Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            Text(account.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(account.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            SetupSecondaryButton(
+                text = "Copy device ID",
+                onClick = { onCopyText("Device key", account.devicePubkey) },
+            )
+            if (account.deviceLinkRequest.isNotBlank()) {
+                SetupSecondaryButton(
+                    text = "Copy request link",
+                    onClick = { onCopyText("Request link", account.deviceLinkRequest) },
+                )
+            }
+            OutlinedButton(
+                onClick = onLogout,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text("Log out")
             }
         }
     }

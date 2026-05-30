@@ -100,6 +100,9 @@ public sealed class IrisDriveStatusData
         !HasOwnerSigningAuthority &&
         string.Equals(AuthorizationState, "awaiting_approval", StringComparison.Ordinal);
 
+    public bool IsSetupComplete =>
+        Initialized && string.Equals(AuthorizationState, "authorized", StringComparison.Ordinal);
+
     private static string ExtractDriveName(JsonElement root)
     {
         if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)
@@ -123,7 +126,20 @@ public sealed class IrisDriveStatusData
 
     private static string? ExtractDrivePath(JsonElement root)
     {
-        return Bool(root, "initialized") ? WindowsCloudFiles.SyncRootPath : null;
+        return JsonSetupComplete(root) ? WindowsCloudFiles.SyncRootPath : null;
+    }
+
+    private static bool JsonSetupComplete(JsonElement root)
+    {
+        if (!Bool(root, "initialized") || Object(root, "account") is not { } account)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            String(account, "authorization_state"),
+            "authorized",
+            StringComparison.Ordinal);
     }
 
     private static bool ExtractLocalNhashResolverEnabled(JsonElement root)

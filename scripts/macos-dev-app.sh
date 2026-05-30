@@ -58,10 +58,17 @@ Environment:
       Local defaults are auto-loaded when present. Shell environment variables
       take precedence over .env.local values.
   IRIS_DRIVE_MACOS_SIGNING=auto|none|development
-      auto/default launches without restricted entitlements unless a development
-      team is supplied. development requires Xcode account/profiles.
+      auto/default uses a local Apple Development identity when available,
+      otherwise ad-hoc. development signs with a real local certificate.
+  IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING=1
+      Use Xcode-managed provisioning for development signing instead of the
+      local certificate signing path.
+  IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE=1
+      Keep the File Provider testing entitlement for provisioned dev builds.
+      The default strips it because plain local certificate signing is rejected
+      by launchd when this restricted entitlement is present.
   IRIS_DRIVE_DEVELOPMENT_TEAM=<team id>
-      Team id used for development signing.
+      Optional team id used to select a development signing identity.
   IRIS_DRIVE_ASC_AUTH_KEY_PATH / IRIS_DRIVE_ASC_AUTH_KEY_ID /
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID
       Optional App Store Connect API key for provisioning updates when Xcode
@@ -78,6 +85,57 @@ log() {
 
 development_team() {
   printf '%s' "${IRIS_DRIVE_DEVELOPMENT_TEAM:-}"
+}
+
+environment_flag() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+codesigning_identities() {
+  security find-identity -v -p codesigning 2>/dev/null |
+    sed -En 's/.*"([^"]+)".*/\1/p'
+}
+
+team_identifier_for_identity() {
+  local identity="$1"
+  local subject
+  subject="$(
+    security find-certificate -c "$identity" -p 2>/dev/null |
+      openssl x509 -noout -subject -nameopt RFC2253 2>/dev/null |
+      head -n 1
+  )"
+  printf '%s\n' "$subject" | sed -En 's/(^|.*,)?OU=([^,]+).*/\2/p'
+}
+
+development_signing_identity() {
+  local requested_team
+  local identity
+  local team
+
+  if [[ -n "${IRIS_DRIVE_CODESIGN_IDENTITY:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_CODESIGN_IDENTITY"
+    return 0
+  fi
+
+  requested_team="$(development_team)"
+  while IFS= read -r identity; do
+    [[ "$identity" == Apple\ Development:* ]] || continue
+    team="$(team_identifier_for_identity "$identity")"
+    if [[ -z "$requested_team" || "$team" == "$requested_team" ]]; then
+      printf '%s\n' "$identity"
+      return 0
+    fi
+  done < <(codesigning_identities)
+
+  if [[ -n "$requested_team" ]]; then
+    echo "No Apple Development identity found for team $requested_team." >&2
+  else
+    echo "No Apple Development signing identity found." >&2
+  fi
+  return 1
 }
 
 xcode_app_entitlements() {
@@ -114,7 +172,7 @@ signing_mode() {
   local mode="${IRIS_DRIVE_MACOS_SIGNING:-auto}"
   case "$mode" in
     auto)
-      if [[ -n "$(development_team)" ]]; then
+      if development_signing_identity >/dev/null 2>&1; then
         printf 'development\n'
       else
         printf 'none\n'
@@ -128,6 +186,10 @@ signing_mode() {
       exit 2
       ;;
   esac
+}
+
+use_xcode_managed_signing() {
+  environment_flag "${IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING:-0}"
 }
 
 resolve_target_dir() {
@@ -262,7 +324,7 @@ build_xcode_app() {
     )
   fi
 
-  if [[ "$mode" == "development" ]]; then
+  if [[ "$mode" == "development" ]] && use_xcode_managed_signing; then
     local team
     team="$(development_team)"
     if [[ -z "$team" ]]; then
@@ -271,7 +333,10 @@ build_xcode_app() {
     fi
     args+=(DEVELOPMENT_TEAM="$team")
     if [[ "${IRIS_DRIVE_ALLOW_PROVISIONING_UPDATES:-1}" != "0" ]]; then
-      args+=("${auth_args[@]}" -allowProvisioningUpdates -allowProvisioningDeviceRegistration)
+      if [[ ${#auth_args[@]} -gt 0 ]]; then
+        args+=("${auth_args[@]}")
+      fi
+      args+=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     fi
   else
     args+=(CODE_SIGNING_ALLOWED=NO)
@@ -281,18 +346,47 @@ build_xcode_app() {
   xcodebuild "${args[@]}" build >"$BUILD_LOG"
 }
 
-signing_identity_for_app() {
-  local app_path="$1"
-  local identity="${IRIS_DRIVE_CODESIGN_IDENTITY:-}"
+prepare_development_entitlements() {
+  local source="$1"
+  local destination="$2"
+  local team="$3"
 
-  if [[ -z "$identity" ]]; then
-    identity="$(
-      codesign -dv --verbose=4 "$app_path" 2>&1 \
-        | awk -F= '/^Authority=Apple Development:/ { print $2; exit }'
-    )"
-  fi
+  TEAM_IDENTIFIER="$team" python3 - "$source" "$destination" <<'PY'
+import os
+import plistlib
+import sys
 
-  printf '%s\n' "${identity:-Apple Development}"
+source, destination = sys.argv[1], sys.argv[2]
+team = os.environ["TEAM_IDENTIFIER"]
+with open(source, "rb") as handle:
+    entitlements = plistlib.load(handle)
+
+def expand(value):
+    if isinstance(value, str):
+        return value.replace("$(TeamIdentifierPrefix)", f"{team}.")
+    if isinstance(value, list):
+        return [expand(item) for item in value]
+    if isinstance(value, dict):
+        return {key: expand(item) for key, item in value.items()}
+    return value
+
+def truthy(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
+
+entitlements = expand(entitlements)
+if not truthy("IRIS_DRIVE_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS"):
+    entitlements.pop("com.apple.developer.associated-domains", None)
+    if not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE"):
+        entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)
+elif not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE"):
+    entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)
+
+with open(destination, "wb") as handle:
+    plistlib.dump(entitlements, handle, sort_keys=False)
+PY
 }
 
 sign_helper() {
@@ -311,9 +405,10 @@ sign_fileprovider_extension() {
   local appex="$1"
   local mode="$2"
   local identity="${3:-}"
+  local entitlements="${4:-}"
 
   if [[ "$mode" == "development" ]]; then
-    codesign --force --sign "$identity" --entitlements "$(xcode_appex_entitlements)" "$appex" >&2
+    codesign --force --sign "$identity" --entitlements "$entitlements" "$appex" >&2
   else
     codesign --force --sign - --entitlements "$(xcode_appex_entitlements)" "$appex" >&2
   fi
@@ -323,9 +418,10 @@ finalize_app_signature() {
   local app_path="$1"
   local mode="$2"
   local identity="${3:-}"
+  local entitlements="${4:-}"
 
   if [[ "$mode" == "development" ]]; then
-    codesign --force --sign "$identity" --entitlements "$(xcode_app_entitlements)" "$app_path" >&2
+    codesign --force --sign "$identity" --entitlements "$entitlements" "$app_path" >&2
     codesign --verify --strict --deep "$app_path" >&2
   fi
 }
@@ -349,6 +445,9 @@ build_app() {
   local built_app_path
   local app_path
   local signing_identity=""
+  local signing_team=""
+  local app_entitlements=""
+  local appex_entitlements=""
 
   mode="$(signing_mode)"
   log "Generating macOS project"
@@ -367,7 +466,17 @@ build_app() {
   app_path="$(install_app_bundle "$built_app_path")"
 
   if [[ "$mode" == "development" ]]; then
-    signing_identity="$(signing_identity_for_app "$app_path")"
+    signing_identity="$(development_signing_identity)"
+    signing_team="$(team_identifier_for_identity "$signing_identity")"
+    if [[ -z "$signing_team" ]]; then
+      echo "Could not resolve team identifier for signing identity: $signing_identity" >&2
+      exit 2
+    fi
+    mkdir -p "$BUILD_DIR/Signing"
+    app_entitlements="$BUILD_DIR/Signing/IrisDriveMac.development.entitlements"
+    appex_entitlements="$BUILD_DIR/Signing/IrisDriveFileProvider.development.entitlements"
+    prepare_development_entitlements "$(xcode_app_entitlements)" "$app_entitlements" "$signing_team"
+    prepare_development_entitlements "$(xcode_appex_entitlements)" "$appex_entitlements" "$signing_team"
   fi
 
   cp "$target_dir/debug/idrive" "$app_path/Contents/MacOS/idrive"
@@ -376,8 +485,8 @@ build_app() {
   chmod +x "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive"
   sign_helper "$app_path/Contents/MacOS/idrive" "$mode" "$signing_identity"
   sign_helper "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive" "$mode" "$signing_identity"
-  sign_fileprovider_extension "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex" "$mode" "$signing_identity"
-  finalize_app_signature "$app_path" "$mode" "$signing_identity"
+  sign_fileprovider_extension "$app_path/Contents/PlugIns/IrisDriveFileProvider.appex" "$mode" "$signing_identity" "$appex_entitlements"
+  finalize_app_signature "$app_path" "$mode" "$signing_identity" "$app_entitlements"
 
   touch "$app_path"
   register_app_bundle "$app_path" "$built_app_path"

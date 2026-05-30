@@ -23,6 +23,12 @@ internal data class AppState(
     val authorizedDeviceCount: Int
         get() = devices.count { it.state.equals("authorized", ignoreCase = true) || it.role == "admin" }
 
+    val isSetupComplete: Boolean
+        get() = account?.authorizationState == "authorized"
+
+    val isAwaitingApproval: Boolean
+        get() = account?.authorizationState == "awaiting_approval"
+
     companion object {
         fun fromJson(jsonText: String): AppState {
             val json = runCatching { JSONObject(jsonText) }.getOrElse {

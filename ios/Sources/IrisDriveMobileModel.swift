@@ -147,11 +147,11 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var statusSymbol: String {
-        hasLocalProfile ? "checkmark.circle.fill" : "link.circle"
+        isSetupComplete ? "checkmark.circle.fill" : "link.circle"
     }
 
     var statusTint: Color {
-        hasLocalProfile ? .green : .orange
+        isSetupComplete ? .green : .orange
     }
 
     var syncStateTitle: String {
@@ -175,12 +175,20 @@ final class IrisDriveMobileModel: ObservableObject {
         !ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var isSetupComplete: Bool {
+        lastState?.ui.account?.authorizationState == "authorized"
+    }
+
+    var isAwaitingApproval: Bool {
+        lastState?.ui.account?.authorizationState == "awaiting_approval"
+    }
+
     var hasOwnerAuthority: Bool {
         lastState?.ui.account?.hasOwnerSigningAuthority ?? false
     }
 
     func ensureFileProviderDomainIfProfileExists() {
-        guard hasLocalProfile else {
+        guard isSetupComplete else {
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
             return
@@ -189,7 +197,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func ensureFileProviderDomain(completion: ((Bool) -> Void)? = nil) {
-        guard hasLocalProfile else {
+        guard isSetupComplete else {
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
             completion?(false)
@@ -227,7 +235,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openDriveFolder() {
-        guard hasLocalProfile else {
+        guard isSetupComplete else {
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
             return
@@ -376,7 +384,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func startSync() {
-        guard hasLocalProfile else { return }
+        guard isSetupComplete else { return }
         dispatch(["type": "start_sync"])
     }
 
@@ -385,7 +393,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func restartSync() {
-        guard hasLocalProfile else { return }
+        guard isSetupComplete else { return }
         dispatch(["type": "restart_sync"])
     }
 

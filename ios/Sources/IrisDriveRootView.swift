@@ -7,8 +7,12 @@ struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
     var body: some View {
-        if model.ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            SetupWelcomeView(model: model)
+        if !model.isSetupComplete {
+            if model.isAwaitingApproval {
+                AwaitingApprovalSetupView(model: model)
+            } else {
+                SetupWelcomeView(model: model)
+            }
         } else {
             TabView {
                 NavigationStack {
@@ -42,6 +46,55 @@ struct IrisDriveRootView: View {
             .sheet(isPresented: $model.isDriveBrowserPresented) {
                 DriveFolderBrowser(initialDirectoryURL: model.driveBrowserInitialURL)
             }
+        }
+    }
+}
+
+private struct AwaitingApprovalSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(spacing: 14) {
+                        Image("BrandIcon")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 96, height: 96)
+                        Text("Iris Drive")
+                            .font(.title.bold())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                }
+
+                Section("Waiting for approval") {
+                    LabeledContent("Owner", value: model.ownerPublicKey)
+                    LabeledContent("This device", value: model.devicePublicKey)
+                    Button {
+                        model.copyDeviceKey()
+                    } label: {
+                        Label("Copy device ID", systemImage: "doc.on.doc")
+                    }
+                    if !model.deviceLinkRequest.isEmpty {
+                        Button {
+                            model.copyLinkRequest()
+                        } label: {
+                            Label("Copy request link", systemImage: "link")
+                        }
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        model.logout()
+                    } label: {
+                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+            }
+            .navigationTitle("Setup")
         }
     }
 }

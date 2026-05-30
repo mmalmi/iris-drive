@@ -688,18 +688,7 @@ fn devices_from_account(
     sync_running: bool,
 ) -> Vec<UiDevice> {
     let Some(app_keys) = state.app_keys.as_ref() else {
-        return vec![UiDevice {
-            pubkey: account_npub(&state.device_pubkey),
-            label: state.device_label.clone().unwrap_or_default(),
-            role: "member".to_owned(),
-            state: authorization_state_label(state).to_owned(),
-            detail: account_npub(&state.device_pubkey),
-            is_current_device: true,
-            is_online: sync_running,
-            can_revoke: false,
-            can_appoint_admin: false,
-            can_demote_admin: false,
-        }];
+        return Vec::new();
     };
 
     app_keys

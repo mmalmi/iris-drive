@@ -49,6 +49,14 @@ final class IrisDriveStatus: ObservableObject {
         }
         return snapshotURL
     }
+
+    var setupComplete: Bool {
+        initialized && authorizationState == "authorized"
+    }
+
+    var awaitingApproval: Bool {
+        initialized && authorizationState == "awaiting_approval"
+    }
 }
 
 struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
@@ -255,6 +263,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let npub: String
     let label: String?
     let role: String
+    let authorizationState: String?
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
@@ -270,6 +279,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         npub = json["device_npub"] as? String ?? pubkey
         label = json["label"] as? String
         role = json["role"] as? String ?? "member"
+        authorizationState = json["authorization_state"] as? String
         isCurrentDevice = json["is_current_device"] as? Bool ?? false
         authorized = json["authorized"] as? Bool ?? false
         fipsOnline = json["fips_online"] as? Bool ?? false

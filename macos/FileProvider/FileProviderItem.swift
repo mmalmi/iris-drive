@@ -834,17 +834,7 @@ enum FileProviderStorage {
     }
 
     private static func currentProcessTeamIdentifier() -> String? {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let value = SecTaskCopyValueForEntitlement(
-                task,
-                "com.apple.developer.team-identifier" as CFString,
-                nil
-              ) as? String
-        else {
-            return nil
-        }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        IrisDriveCodeSigning.currentTeamIdentifier()
     }
 
     private static func providerError(_ message: String) -> NSError {
