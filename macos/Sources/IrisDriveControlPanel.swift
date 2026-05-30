@@ -157,17 +157,20 @@ struct IrisDriveControlPanel: View {
                 } label: {
                     setupButtonLabel("Create profile", systemImage: "plus")
                 }
+                .accessibilityLabel("Create profile")
                 .buttonStyle(.borderedProminent)
                 Button {
                     setupMode = .restore
                 } label: {
                     setupButtonLabel("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
+                .accessibilityLabel("Sign in")
                 .buttonStyle(.bordered)
             }
         case .create:
             setupForm(title: "Create profile") {
                 TextField("Username (optional)", text: $setupUsername)
+                    .accessibilityLabel("Username")
                 setupSubmit("Create profile") {
                     let username = setupUsername.trimmingCharacters(in: .whitespacesAndNewlines)
                     if username.isEmpty {
@@ -187,6 +190,7 @@ struct IrisDriveControlPanel: View {
                         systemImage: "photo"
                     )
                 }
+                .accessibilityLabel(setupPhotoPath.isEmpty ? "Choose photo" : profilePhotoName)
                 .buttonStyle(.bordered)
                 if !setupPhotoPath.isEmpty {
                     Button {
@@ -194,6 +198,7 @@ struct IrisDriveControlPanel: View {
                     } label: {
                         setupButtonLabel("Remove photo", systemImage: "xmark")
                     }
+                    .accessibilityLabel("Remove photo")
                     .buttonStyle(.bordered)
                 }
                 setupSubmit(setupPhotoPath.isEmpty ? "Later" : "Create profile") {
@@ -282,6 +287,7 @@ struct IrisDriveControlPanel: View {
         Button(action: action) {
             setupButtonLabel(title)
         }
+        .accessibilityLabel(title)
         .buttonStyle(.borderedProminent)
     }
 

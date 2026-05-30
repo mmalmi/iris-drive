@@ -42,6 +42,19 @@ run_create_profile_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}"
 }
 
+run_create_profile_direct_smoke() {
+  truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE_DIRECT:-0}"
+}
+
+run_create_profile_gui_smoke() {
+  run_create_profile_smoke && ! run_create_profile_direct_smoke
+}
+
+CREATE_PROFILE_USERNAME="${IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME:-}"
+if run_create_profile_gui_smoke && [[ -z "$CREATE_PROFILE_USERNAME" ]]; then
+  CREATE_PROFILE_USERNAME="Mac Smoke"
+fi
+
 terminate_app_process() {
   pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
   for _ in {1..40}; do
@@ -171,6 +184,128 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
+request_show_control_panel() {
+  /usr/bin/swift - >/dev/null <<'SWIFT'
+import Foundation
+
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("to.iris.drive.showControlPanel"),
+    object: nil,
+    userInfo: nil,
+    deliverImmediately: true
+)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+SWIFT
+}
+
+drive_create_profile_gui() {
+  local username="$1"
+
+  /usr/bin/osascript - "$APP_PROCESS_NAME" "$username" >/dev/null <<'APPLESCRIPT'
+on setupGroup(appName)
+  tell application "System Events"
+    tell process appName
+      return group 1 of window 1
+    end tell
+  end tell
+end setupGroup
+
+on setupStaticTextExists(appName, expected)
+  tell application "System Events"
+    tell process appName
+      try
+        repeat with textItem in static texts of my setupGroup(appName)
+          try
+            if (value of textItem as text) is expected then return true
+          end try
+        end repeat
+      end try
+    end tell
+  end tell
+  return false
+end setupStaticTextExists
+
+on waitForSetupText(appName, expected, timeoutSeconds)
+  set deadline to (current date) + timeoutSeconds
+  repeat while (current date) is less than deadline
+    if my setupStaticTextExists(appName, expected) then return
+    delay 0.2
+  end repeat
+  error "Timed out waiting for setup text: " & expected
+end waitForSetupText
+
+on clickSetupButton(appName, buttonName, fallbackIndex)
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+      set controls to my setupGroup(appName)
+      if exists button buttonName of controls then
+        click button buttonName of controls
+      else
+        click button fallbackIndex of controls
+      end if
+    end tell
+  end tell
+end clickSetupButton
+
+on fillUsername(appName, username)
+  set previousClipboard to the clipboard
+  set the clipboard to username
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+      try
+        click text field 1 of my setupGroup(appName)
+      end try
+    end tell
+
+    repeat with attempt from 1 to 10
+      keystroke "a" using command down
+      keystroke "v" using command down
+      delay 0.2
+      tell process appName
+        try
+          if (value of text field 1 of my setupGroup(appName) as text) is username then
+            set the clipboard to previousClipboard
+            return
+          end if
+        end try
+      end tell
+      key code 48
+      delay 0.1
+    end repeat
+  end tell
+  set the clipboard to previousClipboard
+  error "Username field did not accept GUI input"
+end fillUsername
+
+on run argv
+  set appName to item 1 of argv
+  set username to item 2 of argv
+
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+    end tell
+  end tell
+
+  my waitForSetupText(appName, "Iris Drive", 10)
+  my clickSetupButton(appName, "Create profile", 1)
+  my waitForSetupText(appName, "Create profile", 5)
+
+  if username is not "" then
+    my fillUsername(appName, username)
+  end if
+
+  my clickSetupButton(appName, "Create profile", 2)
+  if username is "" then return
+
+  my waitForSetupText(appName, "Profile photo", 5)
+  my clickSetupButton(appName, "Later", 3)
+end run
+APPLESCRIPT
+}
+
 request_show_drive_folder() {
   /usr/bin/swift - >/dev/null <<'SWIFT'
 import Foundation
@@ -185,7 +320,10 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
-APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
+APP_PATH="${IRIS_DRIVE_MACOS_SMOKE_APP_PATH:-}"
+if [[ -z "$APP_PATH" ]]; then
+  APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
+fi
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: macOS app was not built." >&2
   exit 1
@@ -203,10 +341,12 @@ else
 fi
 
 open_args=(
-  -j
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
 )
+if ! run_create_profile_gui_smoke; then
+  open_args=(-j "${open_args[@]}")
+fi
 if run_create_profile_smoke; then
   open_args+=(
     --env "CFFIXED_USER_HOME=$SMOKE_HOME"
@@ -237,10 +377,18 @@ if run_create_profile_smoke; then
     exit 1
   fi
 
-  if ! request_create_profile; then
-    echo "FAIL: could not request Create profile." >&2
-    show_recent_logs >&2
-    exit 1
+  if run_create_profile_gui_smoke; then
+    if ! request_show_control_panel || ! drive_create_profile_gui "$CREATE_PROFILE_USERNAME"; then
+      echo "FAIL: could not complete the Create profile GUI journey." >&2
+      show_recent_logs >&2
+      exit 1
+    fi
+  else
+    if ! request_create_profile; then
+      echo "FAIL: could not request Create profile." >&2
+      show_recent_logs >&2
+      exit 1
+    fi
   fi
 
   if ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
@@ -257,8 +405,8 @@ if run_create_profile_smoke; then
     exit 1
   fi
 
-  if [[ -n "${IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME:-}" ]] &&
-    [[ "$status_json" != *"\"username\":\"$IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME\""* ]]; then
+  if [[ -n "$CREATE_PROFILE_USERNAME" ]] &&
+    [[ "$status_json" != *"\"username\":\"$CREATE_PROFILE_USERNAME\""* ]]; then
     echo "FAIL: Create profile did not save the requested username." >&2
     echo "$status_json" >&2
     show_recent_logs >&2
