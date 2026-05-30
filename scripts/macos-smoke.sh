@@ -23,7 +23,23 @@ truthy() {
   esac
 }
 
+RUN_CREATE_PROFILE_SMOKE=0
 if truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}"; then
+  RUN_CREATE_PROFILE_SMOKE=1
+fi
+
+RUN_USER_JOURNEY_SMOKE=0
+if truthy "${IRIS_DRIVE_MACOS_SMOKE_USER_JOURNEY:-0}" ||
+  truthy "${IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY:-0}"; then
+  RUN_USER_JOURNEY_SMOKE=1
+fi
+
+if [[ "$RUN_CREATE_PROFILE_SMOKE" == "1" && "$RUN_USER_JOURNEY_SMOKE" == "1" ]]; then
+  echo "FAIL: create-profile and user-journey smoke modes are mutually exclusive." >&2
+  exit 1
+fi
+
+if [[ "$RUN_CREATE_PROFILE_SMOKE" == "1" || "$RUN_USER_JOURNEY_SMOKE" == "1" ]]; then
   SMOKE_APP_DATA="$SMOKE_HOME/Library/Application Support/Iris Drive"
 else
   SMOKE_APP_DATA="$ROOT/macos/.build/SmokeAppData"
@@ -33,13 +49,14 @@ START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 APP_PATH=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
+USER_JOURNEY_OPENED_DRIVE_FOLDER=0
 
 run_ui_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
 }
 
 run_create_profile_smoke() {
-  truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}"
+  [[ "$RUN_CREATE_PROFILE_SMOKE" == "1" ]]
 }
 
 run_create_profile_direct_smoke() {
@@ -50,10 +67,108 @@ run_create_profile_gui_smoke() {
   run_create_profile_smoke && ! run_create_profile_direct_smoke
 }
 
+run_user_journey_smoke() {
+  [[ "$RUN_USER_JOURNEY_SMOKE" == "1" ]]
+}
+
+require_drive_folder_open() {
+  truthy "${IRIS_DRIVE_MACOS_SMOKE_REQUIRE_DRIVE_FOLDER:-0}"
+}
+
 CREATE_PROFILE_USERNAME="${IRIS_DRIVE_MACOS_SMOKE_CREATE_USERNAME:-}"
 if run_create_profile_gui_smoke && [[ -z "$CREATE_PROFILE_USERNAME" ]]; then
   CREATE_PROFILE_USERNAME="Mac Smoke"
 fi
+
+json_get() {
+  local path="$1"
+  python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+for part in sys.argv[1].split("."):
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        sys.exit(1)
+if isinstance(value, bool):
+    print(str(value).lower())
+elif value is not None:
+    print(value)
+' "$path"
+}
+
+json_array_len() {
+  local path="$1"
+  python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+for part in sys.argv[1].split("."):
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        sys.exit(1)
+if not isinstance(value, list):
+    sys.exit(1)
+print(len(value))
+' "$path"
+}
+
+json_list_has_path() {
+  local expected="$1"
+  python3 -c '
+import json
+import sys
+
+listing = json.load(sys.stdin)
+expected = sys.argv[1]
+paths = {entry.get("path") for entry in listing.get("files", [])}
+if expected not in paths:
+    sys.exit(1)
+' "$expected"
+}
+
+json_report_is_synced() {
+  local expected_kind="$1"
+  python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+reports = data.get("reports", [])
+if len(reports) != 1:
+    sys.exit(1)
+report = reports[0]
+if report.get("kind") != sys.argv[1] or report.get("state") != "synced":
+    sys.exit(1)
+upload = report.get("upload", {})
+if int(upload.get("total_hashes") or 0) <= 0:
+    sys.exit(1)
+' "$expected_kind"
+}
+
+json_report_check_ran() {
+  local expected_kind="$1"
+  python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+reports = data.get("reports", [])
+if len(reports) != 1:
+    sys.exit(1)
+report = reports[0]
+if report.get("kind") != sys.argv[1]:
+    sys.exit(1)
+if not report.get("root_cid"):
+    sys.exit(1)
+if report.get("state") not in {"verified", "pending"}:
+    sys.exit(1)
+' "$expected_kind"
+}
 
 terminate_app_process() {
   pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
@@ -71,7 +186,7 @@ cleanup() {
     terminate_app_process
     pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
   fi
-  if run_ui_smoke; then
+  if run_ui_smoke || run_user_journey_smoke; then
     osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
   set smokeRoot to item 1 of argv
@@ -198,10 +313,11 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
-drive_create_profile_gui() {
-  local username="$1"
+drive_setup_gui() {
+  local mode="$1"
+  local field_value="$2"
 
-  /usr/bin/osascript - "$APP_PROCESS_NAME" "$username" >/dev/null <<'APPLESCRIPT'
+  /usr/bin/osascript - "$APP_PROCESS_NAME" "$mode" "$field_value" >/dev/null <<'APPLESCRIPT'
 on setupGroup(appName)
   tell application "System Events"
     tell process appName
@@ -248,9 +364,9 @@ on clickSetupButton(appName, buttonName, fallbackIndex)
   end tell
 end clickSetupButton
 
-on fillUsername(appName, username)
+on fillFirstTextField(appName, fieldValue, description)
   set previousClipboard to the clipboard
-  set the clipboard to username
+  set the clipboard to fieldValue
   tell application "System Events"
     tell process appName
       set frontmost to true
@@ -265,7 +381,7 @@ on fillUsername(appName, username)
       delay 0.2
       tell process appName
         try
-          if (value of text field 1 of my setupGroup(appName) as text) is username then
+          if (value of text field 1 of my setupGroup(appName) as text) is fieldValue then
             set the clipboard to previousClipboard
             return
           end if
@@ -276,12 +392,13 @@ on fillUsername(appName, username)
     end repeat
   end tell
   set the clipboard to previousClipboard
-  error "Username field did not accept GUI input"
-end fillUsername
+  error description & " field did not accept GUI input"
+end fillFirstTextField
 
 on run argv
   set appName to item 1 of argv
-  set username to item 2 of argv
+  set mode to item 2 of argv
+  set fieldValue to item 3 of argv
 
   tell application "System Events"
     tell process appName
@@ -290,20 +407,44 @@ on run argv
   end tell
 
   my waitForSetupText(appName, "Iris Drive", 10)
-  my clickSetupButton(appName, "Create profile", 1)
-  my waitForSetupText(appName, "Create profile", 5)
 
-  if username is not "" then
-    my fillUsername(appName, username)
+  if mode is "create" then
+    my clickSetupButton(appName, "Create profile", 1)
+    my waitForSetupText(appName, "Create profile", 5)
+
+    if fieldValue is not "" then
+      my fillFirstTextField(appName, fieldValue, "Username")
+    end if
+
+    my clickSetupButton(appName, "Create profile", 2)
+    if fieldValue is "" then return
+
+    my waitForSetupText(appName, "Profile photo", 5)
+    my clickSetupButton(appName, "Later", 3)
+    return
   end if
 
-  my clickSetupButton(appName, "Create profile", 2)
-  if username is "" then return
+  if mode is "link" then
+    my clickSetupButton(appName, "Sign in", 2)
+    my waitForSetupText(appName, "Sign in", 5)
+    my clickSetupButton(appName, "Link this device", 3)
+    my waitForSetupText(appName, "Link this device", 5)
+    my fillFirstTextField(appName, fieldValue, "Owner")
+    my clickSetupButton(appName, "Link device", 2)
+    return
+  end if
 
-  my waitForSetupText(appName, "Profile photo", 5)
-  my clickSetupButton(appName, "Later", 3)
+  error "Unknown setup mode: " & mode
 end run
 APPLESCRIPT
+}
+
+drive_create_profile_gui() {
+  drive_setup_gui create "$1"
+}
+
+drive_link_device_gui() {
+  drive_setup_gui link "$1"
 }
 
 request_show_drive_folder() {
@@ -320,6 +461,155 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
+run_user_journey() {
+  local idrive="$APP_PATH/Contents/MacOS/idrive"
+  local owner_config_dir="$SMOKE_DIR/owner/Config"
+  local source_dir="$SMOKE_DIR/source"
+  local backup_dir="$SMOKE_DIR/filesystem-backup"
+  local owner_json owner_npub linked_json linked_device_npub authorization_state
+  local approve_json roster_size roster_json roster_devices import_json list_json
+  local sync_json check_json
+
+  mkdir -p "$owner_config_dir"
+  owner_json="$("$idrive" --config-dir "$owner_config_dir" init --force --label "macOS owner")" || {
+    echo "FAIL: could not initialize owner profile for link journey." >&2
+    return 1
+  }
+  owner_npub="$(printf '%s' "$owner_json" | json_get owner_npub)" || {
+    echo "FAIL: owner init did not return owner_npub." >&2
+    echo "$owner_json" >&2
+    return 1
+  }
+
+  if ! request_show_control_panel || ! drive_link_device_gui "$owner_npub"; then
+    echo "FAIL: could not complete the Link this device GUI journey." >&2
+    return 1
+  fi
+
+  if ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
+    echo "FAIL: Link this device did not initialize local device key material." >&2
+    return 1
+  fi
+
+  linked_json="$("$idrive" --config-dir "$SMOKE_CONFIG_DIR" whoami)" || {
+    echo "FAIL: linked device profile is not readable." >&2
+    return 1
+  }
+  linked_device_npub="$(printf '%s' "$linked_json" | json_get device_npub)" || {
+    echo "FAIL: linked profile did not return device_npub." >&2
+    echo "$linked_json" >&2
+    return 1
+  }
+  authorization_state="$(printf '%s' "$linked_json" | json_get authorization_state)" || {
+    echo "FAIL: linked profile did not return authorization_state." >&2
+    echo "$linked_json" >&2
+    return 1
+  }
+  if [[ "$authorization_state" != "awaiting_approval" ]]; then
+    echo "FAIL: linked device should wait for approval, got $authorization_state." >&2
+    echo "$linked_json" >&2
+    return 1
+  fi
+
+  approve_json="$("$idrive" --config-dir "$owner_config_dir" approve "$linked_device_npub" --label "Mac GUI linked")" || {
+    echo "FAIL: owner could not approve linked GUI device." >&2
+    return 1
+  }
+  roster_size="$(printf '%s' "$approve_json" | json_get roster_size)" || {
+    echo "FAIL: approve did not return roster_size." >&2
+    echo "$approve_json" >&2
+    return 1
+  }
+  if [[ "$roster_size" != "2" ]]; then
+    echo "FAIL: owner roster size after approve was $roster_size, expected 2." >&2
+    echo "$approve_json" >&2
+    return 1
+  fi
+
+  roster_json="$("$idrive" --config-dir "$owner_config_dir" roster)" || {
+    echo "FAIL: owner roster could not be listed after approval." >&2
+    return 1
+  }
+  roster_devices="$(printf '%s' "$roster_json" | json_array_len app_keys.devices)" || {
+    echo "FAIL: owner roster did not include app_keys.devices." >&2
+    echo "$roster_json" >&2
+    return 1
+  }
+  if [[ "$roster_devices" != "2" ]]; then
+    echo "FAIL: owner roster listed $roster_devices devices, expected 2." >&2
+    echo "$roster_json" >&2
+    return 1
+  fi
+
+  if ! wait_for_daemon 10; then
+    echo "FAIL: bundled idrive daemon did not start after Link this device." >&2
+    return 1
+  fi
+
+  if ! request_show_drive_folder; then
+    echo "FAIL: could not request Show Drive Folder during user journey." >&2
+    return 1
+  fi
+  if wait_for_log "Iris Drive mounted drive folder opened" 10 ||
+    wait_for_log "Iris Drive mounted drive folder revealed" 1; then
+    USER_JOURNEY_OPENED_DRIVE_FOLDER=1
+  elif wait_for_log "Iris Drive FileProvider open failed: disabled for this signing mode" 1 &&
+    ! require_drive_folder_open; then
+    echo "WARN: Show Drive Folder requested, but this app is not FileProvider-capable in its signing mode." >&2
+  else
+    echo "FAIL: Show Drive Folder did not open the drive folder during user journey." >&2
+    return 1
+  fi
+
+  mkdir -p "$source_dir/docs"
+  printf 'macOS GUI journey file\n' >"$source_dir/docs/mac-gui-note.txt"
+  import_json="$("$idrive" --config-dir "$owner_config_dir" import "$source_dir")" || {
+    echo "FAIL: owner could not import journey files." >&2
+    return 1
+  }
+  if [[ "$(printf '%s' "$import_json" | json_get file_count)" != "1" ]]; then
+    echo "FAIL: file import did not report one imported file." >&2
+    echo "$import_json" >&2
+    return 1
+  fi
+
+  list_json="$("$idrive" --config-dir "$owner_config_dir" list)" || {
+    echo "FAIL: owner could not list imported files." >&2
+    return 1
+  }
+  if ! printf '%s' "$list_json" | json_list_has_path "docs/mac-gui-note.txt"; then
+    echo "FAIL: imported journey file was not visible in the drive listing." >&2
+    echo "$list_json" >&2
+    return 1
+  fi
+
+  mkdir -p "$backup_dir"
+  "$idrive" --config-dir "$owner_config_dir" \
+    backups add "fs:$backup_dir" --label "macOS smoke replica" >/dev/null || {
+    echo "FAIL: could not add journey backup target." >&2
+    return 1
+  }
+  sync_json="$("$idrive" --config-dir "$owner_config_dir" backups sync)" || {
+    echo "FAIL: backup sync failed during user journey." >&2
+    return 1
+  }
+  if ! printf '%s' "$sync_json" | json_report_is_synced filesystem; then
+    echo "FAIL: backup sync did not report a synced filesystem target." >&2
+    echo "$sync_json" >&2
+    return 1
+  fi
+
+  check_json="$("$idrive" --config-dir "$owner_config_dir" backups check --sample-size 4)" || {
+    echo "FAIL: backup check failed during user journey." >&2
+    return 1
+  }
+  if ! printf '%s' "$check_json" | json_report_check_ran filesystem; then
+    echo "FAIL: backup check did not inspect the filesystem target." >&2
+    echo "$check_json" >&2
+    return 1
+  fi
+}
+
 APP_PATH="${IRIS_DRIVE_MACOS_SMOKE_APP_PATH:-}"
 if [[ -z "$APP_PATH" ]]; then
   APP_PATH="$(IRIS_DRIVE_MACOS_SIGNING=none "$ROOT/scripts/macos-dev-app.sh" build)"
@@ -331,7 +621,7 @@ fi
 
 terminate_app_process
 rm -rf "$SMOKE_APP_DATA"
-if run_create_profile_smoke; then
+if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir -p "$SMOKE_HOME"
 else
   mkdir -p "$SMOKE_CONFIG_DIR"
@@ -344,10 +634,10 @@ open_args=(
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
 )
-if ! run_create_profile_gui_smoke; then
+if ! run_create_profile_gui_smoke && ! run_user_journey_smoke; then
   open_args=(-j "${open_args[@]}")
 fi
-if run_create_profile_smoke; then
+if run_create_profile_smoke || run_user_journey_smoke; then
   open_args+=(
     --env "CFFIXED_USER_HOME=$SMOKE_HOME"
     --env "HOME=$SMOKE_HOME"
@@ -370,14 +660,19 @@ if ! wait_for_log "Iris Drive menu bar item installed" 10; then
   exit 1
 fi
 
-if run_create_profile_smoke; then
+if run_create_profile_smoke || run_user_journey_smoke; then
   if ! wait_for_log "Iris Drive local profile not found" 10; then
     echo "FAIL: Iris Drive did not enter first-run setup." >&2
     show_recent_logs >&2
     exit 1
   fi
 
-  if run_create_profile_gui_smoke; then
+  if run_user_journey_smoke; then
+    if ! run_user_journey; then
+      show_recent_logs >&2
+      exit 1
+    fi
+  elif run_create_profile_gui_smoke; then
     if ! request_show_control_panel || ! drive_create_profile_gui "$CREATE_PROFILE_USERNAME"; then
       echo "FAIL: could not complete the Create profile GUI journey." >&2
       show_recent_logs >&2
@@ -391,32 +686,34 @@ if run_create_profile_smoke; then
     fi
   fi
 
-  if ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
+  if run_create_profile_smoke && ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
     echo "FAIL: Create profile did not initialize a local profile." >&2
     show_recent_logs >&2
     exit 1
   fi
 
-  status_json="$("$APP_PATH/Contents/MacOS/idrive" --config-dir "$SMOKE_CONFIG_DIR" status)"
-  if [[ "$status_json" != *'"initialized":true'* ]]; then
-    echo "FAIL: Create profile initialized key material but status is not initialized." >&2
-    echo "$status_json" >&2
-    show_recent_logs >&2
-    exit 1
-  fi
+  if run_create_profile_smoke; then
+    status_json="$("$APP_PATH/Contents/MacOS/idrive" --config-dir "$SMOKE_CONFIG_DIR" status)"
+    if [[ "$status_json" != *'"initialized":true'* ]]; then
+      echo "FAIL: Create profile initialized key material but status is not initialized." >&2
+      echo "$status_json" >&2
+      show_recent_logs >&2
+      exit 1
+    fi
 
-  if [[ -n "$CREATE_PROFILE_USERNAME" ]] &&
-    [[ "$status_json" != *"\"username\":\"$CREATE_PROFILE_USERNAME\""* ]]; then
-    echo "FAIL: Create profile did not save the requested username." >&2
-    echo "$status_json" >&2
-    show_recent_logs >&2
-    exit 1
-  fi
+    if [[ -n "$CREATE_PROFILE_USERNAME" ]] &&
+      [[ "$status_json" != *"\"username\":\"$CREATE_PROFILE_USERNAME\""* ]]; then
+      echo "FAIL: Create profile did not save the requested username." >&2
+      echo "$status_json" >&2
+      show_recent_logs >&2
+      exit 1
+    fi
 
-  if ! wait_for_daemon 10; then
-    echo "FAIL: bundled idrive daemon did not start after Create profile." >&2
-    show_recent_logs >&2
-    exit 1
+    if ! wait_for_daemon 10; then
+      echo "FAIL: bundled idrive daemon did not start after Create profile." >&2
+      show_recent_logs >&2
+      exit 1
+    fi
   fi
 else
   if ! wait_for_log "Iris Drive control panel updated" 10; then
@@ -432,7 +729,7 @@ else
   fi
 fi
 
-if run_ui_smoke; then
+if run_ui_smoke && ! run_user_journey_smoke; then
   if ! request_show_drive_folder; then
     echo "FAIL: could not request Show Drive Folder." >&2
     show_recent_logs >&2
@@ -450,6 +747,12 @@ fi
 echo "MACOS_SMOKE_OK"
 if run_create_profile_smoke; then
   echo "app launched into first-run setup, Create profile initialized a local profile, and bundled daemon started"
+elif run_user_journey_smoke; then
+  if [[ "$USER_JOURNEY_OPENED_DRIVE_FOLDER" == "1" ]]; then
+    echo "app linked a GUI device, opened the drive folder, imported a file, and synced a backup replica"
+  else
+    echo "app linked a GUI device, handled Show Drive Folder as unavailable in this signing mode, imported a file, and synced a backup replica"
+  fi
 elif run_ui_smoke; then
   echo "app launched, menu bar item installed, bundled daemon started, and Show Drive Folder opened the drive folder"
 else

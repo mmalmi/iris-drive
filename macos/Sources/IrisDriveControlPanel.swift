@@ -220,11 +220,13 @@ struct IrisDriveControlPanel: View {
                 } label: {
                     setupButtonLabel("Link this device", systemImage: "desktopcomputer")
                 }
+                .accessibilityLabel("Link this device")
                 .buttonStyle(.bordered)
             }
         case .link:
             setupForm(title: "Link this device") {
                 TextField("Owner public key or invite link", text: $setupOwner)
+                    .accessibilityLabel("Owner public key or invite link")
                 setupSubmit("Link device") {
                     controller.linkDevice(owner: setupOwner)
                 }
