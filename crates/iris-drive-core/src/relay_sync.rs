@@ -413,7 +413,7 @@ pub async fn fetch_latest_files_root(
 }
 
 /// Build the relay filter set covering drive-root events for a single
-/// account's primary drive. AppKeys rosters are intentionally excluded from
+/// account's primary drive. `AppKeys` rosters are intentionally excluded from
 /// relays; they travel over direct/FIPS channels.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:

@@ -59,6 +59,7 @@ just run-cli stats
 just run-cli status
 just run-cli whoami
 just run-cli list
+just run-cli update --check
 ```
 
 Most desktop GUI actions have matching CLI flows:
@@ -85,6 +86,20 @@ gateway URLs when a root is available. Nhash links can also be opened through
 `http://nhash.iris.localhost:17321/<nhash>/...`. The resolver/gateway setting
 is on by default and can be changed with `idrive nhash-resolver enable` or
 `idrive nhash-resolver disable`.
+
+## Releases
+
+`idrive update` consumes signed hashtree releases from
+`releases/iris-drive/latest` under the project publisher npub. The updater uses
+the user's configured relays and Blossom servers, and reuses the running
+iris-drive daemon's embedded hashtree endpoint as the first read source when it
+is fresh.
+
+To stage already-built artifacts from `dist/` into the updater release layout:
+
+```bash
+node scripts/local-release.mjs --tag v0.1.0
+```
 
 ## Layout
 

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use hashtree_core::{
     Cid, HashTree, HashTreeConfig, LinkType, MemoryStore, NHashData, Store, nhash_encode_full,
     to_hex,
@@ -40,6 +40,7 @@ mod publish;
 mod stats;
 mod status;
 mod sync;
+mod updater;
 
 #[allow(clippy::wildcard_imports)]
 use account::*;
@@ -61,6 +62,8 @@ use stats::*;
 use status::*;
 #[allow(clippy::wildcard_imports)]
 use sync::*;
+#[allow(clippy::wildcard_imports)]
+use updater::*;
 
 const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
@@ -127,6 +130,7 @@ fn run_cli() -> ExitCode {
         }
         Command::InstallCli { path, force } => cmd_install_cli(path, force),
         Command::UninstallCli { path } => cmd_uninstall_cli(path),
+        Command::Update(args) => cmd_update(&config_dir, args),
         Command::Init {
             force,
             label,

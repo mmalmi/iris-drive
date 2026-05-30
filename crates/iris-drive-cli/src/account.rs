@@ -76,7 +76,7 @@ pub(crate) fn cmd_link_with_admin_device(
     {
         account
             .state
-            .queue_outbound_device_link_request(admin_device_hex, link_secret, unix_now_seconds())
+            .queue_outbound_device_link_request(admin_device_hex, &link_secret, unix_now_seconds())
             .context("queueing device link request")?;
     }
     finish_account_init(config_dir, &account, None)
@@ -636,6 +636,7 @@ async fn handle_device_link_request_app_message(
     Ok(true)
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_device_link_roster_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,

@@ -216,7 +216,7 @@ impl NativeAppRuntime {
         };
         if let Err(error) = account.state.queue_outbound_device_link_request(
             admin_device,
-            link_secret,
+            &link_secret,
             unix_now_seconds(),
         ) {
             self.state.error = format!("queueing device link request: {error}");

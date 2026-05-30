@@ -73,12 +73,12 @@ pub fn parse_device_link_invite(input: &str) -> Result<Option<ParsedDeviceLinkIn
             .context("decoding device link invite payload")?;
         let invite: DeviceLinkInvitePayload =
             serde_json::from_slice(&decoded).context("parsing device link invite payload")?;
-        return normalize_invite_payload(invite).map(Some);
+        return normalize_invite_payload(&invite).map(Some);
     }
     if trimmed.starts_with('{') {
         let invite: DeviceLinkInvitePayload =
             serde_json::from_str(trimmed).context("parsing device link invite JSON")?;
-        return normalize_invite_payload(invite).map(Some);
+        return normalize_invite_payload(&invite).map(Some);
     }
     if let Some(query) = legacy_invite_query(trimmed) {
         return parse_legacy_query_invite(query).map(Some);
@@ -86,6 +86,7 @@ pub fn parse_device_link_invite(input: &str) -> Result<Option<ParsedDeviceLinkIn
     Ok(None)
 }
 
+#[must_use]
 pub fn device_link_invite_web_url(invite_url: &str) -> String {
     invite_url.replacen(DEVICE_LINK_INVITE_PREFIX, DEVICE_LINK_INVITE_WEB_PREFIX, 1)
 }
@@ -96,7 +97,7 @@ fn canonical_invite_payload(input: &str) -> Option<&str> {
         .or_else(|| input.strip_prefix(DEVICE_LINK_INVITE_WEB_PREFIX))
 }
 
-fn normalize_invite_payload(invite: DeviceLinkInvitePayload) -> Result<ParsedDeviceLinkInvite> {
+fn normalize_invite_payload(invite: &DeviceLinkInvitePayload) -> Result<ParsedDeviceLinkInvite> {
     if invite.v != DEVICE_LINK_INVITE_VERSION {
         return Err(anyhow!(
             "unsupported device link invite version {}; expected {}",

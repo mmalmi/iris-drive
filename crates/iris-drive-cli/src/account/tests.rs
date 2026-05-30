@@ -156,7 +156,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     requested
         .queue_outbound_device_link_request(
             admin.state.device_pubkey.clone(),
-            admin.state.device_link_secret.clone(),
+            &admin.state.device_link_secret,
             123,
         )
         .unwrap();

@@ -206,7 +206,7 @@ impl AccountState {
     pub fn queue_outbound_device_link_request(
         &mut self,
         admin_device_pubkey: String,
-        link_secret: String,
+        link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
         if !is_pubkey_hex(&admin_device_pubkey) {
@@ -834,6 +834,7 @@ pub struct AccountPaths {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct LogoutReport {
     pub removed_key: bool,
     pub removed_owner_key: bool,
@@ -860,14 +861,20 @@ impl LogoutReport {
 pub fn logout_local_account(config_dir: &Path) -> Result<LogoutReport, AccountError> {
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path)?;
-    let mut report = LogoutReport::default();
 
-    report.cleared_account = config.account.take().is_some();
-    report.cleared_user_profile = config.user_profile.take().is_some();
-    report.cleared_drives = !config.drives.is_empty();
+    let cleared_account = config.account.take().is_some();
+    let cleared_user_profile = config.user_profile.take().is_some();
+    let cleared_drives = !config.drives.is_empty();
     config.drives.clear();
-    report.cleared_backup_targets = !config.backup_targets.is_empty();
+    let cleared_backup_targets = !config.backup_targets.is_empty();
     config.backup_targets.clear();
+    let mut report = LogoutReport {
+        cleared_account,
+        cleared_user_profile,
+        cleared_drives,
+        cleared_backup_targets,
+        ..LogoutReport::default()
+    };
 
     if config_path.exists()
         || report.cleared_account
@@ -878,15 +885,15 @@ pub fn logout_local_account(config_dir: &Path) -> Result<LogoutReport, AccountEr
         config.save(&config_path)?;
     }
 
-    report.removed_key = remove_file_if_present(key_path_in(config_dir))?;
-    report.removed_owner_key = remove_file_if_present(owner_key_path_in(config_dir))?;
-    report.removed_sync_cache = remove_file_if_present(sync_cache_path_in(config_dir))?;
+    report.removed_key = remove_file_if_present(&key_path_in(config_dir))?;
+    report.removed_owner_key = remove_file_if_present(&owner_key_path_in(config_dir))?;
+    report.removed_sync_cache = remove_file_if_present(&sync_cache_path_in(config_dir))?;
 
     Ok(report)
 }
 
-fn remove_file_if_present(path: PathBuf) -> Result<bool, std::io::Error> {
-    match std::fs::remove_file(&path) {
+fn remove_file_if_present(path: &Path) -> Result<bool, std::io::Error> {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),

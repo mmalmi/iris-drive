@@ -37,6 +37,8 @@ pub(crate) enum Command {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    /// Check, download, or install a verified hashtree-published idrive update.
+    Update(UpdateArgs),
     /// **Create** flow: generate a fresh owner key + a fresh device key
     /// on this machine. Single-device default; this install has owner
     /// signing authority and the `AppKeys` roster lists this one device.
@@ -226,6 +228,32 @@ pub(crate) enum Command {
         #[arg(long)]
         mountpoint: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)]
+pub(crate) struct UpdateArgs {
+    /// Only check whether an update is available.
+    #[arg(long)]
+    pub(crate) check: bool,
+    /// Download the selected artifact without installing it.
+    #[arg(long)]
+    pub(crate) download_only: bool,
+    /// Directory for --download-only artifacts.
+    #[arg(long)]
+    pub(crate) download_dir: Option<PathBuf>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Destination binary to update (defaults to the currently running executable).
+    #[arg(long)]
+    pub(crate) path: Option<PathBuf>,
+    /// Install even when the latest release is not newer than this binary.
+    #[arg(long)]
+    pub(crate) force: bool,
+    /// Override the hashtree release reference.
+    #[arg(long, env = "IRIS_DRIVE_UPDATE_HTREE_REF")]
+    pub(crate) reference: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]

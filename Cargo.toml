@@ -52,7 +52,10 @@ hashtree-fs = { path = "../hashtree/rust/crates/hashtree-fs" }
 hashtree-fuse = { path = "../hashtree/rust/crates/fuse", features = ["fuse"] }
 hashtree-lmdb = { path = "../hashtree/rust/crates/hashtree-lmdb" }
 hashtree-nostr = { path = "../hashtree/rust/crates/hashtree-nostr" }
+hashtree-resolver = { path = "../hashtree/rust/crates/hashtree-resolver", features = ["nostr"] }
+hashtree-updater = { path = "../hashtree/rust/crates/hashtree-updater" }
 hashtree-provider = { path = "crates/hashtree-provider" }
+nostr = { version = "0.35", features = ["nip44"] }
 tempfile = "3"
 notify = "6"
 notify-debouncer-mini = "0.4"
