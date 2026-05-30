@@ -24,9 +24,11 @@ info:
     @echo "  just android-build"
     @echo "  just android-install"
     @echo "  just android-smoke"
+    @echo "  just android-gui-smoke"
     @echo "  just ios-xcodeproj"
     @echo "  just ios-build"
     @echo "  just ios-smoke"
+    @echo "  just ios-gui-smoke"
     @echo "  just lab"
     @echo "  just lab-smoke"
     @echo "  just lab-test"
@@ -116,6 +118,9 @@ android-install:
 android-smoke:
     ./scripts/mobile-android-smoke.sh
 
+android-gui-smoke:
+    ./scripts/android-gui-linking-smoke.sh
+
 ios-xcodeproj:
     cd ios && xcodegen generate
 
@@ -125,6 +130,9 @@ ios-build:
 
 ios-smoke:
     ./scripts/ios-simulator-smoke.sh
+
+ios-gui-smoke:
+    ./scripts/ios-gui-linking-smoke.sh
 
 dev-vms *args:
     ./scripts/dev-vm-update-run.sh {{args}}

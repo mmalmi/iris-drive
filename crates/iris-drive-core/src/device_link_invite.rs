@@ -10,6 +10,7 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 
 pub const DEVICE_LINK_INVITE_PREFIX: &str = "iris-drive://invite/";
+const DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 pub const DEVICE_LINK_INVITE_WEB_PREFIX: &str = "https://drive.iris.to/invite/";
 pub const DEVICE_LINK_INVITE_VERSION: u8 = 1;
 
@@ -94,6 +95,7 @@ pub fn device_link_invite_web_url(invite_url: &str) -> String {
 fn canonical_invite_payload(input: &str) -> Option<&str> {
     input
         .strip_prefix(DEVICE_LINK_INVITE_PREFIX)
+        .or_else(|| input.strip_prefix(DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX))
         .or_else(|| input.strip_prefix(DEVICE_LINK_INVITE_WEB_PREFIX))
 }
 
@@ -148,6 +150,9 @@ fn parse_legacy_query_invite(query: &str) -> Result<ParsedDeviceLinkInvite> {
 
 fn legacy_invite_query(input: &str) -> Option<&str> {
     if let Some(rest) = input.strip_prefix("iris-drive://link-device") {
+        return rest.strip_prefix('?');
+    }
+    if let Some(rest) = input.strip_prefix("iris-drive:/link-device") {
         return rest.strip_prefix('?');
     }
     if let Some(rest) = input.strip_prefix("https://drive.iris.to/link-device") {
@@ -230,6 +235,23 @@ mod tests {
         assert_eq!(parsed.link_secret, "join-secret");
         assert!(!url.contains("local-owner"));
         assert!(!url.contains("device-"));
+    }
+
+    #[test]
+    fn single_slash_custom_scheme_invite_imports() {
+        let owner = Keys::generate().public_key();
+        let admin = Keys::generate().public_key();
+        let url = encode_device_link_invite(&owner.to_hex(), &admin.to_hex(), "join-secret")
+            .expect("encode invite");
+        let single_slash = url.replacen("iris-drive://invite/", "iris-drive:/invite/", 1);
+
+        let parsed = parse_device_link_invite(&single_slash)
+            .expect("parse invite")
+            .expect("invite");
+
+        assert_eq!(parsed.owner_hex, owner.to_hex());
+        assert_eq!(parsed.admin_device_hex, admin.to_hex());
+        assert_eq!(parsed.link_secret, "join-secret");
     }
 
     #[test]

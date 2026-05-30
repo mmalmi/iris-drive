@@ -167,16 +167,9 @@ pub(crate) fn build_ui(app: &adw::Application) {
     add_field(&account_grid, 2, 0, "State", &account_authorization);
     peers_page.append(&account_grid);
 
-    let approve_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     approve_box.set_hexpand(true);
-    approve_box.append(&field_title("Approve device"));
-    let approve_device_entry = setup_entry("Device ID");
-    approve_device_entry.set_hexpand(true);
-    let approve_label_entry = setup_entry("Device label");
-    approve_label_entry.set_hexpand(true);
-    let approve_device_button = action_button("emblem-ok-symbolic", "Approve", "Approve device");
-    approve_box.append(&approve_device_entry);
-    approve_box.append(&approve_label_entry);
+    let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
     approve_box.append(&approve_device_button);
     peers_page.append(&approve_box);
 
@@ -198,8 +191,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);
     let add_backup_button = icon_button("list-add-symbolic", "Add backup");
-    let check_backups_button =
-        action_button("emblem-default-symbolic", "Check", "Check backups");
+    let check_backups_button = action_button("emblem-default-symbolic", "Check", "Check backups");
     let sync_backups_button =
         action_button("emblem-synchronizing-symbolic", "Sync", "Sync backups");
     backup_controls.append(&backup_entry);
@@ -333,8 +325,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
             account_device,
             account_authorization,
             approve_box,
-            approve_device_entry,
-            approve_label_entry,
             approve_device_button,
             notice,
             drives,
@@ -408,7 +398,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     {
         let button = model.ui.approve_device_button.clone();
         let model = Rc::clone(&model);
-        button.connect_clicked(move |_| approve_device(&model));
+        button.connect_clicked(move |_| show_add_device_dialog(&model));
     }
     {
         let model = Rc::clone(&model);

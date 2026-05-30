@@ -1,7 +1,6 @@
 package to.iris.drive.app
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
@@ -49,21 +47,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.flow.StateFlow
-import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
-import to.iris.drive.app.core.DeviceLinkRequestState
-import to.iris.drive.app.core.DeviceState
-import to.iris.drive.app.core.NativeCore
 
 private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
+
+private fun isCompleteDeviceLinkOwnerInput(value: String): Boolean {
+    val trimmed = value.trim()
+    if (trimmed.any(Char::isWhitespace)) return false
+    val lower = trimmed.lowercase()
+    if (lower.startsWith("npub1")) return lower.length >= 63
+    if (lower.length == 64 && lower.all { it in '0'..'9' || it in 'a'..'f' }) return true
+    listOf(
+        "iris-drive://invite/",
+        "iris-drive:/invite/",
+        "https://drive.iris.to/invite/",
+    ).forEach { prefix ->
+        if (lower.startsWith(prefix)) return lower.removePrefix(prefix).length >= 32
+    }
+    return (lower.startsWith("iris-drive://link-device?") ||
+        lower.startsWith("iris-drive:/link-device?") ||
+        lower.startsWith("https://drive.iris.to/link-device?")) &&
+        lower.contains("owner=") &&
+        lower.contains("admin=") &&
+        lower.contains("secret=")
+}
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
 private val IrisLightSurface = Color.White
@@ -89,16 +103,16 @@ private val Background: Color
 private val Ink: Color
     @Composable get() = MaterialTheme.colorScheme.onSurface
 
-private val Muted: Color
+internal val Muted: Color
     @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 
-private val Teal: Color
+internal val Teal: Color
     @Composable get() = MaterialTheme.colorScheme.primary
 
 private val SoftTeal: Color
     @Composable get() = MaterialTheme.colorScheme.primaryContainer
 
-private val Danger: Color
+internal val Danger: Color
     @Composable get() = MaterialTheme.colorScheme.error
 
 private enum class SetupRoute {
@@ -219,12 +233,6 @@ private fun AwaitingApprovalContent(
                 text = "Copy device ID",
                 onClick = { onCopyText("Device key", account.devicePubkey) },
             )
-            if (account.deviceLinkRequest.isNotBlank()) {
-                SetupSecondaryButton(
-                    text = "Copy request link",
-                    onClick = { onCopyText("Request link", account.deviceLinkRequest) },
-                )
-            }
             OutlinedButton(
                 onClick = onLogout,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -314,10 +322,19 @@ private fun SetupContent(
     var selectedPhoto by remember { mutableStateOf("") }
     var restoreSecret by remember { mutableStateOf("") }
     var linkOwner by remember { mutableStateOf("") }
+    var submittedLinkOwner by remember { mutableStateOf("") }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
     var showLinkScanner by remember { mutableStateOf(false) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedPhoto = uri?.lastPathSegment.orEmpty()
+    }
+    fun submitLinkOwner(value: String, force: Boolean) {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return
+        if (!force && !isCompleteDeviceLinkOwnerInput(trimmed)) return
+        if (submittedLinkOwner == trimmed) return
+        submittedLinkOwner = trimmed
+        onLinkDevice(trimmed)
     }
 
     if (showLinkScanner) {
@@ -325,6 +342,7 @@ private fun SetupContent(
             onDismiss = { showLinkScanner = false },
             onScanned = { code ->
                 linkOwner = code
+                submitLinkOwner(code, force = false)
                 showLinkScanner = false
                 null
             },
@@ -357,10 +375,12 @@ private fun SetupContent(
                         text = "Create profile",
                         onClick = { route = SetupRoute.CreateProfile },
                         icon = true,
+                        testTag = "welcomeCreateProfile",
                     )
                     SetupSecondaryButton(
                         text = "Sign in",
                         onClick = { route = SetupRoute.SignIn },
+                        testTag = "welcomeSignIn",
                     )
                 }
                 SetupRoute.CreateProfile -> {
@@ -368,7 +388,7 @@ private fun SetupContent(
                     OutlinedTextField(
                         value = createUsername,
                         onValueChange = { createUsername = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("createUsername"),
                         singleLine = true,
                         label = { Text("Username (optional)") },
                     )
@@ -382,6 +402,7 @@ private fun SetupContent(
                             }
                         },
                         icon = true,
+                        testTag = "createProfileSubmit",
                     )
                 }
                 SetupRoute.CreatePhoto -> {
@@ -408,7 +429,7 @@ private fun SetupContent(
                     OutlinedTextField(
                         value = restoreSecret,
                         onValueChange = { restoreSecret = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("restoreSecret"),
                         singleLine = true,
                         label = { Text("Secret key") },
                     )
@@ -420,21 +441,26 @@ private fun SetupContent(
                     SetupSecondaryButton(
                         text = "Link this device",
                         onClick = { route = SetupRoute.LinkDevice },
+                        testTag = "openLinkDevice",
                     )
                 }
                 SetupRoute.LinkDevice -> {
                     SetupFormHeader(title = "Link this device", onBack = { route = SetupRoute.Welcome })
                     OutlinedTextField(
                         value = linkOwner,
-                        onValueChange = { linkOwner = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        onValueChange = {
+                            linkOwner = it
+                            submitLinkOwner(it, force = false)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
                         singleLine = true,
                         label = { Text("Owner public key or invite link") },
                     )
                     SetupPrimaryButton(
                         text = "Link device",
-                        onClick = { onLinkDevice(linkOwner) },
+                        onClick = { submitLinkOwner(linkOwner, force = true) },
                         enabled = linkOwner.isNotBlank(),
+                        testTag = "linkDeviceSubmit",
                     )
                     SetupSecondaryButton(
                         text = "Scan invite QR",
@@ -473,13 +499,17 @@ private fun SetupPrimaryButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
     icon: Boolean = false,
+    testTag: String? = null,
 ) {
+    val modifier = Modifier
+        .fillMaxWidth()
+        .height(48.dp)
+        .let { base -> if (testTag == null) base else base.testTag(testTag) }
+
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(6.dp),
     ) {
         if (icon) {
@@ -491,12 +521,15 @@ private fun SetupPrimaryButton(
 }
 
 @Composable
-private fun SetupSecondaryButton(text: String, onClick: () -> Unit) {
+private fun SetupSecondaryButton(text: String, onClick: () -> Unit, testTag: String? = null) {
+    val modifier = Modifier
+        .fillMaxWidth()
+        .height(48.dp)
+        .let { base -> if (testTag == null) base else base.testTag(testTag) }
+
     OutlinedButton(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(6.dp),
     ) {
         Text(text)
@@ -527,7 +560,8 @@ private fun DriveContent(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(padding),
+            .padding(padding)
+            .testTag("driveContent"),
         contentPadding = PaddingValues(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -682,109 +716,6 @@ private fun ProviderPanel(
     }
 }
 
-@Composable
-private fun DevicesPanel(
-    devices: List<DeviceState>,
-    linkInvite: String,
-    inboundRequests: List<DeviceLinkRequestState>,
-    canApprove: Boolean,
-    onCopyLinkInvite: () -> Unit,
-    onApproveDevice: (String, String) -> Unit,
-    onRevokeDevice: (String) -> Unit,
-    onAppointAdmin: (String) -> Unit,
-    onDemoteAdmin: (String) -> Unit,
-) {
-    var request by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("") }
-
-    CardSection(title = "Devices", trailing = "${devices.size}") {
-        if (linkInvite.isNotBlank()) {
-            Text("Invite device", fontWeight = FontWeight.SemiBold)
-            QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
-            Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            OutlinedButton(onClick = onCopyLinkInvite) {
-                Text("Copy invite link")
-            }
-        }
-        inboundRequests.forEach { inbound ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
-                    Text(inbound.devicePubkey, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Button(
-                    onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
-                    enabled = canApprove,
-                ) {
-                    Text("Approve")
-                }
-            }
-        }
-        devices.forEach { device ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(
-                    painterResource(R.drawable.ic_drive),
-                    contentDescription = null,
-                    tint = if (device.isOnline) Teal else Muted,
-                )
-                Spacer(Modifier.size(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(device.label, fontWeight = FontWeight.SemiBold)
-                    Text("${device.role.ifBlank { "member" }} | ${device.state}", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    if (device.isCurrentDevice) {
-                        Text("Device ID: ${device.pubkey}", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (device.canAppointAdmin) {
-                    TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
-                        Text("Admin")
-                    }
-                }
-                if (device.canDemoteAdmin) {
-                    TextButton(onClick = { onDemoteAdmin(device.pubkey) }) {
-                        Text("Member")
-                    }
-                }
-                if (device.canRevoke) {
-                    IconButton(onClick = { onRevokeDevice(device.pubkey) }) {
-                        Icon(
-                            painterResource(R.drawable.ic_delete),
-                            contentDescription = "Revoke ${device.label}",
-                            tint = Danger,
-                        )
-                    }
-                }
-            }
-        }
-        OutlinedTextField(
-            value = request,
-            onValueChange = { request = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Device ID") },
-        )
-        OutlinedTextField(
-            value = label,
-            onValueChange = { label = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Label") },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = {
-                    onApproveDevice(request, label)
-                    request = ""
-                    label = ""
-                },
-                enabled = canApprove && request.isNotBlank(),
-            ) {
-                Text("Approve Device")
-            }
-        }
-    }
-}
 
 @Composable
 private fun BackupsPanel(backups: List<BackupState>) {
@@ -800,41 +731,6 @@ private fun BackupsPanel(backups: List<BackupState>) {
     }
 }
 
-@Composable
-private fun QrCode(
-    value: String,
-    modifier: Modifier = Modifier,
-    side: Dp = 180.dp,
-) {
-    val qr = remember(value) {
-        runCatching { JSONObject(NativeCore.qrMatrixJson(value)) }.getOrElse { JSONObject() }
-    }
-    val width = qr.optInt("width")
-    val cells = qr.optJSONArray("cells")
-    Canvas(
-        modifier = modifier
-            .size(side)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.White),
-    ) {
-        drawRect(Color.White)
-        if (width <= 0 || cells == null) return@Canvas
-        val quiet = 3
-        val modules = width + quiet * 2
-        val cell = size.minDimension / modules
-        for (y in 0 until width) {
-            for (x in 0 until width) {
-                if (cells.optBoolean(y * width + x)) {
-                    drawRect(
-                        color = Color(0xFF111827),
-                        topLeft = androidx.compose.ui.geometry.Offset((x + quiet) * cell, (y + quiet) * cell),
-                        size = Size(cell, cell),
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun SettingsPanel(
@@ -937,7 +833,7 @@ private fun Notice(text: String) {
 }
 
 @Composable
-private fun CardSection(
+internal fun CardSection(
     title: String,
     trailing: String,
     content: @Composable ColumnScope.() -> Unit,

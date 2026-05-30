@@ -141,8 +141,7 @@ pub(crate) fn render_backups(list: &gtk::ListBox, json: &Value) {
                 if let Some(latency) = find_number(&check, &["latency_ms"]) {
                     detail = format!("{detail} | {latency} ms");
                 }
-                if let Some(bytes_per_second) =
-                    find_number(&check, &["download_bytes_per_second"])
+                if let Some(bytes_per_second) = find_number(&check, &["download_bytes_per_second"])
                 {
                     detail = format!("{detail} | {}/s", format_bytes(bytes_per_second));
                 }

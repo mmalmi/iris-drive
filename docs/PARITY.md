@@ -1,6 +1,6 @@
 # Platform GUI parity
 
-Linux is the current behavior reference for the native control panel. macOS,
+macOS is the current behavior reference for the native control panel. Linux,
 Windows, iOS, and Android should expose the same user-visible sync controls
 where the platform allows it, even when their OS file-provider backends differ.
 `UI scaffold` means the shell exposes the control and state shape, but still
@@ -11,10 +11,10 @@ equivalent to desktop.
 | --- | --- | --- | --- | --- | --- |
 | First-run create profile | Yes | Yes | Yes | Local create flow | App-core create flow |
 | Restore owner profile | Yes | Yes | Yes | Local restore flow | App-core restore flow |
-| Link request handoff | Yes | Yes | Yes | Local link flow + deep link | App-core link flow + deep link |
+| Link this device flow | Sign in -> Link this device | Sign in -> Link this device | Sign in -> Link this device | Sign in -> Link this device + deep link | Sign in -> Link this device + deep link |
 | Log out local profile | Yes | Yes | Yes | App-core logout flow | App-core logout flow |
 | Copy owner/device keys | Yes | Yes | Yes | Yes | App-core UI flow |
-| Approve linked device from request link | Yes | Yes | Yes | Local approve flow + deep link | App-core UI flow + deep link |
+| Add another device | Add Device dialog | Add Device sheet | Add Device dialog | Add Device sheet + deep link | Add Device dialog + deep link |
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
@@ -45,19 +45,16 @@ real FileProvider, FUSE, and Cloud Files surfaces. VM hostnames stay in
 `~/.config/iris-drive/dev-lab.env` or local git remotes, not in tracked files.
 The native smoke writes per-hop timing JSONL to `target/e2e-3vms-*-timings.jsonl`.
 
-The minimum parity smoke for Linux is:
+The minimum parity smoke for native desktop shells is:
 
 1. Create an owner profile on one VM.
-2. Link the other VM as a secondary device from the GUI and copy its request link.
-3. Paste the request link into the owner GUI and approve it.
+2. Link the other VM as a secondary device from the GUI and copy its Device ID.
+3. Open Add Device in the owner GUI, paste the Device ID, and approve it.
 4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
 5. Create, rename, edit, and delete files inside the mounted drive.
 6. Confirm authorized peers receive the new roots without falling back to a normal folder scan.
 7. Confirm native directory viewers/watchers wake after remote creates and deletes without reopening the folder.
 8. Confirm the three native visible directories have matching path/content manifests and no unintended conflict copies.
-
-The same flow is valid for macOS once the visible app has the latest control
-panel build.
 
 Block replication now tries direct hashtree-over-FIPS transfer between
 authorized Iris Drive instances first. Blossom remains configured as a
@@ -70,6 +67,7 @@ the containing app. The local iOS simulator smoke is:
 
 ```bash
 just ios-smoke
+just ios-gui-smoke
 ```
 
 Android has a buildable Jetpack Compose shell plus a SAF `DocumentsProvider`
@@ -77,6 +75,7 @@ registered as `to.iris.drive.documents`. The local Android adb smoke is:
 
 ```bash
 just android-smoke
+just android-gui-smoke
 ```
 
 For the full desktop + mobile lab, use:
@@ -85,6 +84,6 @@ For the full desktop + mobile lab, use:
 just e2e-5devices
 ```
 
-That runs the iOS simulator smoke, runs the Android adb smoke on the configured
-Android host, then includes both mobile host labels as daemon peers in the
-shared multidevice sync harness.
+That runs the iOS simulator and GUI linking smokes, runs the Android GUI
+linking and provider smokes on the configured Android host, then includes both
+mobile host labels as daemon peers in the shared multidevice sync harness.

@@ -5,4 +5,4 @@ macos/Sources/IrisDriveMacApp.swift 2400 Legacy macOS shell pending view/runtime
 scripts/dev-vm-smoke.sh 2000 Multi-platform dev VM smoke harness needs a later split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 macos/Sources/IrisDriveControlPanel.swift 1300 Legacy macOS control panel pending view split.
-windows/MainWindow.xaml.cs 1250 Legacy Windows window controller pending view-model split.
+windows/MainWindow.xaml.cs 1300 Legacy Windows window controller pending view-model split.

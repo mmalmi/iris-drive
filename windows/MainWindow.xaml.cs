@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,6 +34,7 @@ public partial class MainWindow : Window
     private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
     private bool quitRequested;
+    private string submittedLinkOwner = "";
     private bool settingsUpdating;
     private Forms.NotifyIcon? trayIcon;
 
@@ -150,7 +152,6 @@ public partial class MainWindow : Window
         ShowSetupPanel(AwaitingPanel);
         AwaitingOwnerBox.Text = status.OwnerNpub ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? "";
-        DeviceRequestBox.Text = status.DeviceLinkRequestUrl ?? "";
         SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync paused");
     }
 
@@ -680,30 +681,103 @@ public partial class MainWindow : Window
         CopyText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
-    private void CopyDeviceRequest_Click(object sender, RoutedEventArgs e)
+    private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceLinkRequestUrl, "Request copied");
+        CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
     }
 
-    private async void ApproveDevice_Click(object sender, RoutedEventArgs e)
+    private void ShowAddDevice_Click(object sender, RoutedEventArgs e)
     {
-        try
+        var deviceBox = new TextBox
         {
-            await service.ApproveDeviceAsync(ApproveDeviceBox.Text, ApproveLabelBox.Text);
-            ApproveDeviceBox.Clear();
-            ApproveLabelBox.Clear();
-            StopDaemon();
-            if (currentStatus is not null)
+            Tag = "Device ID",
+            MinHeight = 34,
+            MinWidth = 360,
+            Margin = new Thickness(0, 4, 0, 10),
+        };
+        var labelBox = new TextBox
+        {
+            Tag = "Name (optional)",
+            MinHeight = 34,
+            MinWidth = 360,
+            Margin = new Thickness(0, 4, 0, 14),
+        };
+        var notice = new TextBlock
+        {
+            Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12),
+            Text = "Paste the Device ID shown on the other device when you link it manually.",
+        };
+        var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
+        var add = new WpfButton
+        {
+            Content = "Add",
+            Style = (Style)FindResource("PrimaryButton"),
+            MinWidth = 92,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(add);
+
+        var body = new StackPanel { Margin = new Thickness(18), Width = 400 };
+        body.Children.Add(new TextBlock
+        {
+            Text = "Add a device",
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+        body.Children.Add(notice);
+        body.Children.Add(new TextBlock { Text = "Device ID", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(deviceBox);
+        body.Children.Add(new TextBlock { Text = "Name (optional)", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(labelBox);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "Add a device",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            Content = body,
+        };
+
+        cancel.Click += (_, _) => dialog.Close();
+        add.Click += async (_, _) =>
+        {
+            add.IsEnabled = false;
+            try
             {
-                EnsureDaemonRunning(currentStatus);
+                await ApproveDeviceAsync(deviceBox.Text, labelBox.Text);
+                dialog.Close();
             }
-            NoticeText.Text = "Device approved";
-            await RefreshAsync();
-        }
-        catch (Exception error)
+            catch (Exception error)
+            {
+                notice.Text = error.Message;
+                add.IsEnabled = true;
+            }
+        };
+        dialog.ShowDialog();
+    }
+
+    private async Task ApproveDeviceAsync(string device, string label)
+    {
+        await service.ApproveDeviceAsync(device, label);
+        StopDaemon();
+        if (currentStatus is not null)
         {
-            NoticeText.Text = error.Message;
+            EnsureDaemonRunning(currentStatus);
         }
+        NoticeText.Text = "Device approved";
+        await RefreshAsync();
     }
 
     private async void RevokeDevice_Click(object sender, RoutedEventArgs e)
@@ -953,11 +1027,6 @@ public partial class MainWindow : Window
         RestoreSecretPlaceholder.Visibility = string.IsNullOrEmpty(RestoreSecretBox.Password)
             ? Visibility.Visible
             : Visibility.Collapsed;
-    }
-
-    private async void LinkSubmit_Click(object sender, RoutedEventArgs e)
-    {
-        await RunSetupAsync(() => service.LinkDeviceAsync(LinkOwnerBox.Text));
     }
 
     private async Task RunSetupAsync(Func<Task> operation)

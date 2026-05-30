@@ -228,6 +228,9 @@ pub(crate) fn device_approval_query(input: &str) -> Option<&str> {
     if let Some(rest) = input.strip_prefix("iris-drive://device-link") {
         return rest.strip_prefix('?');
     }
+    if let Some(rest) = input.strip_prefix("iris-drive:/device-link") {
+        return rest.strip_prefix('?');
+    }
     if let Some(rest) = input.strip_prefix("https://drive.iris.to/device-link") {
         return rest.strip_prefix('?');
     }

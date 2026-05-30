@@ -20,7 +20,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     container.set_valign(gtk::Align::Center);
     container.set_width_request(420);
 
-    let header = gtk::Label::new(Some("Awaiting approval"));
+    let header = gtk::Label::new(Some("Waiting for approval"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
@@ -34,16 +34,6 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     container.append(&field_title("This device"));
     container.append(&device);
 
-    let request = find_string(
-        account.get("device_link_request").unwrap_or(&Value::Null),
-        &["url"],
-    )
-    .unwrap_or("");
-    let request_entry = readonly_entry(request);
-    request_entry.set_height_request(82);
-    container.append(&field_title("Request link"));
-    container.append(&request_entry);
-
     let notice = setup_notice();
     notice.set_text(if sync_running {
         "Waiting for approval"
@@ -51,22 +41,32 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
         "Sync paused"
     });
 
-    let copy = primary_button("Copy request");
+    let copy = primary_button("Copy device ID");
     {
-        let request = request.to_string();
+        let device = find_string(account, &["device_npub"])
+            .unwrap_or("")
+            .to_string();
         let notice = notice.clone();
         copy.connect_clicked(move |_| {
-            if request.is_empty() {
+            if device.is_empty() {
                 notice.set_text("Nothing to copy");
             } else if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&request);
-                notice.set_text("Request copied");
+                display.clipboard().set_text(&device);
+                notice.set_text("Device ID copied");
             } else {
                 notice.set_text("Clipboard unavailable");
             }
         });
     }
     container.append(&copy);
+
+    let logout_button = pill_button("Log out");
+    logout_button.add_css_class("destructive-action");
+    {
+        let model = Rc::clone(model);
+        logout_button.connect_clicked(move |_| logout(&model));
+    }
+    container.append(&logout_button);
     container.append(&notice);
 
     append_centered_setup(model, &container);
@@ -323,27 +323,29 @@ pub(crate) fn render_link_device(model: &AppRef) {
 
     let notice = setup_notice();
     let submit = primary_button("Link device");
+    let submitted_owner = Rc::new(RefCell::new(String::new()));
+    {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
+        let submit = submit.clone();
+        let submitted_owner = Rc::clone(&submitted_owner);
+        owner.connect_changed(move |entry| {
+            let owner_value = entry.text().trim().to_string();
+            if !is_complete_link_owner_input(&owner_value)
+                || *submitted_owner.borrow() == owner_value
+            {
+                return;
+            }
+            submitted_owner.replace(owner_value);
+            submit_link_device(&model, entry, &notice, &submit);
+        });
+    }
     {
         let model = Rc::clone(model);
         let owner = owner.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
-            let owner_value = owner.text().trim().to_string();
-            if owner_value.is_empty() {
-                notice.set_text("Owner public key or invite link is required.");
-                return;
-            }
-            button.set_sensitive(false);
-            match link_device(&owner_value) {
-                Ok(()) => {
-                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
-                    refresh(&model);
-                }
-                Err(error) => {
-                    notice.set_text(&error);
-                    button.set_sensitive(true);
-                }
-            }
+            submit_link_device(&model, &owner, &notice, button);
         });
     }
     container.append(&submit);
@@ -351,6 +353,59 @@ pub(crate) fn render_link_device(model: &AppRef) {
     append_centered_setup(model, &container);
 
     owner.grab_focus();
+}
+
+fn submit_link_device(
+    model: &AppRef,
+    owner: &gtk::Entry,
+    notice: &gtk::Label,
+    button: &gtk::Button,
+) {
+    let owner_value = owner.text().trim().to_string();
+    if owner_value.is_empty() {
+        notice.set_text("Owner public key or invite link is required.");
+        return;
+    }
+    button.set_sensitive(false);
+    match link_device(&owner_value) {
+        Ok(()) => {
+            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+            refresh(model);
+        }
+        Err(error) => {
+            notice.set_text(&error);
+            button.set_sensitive(true);
+        }
+    }
+}
+
+fn is_complete_link_owner_input(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("npub1") {
+        return lower.len() >= 63;
+    }
+    if lower.len() == 64 && lower.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return true;
+    }
+    for prefix in [
+        "iris-drive://invite/",
+        "iris-drive:/invite/",
+        "https://drive.iris.to/invite/",
+    ] {
+        if lower.starts_with(prefix) {
+            return lower[prefix.len()..].len() >= 32;
+        }
+    }
+    (lower.starts_with("iris-drive://link-device?")
+        || lower.starts_with("iris-drive:/link-device?")
+        || lower.starts_with("https://drive.iris.to/link-device?"))
+        && lower.contains("owner=")
+        && lower.contains("admin=")
+        && lower.contains("secret=")
 }
 
 pub(crate) fn append_centered_setup(model: &AppRef, child: &gtk::Box) {

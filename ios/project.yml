@@ -80,3 +80,29 @@ targets:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID)
+
+  IrisDriveIOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        PRODUCT_NAME: IrisDriveIOSUITests
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.ios.UITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: IrisDriveIOS
+    dependencies:
+      - target: IrisDriveIOS
+
+schemes:
+  IrisDriveIOS:
+    build:
+      targets:
+        IrisDriveIOS: all
+        IrisDriveFileProvider: all
+        IrisDriveShareExtension: all
+        IrisDriveIOSUITests: [test]
+    test:
+      targets:
+        - IrisDriveIOSUITests

@@ -827,6 +827,7 @@ fn decode_device_approval_request(
     request: &str,
 ) -> Result<(String, String, Option<String>), String> {
     if request.starts_with("iris-drive://device-link")
+        || request.starts_with("iris-drive:/device-link")
         || request.starts_with("https://drive.iris.to/device-link")
     {
         let query = request.split_once('?').map_or("", |(_, query)| query);

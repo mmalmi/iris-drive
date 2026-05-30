@@ -52,8 +52,14 @@ ANDROID_HOST="$(required_env IRIS_DRIVE_E2E_ANDROID_HOST)"
 echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
 ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-simulator-smoke.sh'
 
-echo "[e2e-5devices] running Android adb smoke on $ANDROID_HOST" >&2
-ssh "$ANDROID_HOST" 'cd "$HOME/src/iris-drive" && scripts/mobile-android-smoke.sh'
+echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
+ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-gui-linking-smoke.sh'
+
+echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
+ssh "$ANDROID_HOST" 'cd "$HOME/src/iris-drive" && scripts/android-gui-linking-smoke.sh'
+
+echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
+ssh "$ANDROID_HOST" 'cd "$HOME/src/iris-drive" && scripts/mobile-android-smoke.sh --no-build'
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu macos"

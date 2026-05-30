@@ -49,6 +49,9 @@ IOS_HOST="$(required_env IRIS_DRIVE_E2E_IOS_HOST)"
 echo "[e2e-4devices] running iOS simulator smoke on $IOS_HOST" >&2
 ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-simulator-smoke.sh'
 
+echo "[e2e-4devices] running iOS GUI linking smoke on $IOS_HOST" >&2
+ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-gui-linking-smoke.sh'
+
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu macos"
 fi

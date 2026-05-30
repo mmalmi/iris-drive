@@ -161,11 +161,12 @@ fi
 
 xcrun simctl boot "$DEVICE_UDID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
-xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 
+xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
+
+xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 
 SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
   SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
@@ -177,7 +178,6 @@ if [[ -z "$CONTAINER" || ! -d "$CONTAINER" ]]; then
   exit 1
 fi
 STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
-
 if ! wait_for_debug_state \
   "$STATE_FILE" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \

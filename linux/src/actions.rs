@@ -91,15 +91,81 @@ pub(crate) fn logout(model: &AppRef) {
     }
 }
 
-pub(crate) fn approve_device(model: &AppRef) {
-    let device = model.ui.approve_device_entry.text().trim().to_string();
-    if device.is_empty() {
+pub(crate) fn show_add_device_dialog(model: &AppRef) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Add a device")
+        .modal(true)
+        .default_width(420)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Add a device"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let help = gtk::Label::new(Some(
+        "Paste the Device ID shown on the other device when you link it manually.",
+    ));
+    help.add_css_class("iris-muted");
+    help.set_xalign(0.0);
+    help.set_wrap(true);
+    body.append(&help);
+
+    let device = setup_entry("Device ID");
+    let label = setup_entry("Name (optional)");
+    body.append(&device);
+    body.append(&label);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let add = primary_button("Add");
+    buttons.append(&cancel);
+    buttons.append(&add);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let device = device.clone();
+        let label = label.clone();
+        add.connect_clicked(move |_| {
+            if approve_device_values(
+                &model,
+                device.text().trim().to_string(),
+                label.text().trim().to_string(),
+            ) {
+                dialog.close();
+            }
+        });
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
+    if device.trim().is_empty() {
         model.ui.notice.set_text("Device key is required");
-        return;
+        return false;
     }
 
     let mut args = vec!["approve".to_string(), device];
-    let label = model.ui.approve_label_entry.text().trim().to_string();
+    let label = label.trim().to_string();
     if !label.is_empty() {
         args.push("--label".to_string());
         args.push(label);
@@ -107,13 +173,15 @@ pub(crate) fn approve_device(model: &AppRef) {
 
     match run_idrive_owned(&args) {
         Ok(()) => {
-            model.ui.approve_device_entry.set_text("");
-            model.ui.approve_label_entry.set_text("");
             restart_daemon(model);
             model.ui.notice.set_text("Device approved");
             refresh(model);
+            true
         }
-        Err(error) => model.ui.notice.set_text(&error),
+        Err(error) => {
+            model.ui.notice.set_text(&error);
+            false
+        }
     }
 }
 

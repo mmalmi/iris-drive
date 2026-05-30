@@ -318,12 +318,14 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func linkDevice() {
-        guard !ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let owner = ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else {
             return
         }
+        ownerPublicKey = owner
         dispatch([
             "type": "link_device",
-            "owner_pubkey": ownerPublicKey,
+            "owner_pubkey": owner,
             "device_label": deviceLabel,
         ])
         ensureFileProviderDomainIfProfileExists()
@@ -491,7 +493,7 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        statusTitle = hasOwnerAuthority ? "Invalid device request" : "Device request link"
+        statusTitle = hasOwnerAuthority ? "Invalid device invite" : "Open on an owner device"
         statusDetail = hasOwnerAuthority
             ? (device ?? url.absoluteString)
             : "Open this request on an owner device, or scan an invite link to join."
@@ -715,12 +717,15 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func isDeviceLink(_ url: URL) -> Bool {
         (url.scheme == "iris-drive" && url.host == "device-link")
+            || (url.scheme == "iris-drive" && url.host == nil && url.path == "/device-link")
             || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/device-link")
     }
 
     private func isLinkDevice(_ url: URL) -> Bool {
         (url.scheme == "iris-drive" && url.host == "link-device")
             || (url.scheme == "iris-drive" && url.host == "invite")
+            || (url.scheme == "iris-drive" && url.host == nil && url.path == "/link-device")
+            || (url.scheme == "iris-drive" && url.host == nil && url.path.starts(with: "/invite/"))
             || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/link-device")
             || (url.scheme == "https" && url.host == "drive.iris.to" && url.path.starts(with: "/invite/"))
     }

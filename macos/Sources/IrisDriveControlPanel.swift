@@ -69,6 +69,7 @@ struct IrisDriveControlPanel: View {
     @State private var setupPhotoPath = ""
     @State private var setupSecret = ""
     @State private var setupOwner = ""
+    @State var submittedSetupOwner = ""
     @State private var approveDeviceKey = ""
     @State private var approveDeviceLabel = ""
     @State private var showAddDevice = false
@@ -230,8 +231,14 @@ struct IrisDriveControlPanel: View {
             setupForm(title: "Link this device") {
                 TextField("Owner public key or invite link", text: $setupOwner)
                     .accessibilityLabel("Owner public key or invite link")
+                    .onSubmit {
+                        submitSetupOwner(setupOwner, force: true)
+                    }
+                    .onChange(of: setupOwner) { _, newValue in
+                        submitSetupOwner(newValue, force: false)
+                    }
                 setupSubmit("Link device") {
-                    controller.linkDevice(owner: setupOwner)
+                    submitSetupOwner(setupOwner, force: true)
                 }
                 .disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

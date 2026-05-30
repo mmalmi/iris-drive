@@ -77,13 +77,6 @@ private struct AwaitingApprovalSetupView: View {
                     } label: {
                         Label("Copy device ID", systemImage: "doc.on.doc")
                     }
-                    if !model.deviceLinkRequest.isEmpty {
-                        Button {
-                            model.copyLinkRequest()
-                        } label: {
-                            Label("Copy request link", systemImage: "link")
-                        }
-                    }
                 }
 
                 Section {
@@ -94,7 +87,6 @@ private struct AwaitingApprovalSetupView: View {
                     }
                 }
             }
-            .navigationTitle("Setup")
         }
     }
 }
@@ -132,14 +124,15 @@ private struct SetupWelcomeView: View {
                     } label: {
                         Label("Create profile", systemImage: "plus")
                     }
+                    .accessibilityIdentifier("welcomeCreateProfile")
                     Button {
                         path.append(.signIn)
                     } label: {
                         Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+                    .accessibilityIdentifier("welcomeSignIn")
                 }
             }
-            .navigationTitle("Setup")
             .navigationDestination(for: SetupRoute.self) { route in
                 switch route {
                 case .create:
@@ -178,6 +171,7 @@ private struct CreateProfileSetupView: View {
             Section {
                 TextField("Username (optional)", text: $username)
                     .textInputAutocapitalization(.words)
+                    .accessibilityIdentifier("createUsername")
                 Button {
                     continueWithUsername(trimmedUsername)
                 } label: {
@@ -186,9 +180,11 @@ private struct CreateProfileSetupView: View {
                         systemImage: "plus"
                     )
                 }
+                .accessibilityIdentifier("createProfileSubmit")
             }
         }
         .navigationTitle("Create profile")
+        .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -224,6 +220,7 @@ private struct ProfilePhotoSetupView: View {
             }
         }
         .navigationTitle("Profile photo")
+        .toolbar(.visible, for: .navigationBar)
     }
 }
 
@@ -244,16 +241,24 @@ private struct SignInSetupView: View {
                 Button(action: openLinkDevice) {
                     Label("Link this device", systemImage: "link")
                 }
+                .accessibilityIdentifier("openLinkDevice")
             }
         }
         .navigationTitle("Sign in")
+        .toolbar(.visible, for: .navigationBar)
     }
 }
 
 private struct LinkDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var ownerPublicKey = ""
+    @State private var submittedOwnerPublicKey = ""
     @State private var scannerPresented = false
+
+    init(model: IrisDriveMobileModel) {
+        self.model = model
+        _ownerPublicKey = State(initialValue: iosUiTestValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
+    }
 
     var body: some View {
         Form {
@@ -261,12 +266,19 @@ private struct LinkDeviceSetupView: View {
                 TextField("Owner public key or invite link", text: $ownerPublicKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .accessibilityIdentifier("linkOwnerInput")
+                    .onSubmit {
+                        submitLinkDevice(ownerPublicKey, force: true)
+                    }
+                    .onChange(of: ownerPublicKey) { _, newValue in
+                        submitLinkDevice(newValue, force: false)
+                    }
                 Button {
-                    model.ownerPublicKey = ownerPublicKey
-                    model.linkDevice()
+                    submitLinkDevice(ownerPublicKey, force: true)
                 } label: {
                     Label("Link device", systemImage: "link")
                 }
+                .accessibilityIdentifier("linkDeviceSubmit")
                 .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     scannerPresented = true
@@ -276,11 +288,26 @@ private struct LinkDeviceSetupView: View {
             }
         }
         .navigationTitle("Link this device")
+        .toolbar(.visible, for: .navigationBar)
+        .onAppear {
+            submitLinkDevice(ownerPublicKey, force: false)
+        }
         .sheet(isPresented: $scannerPresented) {
             QRCodeScannerSheet { code in
                 ownerPublicKey = code
+                submitLinkDevice(code, force: false)
             }
         }
+    }
+
+    private func submitLinkDevice(_ value: String, force: Bool) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard force || isCompleteDeviceLinkOwnerInput(trimmed) else { return }
+        guard submittedOwnerPublicKey != trimmed else { return }
+        submittedOwnerPublicKey = trimmed
+        model.ownerPublicKey = trimmed
+        model.linkDevice()
     }
 }
 
@@ -370,6 +397,7 @@ private struct DriveFolderBrowser: UIViewControllerRepresentable {
 
 private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var showingAddDevice = false
 
     var body: some View {
         List {
@@ -420,59 +448,150 @@ private struct DevicesView: View {
                     }
                 }
             }
+        }
+        .navigationTitle("Devices")
+        .toolbar {
+            if model.hasOwnerAuthority {
+                Button {
+                    showingAddDevice = true
+                } label: {
+                    Label("Add Device", systemImage: "plus")
+                }
+                .accessibilityIdentifier("addDeviceButton")
+            }
+        }
+        .sheet(isPresented: $showingAddDevice) {
+            AddDeviceSheet(model: model, isPresented: $showingAddDevice)
+        }
+    }
+}
 
-            if !model.inboundDeviceLinkRequests.isEmpty {
-                Section("Device Requests") {
-                    ForEach(model.inboundDeviceLinkRequests) { request in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(request.label.isEmpty ? "New device" : request.label)
-                                .font(.headline)
-                            Text(request.devicePubkey)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                            Button {
-                                model.approveDevice(request: request.requestLink, label: request.label)
-                            } label: {
-                                Label("Approve device", systemImage: "checkmark.circle")
+private struct AddDeviceSheet: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !model.deviceLinkInvite.isEmpty {
+                    Section("Invite device") {
+                        QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkInvite))
+                            .frame(width: 260, height: 260)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        Text(model.deviceLinkInvite)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button {
+                            model.copyLinkInvite()
+                        } label: {
+                            Label("Copy invite link", systemImage: "link")
+                        }
+                    }
+                }
+
+                if !model.inboundDeviceLinkRequests.isEmpty {
+                    Section("Devices asking to join") {
+                        ForEach(model.inboundDeviceLinkRequests) { request in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(request.label.isEmpty ? "New device" : request.label)
+                                    .font(.headline)
+                                Text(request.devicePubkey)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                Button {
+                                    model.approveDevice(request: request.requestLink, label: request.label)
+                                } label: {
+                                    Label("Add", systemImage: "plus")
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if !model.deviceLinkInvite.isEmpty {
-                Section("Invite Device") {
-                    QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkInvite))
-                        .frame(width: 260, height: 260)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Text(model.deviceLinkInvite)
-                        .font(.footnote)
+                Section("Link manually") {
+                    Text("Paste the Device ID shown on the other device when you link it manually.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    TextField("Device ID", text: $model.approveDeviceKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("manualDeviceId")
+                    TextField("Name (optional)", text: $model.approveDeviceLabel)
+                        .accessibilityIdentifier("manualDeviceName")
                     Button {
-                        model.copyLinkInvite()
+                        model.approveDevice()
+                        isPresented = false
                     } label: {
-                        Label("Copy invite link", systemImage: "link")
+                        Label("Add", systemImage: "plus")
                     }
+                    .accessibilityIdentifier("manualDeviceAdd")
+                    .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-
-            Section("Add Manually") {
-                TextField("Device ID", text: $model.approveDeviceKey)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                TextField("Label", text: $model.approveDeviceLabel)
-                Button {
-                    model.approveDevice()
-                } label: {
-                    Label("Approve device", systemImage: "checkmark.circle")
+            .navigationTitle("Add a device")
+            .toolbar {
+                Button("Cancel") {
+                    isPresented = false
                 }
-                .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .onAppear {
+                prefillUiTestDeviceFields()
             }
         }
-        .navigationTitle("Devices")
     }
+
+    private func prefillUiTestDeviceFields() {
+        let request = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
+        if !request.isEmpty,
+           model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.approveDeviceKey = request
+        }
+
+        let label = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL")
+        if !label.isEmpty,
+           model.approveDeviceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.approveDeviceLabel = label
+        }
+    }
+}
+
+private func iosUiTestValue(_ name: String) -> String {
+    #if DEBUG
+    ProcessInfo.processInfo.environment[name] ?? ""
+    #else
+    ""
+    #endif
+}
+
+private func isCompleteDeviceLinkOwnerInput(_ value: String) -> Bool {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.contains(where: { $0.isWhitespace }) else { return false }
+    let lower = trimmed.lowercased()
+    if lower.hasPrefix("npub1") {
+        return lower.count >= 63
+    }
+    if lower.count == 64, lower.unicodeScalars.allSatisfy(isAsciiHexDigit) {
+        return true
+    }
+    for prefix in [
+        "iris-drive://invite/",
+        "iris-drive:/invite/",
+        "https://drive.iris.to/invite/",
+    ] where lower.hasPrefix(prefix) {
+        return lower.dropFirst(prefix.count).count >= 32
+    }
+    if lower.hasPrefix("iris-drive://link-device?")
+        || lower.hasPrefix("iris-drive:/link-device?")
+        || lower.hasPrefix("https://drive.iris.to/link-device?") {
+        return lower.contains("owner=") && lower.contains("admin=") && lower.contains("secret=")
+    }
+    return false
+}
+
+private func isAsciiHexDigit(_ scalar: Unicode.Scalar) -> Bool {
+    (48...57).contains(scalar.value) || (97...102).contains(scalar.value)
 }
 
 private struct BackupsView: View {

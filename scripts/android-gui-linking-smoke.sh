@@ -61,16 +61,6 @@ wait_for_debug_state() {
   return 1
 }
 
-if [[ ! -x "$IDRIVE" ]]; then
-  cargo build -p idrive
-fi
-
-"$ROOT/tools/run-android" build
-if [[ ! -f "$APK_PATH" ]]; then
-  echo "FAIL: Debug APK not found at $APK_PATH" >&2
-  exit 1
-fi
-
 ADB="$(resolve_adb)"
 serial="$(select_serial "$ADB")"
 if [[ -z "$serial" ]]; then
@@ -78,11 +68,37 @@ if [[ -z "$serial" ]]; then
   exit 1
 fi
 
+"$ADB" -s "$serial" wait-for-device
+(
+  cd "$ROOT"
+  ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.class=to.iris.drive.app.IrisDriveAndroidGuiFlowTest
+)
+
+if [[ ! -x "$IDRIVE" ]]; then
+  cargo build -p idrive
+fi
+if [[ ! -f "$APK_PATH" ]]; then
+  echo "FAIL: Debug APK not found at $APK_PATH" >&2
+  exit 1
+fi
+
+"$ADB" -s "$serial" install -r "$APK_PATH" >/dev/null
+"$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
+"$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
+  --es "$DEBUG_ACTION_EXTRA" create-profile >/dev/null
+
+if ! wait_for_debug_state \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("has_owner_signing_authority") else 1)' \
+  15; then
+  echo "FAIL: Android did not create a real owner profile after the GUI create-profile test." >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
+  exit 1
+fi
+
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
 
-"$ADB" -s "$serial" wait-for-device
-"$ADB" -s "$serial" install -r "$APK_PATH" >/dev/null
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
 "$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" link-device \
@@ -91,7 +107,7 @@ owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_
 if ! wait_for_debug_state \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
   15; then
-  echo "FAIL: Android GUI did not create a real awaiting linked-device profile." >&2
+  echo "FAIL: Android did not create a real awaiting linked-device profile after the GUI link-this-device test." >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
   exit 1
 fi

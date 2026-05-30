@@ -60,8 +60,6 @@ struct Ui {
     account_device: gtk::Label,
     account_authorization: gtk::Label,
     approve_box: gtk::Box,
-    approve_device_entry: gtk::Entry,
-    approve_label_entry: gtk::Entry,
     approve_device_button: gtk::Button,
     notice: gtk::Label,
     drives: gtk::ListBox,

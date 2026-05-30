@@ -237,11 +237,14 @@ class MainActivity : ComponentActivity() {
 
     private fun isDeviceApprovalUri(uri: Uri): Boolean =
         (uri.scheme == "iris-drive" && uri.host == "device-link") ||
+            (uri.scheme == "iris-drive" && uri.host == null && uri.path == "/device-link") ||
             (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/device-link")
 
     private fun isLinkDeviceUri(uri: Uri): Boolean =
         (uri.scheme == "iris-drive" && uri.host == "link-device") ||
             (uri.scheme == "iris-drive" && uri.host == "invite") ||
+            (uri.scheme == "iris-drive" && uri.host == null && uri.path == "/link-device") ||
+            (uri.scheme == "iris-drive" && uri.host == null && uri.path?.startsWith("/invite/") == true) ||
             (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/link-device") ||
             (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path?.startsWith("/invite/") == true)
 

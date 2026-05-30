@@ -21,13 +21,25 @@ require_contains() {
   fi
 }
 
+require_absent() {
+  local path="$1"
+  local pattern="$2"
+  if grep -F "$pattern" "$ROOT/$path" >/dev/null; then
+    echo "unexpected '$pattern' in $path" >&2
+    exit 1
+  fi
+}
+
 require_file android/settings.gradle.kts
 require_file android/app/build.gradle.kts
 require_file android/app/src/main/AndroidManifest.xml
 require_file android/app/src/main/java/to/iris/drive/app/MainActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
+require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt
 require_file android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt
 require_file scripts/mobile-android-smoke.sh
+require_file scripts/android-gui-linking-smoke.sh
 require_file scripts/cross-vm-five-platform-e2e.sh
 require_file tools/run-android
 
@@ -41,16 +53,29 @@ require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveD
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "renameDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "deleteDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt "isChildDocument"
-require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Approve Device"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "SetupRoute.Welcome ->"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "route = SetupRoute.CreateProfile"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "route = SetupRoute.SignIn"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Add Device"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy owner key"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open in Files"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open snapshot link"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Reset relay"
+require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Text(\"Setup\")"
+require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy request link"
+require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Copy request link"
+require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Approve Device"
+require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Approve Device"
 require_contains scripts/mobile-android-smoke.sh "PROVIDER_AUTHORITY"
 require_contains scripts/mobile-android-smoke.sh "create-profile"
+require_contains scripts/android-gui-linking-smoke.sh "connectedDebugAndroidTest"
+require_contains scripts/android-gui-linking-smoke.sh "IrisDriveAndroidGuiFlowTest"
+require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt "linkDeviceSubmit\").assertIsEnabled().performClick()"
 require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_E2E_ANDROID_HOST"
+require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains Justfile "android-build"
 require_contains Justfile "android-smoke"
+require_contains Justfile "android-gui-smoke"
 require_contains Justfile "e2e-5devices"
 
 echo "ANDROID_E2E_KIT_OK"
