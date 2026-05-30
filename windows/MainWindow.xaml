@@ -362,6 +362,12 @@
               <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
               <CheckBox x:Name="CloseToTrayCheckBox" Content="Tray on close" Checked="CloseToTray_Changed" Unchecked="CloseToTray_Changed" />
               <CheckBox x:Name="LocalNhashResolverCheckBox" Content="nhash.iris.localhost resolver" Margin="0,8,0,0" Checked="LocalNhashResolver_Changed" Unchecked="LocalNhashResolver_Changed" />
+              <Button Click="Logout_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE8BB;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Log out" />
+                </StackPanel>
+              </Button>
             </StackPanel>
           </StackPanel>
         </ScrollViewer>

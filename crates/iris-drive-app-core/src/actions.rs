@@ -15,6 +15,7 @@ pub enum NativeAppAction {
         owner_pubkey: String,
         device_label: String,
     },
+    Logout,
     ApproveDevice {
         request: String,
         label: String,

@@ -81,6 +81,8 @@ pub(crate) enum Command {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Log out this local install and remove local account key material.
+    Logout,
     /// Approve a pending device by adding it to the `AppKeys` roster.
     /// Only usable on admin devices.
     Approve {

@@ -80,6 +80,17 @@ pub(crate) fn reset_relays(model: &AppRef) {
     }
 }
 
+pub(crate) fn logout(model: &AppRef) {
+    stop_daemon(model);
+    match run_idrive(["logout"]) {
+        Ok(()) => {
+            model.ui.notice.set_text("Logged out");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn approve_device(model: &AppRef) {
     let device = model.ui.approve_device_entry.text().trim().to_string();
     if device.is_empty() {

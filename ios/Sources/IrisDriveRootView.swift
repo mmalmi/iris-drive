@@ -450,6 +450,7 @@ private struct BackupsView: View {
 
 private struct SettingsView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var showingLogoutConfirmation = false
 
     var body: some View {
         Form {
@@ -475,6 +476,11 @@ private struct SettingsView: View {
                     Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
                 .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(role: .destructive) {
+                    showingLogoutConfirmation = true
+                } label: {
+                    Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
             }
 
             Section("Network") {
@@ -522,6 +528,16 @@ private struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .confirmationDialog(
+            "Log out of Iris Drive on this device?",
+            isPresented: $showingLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Log out", role: .destructive) {
+                model.logout()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }
 

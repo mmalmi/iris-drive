@@ -73,6 +73,7 @@ struct IrisDriveControlPanel: View {
     @State private var approveDeviceLabel = ""
     @State private var showAddDevice = false
     @State private var showAddBackup = false
+    @State private var showLogoutConfirmation = false
 
     var body: some View {
         Group {
@@ -588,6 +589,11 @@ struct IrisDriveControlPanel: View {
                     controller.copyDeviceKey()
                 }
                 AccountInfoRow(title: "State", value: status.authorizationState ?? "-")
+                Button(role: .destructive) {
+                    showLogoutConfirmation = true
+                } label: {
+                    Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
             }
 
             Section("Network") {
@@ -619,6 +625,16 @@ struct IrisDriveControlPanel: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "Log out of Iris Drive on this Mac?",
+            isPresented: $showLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Log Out", role: .destructive) {
+                controller.logout()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private var relayEditor: some View {

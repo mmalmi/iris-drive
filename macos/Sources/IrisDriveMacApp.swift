@@ -492,6 +492,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         finishSetup(arguments: args)
     }
 
+    @objc func logout() {
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        stopSync()
+        updateStatus("Logging out")
+
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(idrive, arguments: ["logout"], paths: paths)
+                self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
+                self.updateStatus("Logged out")
+            } catch {
+                NSLog("Iris Drive logout failed: \(error)")
+                self.updateStatus("Logout failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
     func approveDevice(_ device: String, label: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
@@ -641,6 +663,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         stopItem.target = self
         menu.addItem(stopItem)
+
+        let logoutItem = NSMenuItem(
+            title: "Log Out",
+            action: #selector(logout),
+            keyEquivalent: ""
+        )
+        logoutItem.target = self
+        menu.addItem(logoutItem)
 
         let configItem = NSMenuItem(
             title: "Show Config Folder",

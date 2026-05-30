@@ -143,6 +143,11 @@ public sealed class IrisDriveService
         return RunAsync("nhash-resolver", enabled ? "enable" : "disable");
     }
 
+    public Task LogoutAsync()
+    {
+        return RunAsync("logout");
+    }
+
     public Process StartDaemonProcess()
     {
         var process = new Process

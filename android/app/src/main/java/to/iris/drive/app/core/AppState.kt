@@ -121,6 +121,8 @@ internal object NativeActions {
             .put("device_label", deviceLabel)
             .toString()
 
+    fun logout(): String = JSONObject().put("type", "logout").toString()
+
     fun approveDevice(request: String, label: String): String =
         JSONObject()
             .put("type", "approve_device")

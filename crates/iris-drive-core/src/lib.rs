@@ -42,7 +42,10 @@ pub mod root_meta;
 pub mod sync;
 pub mod sync_cache;
 
-pub use account::{Account, AccountError, AccountState, DeviceAuthorizationState};
+pub use account::{
+    Account, AccountError, AccountState, DeviceAuthorizationState, LogoutReport,
+    logout_local_account,
+};
 pub use app_keys::{
     AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
     select_latest,

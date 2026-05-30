@@ -27,9 +27,10 @@ use uuid::Uuid;
 use crate::app_keys::{
     AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
 };
+use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::nostr_events::build_app_keys_event;
-use crate::paths::{key_path_in, owner_key_path_in};
+use crate::paths::{config_path_in, key_path_in, owner_key_path_in, sync_cache_path_in};
 
 #[derive(Debug, Error)]
 pub enum AccountError {
@@ -59,6 +60,8 @@ pub enum AccountError {
     RosterEvent(String),
     #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
     InvalidDckLength(usize),
+    #[error("config: {0}")]
+    Config(#[from] ConfigError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -828,6 +831,66 @@ pub fn account_paths(config_dir: &Path) -> AccountPaths {
 pub struct AccountPaths {
     pub device_key: PathBuf,
     pub owner_key: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogoutReport {
+    pub removed_key: bool,
+    pub removed_owner_key: bool,
+    pub removed_sync_cache: bool,
+    pub cleared_account: bool,
+    pub cleared_user_profile: bool,
+    pub cleared_drives: bool,
+    pub cleared_backup_targets: bool,
+}
+
+impl LogoutReport {
+    #[must_use]
+    pub fn changed(&self) -> bool {
+        self.removed_key
+            || self.removed_owner_key
+            || self.removed_sync_cache
+            || self.cleared_account
+            || self.cleared_user_profile
+            || self.cleared_drives
+            || self.cleared_backup_targets
+    }
+}
+
+pub fn logout_local_account(config_dir: &Path) -> Result<LogoutReport, AccountError> {
+    let config_path = config_path_in(config_dir);
+    let mut config = AppConfig::load_or_default(&config_path)?;
+    let mut report = LogoutReport::default();
+
+    report.cleared_account = config.account.take().is_some();
+    report.cleared_user_profile = config.user_profile.take().is_some();
+    report.cleared_drives = !config.drives.is_empty();
+    config.drives.clear();
+    report.cleared_backup_targets = !config.backup_targets.is_empty();
+    config.backup_targets.clear();
+
+    if config_path.exists()
+        || report.cleared_account
+        || report.cleared_user_profile
+        || report.cleared_drives
+        || report.cleared_backup_targets
+    {
+        config.save(&config_path)?;
+    }
+
+    report.removed_key = remove_file_if_present(key_path_in(config_dir))?;
+    report.removed_owner_key = remove_file_if_present(owner_key_path_in(config_dir))?;
+    report.removed_sync_cache = remove_file_if_present(sync_cache_path_in(config_dir))?;
+
+    Ok(report)
+}
+
+fn remove_file_if_present(path: PathBuf) -> Result<bool, std::io::Error> {
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

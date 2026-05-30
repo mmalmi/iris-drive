@@ -12,6 +12,7 @@ equivalent to desktop.
 | First-run create profile | Yes | Yes | Yes | Local create flow | App-core create flow |
 | Restore owner profile | Yes | Yes | Yes | Local restore flow | App-core restore flow |
 | Link request handoff | Yes | Yes | Yes | Local link flow + deep link | App-core link flow + deep link |
+| Log out local profile | Yes | Yes | Yes | App-core logout flow | App-core logout flow |
 | Copy owner/device keys | Yes | Yes | Yes | Yes | App-core UI flow |
 | Approve linked device from request link | Yes | Yes | Yes | Local approve flow + deep link | App-core UI flow + deep link |
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |

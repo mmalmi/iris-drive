@@ -250,6 +250,9 @@ pub(crate) fn build_ui(app: &adw::Application) {
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
     settings_page.append(&local_nhash_resolver);
+    let logout_button = action_button("system-log-out-symbolic", "Log Out", "Log out");
+    logout_button.add_css_class("destructive-action");
+    settings_page.append(&logout_button);
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
     stack.add_titled(&peers_page, Some("devices"), "Devices");
@@ -342,6 +345,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             blossom,
             tray_on_close,
             local_nhash_resolver,
+            logout_button,
             relay_entry,
             backup_entry,
             backup_label_entry,
@@ -438,6 +442,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
             }
             set_local_nhash_resolver(&model, button.is_active());
         });
+    }
+    {
+        let button = model.ui.logout_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| logout(&model));
     }
 
     connect_tray(&model, &window);

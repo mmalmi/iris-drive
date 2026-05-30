@@ -72,6 +72,7 @@ struct Ui {
     blossom: gtk::ListBox,
     tray_on_close: gtk::CheckButton,
     local_nhash_resolver: gtk::CheckButton,
+    logout_button: gtk::Button,
     relay_entry: gtk::Entry,
     backup_entry: gtk::Entry,
     backup_label_entry: gtk::Entry,
@@ -121,6 +122,7 @@ enum TrayCommand {
     OpenDriveFolder,
     StartSync,
     StopSync,
+    Logout,
     Quit,
 }
 

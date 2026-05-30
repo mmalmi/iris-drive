@@ -75,6 +75,10 @@ class MainActivity : ComponentActivity() {
                 onDemoteAdmin = { devicePubkey ->
                     dispatch(NativeActions.demoteAdmin(devicePubkey))
                 },
+                onLogout = {
+                    stopSyncService()
+                    dispatch(NativeActions.logout())
+                },
                 onAddRelay = { url -> dispatch(NativeActions.addRelay(url)) },
                 onRemoveRelay = { url -> dispatch(NativeActions.removeRelay(url)) },
                 onResetRelays = { dispatch(NativeActions.resetRelays()) },

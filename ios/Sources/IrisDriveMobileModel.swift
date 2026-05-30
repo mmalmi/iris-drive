@@ -268,6 +268,14 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
+    private func removeFileProviderDomain() {
+        let domain = NSFileProviderDomain(
+            identifier: irisDriveDomainIdentifier,
+            displayName: irisDriveFileProviderDisplayName
+        )
+        NSFileProviderManager.remove(domain) { _ in }
+    }
+
     func refresh() {
         applyStateJson(nativeCore.refreshJson())
         ensureFileProviderDomainIfProfileExists()
@@ -346,6 +354,19 @@ final class IrisDriveMobileModel: ObservableObject {
             "type": "demote_admin",
             "device_pubkey": id,
         ])
+    }
+
+    func logout() {
+        stopSync()
+        dispatch(["type": "logout"])
+        restoreSecret = ""
+        approveDeviceKey = ""
+        approveDeviceLabel = ""
+        profileUsername = ""
+        profilePhotoName = ""
+        fileProviderStatus = "Files provider not registered"
+        removeFileProviderDomain()
+        persistLocalSettings()
     }
 
     func revokeDevice(label: String) {

@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -121,6 +122,7 @@ internal fun IrisDriveAndroidApp(
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
@@ -173,6 +175,7 @@ internal fun IrisDriveAndroidApp(
                     onRevokeDevice = onRevokeDevice,
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
+                    onLogout = onLogout,
                     onAddRelay = onAddRelay,
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
@@ -465,6 +468,7 @@ private fun DriveContent(
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
@@ -522,6 +526,7 @@ private fun DriveContent(
                 state = state,
                 onCopyOwnerKey = onCopyOwnerKey,
                 onCopyDeviceKey = onCopyDeviceKey,
+                onLogout = onLogout,
                 onAddRelay = onAddRelay,
                 onRemoveRelay = onRemoveRelay,
                 onResetRelays = onResetRelays,
@@ -785,12 +790,37 @@ private fun SettingsPanel(
     state: AppState,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
+    onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
 ) {
     var relayInput by remember { mutableStateOf("") }
+    var confirmLogout by remember { mutableStateOf(false) }
     val account = state.account
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Log out") },
+            text = { Text("Remove this local Iris Drive profile from Android?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    },
+                ) {
+                    Text("Log out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 
     CardSection(title = "Settings", trailing = "network") {
         Text("Relays", fontWeight = FontWeight.SemiBold)
@@ -834,6 +864,11 @@ private fun SettingsPanel(
             OutlinedButton(onClick = onCopyDeviceKey) {
                 Text("Copy device key")
             }
+        }
+        OutlinedButton(onClick = { confirmLogout = true }) {
+            Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)
+            Spacer(Modifier.size(8.dp))
+            Text("Log out", color = Danger)
         }
     }
 }

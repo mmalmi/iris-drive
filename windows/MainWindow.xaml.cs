@@ -841,6 +841,38 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void Logout_Click(object sender, RoutedEventArgs e)
+    {
+        await LogoutAsync();
+    }
+
+    private async Task LogoutAsync()
+    {
+        if (MessageBox.Show(
+                this,
+                "Remove this local Iris Drive profile from Windows?",
+                "Log out",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            StopDaemon();
+            await service.LogoutAsync();
+            currentStatus = null;
+            preparedDriveRefreshKey = null;
+            ShowWelcome();
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
     private void CopyText(string? value, string message)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1044,6 +1076,7 @@ public partial class MainWindow : Window
             StopDaemon();
             await RefreshAsync();
         });
+        menu.Items.Add("Log out", null, async (_, _) => await LogoutAsync());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
 

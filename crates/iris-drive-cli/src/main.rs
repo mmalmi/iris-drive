@@ -145,6 +145,7 @@ fn run_cli() -> ExitCode {
             force,
             label,
         } => cmd_link(&config_dir, &owner, force, label),
+        Command::Logout => cmd_logout(&config_dir),
         Command::Approve { device, label } => cmd_approve(&config_dir, &device, label),
         Command::Revoke { device } => cmd_revoke(&config_dir, &device),
         Command::Roster => cmd_roster(&config_dir),

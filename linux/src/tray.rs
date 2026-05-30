@@ -52,6 +52,7 @@ pub(crate) fn handle_tray_command(
             stop_daemon(model);
             refresh(model);
         }
+        TrayCommand::Logout => logout(model),
         TrayCommand::Quit => quit_application(model, window),
     }
 }
@@ -218,6 +219,12 @@ impl ksni::Tray for IrisDriveTray {
                 TrayCommand::StopSync,
                 "Pause Sync",
                 "media-playback-pause",
+            ),
+            tray_menu_item(
+                &self.sender,
+                TrayCommand::Logout,
+                "Log Out",
+                "system-log-out",
             ),
             ksni::MenuItem::Separator,
             tray_menu_item(&self.sender, TrayCommand::Quit, "Quit", "application-exit"),

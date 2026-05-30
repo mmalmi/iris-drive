@@ -29,6 +29,35 @@ fn init_yields_authorized_owner_capable_account() {
 }
 
 #[test]
+fn logout_removes_local_account_and_key_material() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    assert!(dir.path().join("key").exists());
+
+    let out = idrive(dir.path()).arg("logout").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["logged_out"], true);
+    assert_eq!(v["removed_key"], true);
+
+    assert!(!dir.path().join("key").exists());
+    assert!(!dir.path().join("owner_key").exists());
+
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(config.account.is_none());
+    assert!(config.user_profile.is_none());
+    assert!(config.drives.is_empty());
+
+    let status = run_json(dir.path(), &["status"]);
+    assert_eq!(status["initialized"], false);
+    assert!(status["drives"].as_array().unwrap().is_empty());
+
+    idrive(dir.path()).arg("whoami").assert().failure();
+    idrive(dir.path()).arg("logout").assert().success();
+}
+
+#[test]
 fn restore_uses_provided_device_nsec_and_grants_admin_authority() {
     // Capture original account/device npub from an init.
     let dir_a = tempdir().unwrap();

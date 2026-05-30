@@ -8,7 +8,8 @@ shared `idrive` CLI:
 - sync start/stop/restart
 - drive folder and snapshot link actions
 - devices, network, and settings pages
-- Windows tray icon with show/open/start/stop/restart/quit actions
+- local profile logout
+- Windows tray icon with show/open/start/stop/logout/quit actions
 - self-contained `win-x64` publish output for shortcuts/installers
 
 Build from the repo root on Windows:
