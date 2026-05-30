@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SVG="$ROOT/linux/resources/iris-drive.svg"
 MACOS_APPICON="$ROOT/macos/Resources/Assets.xcassets/AppIcon.appiconset"
+MACOS_BRAND_ICON="$ROOT/macos/Resources/Assets.xcassets/BrandIcon.imageset"
 WINDOWS_ICO="$ROOT/windows/IrisDrive.ico"
+WINDOWS_BRAND_ICON="$ROOT/windows/IrisDrive.png"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -22,13 +24,24 @@ render_png() {
 render_android_launcher_png() {
   local size="$1"
   local output="$2"
+  local scale="${3:-0.58}"
+  local fill_background="${4:-false}"
+  local translate
   local tmp
 
+  translate="$(node -e "const scale = Number(process.argv[1]); console.log(((1024 - 1024 * scale) / 2).toFixed(3))" "$scale")"
   tmp="$(mktemp)"
   {
     cat <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
-  <g transform="translate(128 128) scale(0.75)">
+EOF
+    if [[ "$fill_background" == "true" ]]; then
+      cat <<'EOF'
+  <rect width="1024" height="1024" fill="#080214"/>
+EOF
+    fi
+    cat <<EOF
+  <g transform="translate($translate $translate) scale($scale)">
 EOF
     sed '1d;$d' "$SVG"
     cat <<'EOF'
@@ -57,6 +70,12 @@ generate_macos_icons() {
   render_png 512 "$MACOS_APPICON/icon_512x512.png"
   render_png 1024 "$MACOS_APPICON/icon_512x512@2x.png"
   echo "generated macOS app icons"
+
+  if [[ -d "$MACOS_BRAND_ICON" ]]; then
+    render_png 128 "$MACOS_BRAND_ICON/brand_icon.png"
+    render_png 256 "$MACOS_BRAND_ICON/brand_icon@2x.png"
+    echo "generated macOS brand icon"
+  fi
 }
 
 generate_windows_icon() {
@@ -107,6 +126,7 @@ images.forEach((image, index) => {
 
 fs.writeFileSync(outPath, Buffer.concat([header, ...images.map((image) => image.data)]));
 NODE
+  render_png 256 "$WINDOWS_BRAND_ICON"
   echo "generated Windows icon"
 }
 
@@ -130,12 +150,29 @@ generate_android_icons() {
     dir="$res_dir/$density"
     foreground_size=$((size * 9 / 4))
     mkdir -p "$dir"
-    render_png "$size" "$dir/ic_launcher.png"
-    render_png "$size" "$dir/ic_launcher_round.png"
-    render_android_launcher_png "$foreground_size" "$dir/ic_launcher_foreground.png"
+    render_android_launcher_png "$size" "$dir/ic_launcher.png" 0.74 true
+    render_android_launcher_png "$size" "$dir/ic_launcher_round.png" 0.74 true
+    render_android_launcher_png "$foreground_size" "$dir/ic_launcher_foreground.png" 0.58
   done
 
-  echo "generated Android launcher icons"
+  mkdir -p "$res_dir/drawable-nodpi"
+  render_png 256 "$res_dir/drawable-nodpi/brand_icon.png"
+
+  echo "generated Android launcher and brand icons"
+}
+
+generate_ios_brand_icons() {
+  local assets_dir="$ROOT/ios/Resources/Assets.xcassets"
+  local brand_icon="$assets_dir/BrandIcon.imageset"
+  if [[ ! -d "$brand_icon" ]]; then
+    echo "skipping iOS brand icon; missing $brand_icon"
+    return
+  fi
+
+  render_png 128 "$brand_icon/brand_icon.png"
+  render_png 256 "$brand_icon/brand_icon@2x.png"
+  render_png 384 "$brand_icon/brand_icon@3x.png"
+  echo "generated iOS brand icon"
 }
 
 generate_ios_icons() {
@@ -176,4 +213,5 @@ need node
 generate_macos_icons
 generate_windows_icon
 generate_android_icons
+generate_ios_brand_icons
 generate_ios_icons

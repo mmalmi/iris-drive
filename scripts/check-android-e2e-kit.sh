@@ -43,7 +43,7 @@ require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveD
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt "isChildDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Approve Device"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy owner key"
-require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open drive"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open in Files"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open snapshot link"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Reset relay"
 require_contains scripts/mobile-android-smoke.sh "PROVIDER_AUTHORITY"
