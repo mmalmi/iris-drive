@@ -848,7 +848,7 @@ public partial class MainWindow : Window
 
     private async Task LogoutAsync()
     {
-        if (MessageBox.Show(
+        if (System.Windows.MessageBox.Show(
                 this,
                 "Remove this local Iris Drive profile from Windows?",
                 "Log out",
@@ -910,7 +910,7 @@ public partial class MainWindow : Window
 
     private void ChooseCreatePhoto_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Filter = "Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*",
             Multiselect = false,

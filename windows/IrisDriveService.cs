@@ -37,7 +37,7 @@ public sealed class IrisDriveService
                 args.Add(profilePhotoPath.Trim());
             }
         }
-        return FinishSetupAsync(args);
+        return FinishSetupAsync(args.ToArray());
     }
 
     public Task RestoreProfileAsync(string secret)
