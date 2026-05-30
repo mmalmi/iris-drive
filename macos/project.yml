@@ -20,6 +20,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Shared
       - path: Resources
     settings:
       base:
@@ -40,6 +41,7 @@ targets:
     platform: macOS
     sources:
       - path: FileProvider
+      - path: Shared
     settings:
       base:
         PRODUCT_NAME: IrisDriveFileProvider

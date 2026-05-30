@@ -161,7 +161,7 @@ structure:
     ./scripts/check-platform-parity-matrix.sh
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
-    ./scripts/check-rust-file-length.sh
+    ./scripts/check-source-file-size.sh
 
 docker-cli-e2e:
     ./scripts/docker-cli-e2e.sh

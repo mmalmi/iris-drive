@@ -10,8 +10,6 @@ private let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
-private let irisDriveAppGroupName = "to.iris.drive"
-private let irisDriveLegacyAppGroupIdentifier = "group.to.iris.drive"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
@@ -1330,18 +1328,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func environmentFlag(_ name: String) -> Bool {
-        irisDriveEnvironmentFlag(name)
+        IrisDriveEnvironment.flag(name)
     }
 
     private func fileProviderApplicationSupportFallbackDirectory() -> URL {
-        if let shared = irisDriveAppGroupContainerURL() {
-            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
-        }
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return base.appendingPathComponent("Iris Drive", isDirectory: true)
+        IrisDriveAppGroup.applicationSupportDirectory(
+            teamIdentifier: currentProcessTeamIdentifier()
+        )
     }
 
     private func persistedFileProviderRuntime() -> FileProviderRuntimeConfig? {
@@ -2148,7 +2141,9 @@ private func irisDriveDebugLog(_ message: String) {
 
 private func irisDriveDebugLogDirectories() -> [URL] {
     var directories = [URL]()
-    if let shared = irisDriveAppGroupContainerURL() {
+    if let shared = IrisDriveAppGroup.containerURL(
+        teamIdentifier: currentProcessTeamIdentifier()
+    ) {
         directories.append(
             shared
                 .appendingPathComponent("Iris Drive", isDirectory: true)
@@ -2171,40 +2166,6 @@ private func irisDriveDebugLogDirectories() -> [URL] {
             .appendingPathComponent("Logs", isDirectory: true)
     )
     return directories
-}
-
-private func irisDriveAppGroupContainerURL() -> URL? {
-    for identifier in irisDriveAppGroupIdentifiers() {
-        if let url = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: identifier
-        ) {
-            return url
-        }
-    }
-    return nil
-}
-
-private func irisDriveAppGroupIdentifiers() -> [String] {
-    var identifiers = [String]()
-    if let teamIdentifier = currentProcessTeamIdentifier() {
-        identifiers.append("\(teamIdentifier).\(irisDriveAppGroupName)")
-    }
-    if irisDriveEnvironmentFlag("IRIS_DRIVE_ENABLE_LEGACY_APP_GROUP") {
-        identifiers.append(irisDriveLegacyAppGroupIdentifier)
-    }
-
-    var seen = Set<String>()
-    return identifiers.filter { seen.insert($0).inserted }
-}
-
-private func irisDriveEnvironmentFlag(_ name: String) -> Bool {
-    guard let value = ProcessInfo.processInfo.environment[name]?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-    else {
-        return false
-    }
-    return ["1", "true", "yes", "on"].contains(value)
 }
 
 private func ensureFileProviderDomainRegistered(

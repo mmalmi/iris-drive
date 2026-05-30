@@ -15,7 +15,15 @@ APP_PROCESS_NAME="Iris Drive"
 APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"
 SMOKE_HOME="$SMOKE_DIR/home"
-if [[ "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
+
+truthy() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}"; then
   SMOKE_APP_DATA="$SMOKE_HOME/Library/Application Support/Iris Drive"
 else
   SMOKE_APP_DATA="$ROOT/macos/.build/SmokeAppData"
@@ -27,17 +35,11 @@ APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
 
 run_ui_smoke() {
-  case "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}" in
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
-    *) return 1 ;;
-  esac
+  truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
 }
 
 run_create_profile_smoke() {
-  case "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}" in
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
-    *) return 1 ;;
-  esac
+  truthy "${IRIS_DRIVE_MACOS_SMOKE_CREATE_PROFILE:-0}"
 }
 
 terminate_app_process() {

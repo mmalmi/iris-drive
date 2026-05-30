@@ -97,8 +97,6 @@ enum FileProviderStorage {
     private static let runtimeFileName = "fileprovider-runtime.json"
     private static let snapshotFileName = "fileprovider-snapshot.json"
     private static let debugLogFileName = "fileprovider-extension.log"
-    private static let appGroupName = "to.iris.drive"
-    private static let legacyAppGroupIdentifier = "group.to.iris.drive"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
     private static let contentCacheDirectoryName = "FileProviderContentCache"
@@ -830,48 +828,9 @@ enum FileProviderStorage {
     }
 
     private static func fallbackApplicationSupportDirectory() -> URL {
-        if let shared = appGroupContainerURL() {
-            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
-        }
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return base.appendingPathComponent("Iris Drive", isDirectory: true)
-    }
-
-    private static func appGroupContainerURL() -> URL? {
-        for identifier in appGroupIdentifiers() {
-            if let url = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: identifier
-            ) {
-                return url
-            }
-        }
-        return nil
-    }
-
-    private static func appGroupIdentifiers() -> [String] {
-        var identifiers = [String]()
-        if let teamIdentifier = currentProcessTeamIdentifier() {
-            identifiers.append("\(teamIdentifier).\(appGroupName)")
-        }
-        if environmentFlag("IRIS_DRIVE_ENABLE_LEGACY_APP_GROUP") {
-            identifiers.append(legacyAppGroupIdentifier)
-        }
-
-        var seen = Set<String>()
-        return identifiers.filter { seen.insert($0).inserted }
-    }
-
-    private static func environmentFlag(_ name: String) -> Bool {
-        guard let value = ProcessInfo.processInfo.environment[name]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        else {
-            return false
-        }
-        return ["1", "true", "yes", "on"].contains(value)
+        IrisDriveAppGroup.applicationSupportDirectory(
+            teamIdentifier: currentProcessTeamIdentifier()
+        )
     }
 
     private static func currentProcessTeamIdentifier() -> String? {
