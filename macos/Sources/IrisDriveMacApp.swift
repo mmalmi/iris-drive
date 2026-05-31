@@ -1678,7 +1678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case "shutdown":
                     self.updateStatus("Sync paused")
                 case "initial_publish_error", "auto_publish_error", "apply_error":
-                    self.updateStatus("Sync needs attention")
+                    self.updateStatus("Sync failed")
                 default:
                     break
                 }

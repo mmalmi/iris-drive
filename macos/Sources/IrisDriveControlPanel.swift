@@ -478,7 +478,7 @@ struct IrisDriveControlPanel: View {
         case .paused:
             return "Paused"
         case .attention:
-            return "Needs attention"
+            return "Sync failed"
         }
     }
 
