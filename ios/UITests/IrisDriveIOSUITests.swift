@@ -60,6 +60,21 @@ final class IrisDriveIOSUITests: XCTestCase {
         assertFilesOpen(in: app, files: files, timeout: 15)
     }
 
+    func testMyDriveDevicesSummaryOpensDevices() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let devicesSummary = app.buttons["devicesSummaryButton"]
+        XCTAssertTrue(devicesSummary.waitForExistence(timeout: 10))
+        let value = devicesSummary.value as? String ?? ""
+        XCTAssertTrue(value.contains("/"), "unexpected devices summary: \(value)")
+        XCTAssertTrue(value.contains(" online"), "unexpected devices summary: \(value)")
+
+        devicesSummary.tap()
+        XCTAssertTrue(app.navigationBars["Devices"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["Devices"].isSelected)
+    }
+
     func testApprovedLinkedDeviceLeavesWaiting() throws {
         let app = launchApp()
 

@@ -1,8 +1,16 @@
 import PhotosUI
 import SwiftUI
 
+private enum MainTab: Hashable {
+    case drive
+    case devices
+    case backups
+    case settings
+}
+
 struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var selectedTab = MainTab.drive
 
     var body: some View {
         if !model.isSetupComplete {
@@ -14,13 +22,16 @@ struct IrisDriveRootView: View {
                 SetupWelcomeView(model: model)
             }
         } else {
-            TabView {
+            TabView(selection: $selectedTab) {
                 NavigationStack {
-                    DriveHomeView(model: model)
+                    DriveHomeView(model: model) {
+                        selectedTab = .devices
+                    }
                 }
                 .tabItem {
                     Label("My Drive", systemImage: "externaldrive.fill")
                 }
+                .tag(MainTab.drive)
 
                 NavigationStack {
                     DevicesView(model: model)
@@ -28,6 +39,7 @@ struct IrisDriveRootView: View {
                 .tabItem {
                     Label("Devices", systemImage: "person.2.fill")
                 }
+                .tag(MainTab.devices)
 
                 NavigationStack {
                     BackupsView(model: model)
@@ -35,6 +47,7 @@ struct IrisDriveRootView: View {
                 .tabItem {
                     Label("Backups", systemImage: "lock.shield.fill")
                 }
+                .tag(MainTab.backups)
 
                 NavigationStack {
                     SettingsView(model: model)
@@ -42,6 +55,7 @@ struct IrisDriveRootView: View {
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
+                .tag(MainTab.settings)
             }
             .task {
                 while model.isSetupComplete {
@@ -386,6 +400,19 @@ private struct LinkDeviceSetupView: View {
 
 private struct DriveHomeView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    let showDevices: () -> Void
+
+    private var onlineDeviceCount: Int {
+        model.devices.filter(\.isOnline).count
+    }
+
+    private var totalDeviceCount: Int {
+        max(model.authorizedDeviceCount, model.devices.count)
+    }
+
+    private var deviceSummaryText: String {
+        "\(onlineDeviceCount)/\(totalDeviceCount) online"
+    }
 
     var body: some View {
         List {
@@ -412,7 +439,12 @@ private struct DriveHomeView: View {
             Section("Summary") {
                 LabeledContent("Files", value: "\(model.fileCount)")
                 LabeledContent("Storage", value: byteString(model.visibleFileBytes))
-                LabeledContent("Devices", value: "\(model.authorizedDeviceCount)")
+                Button(action: showDevices) {
+                    LabeledContent("Devices", value: deviceSummaryText)
+                }
+                .accessibilityIdentifier("devicesSummaryButton")
+                .accessibilityLabel("Devices")
+                .accessibilityValue(deviceSummaryText)
             }
 
             Section("Files") {
