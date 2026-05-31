@@ -15,10 +15,14 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 anyhow.workspace = true
 iris-drive-core.workspace = true
+hashtree-provider.workspace = true
+hashtree-core.workspace = true
+hashtree-fs.workspace = true
 nostr-sdk.workspace = true
 qrcode = { version = "0.14", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+rustls.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uniffi.workspace = true

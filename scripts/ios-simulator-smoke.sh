@@ -23,6 +23,7 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | 
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
+RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-gui-owner)"
 
 usage() {
@@ -103,6 +104,25 @@ resolve_app_path() {
     -quit 2>/dev/null
 }
 
+assert_static_app_core_linkage() {
+  local app_path="$1"
+  local offenders
+
+  offenders="$(
+    find "$app_path" -type f -perm -111 -print 2>/dev/null |
+      while IFS= read -r binary; do
+        if otool -L "$binary" 2>/dev/null | grep -F "libiris_drive_app_core.dylib" >/dev/null; then
+          printf '%s\n' "$binary"
+        fi
+      done
+  )"
+  if [[ -n "$offenders" ]]; then
+    echo "FAIL: iOS app links iris-drive app-core dynamically; use the static archive instead." >&2
+    echo "$offenders" >&2
+    exit 1
+  fi
+}
+
 app_group_container() {
   xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null
 }
@@ -125,6 +145,10 @@ if [[ ! -x "$IDRIVE" ]]; then
 fi
 
 cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
+if [[ ! -f "$RUST_STATIC_LIB" ]]; then
+  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
+  exit 1
+fi
 
 if command -v xcodegen >/dev/null 2>&1; then
   (cd "$ROOT/ios" && xcodegen generate)
@@ -144,7 +168,7 @@ xcodebuild \
   -destination "$DESTINATION" \
   CODE_SIGNING_ALLOWED=NO \
   LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-  OTHER_LDFLAGS="-liris_drive_app_core" \
+  OTHER_LDFLAGS="$RUST_STATIC_LIB" \
   build >"$BUILD_LOG"
 
 APP_PATH="$(resolve_app_path)"
@@ -152,6 +176,7 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
   exit 1
 fi
+assert_static_app_core_linkage "$APP_PATH"
 
 if [[ "$BUILD_ONLY" == "1" ]]; then
   echo "IOS_BUILD_OK"

@@ -46,6 +46,7 @@ targets:
     platform: iOS
     sources:
       - path: FileProvider
+      - path: Sources/IrisDriveNativeCore.swift
     settings:
       base:
         PRODUCT_NAME: IrisDriveFileProvider
@@ -65,6 +66,7 @@ targets:
     platform: iOS
     sources:
       - path: ShareExtension
+      - path: Sources/IrisDriveNativeCore.swift
       - path: FileProvider/FileProviderStorage.swift
       - path: FileProvider/FileProviderItem.swift
     settings:

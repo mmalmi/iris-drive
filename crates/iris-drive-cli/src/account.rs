@@ -3,6 +3,10 @@ use super::*;
 
 mod device_link_urls;
 pub(crate) use device_link_urls::*;
+pub(crate) use iris_drive_core::device_link_transport::{
+    DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
+    DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
+};
 
 pub(crate) fn cmd_init(
     config_dir: &std::path::Path,
@@ -338,50 +342,8 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-pub(crate) const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
-pub(crate) const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
-pub(crate) const DEVICE_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/device-link/v1/roster-ack";
 pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
 pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 30;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeviceLinkRequestFrame {
-    schema: u32,
-    owner_pubkey: String,
-    device_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    link_secret: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
-    requested_at: u64,
-    url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeviceLinkRosterFrame {
-    schema: u32,
-    owner_pubkey: String,
-    admin_device_pubkey: String,
-    app_keys: iris_drive_core::AppKeysSnapshot,
-    #[serde(default)]
-    app_keys_event_id: String,
-    #[serde(default)]
-    app_keys_event_json: String,
-    sent_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeviceLinkRosterAckFrame {
-    schema: u32,
-    owner_pubkey: String,
-    admin_device_pubkey: String,
-    device_pubkey: String,
-    #[serde(default)]
-    app_keys_event_id: String,
-    app_keys_created_at: i64,
-    dck_generation: u64,
-    acknowledged_at: u64,
-}
 
 pub(crate) async fn send_pending_device_link_request(
     config_dir: &Path,
@@ -418,24 +380,10 @@ pub(crate) async fn send_pending_device_link_request(
     }
 
     sync.refresh_authorized_peers(&config).await;
-    let link_secret = if pending.link_secret.trim().is_empty() {
-        state.device_link_secret.clone()
-    } else {
-        pending.link_secret.clone()
-    };
-    let frame = DeviceLinkRequestFrame {
-        schema: 1,
-        owner_pubkey: state.owner_pubkey.clone(),
-        device_pubkey: state.device_pubkey.clone(),
-        link_secret: link_secret.clone(),
-        label: state.device_label.clone(),
-        requested_at: pending.requested_at,
-        url: encode_device_approval_request(
-            &state.owner_pubkey,
-            &state.device_pubkey,
-            &link_secret,
-            state.device_label.as_deref(),
-        ),
+    let Some(frame) =
+        iris_drive_core::device_link_transport::pending_device_link_request_frame(state)
+    else {
+        return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
     sync.send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes.clone())

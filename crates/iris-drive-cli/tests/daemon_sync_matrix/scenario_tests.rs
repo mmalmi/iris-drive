@@ -4,6 +4,70 @@ use super::*;
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+
+    cluster
+        .write(
+            Client::Windows,
+            "post-approval/from-owner.txt",
+            b"from owner",
+        )
+        .await;
+    cluster
+        .write(
+            Client::Ubuntu,
+            "post-approval/from-linked.txt",
+            b"from linked",
+        )
+        .await;
+
+    let mut expected = DirSnapshot::new();
+    expected.insert(
+        "post-approval/from-owner.txt".to_string(),
+        FileSnapshot {
+            len: b"from owner".len() as u64,
+            sha256: to_hex(&sha256(b"from owner")),
+            bytes: b"from owner".to_vec(),
+        },
+    );
+    expected.insert(
+        "post-approval/from-linked.txt".to_string(),
+        FileSnapshot {
+            len: b"from linked".len() as u64,
+            sha256: to_hex(&sha256(b"from linked")),
+            bytes: b"from linked".to_vec(),
+        },
+    );
+
+    cluster
+        .wait_for_visible_snapshot(&expected, "post-approval two-way edits")
+        .await;
+    cluster.assert_file(
+        Client::Windows,
+        "post-approval/from-owner.txt",
+        b"from owner",
+    );
+    cluster.assert_file(
+        Client::Windows,
+        "post-approval/from-linked.txt",
+        b"from linked",
+    );
+    cluster.assert_file(
+        Client::Ubuntu,
+        "post-approval/from-owner.txt",
+        b"from owner",
+    );
+    cluster.assert_file(
+        Client::Ubuntu,
+        "post-approval/from-linked.txt",
+        b"from linked",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_three_vm_initial_merge_from_all_peers_and_conflicts() {
     let _guard = live_daemon_test_guard().await;
     let conflict_path = "initial/conflict.txt";

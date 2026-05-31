@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -31,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -46,6 +49,7 @@ internal fun DevicesPanel(
     inboundRequests: List<DeviceLinkRequestState>,
     canApprove: Boolean,
     onCopyLinkInvite: () -> Unit,
+    onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
@@ -121,6 +125,7 @@ internal fun DevicesPanel(
             onRequestChange = { request = it },
             onLabelChange = { label = it },
             onCopyLinkInvite = onCopyLinkInvite,
+            onResetInvite = onResetInvite,
             onApproveDevice = onApproveDevice,
             onDismiss = { showAddDevice = false },
             onAdded = {
@@ -142,10 +147,17 @@ private fun AddDeviceDialog(
     onRequestChange: (String) -> Unit,
     onLabelChange: (String) -> Unit,
     onCopyLinkInvite: () -> Unit,
+    onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onDismiss: () -> Unit,
     onAdded: () -> Unit,
 ) {
+    fun submitManualDevice() {
+        if (!canApprove || request.isBlank()) return
+        onApproveDevice(request, label)
+        onAdded()
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add a device") },
@@ -157,6 +169,9 @@ private fun AddDeviceDialog(
                     Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     OutlinedButton(onClick = onCopyLinkInvite) {
                         Text("Copy invite link")
+                    }
+                    OutlinedButton(onClick = onResetInvite) {
+                        Text("Reset invite")
                     }
                 }
                 if (inboundRequests.isNotEmpty()) {
@@ -191,6 +206,7 @@ private fun AddDeviceDialog(
                     modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
                     singleLine = true,
                     label = { Text("Device ID") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
                 OutlinedTextField(
                     value = label,
@@ -198,15 +214,14 @@ private fun AddDeviceDialog(
                     modifier = Modifier.fillMaxWidth().testTag("manualDeviceName"),
                     singleLine = true,
                     label = { Text("Name (optional)") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitManualDevice() }),
                 )
             }
         },
         confirmButton = {
             Button(
-                onClick = {
-                    onApproveDevice(request, label)
-                    onAdded()
-                },
+                onClick = { submitManualDevice() },
                 enabled = canApprove && request.isNotBlank(),
                 modifier = Modifier.testTag("manualDeviceAdd"),
             ) {

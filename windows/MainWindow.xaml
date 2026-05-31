@@ -46,7 +46,7 @@
           </Button>
           <TextBlock Text="Create profile" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Username" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="CreateUsernameBox" Tag="Optional" MinHeight="34" Margin="0,0,0,12" TextChanged="CreateUsernameBox_TextChanged" />
+          <TextBox x:Name="CreateUsernameBox" Tag="Optional" MinHeight="34" Margin="0,0,0,12" TextChanged="CreateUsernameBox_TextChanged" KeyDown="CreateUsernameBox_KeyDown" />
           <Button x:Name="CreateSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="CreateSubmit_Click">
             <TextBlock x:Name="CreateSubmitText" Text="Create profile" HorizontalAlignment="Center" />
           </Button>
@@ -83,7 +83,7 @@
           <TextBlock Text="Sign in" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Secret key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <Grid Margin="0,0,0,10">
-            <PasswordBox x:Name="RestoreSecretBox" PasswordChanged="RestoreSecretBox_PasswordChanged" />
+            <PasswordBox x:Name="RestoreSecretBox" PasswordChanged="RestoreSecretBox_PasswordChanged" KeyDown="RestoreSecretBox_KeyDown" />
             <TextBlock x:Name="RestoreSecretPlaceholder"
                        Text="nsec1... or hex secret key"
                        Foreground="{StaticResource IrisMutedBrush}"
@@ -111,7 +111,7 @@
           </Button>
           <TextBlock Text="Link this device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Owner public key or invite link" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="LinkOwnerBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkOwnerBox_TextChanged" />
+          <TextBox x:Name="LinkOwnerBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkOwnerBox_TextChanged" KeyDown="LinkOwnerBox_KeyDown" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="LinkSubmit_Click">
             <TextBlock Text="Link device" HorizontalAlignment="Center" />
           </Button>
@@ -157,6 +157,12 @@
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="My Drive" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="SidebarOpenButton" Style="{StaticResource NavButton}" Click="OpenDrive_Click">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Open" />
             </StackPanel>
           </Button>
           <Button x:Name="NavDevicesButton" Tag="Devices" Style="{StaticResource NavButton}" Click="Nav_Click">
@@ -305,8 +311,8 @@
                   <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyDevice_Click" Margin="0,8,0,0">
                     <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />
                   </Button>
-                  <TextBlock Grid.Row="2" Text="State" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
-                  <TextBlock x:Name="AuthValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" />
+                  <TextBlock Grid.Row="2" Text="State" Style="{StaticResource FieldName}" Margin="0,8,0,0" Visibility="Collapsed" />
+                  <TextBlock x:Name="AuthValue" Grid.Row="2" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" Visibility="Collapsed" />
                 </Grid>
               </Border>
 
@@ -317,9 +323,15 @@
                     <TextBlock Text="Add Device" />
                   </StackPanel>
                 </Button>
+                <Button Click="ResetInvite_Click" Margin="0,8,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE72C;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Reset invite" />
+                  </StackPanel>
+                </Button>
               </StackPanel>
 
-              <TextBlock Text="Authorized" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <TextBlock Text="Linked devices" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
             </StackPanel>
 

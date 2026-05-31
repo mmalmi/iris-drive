@@ -87,6 +87,14 @@ private struct AwaitingApprovalSetupView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("awaitingApprovalView")
+            .task {
+                while model.isAwaitingApproval {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    model.refresh()
+                }
+            }
         }
     }
 }
@@ -172,6 +180,9 @@ private struct CreateProfileSetupView: View {
                 TextField("Username (optional)", text: $username)
                     .textInputAutocapitalization(.words)
                     .accessibilityIdentifier("createUsername")
+                    .onSubmit {
+                        continueWithUsername(trimmedUsername)
+                    }
                 Button {
                     continueWithUsername(trimmedUsername)
                 } label: {
@@ -232,6 +243,9 @@ private struct SignInSetupView: View {
         Form {
             Section {
                 SecureField("Secret key", text: $model.restoreSecret)
+                    .onSubmit {
+                        model.restoreProfile()
+                    }
                 Button {
                     model.restoreProfile()
                 } label: {
@@ -470,6 +484,16 @@ private struct AddDeviceSheet: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isPresented: Bool
 
+    private var canAddManualDevice: Bool {
+        !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submitManualDevice() {
+        guard canAddManualDevice else { return }
+        model.approveDevice()
+        isPresented = false
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -486,6 +510,11 @@ private struct AddDeviceSheet: View {
                             model.copyLinkInvite()
                         } label: {
                             Label("Copy invite link", systemImage: "link")
+                        }
+                        Button {
+                            model.resetInvite()
+                        } label: {
+                            Label("Reset invite", systemImage: "arrow.clockwise")
                         }
                     }
                 }
@@ -518,16 +547,21 @@ private struct AddDeviceSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("manualDeviceId")
+                        .onSubmit {
+                            submitManualDevice()
+                        }
                     TextField("Name (optional)", text: $model.approveDeviceLabel)
                         .accessibilityIdentifier("manualDeviceName")
+                        .onSubmit {
+                            submitManualDevice()
+                        }
                     Button {
-                        model.approveDevice()
-                        isPresented = false
+                        submitManualDevice()
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
                     .accessibilityIdentifier("manualDeviceAdd")
-                    .disabled(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canAddManualDevice)
                 }
             }
             .navigationTitle("Add a device")

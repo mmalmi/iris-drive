@@ -36,6 +36,7 @@ final class ShareViewController: UIViewController {
         let group = DispatchGroup()
         let lock = NSLock()
         var imported = 0
+        var failed = 0
 
         for provider in providers {
             guard let typeIdentifier = preferredTypeIdentifier(for: provider) else { continue }
@@ -50,12 +51,21 @@ final class ShareViewController: UIViewController {
                     }
                 } catch {
                     FileProviderStorage.debugLog("share import failed: \(error)")
+                    lock.lock()
+                    failed += 1
+                    lock.unlock()
                 }
             }
         }
 
         group.notify(queue: .main) {
-            self.statusLabel.text = imported == 1 ? "Saved to Iris Drive" : "Saved \(imported) items to Iris Drive"
+            if imported == 0 {
+                self.statusLabel.text = failed == 0 ? "No items saved" : "Could not save to Iris Drive"
+            } else {
+                self.statusLabel.text = imported == 1
+                    ? "Saved to Iris Drive"
+                    : "Saved \(imported) items to Iris Drive"
+            }
             self.extensionContext?.completeRequest(returningItems: nil)
         }
     }

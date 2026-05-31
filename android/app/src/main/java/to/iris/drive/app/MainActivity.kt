@@ -18,6 +18,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,12 +32,19 @@ import to.iris.drive.app.sync.IrisDriveSyncService
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState())
     private var nativeHandle: Long = 0
+    private var refreshJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         NativeCore.initializeAndroidContext(applicationContext)
         nativeHandle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
         refresh()
+        refreshJob = lifecycleScope.launch {
+            while (true) {
+                delay(2_000)
+                refresh()
+            }
+        }
         handleDebugIntent(intent)
 
         setContent {
@@ -66,6 +75,7 @@ class MainActivity : ComponentActivity() {
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label))
                 },
+                onResetInvite = { dispatch(NativeActions.resetInvite()) },
                 onRevokeDevice = { devicePubkey ->
                     dispatch(NativeActions.revokeDevice(devicePubkey))
                 },
@@ -106,6 +116,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        refreshJob?.cancel()
+        refreshJob = null
         val handle = nativeHandle
         nativeHandle = 0
         if (handle != 0L) {

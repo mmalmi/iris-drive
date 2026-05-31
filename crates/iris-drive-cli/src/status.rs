@@ -307,6 +307,7 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
     {
         fips.insert("connected_peers".to_string(), json!([]));
         fips.insert("mesh_peers".to_string(), json!([]));
+        fips.insert("peer_statuses".to_string(), json!([]));
     }
     Some(value)
 }
@@ -827,6 +828,10 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "authorized_peers": authorized_peers,
         "connected_peers": connected_peers,
         "mesh_peers": mesh_peers,
+        "peer_statuses": fips_status
+            .and_then(|status| status.get("peer_statuses"))
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         "relay_statuses": fips_status
             .and_then(|status| status.get("relay_statuses"))
             .cloned()

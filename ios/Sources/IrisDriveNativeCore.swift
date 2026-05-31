@@ -24,6 +24,49 @@ private func irisDriveAppDispatchJson(
 @_silgen_name("iris_drive_qr_matrix_json")
 private func irisDriveQrMatrixJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_provider_list_json")
+private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_read_json")
+private func irisDriveProviderReadJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ path: UnsafePointer<CChar>,
+    _ outputPath: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_write_json")
+private func irisDriveProviderWriteJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ path: UnsafePointer<CChar>,
+    _ sourcePath: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_mkdir_json")
+private func irisDriveProviderMkdirJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ path: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_delete_json")
+private func irisDriveProviderDeleteJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ path: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_rename_json")
+private func irisDriveProviderRenameJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ oldPath: UnsafePointer<CChar>,
+    _ newPath: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_import_shared_file_json")
+private func irisDriveProviderImportSharedFileJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ displayName: UnsafePointer<CChar>,
+    _ sourcePath: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_string_free")
 private func irisDriveStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
@@ -70,6 +113,78 @@ final class IrisDriveNativeCore {
 
     private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         guard let pointer else { return #"{"error":"native app returned null"}"# }
+        defer { irisDriveStringFree(pointer) }
+        return String(cString: pointer)
+    }
+}
+
+enum IrisDriveNativeProvider {
+    static func list(dataDir: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            takeString(irisDriveProviderListJson(dataDirPointer))
+        }
+    }
+
+    static func read(dataDir: String, path: String, outputPath: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            path.withCString { pathPointer in
+                outputPath.withCString { outputPointer in
+                    takeString(irisDriveProviderReadJson(dataDirPointer, pathPointer, outputPointer))
+                }
+            }
+        }
+    }
+
+    static func write(dataDir: String, path: String, sourcePath: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            path.withCString { pathPointer in
+                sourcePath.withCString { sourcePointer in
+                    takeString(irisDriveProviderWriteJson(dataDirPointer, pathPointer, sourcePointer))
+                }
+            }
+        }
+    }
+
+    static func mkdir(dataDir: String, path: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            path.withCString { pathPointer in
+                takeString(irisDriveProviderMkdirJson(dataDirPointer, pathPointer))
+            }
+        }
+    }
+
+    static func delete(dataDir: String, path: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            path.withCString { pathPointer in
+                takeString(irisDriveProviderDeleteJson(dataDirPointer, pathPointer))
+            }
+        }
+    }
+
+    static func rename(dataDir: String, oldPath: String, newPath: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            oldPath.withCString { oldPointer in
+                newPath.withCString { newPointer in
+                    takeString(irisDriveProviderRenameJson(dataDirPointer, oldPointer, newPointer))
+                }
+            }
+        }
+    }
+
+    static func importSharedFile(dataDir: String, displayName: String, sourcePath: String) -> String {
+        dataDir.withCString { dataDirPointer in
+            displayName.withCString { namePointer in
+                sourcePath.withCString { sourcePointer in
+                    takeString(
+                        irisDriveProviderImportSharedFileJson(dataDirPointer, namePointer, sourcePointer)
+                    )
+                }
+            }
+        }
+    }
+
+    private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+        guard let pointer else { return #"{"error":"native provider returned null"}"# }
         defer { irisDriveStringFree(pointer) }
         return String(cString: pointer)
     }

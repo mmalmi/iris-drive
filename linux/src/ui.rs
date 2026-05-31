@@ -164,16 +164,21 @@ pub(crate) fn build_ui(app: &adw::Application) {
         &account_device,
         &copy_device_button,
     );
-    add_field(&account_grid, 2, 0, "State", &account_authorization);
     peers_page.append(&account_grid);
 
     let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     approve_box.set_hexpand(true);
     let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
+    let reset_invite_button = action_button(
+        "view-refresh-symbolic",
+        "Reset invite",
+        "Reset invite",
+    );
     approve_box.append(&approve_device_button);
+    approve_box.append(&reset_invite_button);
     peers_page.append(&approve_box);
 
-    peers_page.append(&field_title("Authorized"));
+    peers_page.append(&field_title("Linked devices"));
     let peers = gtk::ListBox::new();
     peers.add_css_class("iris-drive-list");
     peers.set_selection_mode(gtk::SelectionMode::None);
@@ -269,6 +274,10 @@ pub(crate) fn build_ui(app: &adw::Application) {
     }
 
     sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let sidebar_open = sidebar_button("folder-open-symbolic", "Open");
+    sidebar.append(&sidebar_open);
+
+    sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let sidebar_summary = gtk::Box::new(gtk::Orientation::Vertical, 4);
     sidebar_summary.add_css_class("iris-sidebar-summary");
     let sidebar_online = gtk::Label::new(Some("0/0 online"));
@@ -326,6 +335,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             account_authorization,
             approve_box,
             approve_device_button,
+            reset_invite_button,
             notice,
             drives,
             peers,
@@ -378,6 +388,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
         button.connect_clicked(move |_| open_drive_folder(&model));
     }
     {
+        let button = sidebar_open.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| open_drive_folder(&model));
+    }
+    {
         let button = model.ui.copy_snapshot_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| copy_snapshot_link(&model));
@@ -399,6 +414,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
         let button = model.ui.approve_device_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| show_add_device_dialog(&model));
+    }
+    {
+        let button = model.ui.reset_invite_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| reset_invite(&model));
     }
     {
         let model = Rc::clone(&model);

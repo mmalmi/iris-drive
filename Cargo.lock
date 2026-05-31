@@ -3298,10 +3298,14 @@ name = "iris-drive-app-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hashtree-core",
+ "hashtree-fs",
+ "hashtree-provider",
  "iris-drive-core",
  "jni",
  "nostr-sdk 0.35.0",
  "qrcode",
+ "rustls 0.23.40",
  "serde",
  "serde_json",
  "tempfile",

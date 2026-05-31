@@ -14,7 +14,7 @@ use hashtree_core::{
 };
 use hashtree_fips_transport::{
     FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
-    FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
+    FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
+use crate::device_link_transport::DEVICE_LINK_REQUEST_APP_TOPIC;
 use crate::identity::DeviceIdentity;
 
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
@@ -32,6 +33,7 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
+const DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
@@ -108,11 +110,17 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .to_bech32()
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
-        let transport_settings = FipsTransportSettings::from_env();
+        let mut transport_settings = FipsTransportSettings::from_env();
+        if accepts_device_link_requests(config) {
+            transport_settings.open_discovery_max_pending = transport_settings
+                .open_discovery_max_pending
+                .max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
+        }
         let endpoint = Box::pin(bind_fips_endpoint(fips_endpoint_options(
             identity_nsec,
             discovery_scope.clone(),
             config.relays.clone(),
+            config,
             &transport_settings,
         )))
         .await
@@ -122,7 +130,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
                 .with_request_timeout(FIPS_REQUEST_TIMEOUT)
                 .with_request_retry_interval(FIPS_REQUEST_RETRY_INTERVAL)
-                .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS),
+                .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS)
+                .with_unconfigured_app_message_topics([DEVICE_LINK_REQUEST_APP_TOPIC]),
         );
         transport
             .set_peer_configs_with_routing_peers(
@@ -192,6 +201,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
         self.transport.connected_peer_ids().await
+    }
+
+    pub async fn fips_peer_statuses(&self) -> Vec<FipsPeerStatus> {
+        self.transport.peer_statuses().await
     }
 
     pub async fn fips_relay_statuses(&self) -> Vec<FipsRelayStatus> {
@@ -331,8 +344,14 @@ fn fips_endpoint_options(
     identity_nsec: String,
     discovery_scope: String,
     relays: Vec<String>,
+    config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> FipsEndpointOptions {
+    let mut open_discovery_max_pending = settings.open_discovery_max_pending;
+    if accepts_device_link_requests(config) {
+        open_discovery_max_pending =
+            open_discovery_max_pending.max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
+    }
     FipsEndpointOptions {
         identity_nsec,
         discovery_scope,
@@ -344,9 +363,16 @@ fn fips_endpoint_options(
         udp_external_addr: settings.udp_external_addr.clone(),
         webrtc_auto_connect: true,
         webrtc_max_connections: settings.webrtc_max_connections,
-        open_discovery_max_pending: settings.open_discovery_max_pending,
+        open_discovery_max_pending,
         packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
     }
+}
+
+fn accepts_device_link_requests(config: &AppConfig) -> bool {
+    config
+        .account
+        .as_ref()
+        .is_some_and(crate::AccountState::can_manage_devices)
 }
 
 fn non_empty_env(name: &str) -> Option<String> {

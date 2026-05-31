@@ -4,6 +4,7 @@ use super::*;
 pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> Result<()> {
     match command {
         DevicesCmd::Invite => cmd_devices_invite(config_dir),
+        DevicesCmd::ResetInvite => cmd_devices_reset_invite(config_dir),
         DevicesCmd::Request {
             owner_or_invite,
             admin_device,
@@ -37,6 +38,37 @@ pub(crate) fn cmd_devices_invite(config_dir: &std::path::Path) -> Result<()> {
         ));
     }
     println!("{invite}");
+    Ok(())
+}
+
+pub(crate) fn cmd_devices_reset_invite(config_dir: &std::path::Path) -> Result<()> {
+    let config_path = config_path_in(config_dir);
+    let mut config = AppConfig::load_or_default(&config_path)?;
+    let (invite, inbound_requests) = {
+        let state = config
+            .account
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+        if !state.can_manage_devices() {
+            return Err(anyhow::anyhow!(
+                "device link invites require an admin device"
+            ));
+        }
+        state.reset_device_link_secret();
+        (
+            device_link_invite_json(state),
+            inbound_device_link_requests_json(state),
+        )
+    };
+    config.save(&config_path)?;
+    println!(
+        "{}",
+        json!({
+            "reset": true,
+            "device_link_invite": invite,
+            "inbound_device_link_requests": inbound_requests,
+        })
+    );
     Ok(())
 }
 

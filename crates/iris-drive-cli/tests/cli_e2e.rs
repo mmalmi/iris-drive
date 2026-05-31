@@ -506,6 +506,16 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
                 "mesh_peers": ["npub1remote"],
                 "authorized_peers": ["npub1remote"],
                 "connected_peers": ["npub1remote", "npub1outside"],
+                "peer_statuses": [{
+                    "npub": "npub1remote",
+                    "transport_addr": "udp:10.44.1.2:2121",
+                    "transport_type": "udp",
+                    "srtt_ms": 23,
+                    "packets_sent": 5,
+                    "packets_recv": 7,
+                    "bytes_sent": 512,
+                    "bytes_recv": 1024,
+                }],
                 "relay_statuses": [{"url": "wss://relay.example", "status": "connected"}],
             },
         }))
@@ -535,9 +545,88 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["other_peer_count"], 1);
     assert_eq!(fips["connected_peer_count"], 2);
     assert_eq!(
+        fips["peer_statuses"],
+        serde_json::json!([{
+            "npub": "npub1remote",
+            "transport_addr": "udp:10.44.1.2:2121",
+            "transport_type": "udp",
+            "srtt_ms": 23,
+            "packets_sent": 5,
+            "packets_recv": 7,
+            "bytes_sent": 512,
+            "bytes_recv": 1024,
+        }])
+    );
+    assert_eq!(
         fips["relay_statuses"],
         serde_json::json!([{"url": "wss://relay.example", "status": "connected"}])
     );
+}
+
+#[test]
+fn status_reports_fips_latency_for_direct_peer() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_npub, "--label", "linux-peer"],
+    );
+    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        owner_dir.path().join("daemon.lock"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        owner_dir.path().join("daemon-status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "updated_at": now,
+            "fips_block_sync": {
+                "endpoint_npub": "npub1local",
+                "authorized_peers": [linked_device_npub.clone()],
+                "connected_peers": [linked_device_npub.clone()],
+                "mesh_peers": [],
+                "peer_statuses": [{
+                    "npub": linked_device_npub.clone(),
+                    "transport_addr": "udp:10.44.1.2:2121",
+                    "transport_type": "udp",
+                    "srtt_ms": 31,
+                    "packets_sent": 11,
+                    "packets_recv": 13,
+                    "bytes_sent": 2048,
+                    "bytes_recv": 4096,
+                }],
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = run_json(owner_dir.path(), &["status"]);
+    let linked_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["device_npub"] == linked_device_npub)
+        .expect("linked device peer");
+    assert_eq!(linked_peer["fips_online"], true);
+    assert_eq!(linked_peer["fips_online_via"], "direct");
+    assert_eq!(linked_peer["fips_transport_type"], "udp");
+    assert_eq!(linked_peer["fips_transport_addr"], "udp:10.44.1.2:2121");
+    assert_eq!(linked_peer["fips_srtt_ms"], 31);
+    assert_eq!(linked_peer["fips_ping_ms"], 31);
+    assert_eq!(linked_peer["fips_packets_sent"], 11);
+    assert_eq!(linked_peer["fips_packets_recv"], 13);
+    assert_eq!(linked_peer["fips_bytes_sent"], 2048);
+    assert_eq!(linked_peer["fips_bytes_recv"], 4096);
 }
 
 #[test]
@@ -612,6 +701,11 @@ fn status_drops_stale_fips_mesh_peers() {
                 "authorized_peers": [linked_device_npub.clone()],
                 "connected_peers": [linked_device_npub.clone()],
                 "mesh_peers": [linked_device_npub.clone()],
+                "peer_statuses": [{
+                    "npub": linked_device_npub.clone(),
+                    "transport_type": "udp",
+                    "srtt_ms": 19,
+                }],
             },
         }))
         .unwrap(),
@@ -623,6 +717,7 @@ fn status_drops_stale_fips_mesh_peers() {
     assert_eq!(fips["fresh"], false);
     assert_eq!(fips["connected_peers"], serde_json::json!([]));
     assert_eq!(fips["mesh_peers"], serde_json::json!([]));
+    assert_eq!(fips["peer_statuses"], serde_json::json!([]));
     let linked_peer = status["peers"]
         .as_array()
         .unwrap()

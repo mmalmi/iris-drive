@@ -34,7 +34,9 @@ final class IrisDriveIOSUITests: XCTestCase {
             XCTAssertEqual(owner.value as? String, invite)
         }
 
-        XCTAssertTrue(app.staticTexts["Waiting for approval"].waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["awaitingApprovalView"].waitForExistence(timeout: 15)
+        )
     }
 
     func testCreateProfileFromWelcome() throws {
@@ -44,6 +46,13 @@ final class IrisDriveIOSUITests: XCTestCase {
         app.buttons["createProfileSubmit"].tap()
 
         XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 15))
+    }
+
+    func testApprovedLinkedDeviceLeavesWaiting() throws {
+        let app = launchApp()
+
+        XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 45))
+        XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
     }
 
     func testAddLinkedDeviceFromDevices() throws {
@@ -70,7 +79,7 @@ final class IrisDriveIOSUITests: XCTestCase {
     private func launchApp() -> XCUIApplication {
         let app = XCUIApplication()
         for (key, value) in ProcessInfo.processInfo.environment
-            where key.hasPrefix("IRIS_DRIVE_UI_TEST_") {
+            where key.hasPrefix("IRIS_DRIVE_UI_TEST_") || key.hasPrefix("IRIS_DRIVE_FIPS_") {
             app.launchEnvironment[key] = value
         }
         app.launch()

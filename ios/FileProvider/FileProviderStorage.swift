@@ -4,30 +4,27 @@ import UniformTypeIdentifiers
 
 enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
-    private static let providerStateFileName = "ios-provider-state.json"
     private static let providerSnapshotFileName = "ios-provider-snapshot.json"
     private static let debugLogFileName = "ios-fileprovider-extension.log"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
-    private static let lock = NSLock()
 
-    private struct ProviderState: Codable {
+    private struct ProviderState: Decodable {
         var anchor: String
         var entries: [ProviderEntry]
-
-        static var empty: ProviderState {
-            ProviderState(anchor: "empty", entries: [])
-        }
     }
 
-    private struct ProviderEntry: Codable {
+    private struct ProviderEntry: Decodable {
         var path: String
         var kind: String
         var size: UInt64
-        var version: String
-        var contentBase64: String?
-        var createdAt: Date
-        var modifiedAt: Date
+        var version: String?
+    }
+
+    private struct ProviderList: Decodable {
+        var anchor: String?
+        var entries: [ProviderEntry]
+        var error: String?
     }
 
     private struct ProviderSnapshot: Codable {
@@ -72,18 +69,16 @@ enum FileProviderStorage {
     }
 
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
+        let state = loadStateForEnumeration()
         if identifier == .rootContainer || identifier == .workingSet {
-            return .root(anchor: loadState().anchor)
+            return .root(anchor: state.anchor)
         }
         if identifier == .trashContainer {
-            return .trash(anchor: loadState().anchor)
+            return .trash(anchor: state.anchor)
         }
-        let state = loadState()
         guard let path = path(for: identifier),
               let entry = state.entries.first(where: { $0.path == path })
-        else {
-            return nil
-        }
+        else { return nil }
         return item(for: entry, anchor: state.anchor)
     }
 
@@ -115,7 +110,7 @@ enum FileProviderStorage {
             return []
         }
         guard let parent = path(for: containerIdentifier) else { return [] }
-        let state = loadState()
+        let state = loadStateForEnumeration()
         return state.entries
             .filter { parentPath(for: $0.path) == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -123,7 +118,7 @@ enum FileProviderStorage {
     }
 
     static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
-        let state = loadState()
+        let state = loadStateForEnumeration()
         var items = [FileProviderItem.root(anchor: state.anchor), FileProviderItem.trash(anchor: state.anchor)]
         items.append(contentsOf: state.entries.map { item(for: $0, anchor: state.anchor) })
         return (items, syncAnchor(for: state.anchor))
@@ -139,7 +134,7 @@ enum FileProviderStorage {
     }
 
     static func currentProviderAnchor() -> NSFileProviderSyncAnchor {
-        syncAnchor(for: loadState().anchor)
+        syncAnchor(for: loadStateForEnumeration().anchor)
     }
 
     static func recordSnapshot(items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
@@ -156,15 +151,29 @@ enum FileProviderStorage {
     }
 
     static func createItem(template: NSFileProviderItem, contents: URL?) throws -> FileProviderItem {
-        try mutateState { state in
-            let parent = path(for: template.parentItemIdentifier) ?? ""
-            let destination = joinedPath(parent: parent, name: template.filename)
-            state.entries.removeAll { $0.path == destination }
-            let entry = try entry(for: destination, template: template, contents: contents)
-            state.entries.append(entry)
-            state.anchor = newAnchor()
-            return item(for: entry, anchor: state.anchor)
+        let parent = path(for: template.parentItemIdentifier) ?? ""
+        let destination = joinedPath(parent: parent, name: template.filename)
+        if (template.contentType ?? .data).conforms(to: .folder) {
+            try runProviderMutation(
+                IrisDriveNativeProvider.mkdir(dataDir: baseDirectory.path, path: destination)
+            )
+        } else {
+            let source: URL
+            if let contents {
+                source = contents
+            } else {
+                source = try emptyTemporaryFile()
+            }
+            try runProviderMutation(
+                IrisDriveNativeProvider.write(
+                    dataDir: baseDirectory.path,
+                    path: destination,
+                    sourcePath: source.path
+                )
+            )
         }
+        signalProviderChanged()
+        return optimisticItem(for: destination, template: template, contents: contents)
     }
 
     static func importSharedFile(
@@ -172,26 +181,17 @@ enum FileProviderStorage {
         contentType: UTType,
         contents: Data
     ) throws {
-        try mutateState { state in
-            let destination = uniquePath(
-                in: state,
-                parent: "",
-                name: sanitizedFileName(displayName, contentType: contentType)
+        let source = try temporaryDirectory()
+            .appendingPathComponent(UUID().uuidString, isDirectory: false)
+        try contents.write(to: source)
+        try runProviderMutation(
+            IrisDriveNativeProvider.importSharedFile(
+                dataDir: baseDirectory.path,
+                displayName: sanitizedFileName(displayName, contentType: contentType),
+                sourcePath: source.path
             )
-            let now = Date()
-            state.entries.append(
-                ProviderEntry(
-                    path: destination,
-                    kind: "file",
-                    size: UInt64(contents.count),
-                    version: newAnchor(),
-                    contentBase64: contents.base64EncodedString(),
-                    createdAt: now,
-                    modifiedAt: now
-                )
-            )
-            state.anchor = newAnchor()
-        }
+        )
+        signalProviderChanged()
     }
 
     static func modifyItem(
@@ -207,96 +207,88 @@ enum FileProviderStorage {
             try deleteItem(identifier: item.itemIdentifier)
             return nil
         }
-        return try mutateState { state in
-            guard let index = state.entries.firstIndex(where: { $0.path == original }) else {
-                throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
-            }
-            let parent = changedFields.contains(.parentItemIdentifier)
-                ? (path(for: item.parentItemIdentifier) ?? "")
-                : parentPath(for: original)
-            let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
-            let destination = joinedPath(parent: parent, name: name)
-            var entry = state.entries[index]
-            if entry.kind == "directory" && destination != original {
-                renameChildren(in: &state, from: original, to: destination)
-            }
-            entry.path = destination
-            entry.version = newAnchor()
-            entry.modifiedAt = Date()
-            if let contents, entry.kind != "directory" {
-                let data = try Data(contentsOf: contents)
-                entry.size = UInt64(data.count)
-                entry.contentBase64 = data.base64EncodedString()
-            }
-            state.entries[index] = entry
-            state.anchor = newAnchor()
-            return self.item(for: entry, anchor: state.anchor)
+        let parent = changedFields.contains(.parentItemIdentifier)
+            ? (path(for: item.parentItemIdentifier) ?? "")
+            : parentPath(for: original)
+        let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
+        let destination = joinedPath(parent: parent, name: name)
+        if destination != original {
+            try runProviderMutation(
+                IrisDriveNativeProvider.rename(
+                    dataDir: baseDirectory.path,
+                    oldPath: original,
+                    newPath: destination
+                )
+            )
         }
+        if let contents, !(item.contentType ?? .data).conforms(to: .folder) {
+            try runProviderMutation(
+                IrisDriveNativeProvider.write(
+                    dataDir: baseDirectory.path,
+                    path: destination,
+                    sourcePath: contents.path
+                )
+            )
+        }
+        signalProviderChanged()
+        return optimisticItem(for: destination, template: item, contents: contents)
     }
 
     static func deleteItem(identifier: NSFileProviderItemIdentifier) throws {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
-        try mutateState { state in
-            let prefix = "\(path)/"
-            state.entries.removeAll { $0.path == path || $0.path.hasPrefix(prefix) }
-            state.anchor = newAnchor()
-            return ()
-        }
+        try runProviderMutation(
+            IrisDriveNativeProvider.delete(dataDir: baseDirectory.path, path: path)
+        )
+        signalProviderChanged()
     }
 
     static func contentsURL(for identifier: NSFileProviderItemIdentifier) throws -> URL {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
-        let state = loadState()
-        guard let entry = state.entries.first(where: { $0.path == path && $0.kind != "directory" }),
-              let contentBase64 = entry.contentBase64,
-              let data = Data(base64Encoded: contentBase64)
+        let backed = try loadProviderBackedState()
+        guard let entry = backed.entries.first(where: { $0.path == path && $0.kind != "directory" })
         else {
             throw providerError("content unavailable")
         }
         let directory = try temporaryDirectory()
-        let url = directory
+        let output = directory
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
             .appendingPathExtension((path as NSString).pathExtension)
-        try data.write(to: url)
-        return url
+        try runProviderMutation(
+            IrisDriveNativeProvider.read(
+                dataDir: baseDirectory.path,
+                path: entry.path,
+                outputPath: output.path
+            )
+        )
+        return output
     }
 
-    private static func loadState() -> ProviderState {
-        lock.lock()
-        defer { lock.unlock() }
-        return loadStateUnlocked()
-    }
-
-    private static func mutateState<T>(_ body: (inout ProviderState) throws -> T) throws -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        var state = loadStateUnlocked()
-        let value = try body(&state)
-        try saveStateUnlocked(state)
-        return value
-    }
-
-    private static func loadStateUnlocked() -> ProviderState {
-        guard let data = try? Data(contentsOf: stateURL()) else {
-            return .empty
+    private static func loadStateForEnumeration() -> ProviderState {
+        do {
+            return try loadProviderBackedState()
+        } catch {
+            debugLog("provider list unavailable: \(error)")
+            return ProviderState(anchor: "bootstrap", entries: [])
         }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let state = try? decoder.decode(ProviderState.self, from: data) else {
-            return .empty
-        }
-        return state
     }
 
-    private static func saveStateUnlocked(_ state: ProviderState) throws {
-        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(state).write(to: stateURL(), options: [.atomic])
+    private static func loadProviderBackedState() throws -> ProviderState {
+        let json = IrisDriveNativeProvider.list(dataDir: baseDirectory.path)
+        guard let data = json.data(using: .utf8) else {
+            throw providerError("provider returned invalid text")
+        }
+        let list = try JSONDecoder().decode(ProviderList.self, from: data)
+        if let error = list.error, !error.isEmpty {
+            throw providerError(error)
+        }
+        guard let anchor = list.anchor, !anchor.isEmpty else {
+            throw providerError("provider root unavailable")
+        }
+        return ProviderState(anchor: anchor, entries: list.entries)
     }
 
     private static func item(for entry: ProviderEntry, anchor: String) -> FileProviderItem {
@@ -310,43 +302,31 @@ enum FileProviderStorage {
             filename: fileName(for: entry.path),
             contentType: type,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
-            created: entry.createdAt,
-            modified: entry.modifiedAt,
-            versionIdentifier: "\(anchor):\(entry.version):\(entry.path):\(entry.size)"
+            created: nil,
+            modified: nil,
+            versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size)"
         )
     }
 
-    private static func entry(
+    private static func optimisticItem(
         for path: String,
         template: NSFileProviderItem,
         contents: URL?
-    ) throws -> ProviderEntry {
+    ) -> FileProviderItem {
         let isDirectory = (template.contentType ?? .data).conforms(to: .folder)
-        let data = try contents.map { try Data(contentsOf: $0) } ?? Data()
-        let now = Date()
-        return ProviderEntry(
-            path: path,
-            kind: isDirectory ? "directory" : "file",
-            size: isDirectory ? 0 : UInt64(data.count),
-            version: newAnchor(),
-            contentBase64: isDirectory ? nil : data.base64EncodedString(),
-            createdAt: now,
-            modifiedAt: now
+        let contentType = isDirectory
+            ? UTType.folder
+            : UTType(filenameExtension: (path as NSString).pathExtension) ?? .data
+        return FileProviderItem(
+            itemIdentifier: identifier(for: path),
+            parentItemIdentifier: identifier(for: parentPath(for: path)),
+            filename: fileName(for: path),
+            contentType: contentType,
+            itemSize: isDirectory ? nil : NSNumber(value: fileSize(at: contents)),
+            created: Date(),
+            modified: Date(),
+            versionIdentifier: "optimistic:\(path):\(UUID().uuidString)"
         )
-    }
-
-    private static func renameChildren(in state: inout ProviderState, from: String, to: String) {
-        let prefix = "\(from)/"
-        for index in state.entries.indices where state.entries[index].path.hasPrefix(prefix) {
-            let suffix = state.entries[index].path.dropFirst(prefix.count)
-            state.entries[index].path = "\(to)/\(suffix)"
-            state.entries[index].version = newAnchor()
-            state.entries[index].modifiedAt = Date()
-        }
-    }
-
-    private static func stateURL() -> URL {
-        baseDirectory.appendingPathComponent(providerStateFileName, isDirectory: false)
     }
 
     private static func snapshotURL() -> URL {
@@ -359,12 +339,25 @@ enum FileProviderStorage {
         return directory
     }
 
-    private static func syncAnchor(for anchor: String) -> NSFileProviderSyncAnchor {
-        NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
+    private static func emptyTemporaryFile() throws -> URL {
+        let url = try temporaryDirectory()
+            .appendingPathComponent(UUID().uuidString, isDirectory: false)
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+        return url
     }
 
-    private static func newAnchor() -> String {
-        "\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString)"
+    private static func fileSize(at url: URL?) -> UInt64 {
+        guard let url,
+              let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize
+        else {
+            return 0
+        }
+        return UInt64(size)
+    }
+
+    private static func syncAnchor(for anchor: String) -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
     }
 
     private static func joinedPath(parent: String, name: String) -> String {
@@ -375,22 +368,28 @@ enum FileProviderStorage {
         return "\(parent)/\(cleanName)"
     }
 
-    private static func uniquePath(in state: ProviderState, parent: String, name: String) -> String {
-        let existing = Set(state.entries.map(\.path))
-        var candidate = joinedPath(parent: parent, name: name)
-        if !existing.contains(candidate) {
-            return candidate
+    private static func runProviderMutation(_ json: String) throws {
+        guard let data = json.data(using: .utf8) else {
+            throw providerError("provider returned invalid text")
         }
+        if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let error = object["error"] as? String,
+           !error.isEmpty {
+            throw providerError(error)
+        }
+    }
 
-        let nsName = name as NSString
-        let extensionWithDot = nsName.pathExtension.isEmpty ? "" : ".\(nsName.pathExtension)"
-        let basename = nsName.deletingPathExtension
-        var index = 2
-        while existing.contains(candidate) {
-            candidate = joinedPath(parent: parent, name: "\(basename) (\(index))\(extensionWithDot)")
-            index += 1
+    private static func signalProviderChanged() {
+        NSFileProviderManager.default.signalEnumerator(for: .rootContainer) { error in
+            if let error {
+                debugLog("signal root failed: \(error)")
+            }
         }
-        return candidate
+        NSFileProviderManager.default.signalEnumerator(for: .workingSet) { error in
+            if let error {
+                debugLog("signal working set failed: \(error)")
+            }
+        }
     }
 
     private static func sanitizedFileName(_ displayName: String, contentType: UTType) -> String {

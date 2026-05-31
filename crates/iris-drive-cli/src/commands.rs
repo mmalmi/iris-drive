@@ -260,6 +260,9 @@ pub(crate) struct UpdateArgs {
 pub(crate) enum DevicesCmd {
     /// Print an invite URL for this owner-capable device.
     Invite,
+    /// Reset this admin device's invite URL by rotating its invite secret.
+    #[command(name = "reset-invite")]
+    ResetInvite,
     /// Request linking this device using an owner/admin invite URL or owner pubkey.
     #[command(alias = "ask", alias = "connect", alias = "link")]
     Request {

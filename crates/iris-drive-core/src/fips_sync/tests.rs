@@ -414,6 +414,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         "nsec1example".to_string(),
         IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
         vec!["wss://relay.example".to_string()],
+        &AppConfig::default(),
         &settings,
     );
 
@@ -554,6 +555,7 @@ fn endpoint_options_keep_native_udp_private_by_default() {
         "nsec1example".to_string(),
         IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
         Vec::new(),
+        &AppConfig::default(),
         &settings,
     );
 
@@ -562,6 +564,39 @@ fn endpoint_options_keep_native_udp_private_by_default() {
     assert!(!options.udp_public);
     assert!(options.udp_bind_addr.is_none());
     assert!(options.udp_external_addr.is_none());
+}
+
+#[test]
+fn admin_endpoint_options_allow_open_device_link_requests() {
+    let settings = FipsTransportSettings::default();
+    let config = AppConfig {
+        account: Some(crate::AccountState {
+            owner_pubkey: "aa".repeat(32),
+            device_pubkey: "aa".repeat(32),
+            device_link_secret: "link-secret".into(),
+            has_owner_signing_authority: true,
+            authorization_state: crate::DeviceAuthorizationState::Authorized,
+            device_label: None,
+            app_keys: None,
+            app_keys_event: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        Vec::new(),
+        &config,
+        &settings,
+    );
+
+    assert_eq!(
+        options.open_discovery_max_pending,
+        DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING
+    );
 }
 
 #[test]

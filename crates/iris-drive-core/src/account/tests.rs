@@ -163,6 +163,42 @@ fn inbound_device_link_request_requires_link_secret() {
 }
 
 #[test]
+fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    let owner = acct.state.owner_pubkey.clone();
+    let old_secret = acct.state.device_link_secret.clone();
+    let device = fresh_device_pubkey();
+
+    acct.state
+        .record_inbound_device_link_request(
+            &owner,
+            &device,
+            Some("phone".to_string()),
+            &old_secret,
+            10,
+        )
+        .unwrap();
+
+    assert!(acct.state.reset_device_link_secret());
+    assert_ne!(acct.state.device_link_secret, old_secret);
+    assert!(acct.state.inbound_device_link_requests.is_empty());
+
+    assert!(
+        !acct
+            .state
+            .record_inbound_device_link_request(
+                &owner,
+                &fresh_device_pubkey(),
+                Some("old".to_string()),
+                &old_secret,
+                11,
+            )
+            .unwrap()
+    );
+}
+
+#[test]
 fn link_with_invalid_pubkey_errors() {
     let dir = tempdir().unwrap();
     let result = Account::link(dir.path(), "not-a-real-pubkey".into(), None);

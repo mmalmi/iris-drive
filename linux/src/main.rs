@@ -61,6 +61,7 @@ struct Ui {
     account_authorization: gtk::Label,
     approve_box: gtk::Box,
     approve_device_button: gtk::Button,
+    reset_invite_button: gtk::Button,
     notice: gtk::Label,
     drives: gtk::ListBox,
     peers: gtk::ListBox,

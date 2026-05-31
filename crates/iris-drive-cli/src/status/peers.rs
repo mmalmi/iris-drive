@@ -26,6 +26,8 @@ pub(crate) fn peer_statuses(
         string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
     let authorized_fips =
         string_set_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
+    let fips_peer_statuses =
+        fips_peer_statuses_by_npub(fips_status.and_then(|status| status.get("peer_statuses")));
     let block_sync_by_root = daemon_status
         .and_then(|status| status.get("block_sync_by_root"))
         .filter(|value| value.is_object());
@@ -44,6 +46,7 @@ pub(crate) fn peer_statuses(
             let is_current_device = device.pubkey == account.device_pubkey;
             let fips_direct_online = connected_fips.contains(&device_npub);
             let fips_mesh_online = mesh_fips.contains(&device_npub);
+            let fips_peer_status = fips_peer_statuses.get(&device_npub);
             let fips_online = if is_current_device {
                 daemon_running
             } else {
@@ -75,6 +78,30 @@ pub(crate) fn peer_statuses(
                 "fips_direct_online": fips_direct_online,
                 "fips_mesh_online": fips_mesh_online,
                 "fips_online_via": fips_online_via,
+                "fips_transport_type": fips_peer_status
+                    .and_then(|status| status.get("transport_type"))
+                    .and_then(Value::as_str),
+                "fips_transport_addr": fips_peer_status
+                    .and_then(|status| status.get("transport_addr"))
+                    .and_then(Value::as_str),
+                "fips_srtt_ms": fips_peer_status
+                    .and_then(|status| status.get("srtt_ms"))
+                    .and_then(Value::as_u64),
+                "fips_ping_ms": fips_peer_status
+                    .and_then(|status| status.get("srtt_ms"))
+                    .and_then(Value::as_u64),
+                "fips_packets_sent": fips_peer_status
+                    .and_then(|status| status.get("packets_sent"))
+                    .and_then(Value::as_u64),
+                "fips_packets_recv": fips_peer_status
+                    .and_then(|status| status.get("packets_recv"))
+                    .and_then(Value::as_u64),
+                "fips_bytes_sent": fips_peer_status
+                    .and_then(|status| status.get("bytes_sent"))
+                    .and_then(Value::as_u64),
+                "fips_bytes_recv": fips_peer_status
+                    .and_then(|status| status.get("bytes_recv"))
+                    .and_then(Value::as_u64),
                 "has_root": root.is_some(),
                 "root_cid": root_cid,
                 "root_private": root_private,
@@ -87,4 +114,21 @@ pub(crate) fn peer_statuses(
             })
         })
         .collect()
+}
+
+fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> {
+    value
+        .and_then(Value::as_array)
+        .map(|statuses| {
+            statuses
+                .iter()
+                .filter_map(|status| {
+                    status
+                        .get("npub")
+                        .and_then(Value::as_str)
+                        .map(|npub| (npub.to_owned(), status.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

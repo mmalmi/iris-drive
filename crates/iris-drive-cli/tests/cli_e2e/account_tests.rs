@@ -434,6 +434,74 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
 }
 
 #[test]
+fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let old_invite = owner["device_link_invite"]["url"].as_str().unwrap();
+    let linked = run_json(
+        linked_dir.path(),
+        &["devices", "request", old_invite, "--label", "phone"],
+    );
+    let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let linked_device = linked_config
+        .account
+        .as_ref()
+        .unwrap()
+        .device_pubkey
+        .clone();
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.account.as_mut().unwrap();
+    let owner_hex = state.owner_pubkey.clone();
+    let old_secret = state.device_link_secret.clone();
+    state
+        .record_inbound_device_link_request(
+            &owner_hex,
+            &linked_device,
+            Some("phone".to_string()),
+            &old_secret,
+            linked["device_link_request"]["requested_at"]
+                .as_u64()
+                .unwrap(),
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+    let requests = run_json(owner_dir.path(), &["devices", "requests"]);
+    assert_eq!(requests["inbound"].as_array().unwrap().len(), 1);
+
+    let reset = run_json(owner_dir.path(), &["devices", "reset-invite"]);
+    let new_invite = reset["device_link_invite"]["url"].as_str().unwrap();
+    assert_ne!(new_invite, old_invite);
+    assert!(
+        reset["inbound_device_link_requests"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.account.as_mut().unwrap();
+    assert_ne!(state.device_link_secret, old_secret);
+    assert!(
+        !state
+            .record_inbound_device_link_request(
+                &owner_hex,
+                &linked_device,
+                Some("phone".to_string()),
+                &old_secret,
+                999,
+            )
+            .unwrap()
+    );
+
+    let invite = run_json(owner_dir.path(), &["devices", "invite"]);
+    assert_eq!(invite["url"].as_str(), Some(new_invite));
+}
+
+#[test]
 fn devices_request_manual_owner_and_admin_device_queues_fips_request() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();

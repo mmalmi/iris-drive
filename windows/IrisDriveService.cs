@@ -70,6 +70,11 @@ public sealed class IrisDriveService
         await RunAsync(BuildLabelArgs(new[] { "approve", device.Trim() }, label));
     }
 
+    public Task ResetInviteAsync()
+    {
+        return RunAsync("devices", "reset-invite");
+    }
+
     public Task RevokeDeviceAsync(string device)
     {
         if (string.IsNullOrWhiteSpace(device))

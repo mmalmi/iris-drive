@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
@@ -50,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.StateFlow
@@ -133,6 +136,7 @@ internal fun IrisDriveAndroidApp(
     onOpenUrl: (String) -> Unit,
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
+    onResetInvite: () -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -195,6 +199,7 @@ internal fun IrisDriveAndroidApp(
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
+                    onResetInvite = onResetInvite,
                     onRevokeDevice = onRevokeDevice,
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
@@ -391,6 +396,16 @@ private fun SetupContent(
                         modifier = Modifier.fillMaxWidth().testTag("createUsername"),
                         singleLine = true,
                         label = { Text("Username (optional)") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (createUsername.isBlank()) {
+                                    onCreateProfile()
+                                } else {
+                                    route = SetupRoute.CreatePhoto
+                                }
+                            },
+                        ),
                     )
                     SetupPrimaryButton(
                         text = if (createUsername.isBlank()) "Create profile" else "Continue",
@@ -432,6 +447,14 @@ private fun SetupContent(
                         modifier = Modifier.fillMaxWidth().testTag("restoreSecret"),
                         singleLine = true,
                         label = { Text("Secret key") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (restoreSecret.isNotBlank()) {
+                                    onRestoreProfile(restoreSecret)
+                                }
+                            },
+                        ),
                     )
                     SetupPrimaryButton(
                         text = "Sign in",
@@ -455,6 +478,10 @@ private fun SetupContent(
                         modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
                         singleLine = true,
                         label = { Text("Owner public key or invite link") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = { submitLinkOwner(linkOwner, force = true) },
+                        ),
                     )
                     SetupPrimaryButton(
                         text = "Link device",
@@ -549,6 +576,7 @@ private fun DriveContent(
     onOpenSnapshotLink: () -> Unit,
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
+    onResetInvite: () -> Unit,
     onRevokeDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -598,6 +626,7 @@ private fun DriveContent(
                 canApprove = state.account?.hasOwnerSigningAuthority == true,
                 onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
+                onResetInvite = onResetInvite,
                 onRevokeDevice = onRevokeDevice,
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,

@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let resetDomain =
                     self.resetFileProviderDomainOnStart && !self.startupFileProviderDomainResetDone
                 self.startupFileProviderDomainResetDone = true
-                let completion: (FileProviderDomainState) -> Void = { state in
+                let finish: (FileProviderDomainState) -> Void = { state in
                     DispatchQueue.main.async {
                         self.fileProviderRegistrationInFlight = false
                         self.fileProviderDomainState = state
@@ -120,9 +120,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 key: "domain-registered"
                             )
                         } else if state == .disabled {
-                            self.updateStatus("Enable Iris Drive in Finder")
+                            self.updateStatus("FileProvider unavailable")
                         }
                     }
+                }
+                let completion: (FileProviderDomainState) -> Void = { state in
+                    if state == .disabled {
+                        irisDriveDebugLog("Iris Drive FileProvider domain disabled; resetting")
+                        resetFileProviderDomain(
+                            reason: "domain disabled",
+                            runtime: runtime,
+                            finish
+                        )
+                        return
+                    }
+                    finish(state)
                 }
                 if resetDomain {
                     resetFileProviderDomain(
@@ -435,6 +447,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func resetRelays() {
         mutateRelayConfig(arguments: ["relays", "reset"])
+    }
+
+    func resetInvite() {
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus("Resetting invite")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(
+                    idrive,
+                    arguments: ["devices", "reset-invite"],
+                    paths: paths
+                )
+                DispatchQueue.main.async {
+                    self.updateStatus("Invite reset")
+                    self.refreshStatus()
+                }
+            } catch {
+                NSLog("Iris Drive invite reset failed: \(error)")
+                self.updateStatus("Invite reset failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
     }
 
     func addBackupTarget(_ value: String, label: String) {
@@ -931,7 +969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self else { return }
                 self.fileProviderDomainState = state
                 if state == .disabled {
-                    self.handleFileProviderDisabled()
+                    self.resetDisabledFileProviderDomainForOpen(runtime: runtime)
                     return
                 }
                 guard state == .registered else {
@@ -987,10 +1025,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSSound.beep()
     }
 
-    private func handleFileProviderDisabled() {
-        updateStatus("Enable Iris Drive in Finder")
-        NSLog("Iris Drive FileProvider open skipped: domain disabled by macOS")
-        NSSound.beep()
+    private func resetDisabledFileProviderDomainForOpen(runtime: FileProviderRuntimeConfig) {
+        updateStatus("Repairing FileProvider")
+        NSLog("Iris Drive FileProvider domain disabled; resetting before open")
+        resetFileProviderDomain(reason: "open requested while disabled", runtime: runtime) { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.fileProviderDomainState = state
+                guard state == .registered else {
+                    self.handleFileProviderOpenFailure("domain disabled")
+                    return
+                }
+                self.openFileProviderDriveFolder()
+            }
+        }
     }
 
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
@@ -1706,6 +1754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 rosterConnectedPeerCount: authorizedConnected,
                 connectedPeerCount: connectedPeers.count,
                 otherPeerCount: max(0, connectedPeers.count - authorizedConnected),
+                peerStatuses: (fips?["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init),
                 error: json["fips_block_sync_error"] as? String
             )
             self.updateLinkMenuState()

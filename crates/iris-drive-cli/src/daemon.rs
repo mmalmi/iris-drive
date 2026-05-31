@@ -317,6 +317,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "mesh_peers": sync.mesh_peer_ids().await,
         "authorized_peers": sync.authorized_peer_ids().await,
         "connected_peers": sync.connected_peer_ids().await,
+        "peer_statuses": sync.fips_peer_statuses().await,
         "relay_statuses": sync.fips_relay_statuses().await,
     }))
 }

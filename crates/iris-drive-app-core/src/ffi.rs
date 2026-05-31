@@ -1,11 +1,28 @@
-use std::path::Path;
+#[cfg(not(test))]
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use anyhow::Context;
+use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+#[cfg(not(test))]
+use iris_drive_core::device_link_transport::{
+    DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
+    DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
+    pending_device_link_request_frame,
+};
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, DeviceRole, Drive};
+#[cfg(not(test))]
+use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
+use serde::Serialize;
+use serde_json::json;
 
 use crate::actions::NativeAppAction;
 use crate::state::{
@@ -14,6 +31,13 @@ use crate::state::{
 };
 
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
+const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
+#[cfg(not(test))]
+const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
+#[cfg(not(test))]
+const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 10;
+#[cfg(not(test))]
+const DEVICE_LINK_EXCHANGE_TICK_SECS: u64 = 1;
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
@@ -26,6 +50,7 @@ impl FfiApp {
     #[allow(clippy::needless_pass_by_value)]
     #[must_use]
     pub fn new(data_dir: String, app_version: String) -> Arc<Self> {
+        install_rustls_crypto_provider();
         Arc::new(Self {
             runtime: Mutex::new(NativeAppRuntime::new(data_dir, app_version)),
         })
@@ -71,6 +96,8 @@ struct NativeAppRuntime {
     state: NativeAppState,
     data_dir: String,
     app_version: String,
+    #[cfg(not(test))]
+    device_link_exchange_running: Arc<AtomicBool>,
 }
 
 impl NativeAppRuntime {
@@ -86,8 +113,11 @@ impl NativeAppRuntime {
             state,
             data_dir,
             app_version,
+            #[cfg(not(test))]
+            device_link_exchange_running: Arc::new(AtomicBool::new(false)),
         };
         runtime.reload_from_disk();
+        runtime.start_device_link_exchange_if_needed();
         runtime
     }
 
@@ -119,6 +149,7 @@ impl NativeAppRuntime {
             NativeAppAction::ApproveDevice { request, label } => {
                 self.approve_device(&request, &label);
             }
+            NativeAppAction::ResetInvite => self.reset_invite(),
             NativeAppAction::RevokeDevice { device_pubkey } => {
                 self.revoke_device(&device_pubkey);
             }
@@ -137,8 +168,15 @@ impl NativeAppRuntime {
             NativeAppAction::StopSync => self.set_sync_running(false),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
+            NativeAppAction::ImportFile {
+                display_name,
+                source_path,
+            } => {
+                self.import_file(&display_name, &source_path);
+            }
         }
         self.reload_from_disk_preserving_error();
+        self.start_device_link_exchange_if_needed();
     }
 
     fn create_profile(&mut self, device_label: &str) {
@@ -285,6 +323,28 @@ impl NativeAppRuntime {
             return;
         }
         config.account = Some(account.state);
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
+        }
+    }
+
+    fn reset_invite(&mut self) {
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let Some(state) = config.account.as_mut() else {
+            "owner profile is required to reset invites".clone_into(&mut self.state.error);
+            return;
+        };
+        if !state.can_manage_devices() {
+            "owner profile is required to reset invites".clone_into(&mut self.state.error);
+            return;
+        }
+        state.reset_device_link_secret();
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -451,6 +511,36 @@ impl NativeAppRuntime {
             .map_err(|error| format!("saving config: {error}"))
     }
 
+    fn start_device_link_exchange_if_needed(&mut self) {
+        #[cfg(not(test))]
+        {
+            let Ok(config) = self.load_config() else {
+                return;
+            };
+            let Some(state) = config.account.as_ref() else {
+                return;
+            };
+            if !device_link_exchange_needed(state) {
+                return;
+            }
+            if self
+                .device_link_exchange_running
+                .swap(true, Ordering::AcqRel)
+            {
+                return;
+            }
+
+            let data_dir = self.data_dir.clone();
+            let running = self.device_link_exchange_running.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = run_device_link_exchange(&data_dir) {
+                    tracing::warn!(error = %error, "native device-link FIPS exchange stopped");
+                }
+                running.store(false, Ordering::Release);
+            });
+        }
+    }
+
     fn reload_from_disk_preserving_error(&mut self) {
         let error = self.state.error.clone();
         self.reload_from_disk();
@@ -602,6 +692,1096 @@ impl NativeAppRuntime {
             self.state.error = format!("sync root not found: {name}");
         }
     }
+
+    fn import_file(&mut self, display_name: &str, source_path: &str) {
+        if !self.initialized() {
+            "profile is required before importing files".clone_into(&mut self.state.error);
+            return;
+        }
+        if source_path.trim().is_empty() {
+            "source file is required".clone_into(&mut self.state.error);
+            return;
+        }
+        if let Err(error) =
+            native_provider_import_shared_file(&self.data_dir, display_name, source_path)
+        {
+            self.state.error = format!("importing shared file: {error:#}");
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ProviderListEntry {
+    path: String,
+    kind: &'static str,
+    size: u64,
+    version: String,
+}
+
+pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
+    match run_native_provider_list(data_dir) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_read_json(
+    data_dir: &str,
+    path: &str,
+    output_path: &str,
+) -> serde_json::Value {
+    match run_native_provider_read(data_dir, path, output_path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_write_json(
+    data_dir: &str,
+    path: &str,
+    source_path: &str,
+) -> serde_json::Value {
+    match run_native_provider_write(data_dir, path, source_path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_mkdir_json(data_dir: &str, path: &str) -> serde_json::Value {
+    match run_native_provider_mkdir(data_dir, path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_delete_json(data_dir: &str, path: &str) -> serde_json::Value {
+    match run_native_provider_delete(data_dir, path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_rename_json(
+    data_dir: &str,
+    old_path: &str,
+    new_path: &str,
+) -> serde_json::Value {
+    match run_native_provider_rename(data_dir, old_path, new_path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_import_shared_file_json(
+    data_dir: &str,
+    display_name: &str,
+    source_path: &str,
+) -> serde_json::Value {
+    match native_provider_import_shared_file(data_dir, display_name, source_path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+fn native_provider_import_shared_file(
+    data_dir: &str,
+    display_name: &str,
+    source_path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let display_name = sanitized_provider_file_name(display_name);
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        let entries = provider_entries(&provider).await?;
+        let path = unique_provider_path(&entries, &display_name);
+        let bytes = std::fs::read(source_path)
+            .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
+        write_provider_file(&provider, &path, &bytes).await?;
+        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    })
+}
+
+fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let (_daemon, provider, visible_root) = native_provider(data_dir).await?;
+        let entries = provider_entries(&provider).await?;
+        Ok(json!({
+            "anchor": provider.anchor().await.as_str(),
+            "root_cid": visible_root.to_string(),
+            "entries": entries,
+        }))
+    })
+}
+
+fn run_native_provider_read(
+    data_dir: &str,
+    path: &str,
+    output_path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let path = normalize_provider_path(path)?;
+        let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
+        let item = provider.item(&path).await?;
+        if item.kind == ItemKind::Directory {
+            anyhow::bail!("cannot read directory: {path}");
+        }
+        let bytes = provider.read(&path, 0, item.size).await?;
+        let output = PathBuf::from(output_path);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&output, bytes).with_context(|| format!("writing {}", output.display()))?;
+        Ok(json!({
+            "path": path,
+            "output": output.display().to_string(),
+            "size": item.size,
+        }))
+    })
+}
+
+fn run_native_provider_write(
+    data_dir: &str,
+    path: &str,
+    source_path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let path = normalize_provider_path(path)?;
+        let bytes = std::fs::read(source_path)
+            .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
+        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        write_provider_file(&provider, &path, &bytes).await?;
+        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    })
+}
+
+fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let path = normalize_provider_path(path)?;
+        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        create_provider_dir(&provider, &path).await?;
+        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    })
+}
+
+fn run_native_provider_delete(data_dir: &str, path: &str) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let path = normalize_provider_path(path)?;
+        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        delete_provider_path(&provider, &path).await?;
+        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    })
+}
+
+fn run_native_provider_rename(
+    data_dir: &str,
+    old_path: &str,
+    new_path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let old_path = normalize_provider_path(old_path)?;
+        let new_path = normalize_provider_path(new_path)?;
+        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        rename_provider_path(&provider, &old_path, &new_path).await?;
+        import_provider_mutation(&mut daemon, &provider, &new_path, Some(visible_root)).await
+    })
+}
+
+fn native_provider_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    install_rustls_crypto_provider();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building native provider runtime")
+}
+
+fn install_rustls_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+async fn native_provider(
+    data_dir: &str,
+) -> anyhow::Result<(
+    iris_drive_core::Daemon,
+    HashTreeProviderFs<hashtree_fs::FsBlobStore>,
+    hashtree_core::Cid,
+)> {
+    let daemon = iris_drive_core::Daemon::open(data_dir)
+        .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
+    let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+        .await
+        .context("building provider root")?;
+    let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone())
+        .await
+        .context("opening provider root")?;
+    Ok((daemon, provider, visible.root_cid))
+}
+
+async fn provider_entries<P>(provider: &P) -> anyhow::Result<Vec<ProviderListEntry>>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let mut entries = Vec::new();
+    let mut stack = vec![String::new()];
+    while let Some(parent) = stack.pop() {
+        let mut children = provider.read_dir(&parent).await?;
+        children.sort_by(|left, right| left.name.cmp(&right.name));
+        for child in children {
+            let item = provider.item(&child.id).await?;
+            let kind = match item.kind {
+                ItemKind::Directory => {
+                    stack.push(child.id.clone());
+                    "directory"
+                }
+                ItemKind::File => "file",
+            };
+            entries.push(ProviderListEntry {
+                path: child.id,
+                kind,
+                size: item.size,
+                version: provider.anchor().await.as_str().to_owned(),
+            });
+        }
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(entries)
+}
+
+async fn import_provider_mutation<P>(
+    daemon: &mut iris_drive_core::Daemon,
+    provider: &P,
+    changed_path: &str,
+    tombstone_base_root: Option<hashtree_core::Cid>,
+) -> anyhow::Result<serde_json::Value>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let root = hashtree_core::Cid::parse(provider.anchor().await.as_str())
+        .context("reading provider root CID")?;
+    let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    let publish = publish_current_device_root_best_effort(daemon.config_dir()).await;
+    Ok(json!({
+        "path": changed_path,
+        "root_cid": report.root_cid,
+        "file_count": report.file_count,
+        "top_level_entries": report.top_level_entries,
+        "publish": publish,
+    }))
+}
+
+async fn import_provider_root_with_retry(
+    daemon: &mut iris_drive_core::Daemon,
+    root: hashtree_core::Cid,
+    tombstone_base_root: Option<hashtree_core::Cid>,
+) -> anyhow::Result<iris_drive_core::ImportReport> {
+    let mut attempt = 0;
+    loop {
+        match daemon
+            .import_visible_root_with_tombstone_base(root.clone(), tombstone_base_root.clone())
+            .await
+        {
+            Ok(report) => return Ok(report),
+            Err(error)
+                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
+                    && provider_import_error_message_is_retryable(&error.to_string()) =>
+            {
+                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+async fn publish_current_device_root_best_effort(config_dir: &Path) -> serde_json::Value {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        publish_current_device_root(config_dir),
+    )
+    .await
+    {
+        Ok(Ok(published)) => published,
+        Ok(Err(error)) => json!({"published_drive_root": false, "error": format!("{error:#}")}),
+        Err(_) => json!({"published_drive_root": false, "error": "publish timed out"}),
+    }
+}
+
+async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_json::Value> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(account) = config.account.as_ref() else {
+        return Ok(json!({"published_drive_root": false, "error": "account missing"}));
+    };
+    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
+        return Ok(json!({"published_drive_root": false, "error": "primary drive missing"}));
+    };
+    let Some(root) = drive.device_roots.get(&account.device_pubkey) else {
+        return Ok(json!({"published_drive_root": false, "error": "device root missing"}));
+    };
+    let loaded_account =
+        Account::load(account.clone(), config_dir).context("loading account keys")?;
+
+    let relays = if config.relays.is_empty() {
+        default_relays()
+    } else {
+        config.relays.clone()
+    };
+    let client = iris_drive_core::relay_sync::connect(&relays).await?;
+    let authorized_devices = authorized_device_pubkeys(account);
+    let result = iris_drive_core::relay_sync::publish_drive_root(
+        &client,
+        loaded_account.device.keys(),
+        &account.owner_pubkey,
+        &drive.drive_id,
+        root,
+        &authorized_devices,
+    )
+    .await;
+    let _ = client.disconnect().await;
+    let event_id = result?;
+    Ok(json!({
+        "published_drive_root": true,
+        "drive_root_event_id": event_id.to_hex(),
+    }))
+}
+
+fn authorized_device_pubkeys(state: &iris_drive_core::AccountState) -> Vec<String> {
+    let mut devices: Vec<String> = state
+        .app_keys
+        .as_ref()
+        .map(|snap| {
+            snap.devices
+                .iter()
+                .map(|device| device.pubkey.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !devices.contains(&state.device_pubkey) {
+        devices.push(state.device_pubkey.clone());
+    }
+    devices
+}
+
+async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_owned()).await {
+        Ok(item) if item.kind == ItemKind::Directory => {
+            delete_provider_path(provider, path).await?;
+            provider.create_file(&parent, &name).await?;
+        }
+        Ok(_) => {
+            provider.truncate(&path.to_owned(), 0).await?;
+        }
+        Err(_) => {
+            provider.create_file(&parent, &name).await?;
+        }
+    }
+    if !bytes.is_empty() {
+        provider.write(&path.to_owned(), 0, bytes).await?;
+    }
+    Ok(())
+}
+
+async fn create_provider_dir<P>(provider: &P, path: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_owned()).await {
+        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
+        Ok(_) => {
+            provider.remove(&parent, &name).await?;
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+        Err(_) => {
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+    }
+}
+
+async fn ensure_provider_dirs<P>(provider: &P, parent: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let mut current = String::new();
+    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
+        let next = if current.is_empty() {
+            segment.to_owned()
+        } else {
+            format!("{current}/{segment}")
+        };
+        match provider.item(&next).await {
+            Ok(item) if item.kind == ItemKind::Directory => {}
+            Ok(_) => {
+                provider.remove(&current, segment).await?;
+                provider.create_dir(&current, segment).await?;
+            }
+            Err(_) => {
+                provider.create_dir(&current, segment).await?;
+            }
+        }
+        current = next;
+    }
+    Ok(())
+}
+
+async fn delete_provider_path<P>(provider: &P, path: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let mut directories = Vec::new();
+    let mut stack = vec![path.to_owned()];
+    while let Some(current) = stack.pop() {
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(hashtree_provider::ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if item.kind == ItemKind::Directory {
+            directories.push(current.clone());
+            for child in provider.read_dir(&current).await? {
+                stack.push(child.id);
+            }
+        } else {
+            let (parent, name) = split_provider_path(&current)?;
+            match provider.remove(&parent, &name).await {
+                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    for directory in directories.into_iter().rev() {
+        let (parent, name) = split_provider_path(&directory)?;
+        match provider.remove(&parent, &name).await {
+            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+async fn rename_provider_path<P>(provider: &P, old_path: &str, new_path: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (old_parent, old_name) = split_provider_path(old_path)?;
+    let (new_parent, new_name) = split_provider_path(new_path)?;
+    ensure_provider_dirs(provider, &new_parent).await?;
+    if provider.item(&new_path.to_owned()).await.is_ok() {
+        delete_provider_path(provider, new_path).await?;
+    }
+    provider
+        .rename(&old_parent, &old_name, &new_parent, &new_name)
+        .await?;
+    Ok(())
+}
+
+fn split_provider_path(path: &str) -> anyhow::Result<(String, String)> {
+    let path = normalize_provider_path(path)?;
+    let Some((parent, name)) = path.rsplit_once('/') else {
+        return Ok((String::new(), path));
+    };
+    Ok((parent.to_owned(), name.to_owned()))
+}
+
+fn normalize_provider_path(path: &str) -> anyhow::Result<String> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        anyhow::bail!("provider path is required");
+    }
+    let mut segments = Vec::new();
+    for segment in trimmed.split('/') {
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('\\')
+            || segment.contains(':')
+        {
+            anyhow::bail!("unsafe provider path: {path}");
+        }
+        segments.push(segment);
+    }
+    Ok(segments.join("/"))
+}
+
+fn sanitized_provider_file_name(display_name: &str) -> String {
+    let mut name = display_name
+        .split(['/', ':', '\\'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>()
+        .join("_");
+    if name.is_empty() {
+        "Shared file".clone_into(&mut name);
+    }
+    name
+}
+
+fn unique_provider_path(entries: &[ProviderListEntry], name: &str) -> String {
+    let existing = entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut candidate = name.to_owned();
+    if !existing.contains(candidate.as_str()) {
+        return candidate;
+    }
+
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Shared file");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let mut index = 2;
+    while existing.contains(candidate.as_str()) {
+        candidate = format!("{stem} ({index}){extension}");
+        index += 1;
+    }
+    candidate
+}
+
+fn provider_import_error_message_is_retryable(message: &str) -> bool {
+    message.contains("block not found")
+        || message.contains("missing block")
+        || message.contains("No such file or directory")
+}
+
+#[cfg(not(test))]
+fn run_device_link_exchange(data_dir: &str) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|error| format!("building device-link exchange runtime: {error}"))?;
+    runtime.block_on(run_device_link_exchange_async(data_dir))
+}
+
+#[cfg(not(test))]
+async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
+    let config_dir = Path::new(data_dir);
+    let startup_config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let Some(startup_state) = startup_config.account.as_ref() else {
+        return Ok(());
+    };
+    if !device_link_exchange_needed(startup_state) {
+        return Ok(());
+    }
+
+    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
+        .map_err(|error| format!("loading device key: {error}"))?;
+    let daemon = iris_drive_core::Daemon::open(config_dir)
+        .map_err(|error| format!("opening block store: {error}"))?;
+    let local = daemon.tree().get_store().clone();
+    let sync = iris_drive_core::FipsBlockSync::start(&device, local, &startup_config)
+        .await
+        .map_err(|error| format!("starting FIPS device-link exchange: {error}"))?;
+    let mut app_messages = sync.subscribe_app_messages();
+    let mut sent_requests = BTreeMap::new();
+    let mut sent_rosters = BTreeMap::new();
+    let mut acked_rosters = BTreeSet::new();
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+        DEVICE_LINK_EXCHANGE_TICK_SECS,
+    ));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                if !drive_device_link_exchange_tick(
+                    config_dir,
+                    &sync,
+                    &mut sent_requests,
+                    &mut sent_rosters,
+                    &acked_rosters,
+                ).await? {
+                    break;
+                }
+            }
+            message = app_messages.recv() => {
+                match message {
+                    Ok(message) => {
+                        if let Err(error) = handle_native_device_link_app_message(
+                            config_dir,
+                            &sync,
+                            &message,
+                            &mut acked_rosters,
+                        ).await {
+                            tracing::warn!(error = %error, topic = message.topic, "handling native device-link FIPS message failed");
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "native device-link FIPS receiver lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+async fn drive_device_link_exchange_tick(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    sent_requests: &mut BTreeMap<String, std::time::Instant>,
+    sent_rosters: &mut BTreeMap<String, std::time::Instant>,
+    acked_rosters: &BTreeSet<String>,
+) -> Result<bool, String> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(false);
+    };
+    if !device_link_exchange_needed(state) {
+        return Ok(false);
+    }
+
+    sync.refresh_authorized_peers(&config).await;
+    send_native_pending_device_link_request(sync, state, sent_requests).await?;
+    send_native_authorized_device_link_rosters(
+        config_dir,
+        sync,
+        state,
+        sent_rosters,
+        acked_rosters,
+    )
+    .await?;
+    Ok(true)
+}
+
+#[cfg(not(test))]
+async fn send_native_pending_device_link_request(
+    sync: &iris_drive_core::FsFipsBlockSync,
+    state: &iris_drive_core::AccountState,
+    sent_requests: &mut BTreeMap<String, std::time::Instant>,
+) -> Result<(), String> {
+    let Some(frame) = pending_device_link_request_frame(state) else {
+        return Ok(());
+    };
+    let Some(pending) = state.outbound_device_link_request.as_ref() else {
+        return Ok(());
+    };
+    let fingerprint = format!(
+        "{}:{}:{}",
+        pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
+    );
+    let now = std::time::Instant::now();
+    if sent_requests.get(&fingerprint).is_some_and(|last_sent| {
+        now.duration_since(*last_sent)
+            < std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
+    }) {
+        return Ok(());
+    }
+    let admin_npub = account_npub(&pending.admin_device_pubkey);
+    let bytes = serde_json::to_vec(&frame)
+        .map_err(|error| format!("encoding device link request: {error}"))?;
+    match sync
+        .send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes)
+        .await
+    {
+        Ok(()) => {
+            sent_requests.insert(fingerprint, now);
+            tracing::debug!(
+                admin_npub,
+                requested_at = frame.requested_at,
+                "sent native device-link request over FIPS"
+            );
+        }
+        Err(error) => tracing::warn!(
+            admin_npub,
+            error = %error,
+            "sending native device-link request over FIPS failed"
+        ),
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+async fn send_native_authorized_device_link_rosters(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    state: &iris_drive_core::AccountState,
+    sent_rosters: &mut BTreeMap<String, std::time::Instant>,
+    acked_rosters: &BTreeSet<String>,
+) -> Result<(), String> {
+    if !state.can_manage_devices() {
+        return Ok(());
+    }
+    let Some(app_keys) = state.app_keys.as_ref() else {
+        return Ok(());
+    };
+    if !app_keys.contains(&state.device_pubkey) {
+        return Ok(());
+    }
+
+    let now = std::time::Instant::now();
+    let due_devices = app_keys
+        .devices
+        .iter()
+        .filter(|device| device.pubkey != state.device_pubkey)
+        .filter(|device| {
+            let fingerprint = device_link_roster_fingerprint(device.pubkey.as_str(), app_keys);
+            if acked_rosters.contains(&fingerprint) {
+                return false;
+            }
+            !sent_rosters.get(&fingerprint).is_some_and(|last_sent| {
+                now.duration_since(*last_sent)
+                    < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+            })
+        })
+        .map(|device| device.pubkey.clone())
+        .collect::<Vec<_>>();
+    if due_devices.is_empty() {
+        return Ok(());
+    }
+
+    let (event_id, event_json) = signed_roster_event_for_native_state(config_dir, state, app_keys)?;
+    let frame = DeviceLinkRosterFrame {
+        schema: 1,
+        owner_pubkey: state.owner_pubkey.clone(),
+        admin_device_pubkey: state.device_pubkey.clone(),
+        app_keys: app_keys.clone(),
+        app_keys_event_id: event_id,
+        app_keys_event_json: event_json,
+        sent_at: unix_now_seconds(),
+    };
+    let bytes = serde_json::to_vec(&frame)
+        .map_err(|error| format!("encoding device link roster: {error}"))?;
+    for device_pubkey in due_devices {
+        let recipient_npub = account_npub(&device_pubkey);
+        match sync
+            .send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
+            .await
+        {
+            Ok(()) => {
+                sent_rosters.insert(
+                    device_link_roster_fingerprint(&device_pubkey, app_keys),
+                    now,
+                );
+                tracing::debug!(
+                    recipient_npub,
+                    dck_generation = app_keys.dck_generation,
+                    "sent native device-link roster over FIPS"
+                );
+            }
+            Err(error) => tracing::warn!(
+                recipient_npub,
+                error = %error,
+                "sending native device-link roster over FIPS failed"
+            ),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn signed_roster_event_for_native_state(
+    config_dir: &Path,
+    state: &iris_drive_core::AccountState,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> Result<(String, String), String> {
+    if let Some(record) = state.app_keys_event.as_ref()
+        && record.signer_pubkey == app_keys.signer_pubkey()
+    {
+        return Ok((record.event_id.clone(), record.event_json.clone()));
+    }
+    if app_keys.signer_pubkey() != state.device_pubkey {
+        return Err("cannot send roster: missing signed event from this admin device".to_owned());
+    }
+    let account = Account::load(state.clone(), config_dir)
+        .map_err(|error| format!("loading account for roster signing: {error}"))?;
+    let event =
+        iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), app_keys)
+            .map_err(|error| format!("building device-link roster event: {error}"))?;
+    Ok((event.id.to_hex(), event.as_json()))
+}
+
+#[cfg(not(test))]
+async fn handle_native_device_link_app_message(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    message: &iris_drive_core::FipsAppMessage,
+    acked_rosters: &mut BTreeSet<String>,
+) -> Result<bool, String> {
+    match message.topic.as_str() {
+        DEVICE_LINK_REQUEST_APP_TOPIC => handle_native_device_link_request(config_dir, message),
+        DEVICE_LINK_ROSTER_APP_TOPIC => {
+            handle_native_device_link_roster(config_dir, sync, message).await
+        }
+        DEVICE_LINK_ROSTER_ACK_APP_TOPIC => {
+            handle_native_device_link_roster_ack(config_dir, message, acked_rosters)
+        }
+        _ => Ok(false),
+    }
+}
+
+#[cfg(not(test))]
+fn handle_native_device_link_request(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool, String> {
+    let frame: DeviceLinkRequestFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing device link request frame: {error}"))?;
+    if frame.schema != 1 {
+        return Err(format!(
+            "unsupported device link request schema {}",
+            frame.schema
+        ));
+    }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
+    let device_hex = normalize_pubkey(&frame.device_pubkey)?;
+    let link_secret = if frame.link_secret.trim().is_empty() {
+        device_approval_link_secret(&frame.url)
+    } else {
+        frame.link_secret
+    };
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let Some(state) = config.account.as_mut() else {
+        return Ok(true);
+    };
+    let changed = state
+        .record_inbound_device_link_request(
+            &owner_hex,
+            &device_hex,
+            frame.label,
+            &link_secret,
+            frame.requested_at,
+        )
+        .map_err(|error| format!("recording inbound device link request: {error}"))?;
+    if changed {
+        config
+            .save(config_path_in(config_dir))
+            .map_err(|error| format!("saving config: {error}"))?;
+        tracing::debug!(
+            peer = message.peer_id,
+            device_npub = account_npub(&device_hex),
+            requested_at = frame.requested_at,
+            "received native device-link request over FIPS"
+        );
+    }
+    Ok(true)
+}
+
+#[cfg(not(test))]
+async fn handle_native_device_link_roster(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool, String> {
+    let frame: DeviceLinkRosterFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing device link roster frame: {error}"))?;
+    if frame.schema != 1 {
+        return Err(format!(
+            "unsupported device link roster schema {}",
+            frame.schema
+        ));
+    }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
+    let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
+    let sender_hex = normalize_pubkey(&message.peer_id).ok();
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(true);
+    };
+    if state.can_manage_devices() || state.owner_pubkey != owner_hex {
+        return Ok(true);
+    }
+    if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
+        return Ok(true);
+    }
+    if frame.app_keys_event_json.is_empty() || frame.app_keys_event_id.is_empty() {
+        return Ok(true);
+    }
+    let roster_event = nostr_sdk::Event::from_json(&frame.app_keys_event_json)
+        .map_err(|error| format!("parsing signed device-link roster event: {error}"))?;
+    if roster_event.id.to_hex() != frame.app_keys_event_id {
+        return Ok(true);
+    }
+    let parsed = iris_drive_core::nostr_events::parse_app_keys_event(&roster_event)
+        .map_err(|error| format!("parsing signed device-link AppKeys: {error}"))?;
+    if roster_event.pubkey.to_hex() != admin_device_hex
+        || parsed.owner_pubkey != state.owner_pubkey
+        || !parsed.contains(&state.device_pubkey)
+        || !parsed.is_admin(&admin_device_hex)
+    {
+        return Ok(true);
+    }
+
+    let should_apply = state
+        .outbound_device_link_request
+        .as_ref()
+        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_hex);
+    let already_current = state.app_keys.as_ref() == Some(&parsed);
+    if !should_apply && !already_current {
+        return Ok(true);
+    }
+
+    let outcome = if should_apply {
+        iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut config, &roster_event)
+            .map_err(|error| format!("applying signed device-link roster event: {error}"))?
+    } else {
+        iris_drive_core::relay_sync::AppKeysApply::Applied(iris_drive_core::ApplyDecision::Rejected)
+    };
+    let decision = match outcome {
+        iris_drive_core::relay_sync::AppKeysApply::Applied(decision) => decision,
+        iris_drive_core::relay_sync::AppKeysApply::NotOurOwner
+        | iris_drive_core::relay_sync::AppKeysApply::UnauthorizedSigner => {
+            iris_drive_core::ApplyDecision::Rejected
+        }
+    };
+    let state = config.account.as_ref().expect("account still present");
+    let accepted = should_apply && decision != iris_drive_core::ApplyDecision::Rejected;
+    let ack_data = if accepted || already_current {
+        Some((
+            state.device_pubkey.clone(),
+            state
+                .app_keys
+                .as_ref()
+                .expect("accepted/current app keys")
+                .clone(),
+            roster_event.id.to_hex(),
+        ))
+    } else {
+        None
+    };
+    if accepted {
+        config
+            .save(config_path_in(config_dir))
+            .map_err(|error| format!("saving config: {error}"))?;
+        tracing::debug!(
+            peer = message.peer_id,
+            admin_device_npub = account_npub(&admin_device_hex),
+            "accepted native device-link roster over FIPS"
+        );
+    }
+    if let Some((device_pubkey, app_keys, app_keys_event_id)) = ack_data {
+        send_native_device_link_roster_ack(
+            sync,
+            &admin_device_hex,
+            &owner_hex,
+            &device_pubkey,
+            &app_keys_event_id,
+            &app_keys,
+        )
+        .await?;
+    }
+    Ok(true)
+}
+
+#[cfg(not(test))]
+fn handle_native_device_link_roster_ack(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+    acked_rosters: &mut BTreeSet<String>,
+) -> Result<bool, String> {
+    let frame: DeviceLinkRosterAckFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing device link roster ack frame: {error}"))?;
+    if frame.schema != 1 {
+        return Err(format!(
+            "unsupported device link roster ack schema {}",
+            frame.schema
+        ));
+    }
+    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
+    let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
+    let device_hex = normalize_pubkey(&frame.device_pubkey)?;
+    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
+        return Ok(true);
+    }
+
+    let config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let Some(state) = config.account.as_ref() else {
+        return Ok(true);
+    };
+    let Some(app_keys) = state.app_keys.as_ref() else {
+        return Ok(true);
+    };
+    if !state.can_manage_devices()
+        || state.owner_pubkey != owner_hex
+        || state.device_pubkey != admin_device_hex
+        || !app_keys.contains(&device_hex)
+        || app_keys.created_at != frame.app_keys_created_at
+        || app_keys.dck_generation != frame.dck_generation
+    {
+        return Ok(true);
+    }
+
+    acked_rosters.insert(device_link_roster_fingerprint(&device_hex, app_keys));
+    Ok(true)
+}
+
+#[cfg(not(test))]
+async fn send_native_device_link_roster_ack(
+    sync: &iris_drive_core::FsFipsBlockSync,
+    admin_device_hex: &str,
+    owner_hex: &str,
+    device_hex: &str,
+    app_keys_event_id: &str,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> Result<(), String> {
+    let frame = DeviceLinkRosterAckFrame {
+        schema: 1,
+        owner_pubkey: owner_hex.to_owned(),
+        admin_device_pubkey: admin_device_hex.to_owned(),
+        device_pubkey: device_hex.to_owned(),
+        app_keys_event_id: app_keys_event_id.to_owned(),
+        app_keys_created_at: app_keys.created_at,
+        dck_generation: app_keys.dck_generation,
+        acknowledged_at: unix_now_seconds(),
+    };
+    sync.send_app_message(
+        &account_npub(admin_device_hex),
+        DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+        serde_json::to_vec(&frame)
+            .map_err(|error| format!("encoding device-link roster ack: {error}"))?,
+    )
+    .await
+    .map_err(|error| format!("sending device-link roster ack over FIPS: {error}"))?;
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn device_link_roster_fingerprint(
+    device_pubkey: &str,
+    app_keys: &iris_drive_core::AppKeysSnapshot,
+) -> String {
+    format!(
+        "{}:{}:{}",
+        device_pubkey, app_keys.created_at, app_keys.dck_generation
+    )
+}
+
+#[cfg(not(test))]
+fn device_link_exchange_needed(state: &iris_drive_core::AccountState) -> bool {
+    let _ = state;
+    true
 }
 
 fn paths_for(data_dir: &str) -> UiPaths {
@@ -840,6 +2020,22 @@ fn decode_device_approval_request(
     }
     let device = normalize_pubkey(request)?;
     Ok((String::new(), device, None))
+}
+
+#[cfg(not(test))]
+fn device_approval_link_secret(request: &str) -> String {
+    if request.starts_with("iris-drive://device-link")
+        || request.starts_with("iris-drive:/device-link")
+        || request.starts_with("https://drive.iris.to/device-link")
+    {
+        let query = request.split_once('?').map_or("", |(_, query)| query);
+        return query_value(query, "secret")
+            .or_else(|| query_value(query, "link_secret"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+    }
+    String::new()
 }
 
 fn query_value(query: &str, name: &str) -> Option<String> {

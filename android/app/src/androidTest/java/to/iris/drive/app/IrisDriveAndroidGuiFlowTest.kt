@@ -133,6 +133,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onOpenUrl = { _ -> },
                 onOpenDriveFolder = {},
                 onApproveDevice = onApproveDevice,
+                onResetInvite = {},
                 onRevokeDevice = { _ -> },
                 onAppointAdmin = { _ -> },
                 onDemoteAdmin = { _ -> },

@@ -60,13 +60,14 @@ Environment:
   IRIS_DRIVE_MACOS_SIGNING=auto|none|development
       auto/default uses a local Apple Development identity when available,
       otherwise ad-hoc. development signs with a real local certificate.
-  IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING=1
-      Use Xcode-managed provisioning for development signing instead of the
-      local certificate signing path.
-  IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE=1
-      Keep the File Provider testing entitlement for provisioned dev builds.
-      The default strips it because plain local certificate signing is rejected
-      by launchd when this restricted entitlement is present.
+  IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING=0
+      Use the local certificate signing path for development signing instead
+      of Xcode-managed provisioning. Xcode-managed signing is the default so
+      File Provider testing-mode installs launch and stay enabled.
+  IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE=0
+      Strip the File Provider testing entitlement from provisioned dev builds.
+      The default keeps it so local installs are always enabled without a
+      separate Finder approval click.
   IRIS_DRIVE_DEVELOPMENT_TEAM=<team id>
       Optional team id used to select a development signing identity.
   IRIS_DRIVE_ASC_AUTH_KEY_PATH / IRIS_DRIVE_ASC_AUTH_KEY_ID /
@@ -189,7 +190,7 @@ signing_mode() {
 }
 
 use_xcode_managed_signing() {
-  environment_flag "${IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING:-0}"
+  environment_flag "${IRIS_DRIVE_MACOS_XCODE_MANAGED_SIGNING:-1}"
 }
 
 resolve_target_dir() {
@@ -328,7 +329,10 @@ build_xcode_app() {
     local team
     team="$(development_team)"
     if [[ -z "$team" ]]; then
-      echo "IRIS_DRIVE_MACOS_SIGNING=development requires IRIS_DRIVE_DEVELOPMENT_TEAM." >&2
+      team="$(team_identifier_for_identity "$(development_signing_identity)")"
+    fi
+    if [[ -z "$team" ]]; then
+      echo "Could not infer IRIS_DRIVE_DEVELOPMENT_TEAM from a local Apple Development identity." >&2
       exit 2
     fi
     args+=(DEVELOPMENT_TEAM="$team")
@@ -379,9 +383,9 @@ def truthy(name, default=False):
 entitlements = expand(entitlements)
 if not truthy("IRIS_DRIVE_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS"):
     entitlements.pop("com.apple.developer.associated-domains", None)
-    if not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE"):
+    if not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE", True):
         entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)
-elif not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE"):
+elif not truthy("IRIS_DRIVE_MACOS_KEEP_FILEPROVIDER_TESTING_MODE", True):
     entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)
 
 with open(destination, "wb") as handle:

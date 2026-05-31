@@ -22,12 +22,21 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | 
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
+RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-ui-owner)"
 LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-linked)"
 XCTESTRUN=""
+OWNER_DAEMON_PID=""
+OWNER_DAEMON_LOG="$(mktemp -t iris-drive-ios-ui-owner-daemon.XXXXXX.log)"
+OWNER_FIPS_PORT=""
 
 cleanup() {
+  if [[ -n "$OWNER_DAEMON_PID" ]]; then
+    kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
+    wait "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
+  fi
   rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG"
+  rm -f "$OWNER_DAEMON_LOG"
 }
 trap cleanup EXIT
 
@@ -83,6 +92,47 @@ wait_for_debug_state() {
   return 1
 }
 
+unused_loopback_port() {
+  python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
+wait_for_owner_fips() {
+  local seconds="$1"
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); f=((s.get("network") or {}).get("fips") or {}); raise SystemExit(0 if f.get("running") and f.get("endpoint_npub") else 1)' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_for_owner_inbound_request() {
+  local expected_device="$1"
+  local seconds="$2"
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("account") or {}).get("inbound_device_link_requests") or []); raise SystemExit(0 if any(r.get("device_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+owner_inbound_request_url() {
+  local expected_device="$1"
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status \
+    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("account") or {}).get("inbound_device_link_requests") or []); print(next(r["url"] for r in reqs if r.get("device_npub") == expected and r.get("url"))) ' "$expected_device"
+}
+
 resolve_xctestrun() {
   find "$DERIVED_DATA/Build/Products" \
     -maxdepth 1 \
@@ -90,6 +140,33 @@ resolve_xctestrun() {
     -type f \
     -print \
     -quit 2>/dev/null
+}
+
+resolve_app_path() {
+  find "$DERIVED_DATA/Build/Products" \
+    -path "*/$CONFIGURATION-iphonesimulator/Iris Drive.app" \
+    -type d \
+    -print \
+    -quit 2>/dev/null
+}
+
+assert_static_app_core_linkage() {
+  local app_path="$1"
+  local offenders
+
+  offenders="$(
+    find "$app_path" -type f -perm -111 -print 2>/dev/null |
+      while IFS= read -r binary; do
+        if otool -L "$binary" 2>/dev/null | grep -F "libiris_drive_app_core.dylib" >/dev/null; then
+          printf '%s\n' "$binary"
+        fi
+      done
+  )"
+  if [[ -n "$offenders" ]]; then
+    echo "FAIL: iOS app links iris-drive app-core dynamically; physical devices cannot load host build paths." >&2
+    echo "$offenders" >&2
+    exit 1
+  fi
 }
 
 run_ui_test() {
@@ -141,11 +218,13 @@ PY
   return "$status"
 }
 
-if [[ ! -x "$IDRIVE" ]]; then
-  cargo build -p idrive
-fi
+cargo build -p idrive
 
 cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
+if [[ ! -f "$RUST_STATIC_LIB" ]]; then
+  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
+  exit 1
+fi
 
 if command -v xcodegen >/dev/null 2>&1; then
   (cd "$ROOT/ios" && xcodegen generate)
@@ -165,8 +244,15 @@ xcodebuild \
   -destination "$DESTINATION" \
   CODE_SIGNING_ALLOWED=NO \
   LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-  OTHER_LDFLAGS="-liris_drive_app_core" \
+  OTHER_LDFLAGS="$RUST_STATIC_LIB" \
   build-for-testing >"$BUILD_LOG"
+
+APP_PATH="$(resolve_app_path)"
+if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
+  echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
+  exit 1
+fi
+assert_static_app_core_linkage "$APP_PATH"
 
 XCTESTRUN="$(resolve_xctestrun)"
 if [[ -z "$XCTESTRUN" || ! -f "$XCTESTRUN" ]]; then
@@ -182,11 +268,32 @@ run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSet
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
+owner_device_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$owner_json")"
+OWNER_FIPS_PORT="$(unused_loopback_port)"
+owner_fips_peer="$owner_device_npub=127.0.0.1:$OWNER_FIPS_PORT"
+IRIS_DRIVE_FIPS_UDP_BIND_ADDR="127.0.0.1:$OWNER_FIPS_PORT" \
+  IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="127.0.0.1:$OWNER_FIPS_PORT" \
+  IRIS_DRIVE_FIPS_UDP_PUBLIC=false \
+  IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false \
+  IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false \
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \
+  >"$OWNER_DAEMON_LOG" 2>&1 &
+OWNER_DAEMON_PID="$!"
+if ! wait_for_owner_fips 20; then
+  echo "FAIL: owner daemon did not start FIPS for iOS GUI link delivery." >&2
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
 
 xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome" \
-  "IRIS_DRIVE_UI_TEST_OWNER_INVITE=$owner_invite"
+  "IRIS_DRIVE_UI_TEST_OWNER_INVITE=$owner_invite" \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 
 CONTAINER="$(app_container)"
 STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
@@ -198,12 +305,39 @@ if ! wait_for_debug_state \
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-request_url="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_link_request"])' <"$STATE_FILE")"
+linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_pubkey"])' <"$STATE_FILE")"
+if ! wait_for_owner_inbound_request "$linked_device" 30; then
+  echo "FAIL: owner did not receive the iOS GUI device-link request over FIPS." >&2
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+request_url="$(owner_inbound_request_url "$linked_device")"
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS UI linked")"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then
-  echo "FAIL: CLI owner did not approve the iOS UI link request." >&2
+  echo "FAIL: CLI owner did not approve the inbound iOS UI link request." >&2
   echo "$approved_json" >&2
+  exit 1
+fi
+run_ui_test \
+  "IrisDriveIOSUITests/IrisDriveIOSUITests/testApprovedLinkedDeviceLeavesWaiting" \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+
+CONTAINER="$(app_container)"
+STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+if ! wait_for_debug_state \
+  "$STATE_FILE" \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
+  45; then
+  echo "FAIL: iOS GUI device stayed waiting after the owner approved its FIPS request." >&2
+  [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
 fi
 

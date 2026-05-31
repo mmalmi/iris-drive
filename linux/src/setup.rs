@@ -198,6 +198,10 @@ pub(crate) fn render_create_profile(model: &AppRef) {
             }
         });
     }
+    {
+        let submit = submit.clone();
+        username.connect_activate(move |_| submit.emit_clicked());
+    }
     container.append(&submit);
     container.append(&notice);
     append_centered_setup(model, &container);
@@ -233,6 +237,10 @@ pub(crate) fn render_create_profile_photo(model: &AppRef) {
                 }
             }
         });
+    }
+    {
+        let submit = submit.clone();
+        photo.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
     let later = pill_button("Later");
@@ -292,6 +300,10 @@ pub(crate) fn render_restore_profile(model: &AppRef) {
             }
         });
     }
+    {
+        let submit = submit.clone();
+        nsec.connect_activate(move |_| submit.emit_clicked());
+    }
     container.append(&submit);
 
     let link = pill_button("Link this device");
@@ -347,6 +359,10 @@ pub(crate) fn render_link_device(model: &AppRef) {
         submit.connect_clicked(move |button| {
             submit_link_device(&model, &owner, &notice, button);
         });
+    }
+    {
+        let submit = submit.clone();
+        owner.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
     container.append(&notice);

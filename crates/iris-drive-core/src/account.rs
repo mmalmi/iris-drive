@@ -298,6 +298,14 @@ impl AccountState {
             .sort_by(|left, right| left.device_pubkey.cmp(&right.device_pubkey));
         Ok(changed)
     }
+
+    pub fn reset_device_link_secret(&mut self) -> bool {
+        let previous = self.device_link_secret.clone();
+        self.device_link_secret = default_device_link_secret();
+        let had_requests = !self.inbound_device_link_requests.is_empty();
+        self.inbound_device_link_requests.clear();
+        had_requests || self.device_link_secret != previous
+    }
 }
 
 /// In-memory account: persisted state + the keypairs it references.

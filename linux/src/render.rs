@@ -27,11 +27,11 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
     let list = &model.ui.peers;
     clear_list(list);
     let Some(peers) = json.get("peers").and_then(Value::as_array) else {
-        list.append(&simple_row("No authorized devices", ""));
+        list.append(&simple_row("No devices", ""));
         return;
     };
     if peers.is_empty() {
-        list.append(&simple_row("No authorized devices", ""));
+        list.append(&simple_row("No devices", ""));
         return;
     }
     let can_manage_devices = json
@@ -83,13 +83,13 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
             .get("fips_online")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let state = if fips_online { "Online" } else { "Offline" };
+        let state = fips_connection_label(peer, fips_online);
         let can_manage_peer = can_manage_devices && !is_current_device && !device_npub.is_empty();
         list.append(&peer_row(
             model,
             title,
             &metadata.join(" | "),
-            state,
+            &state,
             fips_online,
             device_npub,
             can_manage_peer && !is_admin,
@@ -210,8 +210,45 @@ pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
     if let Some(scope) = find_string(fips, &["discovery_scope"]).filter(|value| !value.is_empty()) {
         list.append(&simple_row("Scope", scope));
     }
+    if let Some(peer_statuses) = fips.get("peer_statuses").and_then(Value::as_array) {
+        for peer in peer_statuses {
+            let npub = find_string(peer, &["npub"]).unwrap_or("peer");
+            let label = fips_peer_status_label(peer);
+            list.append(&simple_row(&format!("Peer {}", short_text(npub)), &label));
+        }
+    }
     if let Some(error) = find_string(fips, &["error"]).filter(|value| !value.is_empty()) {
         list.append(&simple_row("Error", error));
+    }
+}
+
+fn fips_connection_label(peer: &Value, fips_online: bool) -> String {
+    if !fips_online {
+        return "Offline".to_string();
+    }
+    if let Some(label) = fips_peer_status_label_opt(peer) {
+        return label;
+    }
+    if find_string(peer, &["fips_online_via"]) == Some("mesh") {
+        "Online (Mesh)".to_string()
+    } else {
+        "Online".to_string()
+    }
+}
+
+fn fips_peer_status_label(peer: &Value) -> String {
+    fips_peer_status_label_opt(peer).unwrap_or_else(|| "Online".to_string())
+}
+
+fn fips_peer_status_label_opt(peer: &Value) -> Option<String> {
+    let transport = find_string(peer, &["fips_transport_type", "transport_type"])
+        .map(|value| value.to_ascii_uppercase());
+    let latency = find_number(peer, &["fips_srtt_ms", "srtt_ms"]).map(|value| format!("{value} ms"));
+    match (transport, latency) {
+        (Some(transport), Some(latency)) => Some(format!("Online ({transport}, {latency})")),
+        (Some(transport), None) => Some(format!("Online ({transport})")),
+        (None, Some(latency)) => Some(format!("Online ({latency})")),
+        (None, None) => None,
     }
 }
 

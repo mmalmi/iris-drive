@@ -20,6 +20,7 @@ pub enum NativeAppAction {
         request: String,
         label: String,
     },
+    ResetInvite,
     RevokeDevice {
         device_pubkey: String,
     },
@@ -45,5 +46,9 @@ pub enum NativeAppAction {
     },
     RemoveRoot {
         name: String,
+    },
+    ImportFile {
+        display_name: String,
+        source_path: String,
     },
 }

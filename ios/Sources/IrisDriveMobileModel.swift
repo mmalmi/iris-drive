@@ -94,7 +94,6 @@ final class IrisDriveMobileModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let approvedDevicesKey = "approvedDevices"
     private let relaysKey = "relays"
-    private let providerStateFileName = "ios-provider-state.json"
     private let nativeCore: IrisDriveNativeCore
     private var lastState: NativeAppState?
 
@@ -345,6 +344,10 @@ final class IrisDriveMobileModel: ObservableObject {
         approveDeviceLabel = ""
     }
 
+    func resetInvite() {
+        dispatch(["type": "reset_invite"])
+    }
+
     func revokeDevice(id: String) {
         dispatch([
             "type": "revoke_device",
@@ -557,7 +560,9 @@ final class IrisDriveMobileModel: ObservableObject {
             : deviceLabel
         syncRunning = state.ui.sync.running
         authorizationState = authorizationTitle(state.ui.account?.authorizationState)
-        statusTitle = ownerPublicKey.isEmpty ? "Ready" : authorizationState
+        statusTitle = ownerPublicKey.isEmpty
+            ? "Ready"
+            : (isAwaitingApproval ? "Waiting for approval" : "Ready")
         statusDetail = state.error.isEmpty ? syncStateTitle : state.error
         relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
         relay = relays.first ?? defaultRelay
@@ -565,7 +570,7 @@ final class IrisDriveMobileModel: ObservableObject {
             IrisDriveDevice(
                 label: device.label.isEmpty ? "This device" : device.label,
                 role: roleTitle(device.role),
-                state: authorizationTitle(device.state),
+                state: deviceStateTitle(device.state),
                 detail: device.detail,
                 isOnline: device.isOnline,
                 canRevoke: device.canRevoke,
@@ -581,7 +586,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 requestLink: request.requestLink
             )
         } ?? []
-        authorizedDeviceCount = devices.filter { $0.state == "Authorized" || $0.state == "Admin" }.count
+        authorizedDeviceCount = devices.count
         let stats = loadProviderStats()
         fileCount = stats.fileCount
         visibleFileBytes = stats.visibleFileBytes
@@ -637,7 +642,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private func authorizationTitle(_ value: String?) -> String {
         switch value {
         case "authorized", "Authorized":
-            "Authorized"
+            "Linked"
         case "awaiting_approval", "Awaiting approval":
             "Awaiting approval"
         case "revoked", "Revoked":
@@ -646,6 +651,17 @@ final class IrisDriveMobileModel: ObservableObject {
             "Admin"
         default:
             ownerPublicKey.isEmpty ? "Not linked" : (value ?? "Linked")
+        }
+    }
+
+    private func deviceStateTitle(_ value: String?) -> String {
+        switch value {
+        case "awaiting_approval", "Awaiting approval":
+            "Awaiting approval"
+        case "revoked", "Revoked":
+            "Revoked"
+        default:
+            "Linked"
         }
     }
 
@@ -703,9 +719,9 @@ final class IrisDriveMobileModel: ObservableObject {
         fileCount: Int,
         visibleFileBytes: UInt64
     ) {
-        let url = IrisDriveSharedContainer.baseDirectory
-            .appendingPathComponent(providerStateFileName, isDirectory: false)
-        guard let data = try? Data(contentsOf: url),
+        guard let data = IrisDriveNativeProvider
+            .list(dataDir: IrisDriveSharedContainer.baseDirectory.path)
+            .data(using: .utf8),
               let state = try? JSONDecoder().decode(ProviderState.self, from: data)
         else {
             return (0, 0)

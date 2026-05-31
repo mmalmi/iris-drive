@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace IrisDrive.WindowsShell;
 
@@ -15,6 +16,16 @@ public partial class MainWindow
 
     private async void LinkSubmit_Click(object sender, RoutedEventArgs e)
     {
+        await TrySubmitLinkOwnerAsync(force: true);
+    }
+
+    private async void LinkOwnerBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+        e.Handled = true;
         await TrySubmitLinkOwnerAsync(force: true);
     }
 

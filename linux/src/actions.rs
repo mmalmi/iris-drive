@@ -80,6 +80,16 @@ pub(crate) fn reset_relays(model: &AppRef) {
     }
 }
 
+pub(crate) fn reset_invite(model: &AppRef) {
+    match run_idrive(["devices", "reset-invite"]) {
+        Ok(()) => {
+            model.ui.notice.set_text("Invite reset");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn logout(model: &AppRef) {
     stop_daemon(model);
     match run_idrive(["logout"]) {
@@ -152,6 +162,14 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
                 dialog.close();
             }
         });
+    }
+    {
+        let add = add.clone();
+        device.connect_activate(move |_| add.emit_clicked());
+    }
+    {
+        let add = add.clone();
+        label.connect_activate(move |_| add.emit_clicked());
     }
 
     dialog.set_child(Some(&body));

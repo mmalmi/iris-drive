@@ -175,6 +175,14 @@ struct IrisDriveControlPanel: View {
             setupForm(title: "Create profile") {
                 TextField("Username (optional)", text: $setupUsername)
                     .accessibilityLabel("Username")
+                    .onSubmit {
+                        let username = setupUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if username.isEmpty {
+                            controller.createProfile(username: "", profilePhotoPath: "")
+                        } else {
+                            setupMode = .createPhoto
+                        }
+                    }
                 setupSubmit("Create profile") {
                     let username = setupUsername.trimmingCharacters(in: .whitespacesAndNewlines)
                     if username.isEmpty {
@@ -215,6 +223,9 @@ struct IrisDriveControlPanel: View {
         case .restore:
             setupForm(title: "Sign in") {
                 SecureField("Secret key", text: $setupSecret)
+                    .onSubmit {
+                        controller.restoreProfile(secretKey: setupSecret)
+                    }
                 setupSubmit("Sign in") {
                     controller.restoreProfile(secretKey: setupSecret)
                 }
@@ -327,6 +338,15 @@ struct IrisDriveControlPanel: View {
                     selectedTab = tab
                 }
             }
+            Divider()
+                .padding(.vertical, 4)
+            SidebarRow(
+                symbol: "folder.fill",
+                title: "Open"
+            ) {
+                controller.showDriveFolder()
+            }
+            .accessibilityIdentifier("sidebarOpenDrive")
             Spacer()
         }
         .padding(.vertical, 18)
@@ -466,6 +486,16 @@ struct IrisDriveControlPanel: View {
                     )
                 }
             }
+            if !status.inboundDeviceLinkRequests.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Requests")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(status.inboundDeviceLinkRequests) { request in
+                        DeviceLinkRequestRow(request: request, controller: controller)
+                    }
+                }
+            }
         }
         .sheet(isPresented: $showAddDevice) {
             addDeviceSheet
@@ -487,25 +517,17 @@ struct IrisDriveControlPanel: View {
                 } label: {
                     Label("Copy invite link", systemImage: "link")
                 }
+                Button {
+                    controller.resetInvite()
+                } label: {
+                    Label("Reset invite", systemImage: "arrow.clockwise")
+                }
             }
             if !status.inboundDeviceLinkRequests.isEmpty {
                 Text("Device requests")
                     .font(.headline)
                 ForEach(status.inboundDeviceLinkRequests) { request in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(request.label?.isEmpty == false ? request.label! : "New device")
-                                .font(.subheadline.weight(.semibold))
-                            Text(request.deviceNpub)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        Button("Approve") {
-                            controller.approveDevice(request.requestURL, label: request.label ?? "")
-                        }
-                    }
+                    DeviceLinkRequestRow(request: request, controller: controller)
                 }
             }
             Text("Paste the Device ID shown on the other device when you link it manually.")
@@ -630,7 +652,6 @@ struct IrisDriveControlPanel: View {
                 AccountKeyRow(title: "This device", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
-                AccountInfoRow(title: "State", value: status.authorizationState ?? "-")
                 Button(role: .destructive) {
                     showLogoutConfirmation = true
                 } label: {
@@ -1093,11 +1114,35 @@ private struct PeerRow: View {
         if peer.isCurrentDevice {
             return "This device | \(roleLabel)"
         }
-        return [roleLabel, peer.fipsOnline ? "Online" : "Offline"].joined(separator: " | ")
+        return [roleLabel, fipsConnectionLabel].joined(separator: " | ")
+    }
+
+    private var fipsConnectionLabel: String {
+        guard peer.fipsOnline else {
+            return "Offline"
+        }
+        let via = peer.fipsOnlineVia ?? "direct"
+        let transport = peer.fipsTransportType?.uppercased()
+        let latency = peer.fipsSrttMS.map { "\($0) ms" }
+        switch (transport, latency, via) {
+        case let (transport?, latency?, _):
+            return "Online (\(transport), \(latency))"
+        case let (transport?, nil, _):
+            return "Online (\(transport))"
+        case let (nil, latency?, _):
+            return "Online (\(latency))"
+        case (_, _, "mesh"):
+            return "Online (Mesh)"
+        default:
+            return "Online"
+        }
     }
 
     private var privacy: String {
         guard peer.hasRoot else {
+            if peer.isCurrentDevice {
+                return "Local"
+            }
             return "Pending"
         }
         return peer.rootIsPrivate == false ? "Public" : "Private"
@@ -1115,10 +1160,42 @@ private struct PeerRow: View {
             case "awaiting_approval":
                 return "Awaiting approval"
             default:
-                return "Not authorized"
+                return "Unavailable"
             }
         }
         return peer.role == "admin" ? "Admin" : "Member"
+    }
+}
+
+private struct DeviceLinkRequestRow: View {
+    let request: IrisDriveDeviceLinkRequestStatus
+    let controller: AppDelegate
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "iphone.gen3")
+                .frame(width: 24)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(request.label?.isEmpty == false ? request.label! : "New device")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(request.deviceNpub)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button {
+                controller.approveDevice(request.requestURL, label: request.label ?? "")
+            } label: {
+                Label("Approve", systemImage: "checkmark")
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1264,6 +1341,18 @@ private struct FipsDiagnostics: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
+            }
+            ForEach(status.peerStatuses) { peer in
+                HStack(spacing: 8) {
+                    Text(shortValue(peer.npub))
+                        .font(.system(.caption, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(peer.connectionText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .textSelection(.enabled)
             }
             if let error = status.error, !error.isEmpty {
                 Text(error)

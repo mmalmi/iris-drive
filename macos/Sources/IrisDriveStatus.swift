@@ -85,6 +85,7 @@ struct IrisDriveFipsStatus: Equatable {
     let rosterConnectedPeerCount: Int
     let connectedPeerCount: Int
     let otherPeerCount: Int
+    let peerStatuses: [IrisDriveFipsPeerStatus]
     let error: String?
 
     init(
@@ -97,6 +98,7 @@ struct IrisDriveFipsStatus: Equatable {
         rosterConnectedPeerCount: Int = 0,
         connectedPeerCount: Int = 0,
         otherPeerCount: Int = 0,
+        peerStatuses: [IrisDriveFipsPeerStatus] = [],
         error: String? = nil
     ) {
         self.enabled = enabled
@@ -108,6 +110,7 @@ struct IrisDriveFipsStatus: Equatable {
         self.rosterConnectedPeerCount = rosterConnectedPeerCount
         self.connectedPeerCount = connectedPeerCount
         self.otherPeerCount = otherPeerCount
+        self.peerStatuses = peerStatuses
         self.error = error
     }
 
@@ -122,6 +125,7 @@ struct IrisDriveFipsStatus: Equatable {
             (json["roster_connected_peer_count"] as? NSNumber)?.intValue ?? 0
         connectedPeerCount = (json["connected_peer_count"] as? NSNumber)?.intValue ?? 0
         otherPeerCount = (json["other_peer_count"] as? NSNumber)?.intValue ?? 0
+        peerStatuses = (json["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init)
         error = json["error"] as? String
     }
 
@@ -140,6 +144,33 @@ struct IrisDriveFipsStatus: Equatable {
 
     var rosterText: String {
         "\(rosterConnectedPeerCount)/\(rosterPeerCount) direct"
+    }
+}
+
+struct IrisDriveFipsPeerStatus: Identifiable, Equatable {
+    let id: String
+    let npub: String
+    let transportType: String?
+    let srttMS: Int?
+
+    init(json: [String: Any]) {
+        npub = json["npub"] as? String ?? UUID().uuidString
+        id = npub
+        transportType = json["transport_type"] as? String
+        srttMS = (json["srtt_ms"] as? NSNumber)?.intValue
+    }
+
+    var connectionText: String {
+        switch (transportType?.uppercased(), srttMS) {
+        case let (transport?, latency?):
+            return "\(transport), \(latency) ms"
+        case let (transport?, nil):
+            return transport
+        case let (nil, latency?):
+            return "\(latency) ms"
+        default:
+            return "Online"
+        }
     }
 }
 
@@ -251,7 +282,7 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
     }
 }
 
-private func shortValue(_ value: String) -> String {
+func shortValue(_ value: String) -> String {
     guard value.count > 32 else {
         return value
     }
@@ -267,6 +298,9 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
+    let fipsOnlineVia: String?
+    let fipsTransportType: String?
+    let fipsSrttMS: Int?
     let hasRoot: Bool
     let rootCID: String?
     let rootIsPrivate: Bool?
@@ -283,6 +317,9 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         isCurrentDevice = json["is_current_device"] as? Bool ?? false
         authorized = json["authorized"] as? Bool ?? false
         fipsOnline = json["fips_online"] as? Bool ?? false
+        fipsOnlineVia = json["fips_online_via"] as? String
+        fipsTransportType = json["fips_transport_type"] as? String
+        fipsSrttMS = (json["fips_srtt_ms"] as? NSNumber)?.intValue
         hasRoot = json["has_root"] as? Bool ?? false
         rootCID = json["root_cid"] as? String
         rootIsPrivate = json["root_private"] as? Bool

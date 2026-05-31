@@ -289,7 +289,7 @@ public sealed class IrisDriveStatusData
             }
 
             var isOnline = Bool(peer, "fips_online");
-            var state = isOnline ? "Online" : "Offline";
+            var state = FipsConnectionLabel(peer, isOnline);
             var canManagePeer = canManageDevices &&
                 !isCurrentDevice &&
                 !string.IsNullOrWhiteSpace(deviceNpub);
@@ -371,6 +371,38 @@ public sealed class IrisDriveStatusData
         }
 
         return rows;
+    }
+
+    private static string FipsConnectionLabel(JsonElement peer, bool isOnline)
+    {
+        if (!isOnline)
+        {
+            return "Offline";
+        }
+
+        var direct = FipsPeerStatusLabel(peer, "fips_transport_type", "fips_srtt_ms");
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        return String(peer, "fips_online_via") == "mesh" ? "Online (Mesh)" : "Online";
+    }
+
+    internal static string? FipsPeerStatusLabel(
+        JsonElement peer,
+        string transportProperty,
+        string latencyProperty)
+    {
+        var transport = String(peer, transportProperty)?.ToUpperInvariant();
+        var latency = Int(peer, latencyProperty);
+        return (transport, latency) switch
+        {
+            ({ Length: > 0 }, > 0) => $"Online ({transport}, {latency} ms)",
+            ({ Length: > 0 }, _) => $"Online ({transport})",
+            (_, > 0) => $"Online ({latency} ms)",
+            _ => null,
+        };
     }
 
     private static IReadOnlyList<string> StringArray(JsonElement root, string name)
@@ -495,10 +527,11 @@ public sealed record FipsDiagnostics(
     int RosterConnectedPeerCount,
     int ConnectedPeerCount,
     int OtherPeerCount,
+    IReadOnlyList<FipsPeerDiagnostic> Peers,
     string? Error)
 {
     public static FipsDiagnostics Empty { get; } =
-        new(false, false, false, null, null, 0, 0, 0, 0, null);
+        new(false, false, false, null, null, 0, 0, 0, 0, Array.Empty<FipsPeerDiagnostic>(), null);
 
     public string State =>
         !string.IsNullOrWhiteSpace(Error) ? "Error" :
@@ -526,7 +559,27 @@ public sealed record FipsDiagnostics(
             Int(value, "roster_connected_peer_count"),
             Int(value, "connected_peer_count"),
             Int(value, "other_peer_count"),
+            PeerDiagnostics(value),
             String(value, "error"));
+    }
+
+    private static IReadOnlyList<FipsPeerDiagnostic> PeerDiagnostics(JsonElement fips)
+    {
+        if (!fips.TryGetProperty("peer_statuses", out var peers) ||
+            peers.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<FipsPeerDiagnostic>();
+        }
+
+        var rows = new List<FipsPeerDiagnostic>();
+        foreach (var peer in peers.EnumerateArray())
+        {
+            var npub = String(peer, "npub") ?? "peer";
+            var label = IrisDriveStatusData.FipsPeerStatusLabel(peer, "transport_type", "srtt_ms") ??
+                "Online";
+            rows.Add(new FipsPeerDiagnostic(npub, label));
+        }
+        return rows;
     }
 
     private static string? String(JsonElement root, string name)
@@ -551,6 +604,8 @@ public sealed record FipsDiagnostics(
             value.ValueKind == JsonValueKind.True;
     }
 }
+
+public sealed record FipsPeerDiagnostic(string Npub, string Subtitle);
 
 public sealed record PeerRow(
     string DeviceNpub,

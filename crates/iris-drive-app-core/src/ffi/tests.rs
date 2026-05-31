@@ -1,5 +1,6 @@
 use super::{FfiApp, normalize_pubkey};
 use crate::NativeAppAction;
+use hashtree_provider::{HashTreeProviderFs, ProviderFs};
 use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
 
@@ -262,4 +263,70 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     assert!(approved.ui.devices.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
+}
+
+#[test]
+fn reset_invite_action_rotates_invite_and_clears_requests() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let old_invite = owner.ui.account.unwrap().device_link_invite;
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.account.as_mut().unwrap();
+    let owner_hex = state.owner_pubkey.clone();
+    let link_secret = state.device_link_secret.clone();
+    let linked_device =
+        iris_drive_core::DeviceIdentity::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
+    state
+        .record_inbound_device_link_request(
+            &owner_hex,
+            &linked_device,
+            Some("Phone".to_owned()),
+            &link_secret,
+            42,
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+
+    let reset = app.dispatch(NativeAppAction::ResetInvite);
+    assert!(reset.error.is_empty());
+    let account = reset.ui.account.unwrap();
+    assert_ne!(account.device_link_invite, old_invite);
+    assert!(account.inbound_device_link_requests.is_empty());
+}
+
+#[test]
+fn import_file_action_writes_shared_file_into_provider_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "iPhone".to_owned(),
+    });
+
+    let source = dir.path().join("share-source.txt");
+    std::fs::write(&source, b"from share sheet").unwrap();
+    let state = app.dispatch(NativeAppAction::ImportFile {
+        display_name: "Shared note.txt".to_owned(),
+        source_path: source.display().to_string(),
+    });
+
+    assert!(state.error.is_empty(), "{}", state.error);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let daemon = iris_drive_core::Daemon::open(dir.path()).unwrap();
+        let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid)
+            .await
+            .unwrap();
+        let path = "Shared note.txt".to_owned();
+        let item = provider.item(&path).await.unwrap();
+        let bytes = provider.read(&path, 0, item.size).await.unwrap();
+        assert_eq!(bytes, b"from share sheet");
+    });
 }

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -230,7 +231,7 @@ public partial class MainWindow : Window
         PeersList.Items.Clear();
         if (status.Peers.Count == 0)
         {
-            PeersList.Items.Add(Row("No authorized devices", "", ""));
+            PeersList.Items.Add(Row("No devices", "", ""));
             return;
         }
 
@@ -378,6 +379,11 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(status.Fips.DiscoveryScope))
         {
             FipsList.Items.Add(Row("Scope", status.Fips.DiscoveryScope, ""));
+        }
+
+        foreach (var peer in status.Fips.Peers)
+        {
+            FipsList.Items.Add(Row($"Peer {IrisDriveStatusData.ShortText(peer.Npub)}", peer.Subtitle, ""));
         }
 
         if (!string.IsNullOrWhiteSpace(status.Fips.Error))
@@ -750,8 +756,7 @@ public partial class MainWindow : Window
             Content = body,
         };
 
-        cancel.Click += (_, _) => dialog.Close();
-        add.Click += async (_, _) =>
+        async Task SubmitDeviceAsync()
         {
             add.IsEnabled = false;
             try
@@ -764,6 +769,26 @@ public partial class MainWindow : Window
                 notice.Text = error.Message;
                 add.IsEnabled = true;
             }
+        }
+        cancel.Click += (_, _) => dialog.Close();
+        add.Click += async (_, _) => await SubmitDeviceAsync();
+        deviceBox.KeyDown += async (_, key) =>
+        {
+            if (key.Key != Key.Enter)
+            {
+                return;
+            }
+            key.Handled = true;
+            await SubmitDeviceAsync();
+        };
+        labelBox.KeyDown += async (_, key) =>
+        {
+            if (key.Key != Key.Enter)
+            {
+                return;
+            }
+            key.Handled = true;
+            await SubmitDeviceAsync();
         };
         dialog.ShowDialog();
     }
@@ -778,6 +803,20 @@ public partial class MainWindow : Window
         }
         NoticeText.Text = "Device approved";
         await RefreshAsync();
+    }
+
+    private async void ResetInvite_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await service.ResetInviteAsync();
+            NoticeText.Text = "Invite reset";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
     }
 
     private async void RevokeDevice_Click(object sender, RoutedEventArgs e)
@@ -989,6 +1028,16 @@ public partial class MainWindow : Window
         CreatePhotoPathBox.Focus();
     }
 
+    private void CreateUsernameBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+        e.Handled = true;
+        CreateSubmit_Click(sender, e);
+    }
+
     private void ChooseCreatePhoto_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
@@ -1020,6 +1069,16 @@ public partial class MainWindow : Window
     private async void RestoreSubmit_Click(object sender, RoutedEventArgs e)
     {
         await RunSetupAsync(() => service.RestoreProfileAsync(RestoreSecretBox.Password));
+    }
+
+    private void RestoreSecretBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+        e.Handled = true;
+        RestoreSubmit_Click(sender, e);
     }
 
     private void RestoreSecretBox_PasswordChanged(object sender, RoutedEventArgs e)

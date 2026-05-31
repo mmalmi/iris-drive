@@ -11,7 +11,12 @@ use jni::sys::{jlong, jstring};
 use qrcode::QrCode;
 use serde::Serialize;
 
-use crate::{FfiApp, NativeAppAction, NativeAppState};
+use crate::{
+    FfiApp, NativeAppAction, NativeAppState, ffi::native_provider_delete_json,
+    ffi::native_provider_import_shared_file_json, ffi::native_provider_list_json,
+    ffi::native_provider_mkdir_json, ffi::native_provider_read_json,
+    ffi::native_provider_rename_json, ffi::native_provider_write_json,
+};
 
 pub struct IrisDriveAppHandle {
     app: Arc<FfiApp>,
@@ -99,6 +104,85 @@ pub extern "C" fn iris_drive_qr_matrix_json(text: *const c_char) -> *mut c_char 
         error,
     });
     json_string(&result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_list_json(data_dir: *const c_char) -> *mut c_char {
+    json_string(&native_provider_list_json(&c_string_lossy(data_dir)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_read_json(
+    data_dir: *const c_char,
+    path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_read_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(path),
+        &c_string_lossy(output_path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_write_json(
+    data_dir: *const c_char,
+    path: *const c_char,
+    source_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_write_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(path),
+        &c_string_lossy(source_path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_mkdir_json(
+    data_dir: *const c_char,
+    path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_mkdir_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_delete_json(
+    data_dir: *const c_char,
+    path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_delete_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_rename_json(
+    data_dir: *const c_char,
+    old_path: *const c_char,
+    new_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_rename_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(old_path),
+        &c_string_lossy(new_path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_import_shared_file_json(
+    data_dir: *const c_char,
+    display_name: *const c_char,
+    source_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_import_shared_file_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(display_name),
+        &c_string_lossy(source_path),
+    ))
 }
 
 /// # Safety
