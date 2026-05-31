@@ -70,6 +70,15 @@ The menu-click check is opt-in because it opens Finder on the active desktop:
 IRIS_DRIVE_MACOS_SMOKE_UI=1 just smoke-macos
 ```
 
+## Screenshot Fixture
+
+```bash
+scripts/macos-screenshot-fixture.sh --output artifacts/screenshots/iris-drive-macos-window.png
+```
+
+The fixture launches the debug app with deterministic non-real account data,
+skips daemon/File Provider startup, and captures only the Iris Drive window.
+
 ## Entitlements
 
 Development entitlements:

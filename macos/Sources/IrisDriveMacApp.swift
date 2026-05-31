@@ -45,6 +45,7 @@ struct IrisDriveMacApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let screenshotFixtureMode = IrisDriveScreenshotFixtures.enabled
     private var daemon: Process?
     private var userRequestedSyncStop = false
     private var daemonRestartWorkItem: DispatchWorkItem?
@@ -78,6 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if screenshotFixtureMode {
+            IrisDriveScreenshotFixtures.apply()
+            installWindowObserver()
+            observeWindows()
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         if handOffToExistingInstanceIfNeeded() {
             return
         }
@@ -99,6 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func ensureFileProviderDomain() {
+        if screenshotFixtureMode {
+            fileProviderDomainState = .unavailable
+            return
+        }
         if fileProviderIntegrationEnabled {
             guard !fileProviderRegistrationInFlight else {
                 return
@@ -141,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func ensureFileProviderDomainIfProfileExists() {
+        if screenshotFixtureMode {
+            fileProviderDomainState = .unavailable
+            return
+        }
         let paths = runtimePathsForMenu ?? runtimePaths()
         guard localProfileExists(paths: paths), IrisDriveStatus.shared.setupComplete else {
             fileProviderDomainState = .unavailable
