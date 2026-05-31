@@ -302,6 +302,9 @@ pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serd
 pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Option<Value> {
     let sync = sync?;
     let transport = sync.transport_settings();
+    let direct_devices = sync.connected_peer_ids().await;
+    let mesh_devices = sync.mesh_peer_ids().await;
+    let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
@@ -313,13 +316,28 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "webrtc_enabled": transport.enable_webrtc,
         "webrtc_max_connections": transport.webrtc_max_connections,
         "open_discovery_max_pending": transport.open_discovery_max_pending,
-        "mesh_peer_count": sync.mesh_peer_count().await,
-        "mesh_peers": sync.mesh_peer_ids().await,
+        "online_devices": online_devices.clone(),
+        "online_peers": online_devices,
+        "mesh_peer_count": mesh_devices.len(),
+        "mesh_devices": mesh_devices.clone(),
+        "mesh_peers": mesh_devices,
         "authorized_peers": sync.authorized_peer_ids().await,
-        "connected_peers": sync.connected_peer_ids().await,
+        "direct_devices": direct_devices.clone(),
+        "direct_peers": direct_devices.clone(),
+        "connected_peers": direct_devices,
         "peer_statuses": sync.fips_peer_statuses().await,
         "relay_statuses": sync.fips_relay_statuses().await,
     }))
+}
+
+fn fips_online_device_ids(direct_devices: &[String], mesh_devices: &[String]) -> Vec<String> {
+    direct_devices
+        .iter()
+        .chain(mesh_devices)
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn relay_status_label(status: RelayStatus) -> &'static str {

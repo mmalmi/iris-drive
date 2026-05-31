@@ -420,6 +420,22 @@ fn native_fips_status_drives_device_online_presence() {
         owner_dir.path(),
         &current_device,
         &[],
+        &[linked_device.as_str()],
+        super::unix_now_seconds(),
+    );
+    let mesh_only = app.refresh();
+    let linked = mesh_only
+        .ui
+        .devices
+        .iter()
+        .find(|device| device.pubkey == linked_device)
+        .expect("linked device in roster");
+    assert!(linked.is_online);
+
+    write_native_fips_status_fixture(
+        owner_dir.path(),
+        &current_device,
+        &[],
         &[],
         super::unix_now_seconds().saturating_sub(120),
     );

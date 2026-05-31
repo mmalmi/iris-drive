@@ -86,8 +86,11 @@ struct IrisDriveFipsStatus: Equatable {
     let endpointNpub: String?
     let discoveryScope: String?
     let rosterPeerCount: Int
-    let rosterConnectedPeerCount: Int
-    let connectedPeerCount: Int
+    let rosterOnlineDeviceCount: Int
+    let rosterDirectDeviceCount: Int
+    let onlineDeviceCount: Int
+    let directDeviceCount: Int
+    let meshDeviceCount: Int
     let otherPeerCount: Int
     let peerStatuses: [IrisDriveFipsPeerStatus]
     let error: String?
@@ -99,8 +102,11 @@ struct IrisDriveFipsStatus: Equatable {
         endpointNpub: String? = nil,
         discoveryScope: String? = nil,
         rosterPeerCount: Int = 0,
-        rosterConnectedPeerCount: Int = 0,
-        connectedPeerCount: Int = 0,
+        rosterOnlineDeviceCount: Int = 0,
+        rosterDirectDeviceCount: Int = 0,
+        onlineDeviceCount: Int = 0,
+        directDeviceCount: Int = 0,
+        meshDeviceCount: Int = 0,
         otherPeerCount: Int = 0,
         peerStatuses: [IrisDriveFipsPeerStatus] = [],
         error: String? = nil
@@ -111,8 +117,11 @@ struct IrisDriveFipsStatus: Equatable {
         self.endpointNpub = endpointNpub
         self.discoveryScope = discoveryScope
         self.rosterPeerCount = rosterPeerCount
-        self.rosterConnectedPeerCount = rosterConnectedPeerCount
-        self.connectedPeerCount = connectedPeerCount
+        self.rosterOnlineDeviceCount = rosterOnlineDeviceCount
+        self.rosterDirectDeviceCount = rosterDirectDeviceCount
+        self.onlineDeviceCount = onlineDeviceCount
+        self.directDeviceCount = directDeviceCount
+        self.meshDeviceCount = meshDeviceCount
         self.otherPeerCount = otherPeerCount
         self.peerStatuses = peerStatuses
         self.error = error
@@ -125,9 +134,29 @@ struct IrisDriveFipsStatus: Equatable {
         endpointNpub = json["endpoint_npub"] as? String
         discoveryScope = json["discovery_scope"] as? String
         rosterPeerCount = (json["roster_peer_count"] as? NSNumber)?.intValue ?? 0
-        rosterConnectedPeerCount =
-            (json["roster_connected_peer_count"] as? NSNumber)?.intValue ?? 0
-        connectedPeerCount = (json["connected_peer_count"] as? NSNumber)?.intValue ?? 0
+        rosterOnlineDeviceCount =
+            (json["roster_online_device_count"] as? NSNumber)?.intValue
+            ?? (json["roster_online_peer_count"] as? NSNumber)?.intValue
+            ?? (json["roster_connected_peer_count"] as? NSNumber)?.intValue
+            ?? 0
+        rosterDirectDeviceCount =
+            (json["roster_direct_device_count"] as? NSNumber)?.intValue
+            ?? (json["roster_connected_peer_count"] as? NSNumber)?.intValue
+            ?? 0
+        onlineDeviceCount =
+            (json["online_device_count"] as? NSNumber)?.intValue
+            ?? (json["online_peer_count"] as? NSNumber)?.intValue
+            ?? (json["connected_peer_count"] as? NSNumber)?.intValue
+            ?? 0
+        directDeviceCount =
+            (json["direct_device_count"] as? NSNumber)?.intValue
+            ?? (json["direct_peer_count"] as? NSNumber)?.intValue
+            ?? (json["connected_peer_count"] as? NSNumber)?.intValue
+            ?? 0
+        meshDeviceCount =
+            (json["mesh_device_count"] as? NSNumber)?.intValue
+            ?? (json["mesh_peer_count"] as? NSNumber)?.intValue
+            ?? 0
         otherPeerCount = (json["other_peer_count"] as? NSNumber)?.intValue ?? 0
         peerStatuses = (json["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init)
         error = json["error"] as? String
@@ -147,7 +176,7 @@ struct IrisDriveFipsStatus: Equatable {
     }
 
     var rosterText: String {
-        "\(rosterConnectedPeerCount)/\(rosterPeerCount) direct"
+        "\(rosterOnlineDeviceCount)/\(rosterPeerCount) online"
     }
 }
 

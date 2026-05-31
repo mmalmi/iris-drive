@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 pub(crate) fn peer_statuses(
     config_dir: &Path,
@@ -20,10 +21,15 @@ pub(crate) fn peer_statuses(
     let fips_status = daemon_status
         .and_then(|status| status.get("fips_block_sync"))
         .filter(|value| value.is_object());
-    let connected_fips =
-        string_set_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
-    let mesh_fips =
-        string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
+    let connected_fips = fips_direct_devices_from_status(fips_status)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mesh_fips = fips_mesh_devices_from_status(fips_status)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let online_fips = fips_online_devices_from_status(fips_status)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let authorized_fips =
         string_set_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
     let fips_peer_statuses =
@@ -50,7 +56,7 @@ pub(crate) fn peer_statuses(
             let fips_online = if is_current_device {
                 daemon_running
             } else {
-                fips_direct_online || fips_mesh_online
+                online_fips.contains(&device_npub)
             };
             let fips_online_via = if is_current_device && fips_online {
                 Some("local")

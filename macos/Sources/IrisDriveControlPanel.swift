@@ -1376,7 +1376,8 @@ private struct FipsDiagnostics: View {
                 NetworkMetric(title: "State", value: status.stateText)
                 NetworkMetric(title: "Roster", value: status.rosterText)
                 NetworkMetric(title: "Other", value: "\(status.otherPeerCount)")
-                NetworkMetric(title: "Connected", value: "\(status.connectedPeerCount)")
+                NetworkMetric(title: "Direct", value: "\(status.directDeviceCount)")
+                NetworkMetric(title: "Mesh", value: "\(status.meshDeviceCount)")
             }
             if let endpoint = status.endpointNpub, !endpoint.isEmpty {
                 Text(endpoint)

@@ -551,11 +551,35 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["webrtc_max_connections"], 16);
     assert_eq!(fips["open_discovery_max_pending"], 0);
     assert_eq!(fips["mesh_peer_count"], 1);
+    assert_eq!(fips["mesh_device_count"], 1);
     assert_eq!(fips["mesh_peers"], serde_json::json!(["npub1remote"]));
     assert_eq!(fips["roster_peer_count"], 1);
+    assert_eq!(fips["roster_online_device_count"], 1);
+    assert_eq!(fips["roster_online_peer_count"], 1);
+    assert_eq!(fips["roster_direct_device_count"], 1);
     assert_eq!(fips["roster_connected_peer_count"], 1);
     assert_eq!(fips["other_peer_count"], 1);
+    assert_eq!(fips["online_device_count"], 2);
+    assert_eq!(fips["online_peer_count"], 2);
+    assert_eq!(fips["direct_device_count"], 2);
+    assert_eq!(fips["direct_peer_count"], 2);
     assert_eq!(fips["connected_peer_count"], 2);
+    assert_eq!(
+        fips["online_devices"],
+        serde_json::json!(["npub1outside", "npub1remote"])
+    );
+    assert_eq!(
+        fips["online_peers"],
+        serde_json::json!(["npub1outside", "npub1remote"])
+    );
+    assert_eq!(
+        fips["direct_devices"],
+        serde_json::json!(["npub1outside", "npub1remote"])
+    );
+    assert_eq!(
+        fips["direct_peers"],
+        serde_json::json!(["npub1outside", "npub1remote"])
+    );
     assert_eq!(
         fips["peer_statuses"],
         serde_json::json!([{
@@ -727,7 +751,12 @@ fn status_drops_stale_fips_mesh_peers() {
     let status = run_json(owner_dir.path(), &["status"]);
     let fips = &status["network"]["fips"];
     assert_eq!(fips["fresh"], false);
+    assert_eq!(fips["online_devices"], serde_json::json!([]));
+    assert_eq!(fips["online_peers"], serde_json::json!([]));
+    assert_eq!(fips["direct_devices"], serde_json::json!([]));
+    assert_eq!(fips["direct_peers"], serde_json::json!([]));
     assert_eq!(fips["connected_peers"], serde_json::json!([]));
+    assert_eq!(fips["mesh_devices"], serde_json::json!([]));
     assert_eq!(fips["mesh_peers"], serde_json::json!([]));
     assert_eq!(fips["peer_statuses"], serde_json::json!([]));
     let linked_peer = status["peers"]

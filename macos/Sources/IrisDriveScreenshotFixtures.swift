@@ -102,8 +102,11 @@ enum IrisDriveScreenshotFixtures {
             endpointNpub: fakeNpub("endpoint"),
             discoveryScope: "owner",
             rosterPeerCount: 4,
-            rosterConnectedPeerCount: 3,
-            connectedPeerCount: 3,
+            rosterOnlineDeviceCount: 3,
+            rosterDirectDeviceCount: 3,
+            onlineDeviceCount: 3,
+            directDeviceCount: 2,
+            meshDeviceCount: 1,
             otherPeerCount: 0,
             error: nil
         )

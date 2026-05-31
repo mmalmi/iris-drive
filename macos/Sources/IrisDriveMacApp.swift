@@ -1818,9 +1818,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let fresh = json["fresh"] as? Bool ?? false
             let fips = json["fips_block_sync"] as? [String: Any]
             let connectedPeers = fips?["connected_peers"] as? [String] ?? []
+            let directDevices =
+                fips?["direct_devices"] as? [String]
+                ?? fips?["direct_peers"] as? [String]
+                ?? connectedPeers
+            let meshDevices =
+                fips?["mesh_devices"] as? [String]
+                ?? fips?["mesh_peers"] as? [String]
+                ?? []
+            let onlineDevices =
+                fips?["online_devices"] as? [String]
+                ?? fips?["online_peers"] as? [String]
+                ?? Array(Set(directDevices).union(meshDevices)).sorted()
             let authorizedPeers = fips?["authorized_peers"] as? [String] ?? []
-            let connectedSet = Set(connectedPeers)
+            let connectedSet = Set(directDevices)
+            let onlineSet = Set(onlineDevices)
             let authorizedConnected = authorizedPeers.filter { connectedSet.contains($0) }.count
+            let authorizedOnline = authorizedPeers.filter { onlineSet.contains($0) }.count
             status.fips = IrisDriveFipsStatus(
                 enabled: fips != nil,
                 running: running,
@@ -1828,9 +1842,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 endpointNpub: fips?["endpoint_npub"] as? String,
                 discoveryScope: fips?["discovery_scope"] as? String,
                 rosterPeerCount: authorizedPeers.count,
-                rosterConnectedPeerCount: authorizedConnected,
-                connectedPeerCount: connectedPeers.count,
-                otherPeerCount: max(0, connectedPeers.count - authorizedConnected),
+                rosterOnlineDeviceCount: authorizedOnline,
+                rosterDirectDeviceCount: authorizedConnected,
+                onlineDeviceCount: onlineDevices.count,
+                directDeviceCount: directDevices.count,
+                meshDeviceCount: meshDevices.count,
+                otherPeerCount: max(0, onlineDevices.count - authorizedOnline),
                 peerStatuses: (fips?["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init),
                 error: json["fips_block_sync_error"] as? String
             )

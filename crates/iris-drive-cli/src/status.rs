@@ -337,7 +337,12 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
             .get_mut("fips_block_sync")
             .and_then(Value::as_object_mut)
     {
+        fips.insert("online_devices".to_string(), json!([]));
+        fips.insert("online_peers".to_string(), json!([]));
+        fips.insert("direct_devices".to_string(), json!([]));
+        fips.insert("direct_peers".to_string(), json!([]));
         fips.insert("connected_peers".to_string(), json!([]));
+        fips.insert("mesh_devices".to_string(), json!([]));
         fips.insert("mesh_peers".to_string(), json!([]));
         fips.insert("peer_statuses".to_string(), json!([]));
     }
@@ -791,14 +796,15 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
     if authorized_peers.is_empty() {
         authorized_peers = configured_fips_authorized_peer_npubs(config);
     }
-    let connected_peers =
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("connected_peers")));
-    let mesh_peers =
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
+    let direct_devices = fips_direct_devices_from_status(fips_status);
+    let mesh_devices = fips_mesh_devices_from_status(fips_status);
+    let online_devices = fips_online_devices_from_status(fips_status);
     let authorized_set = authorized_peers.iter().cloned().collect::<BTreeSet<_>>();
-    let connected_set = connected_peers.iter().cloned().collect::<BTreeSet<_>>();
-    let roster_connected_peer_count = connected_set.intersection(&authorized_set).count();
-    let other_peer_count = connected_set.difference(&authorized_set).count();
+    let direct_set = direct_devices.iter().cloned().collect::<BTreeSet<_>>();
+    let online_set = online_devices.iter().cloned().collect::<BTreeSet<_>>();
+    let roster_direct_device_count = direct_set.intersection(&authorized_set).count();
+    let roster_online_device_count = online_set.intersection(&authorized_set).count();
+    let other_peer_count = online_set.difference(&authorized_set).count();
     let error = daemon_status
         .and_then(|status| status.get("fips_block_sync_error"))
         .filter(|value| !value.is_null())
@@ -851,15 +857,28 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "mesh_peer_count": fips_status
             .and_then(|status| status.get("mesh_peer_count"))
             .and_then(Value::as_u64)
-            .unwrap_or(mesh_peers.len() as u64),
+            .unwrap_or(mesh_devices.len() as u64),
+        "mesh_device_count": mesh_devices.len(),
         "roster_peer_count": authorized_peers.len(),
-        "roster_connected_peer_count": roster_connected_peer_count,
+        "roster_online_device_count": roster_online_device_count,
+        "roster_online_peer_count": roster_online_device_count,
+        "roster_direct_device_count": roster_direct_device_count,
+        "roster_connected_peer_count": roster_direct_device_count,
         "authorized_peer_count": authorized_peers.len(),
-        "connected_peer_count": connected_peers.len(),
+        "online_device_count": online_devices.len(),
+        "online_peer_count": online_devices.len(),
+        "direct_device_count": direct_devices.len(),
+        "direct_peer_count": direct_devices.len(),
+        "connected_peer_count": direct_devices.len(),
         "other_peer_count": other_peer_count,
         "authorized_peers": authorized_peers,
-        "connected_peers": connected_peers,
-        "mesh_peers": mesh_peers,
+        "online_devices": online_devices,
+        "online_peers": online_devices,
+        "direct_devices": direct_devices,
+        "direct_peers": direct_devices,
+        "connected_peers": direct_devices,
+        "mesh_devices": mesh_devices,
+        "mesh_peers": mesh_devices,
         "peer_statuses": fips_status
             .and_then(|status| status.get("peer_statuses"))
             .cloned()
@@ -892,6 +911,55 @@ pub(crate) fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<S
 
 pub(crate) fn string_vec_from_json_array(value: Option<&Value>) -> Vec<String> {
     string_set_from_json_array(value).into_iter().collect()
+}
+
+pub(crate) fn fips_online_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
+    let mut peers =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("online_devices")));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("online_peers")),
+    ));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("direct_devices")),
+    ));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("direct_peers")),
+    ));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("connected_peers")),
+    ));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("mesh_devices")),
+    ));
+    peers.extend(string_set_from_json_array(
+        fips_status.and_then(|status| status.get("mesh_peers")),
+    ));
+    peers.into_iter().collect()
+}
+
+pub(crate) fn fips_direct_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
+    let direct_devices =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("direct_devices")));
+    if !direct_devices.is_empty() {
+        return direct_devices;
+    }
+    let direct_peers =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("direct_peers")));
+    if direct_peers.is_empty() {
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("connected_peers")))
+    } else {
+        direct_peers
+    }
+}
+
+pub(crate) fn fips_mesh_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
+    let mesh_devices =
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_devices")));
+    if mesh_devices.is_empty() {
+        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")))
+    } else {
+        mesh_devices
+    }
 }
 
 pub(crate) fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {

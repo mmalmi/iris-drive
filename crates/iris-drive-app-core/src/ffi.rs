@@ -1953,7 +1953,17 @@ struct NativeFipsStatus {
     #[serde(default)]
     updated_at: u64,
     #[serde(default)]
+    online_devices: Vec<String>,
+    #[serde(default)]
+    direct_devices: Vec<String>,
+    #[serde(default)]
+    mesh_devices: Vec<String>,
+    #[serde(default)]
     connected_peers: Vec<String>,
+    #[serde(default)]
+    mesh_peers: Vec<String>,
+    #[serde(default)]
+    online_peers: Vec<String>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -1963,6 +1973,15 @@ impl NativeFipsStatus {
         self.running
             && self.error.as_deref().unwrap_or_default().is_empty()
             && unix_now_seconds().saturating_sub(self.updated_at) <= NATIVE_FIPS_STATUS_FRESH_SECS
+    }
+
+    fn peer_is_online(&self, npub: &str) -> bool {
+        self.online_devices.iter().any(|peer| peer == npub)
+            || self.online_peers.iter().any(|peer| peer == npub)
+            || self.direct_devices.iter().any(|peer| peer == npub)
+            || self.connected_peers.iter().any(|peer| peer == npub)
+            || self.mesh_devices.iter().any(|peer| peer == npub)
+            || self.mesh_peers.iter().any(|peer| peer == npub)
     }
 }
 
@@ -1981,14 +2000,22 @@ async fn write_native_fips_status(
     sync: &iris_drive_core::FsFipsBlockSync,
     error: Option<&str>,
 ) -> Result<(), String> {
+    let direct_devices = sync.connected_peer_ids().await;
+    let mesh_devices = sync.mesh_peer_ids().await;
+    let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     let value = json!({
         "running": error.is_none(),
         "updated_at": unix_now_seconds(),
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
         "authorized_peers": sync.authorized_peer_ids().await,
-        "connected_peers": sync.connected_peer_ids().await,
-        "mesh_peers": sync.mesh_peer_ids().await,
+        "online_devices": online_devices.clone(),
+        "online_peers": online_devices,
+        "direct_devices": direct_devices.clone(),
+        "direct_peers": direct_devices.clone(),
+        "connected_peers": direct_devices,
+        "mesh_devices": mesh_devices.clone(),
+        "mesh_peers": mesh_devices,
         "peer_statuses": sync.fips_peer_statuses().await,
         "error": error,
     });
@@ -2000,7 +2027,12 @@ fn write_native_fips_error(config_dir: &Path, error: &str) {
     let value = json!({
         "running": false,
         "updated_at": unix_now_seconds(),
+        "online_devices": [],
+        "online_peers": [],
+        "direct_devices": [],
+        "direct_peers": [],
         "connected_peers": [],
+        "mesh_devices": [],
         "mesh_peers": [],
         "peer_statuses": [],
         "error": error,
@@ -2123,10 +2155,7 @@ fn devices_from_account(
                             .as_deref()
                             .is_none_or(|endpoint| endpoint == device_npub);
                     }
-                    status
-                        .connected_peers
-                        .iter()
-                        .any(|peer| peer == &device_npub)
+                    status.peer_is_online(&device_npub)
                 });
             let role = device_role_label(device.role).to_owned();
             UiDevice {
@@ -2142,6 +2171,17 @@ fn devices_from_account(
                 can_demote_admin: false,
             }
         })
+        .collect()
+}
+
+#[cfg(not(test))]
+fn fips_online_device_ids(direct_devices: &[String], mesh_devices: &[String]) -> Vec<String> {
+    direct_devices
+        .iter()
+        .chain(mesh_devices)
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 
