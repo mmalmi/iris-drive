@@ -41,6 +41,7 @@ pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
+const MIN_PROVIDER_DISPLAY_UNIX_SECS: i64 = 946_684_800;
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(not(test))]
@@ -868,9 +869,10 @@ fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value>
         let visible_root = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
             .await
             .context("building provider root")?;
-        let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
-            .await
-            .context("opening provider root")?;
+        let provider =
+            HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
+                .await
+                .context("opening provider root")?;
         let entries = provider_entries(&provider, &modified_at_by_path).await?;
         Ok(json!({
             "anchor": provider.anchor().await.as_str(),
@@ -1040,7 +1042,7 @@ fn provider_modified_at_index(
 }
 
 fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
-    if path.is_empty() || modified_at <= 0 {
+    if path.is_empty() || modified_at < MIN_PROVIDER_DISPLAY_UNIX_SECS {
         return;
     }
     index
@@ -1766,37 +1768,31 @@ async fn handle_native_device_link_roster(
         .map_err(|error| format!("parsing signed device-link AppKeys: {error}"))?;
     if roster_event.pubkey.to_hex() != admin_device_hex
         || parsed.owner_pubkey != state.owner_pubkey
-        || !parsed.contains(&state.device_pubkey)
         || !parsed.is_admin(&admin_device_hex)
     {
         return Ok(true);
     }
 
-    let should_apply = state
-        .outbound_device_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_hex);
-    let already_current = state.app_keys.as_ref() == Some(&parsed);
-    if !should_apply && !already_current {
-        return Ok(true);
-    }
-
-    let outcome = if should_apply {
-        iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut config, &roster_event)
-            .map_err(|error| format!("applying signed device-link roster event: {error}"))?
-    } else {
-        iris_drive_core::relay_sync::AppKeysApply::Applied(iris_drive_core::ApplyDecision::Rejected)
-    };
-    let decision = match outcome {
-        iris_drive_core::relay_sync::AppKeysApply::Applied(decision) => decision,
-        iris_drive_core::relay_sync::AppKeysApply::NotOurOwner
-        | iris_drive_core::relay_sync::AppKeysApply::UnauthorizedSigner => {
-            iris_drive_core::ApplyDecision::Rejected
+    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_event(
+        &mut config,
+        &roster_event,
+        &admin_device_hex,
+    )
+    .map_err(|error| format!("applying signed device-link roster event: {error}"))?;
+    let accepted = match outcome {
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
+            decision != iris_drive_core::ApplyDecision::Rejected
         }
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Ignored => false,
     };
+    let changed = matches!(
+        outcome,
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
+            if decision != iris_drive_core::ApplyDecision::Rejected
+    );
     let state = config.account.as_ref().expect("account still present");
-    let accepted = should_apply && decision != iris_drive_core::ApplyDecision::Rejected;
-    let ack_data = if accepted || already_current {
+    let ack_data = if accepted {
         Some((
             state.device_pubkey.clone(),
             state
@@ -1809,13 +1805,14 @@ async fn handle_native_device_link_roster(
     } else {
         None
     };
-    if accepted {
+    if changed {
         config
             .save(config_path_in(config_dir))
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
             admin_device_npub = account_npub(&admin_device_hex),
+            apply_outcome = ?outcome,
             "accepted native device-link roster over FIPS"
         );
     }
@@ -1830,7 +1827,12 @@ async fn handle_native_device_link_roster(
         )
         .await?;
     }
-    if accepted {
+    let should_sync_roots = changed
+        && config
+            .account
+            .as_ref()
+            .is_some_and(iris_drive_core::AccountState::is_authorized);
+    if should_sync_roots {
         match iris_drive_core::sync_once_with_fips(
             config_dir,
             &[],

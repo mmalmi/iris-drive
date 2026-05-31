@@ -89,6 +89,69 @@ fn apply_app_keys_event_from_attacker_ignored() {
 }
 
 #[test]
+fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Account::link(
+        linked_dir.path(),
+        admin.state.owner_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+    let linked_pubkey = linked.state.device_pubkey.clone();
+    linked
+        .state
+        .queue_outbound_device_link_request(
+            admin.state.device_pubkey.clone(),
+            &admin.state.device_link_secret,
+            123,
+        )
+        .unwrap();
+
+    admin
+        .approve_device(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let first_event =
+        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
+    let mut cfg = AppConfig {
+        account: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(admin.state.owner_pubkey.clone()));
+
+    let initial =
+        apply_device_link_roster_event(&mut cfg, &first_event, &admin.state.device_pubkey).unwrap();
+    assert!(matches!(
+        initial,
+        DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
+    ));
+    assert_eq!(
+        cfg.account.as_ref().unwrap().authorization_state,
+        DeviceAuthorizationState::Authorized
+    );
+
+    let third_device = Keys::generate().public_key().to_hex();
+    admin
+        .approve_device(&third_device, Some("tablet".into()))
+        .unwrap();
+    let newer_event =
+        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
+
+    let update =
+        apply_device_link_roster_event(&mut cfg, &newer_event, &admin.state.device_pubkey).unwrap();
+    assert!(matches!(
+        update,
+        DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
+    ));
+    let linked_state = cfg.account.as_ref().unwrap();
+    let linked_roster = linked_state.app_keys.as_ref().unwrap();
+    assert!(linked_roster.contains(&linked_pubkey));
+    assert!(linked_roster.contains(&third_device));
+    assert!(linked_state.outbound_device_link_request.is_none());
+}
+
+#[test]
 fn apply_drive_root_event_from_authorized_device_applies() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());

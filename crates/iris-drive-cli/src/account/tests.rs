@@ -180,6 +180,44 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     );
     assert!(state.outbound_device_link_request.is_none());
     assert!(state.app_keys.as_ref().unwrap().contains(&joiner_pubkey));
+
+    let third_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    admin
+        .approve_device(&third_device, Some("tablet".into()))
+        .unwrap();
+    let updated_roster_event = iris_drive_core::nostr_events::build_app_keys_event(
+        admin.device.keys(),
+        admin.state.app_keys.as_ref().unwrap(),
+    )
+    .unwrap();
+    let updated_frame = DeviceLinkRosterFrame {
+        schema: 1,
+        owner_pubkey: admin.state.owner_pubkey.clone(),
+        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        app_keys: admin.state.app_keys.clone().unwrap(),
+        app_keys_event_id: updated_roster_event.id.to_hex(),
+        app_keys_event_json: updated_roster_event.as_json(),
+        sent_at: 789,
+    };
+    let updated_message = iris_drive_core::FipsAppMessage {
+        peer_id: account_npub(&admin.state.device_pubkey),
+        topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
+        data: serde_json::to_vec(&updated_frame).unwrap(),
+    };
+
+    assert!(
+        handle_device_link_app_message(
+            joiner_dir.path(),
+            &updated_message,
+            None,
+            &mut BTreeSet::new(),
+        )
+        .await
+        .unwrap()
+    );
+    let saved = AppConfig::load_or_default(config_path_in(joiner_dir.path())).unwrap();
+    let state = saved.account.unwrap();
+    assert!(state.app_keys.as_ref().unwrap().contains(&third_device));
 }
 
 #[tokio::test]

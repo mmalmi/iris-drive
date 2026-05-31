@@ -9,6 +9,7 @@ enum FileProviderStorage {
     private static let debugLogFileName = "ios-fileprovider-extension.log"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
+    private static let minDisplayUnixSeconds: Int64 = 946_684_800
 
     private struct ProviderState: Decodable {
         var anchor: String
@@ -374,7 +375,7 @@ enum FileProviderStorage {
     }
 
     private static func displayDate(from unixSeconds: Int64?) -> Date? {
-        guard let unixSeconds, unixSeconds > 0 else { return nil }
+        guard let unixSeconds, unixSeconds >= minDisplayUnixSeconds else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
     }
 

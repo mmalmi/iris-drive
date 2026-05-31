@@ -666,9 +666,21 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         .find(|entry| entry["path"] == "owner-note.txt")
         .expect("provider list includes owner note");
     assert!(
-        owner_note["modified_at"].as_i64().is_some_and(|modified_at| modified_at > 0),
+        owner_note["modified_at"]
+            .as_i64()
+            .is_some_and(|modified_at| modified_at > 0),
         "provider list should include non-epoch modification time: {owner_note:#?}"
     );
+}
+
+#[test]
+fn provider_modified_at_index_ignores_unix_epoch_sentinel() {
+    let mut index = std::collections::BTreeMap::new();
+    super::remember_provider_modified_at(&mut index, "old-note.txt", 1);
+    super::remember_provider_modified_at(&mut index, "new-note.txt", 1_700_000_000);
+
+    assert!(!index.contains_key("old-note.txt"));
+    assert_eq!(index.get("new-note.txt"), Some(&1_700_000_000));
 }
 
 fn apply_latest_app_keys_event(from: &Path, to: &Path) {

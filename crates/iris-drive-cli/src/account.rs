@@ -627,37 +627,31 @@ async fn handle_device_link_roster_app_message(
         .context("parsing signed roster AppKeys")?;
     if roster_event.pubkey.to_hex() != admin_device_hex
         || parsed.owner_pubkey != state.owner_pubkey
-        || !parsed.contains(&state.device_pubkey)
         || !parsed.is_admin(&admin_device_hex)
     {
         return Ok(true);
     }
 
-    let should_apply = state
-        .outbound_device_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_hex);
-    let already_current = state.app_keys.as_ref() == Some(&parsed);
-    if !should_apply && !already_current {
-        return Ok(true);
-    }
-
-    let outcome = if should_apply {
-        iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut config, &roster_event)
-            .context("applying signed roster event")?
-    } else {
-        iris_drive_core::relay_sync::AppKeysApply::Applied(iris_drive_core::ApplyDecision::Rejected)
-    };
-    let decision = match outcome {
-        iris_drive_core::relay_sync::AppKeysApply::Applied(decision) => decision,
-        iris_drive_core::relay_sync::AppKeysApply::NotOurOwner
-        | iris_drive_core::relay_sync::AppKeysApply::UnauthorizedSigner => {
-            iris_drive_core::ApplyDecision::Rejected
+    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_event(
+        &mut config,
+        &roster_event,
+        &admin_device_hex,
+    )
+    .context("applying signed roster event")?;
+    let accepted = match outcome {
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
+            decision != iris_drive_core::ApplyDecision::Rejected
         }
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Ignored => false,
     };
+    let changed = matches!(
+        outcome,
+        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
+            if decision != iris_drive_core::ApplyDecision::Rejected
+    );
     let state = config.account.as_ref().expect("account still present");
-    let accepted = should_apply && decision != iris_drive_core::ApplyDecision::Rejected;
-    let ack_data = if accepted || already_current {
+    let ack_data = if accepted {
         Some((
             state.device_pubkey.clone(),
             state
@@ -670,7 +664,7 @@ async fn handle_device_link_roster_app_message(
     } else {
         None
     };
-    if accepted {
+    if changed {
         let authorization_state = authorization_state_label(state);
         config.save(config_path_in(config_dir))?;
         println!(
@@ -681,7 +675,7 @@ async fn handle_device_link_roster_app_message(
                 "peer": message.peer_id,
                 "admin_device_npub": account_npub(&admin_device_hex),
                 "authorization_state": authorization_state,
-                "apply_decision": format!("{decision:?}").to_ascii_lowercase(),
+                "apply_decision": format!("{outcome:?}").to_ascii_lowercase(),
             })
         );
     }

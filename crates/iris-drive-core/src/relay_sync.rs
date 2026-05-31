@@ -56,6 +56,17 @@ pub enum AppKeysApply {
     Applied(ApplyDecision),
 }
 
+/// Result of applying an admin roster sent over the direct device-link channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceLinkRosterApply {
+    /// The event is not applicable to this device/account.
+    Ignored,
+    /// The local roster already matches this event.
+    Current,
+    /// The event was accepted by the AppKeys timeline rules.
+    Applied(ApplyDecision),
+}
+
 /// Apply a remote `AppKeys` event to `config`. The event may be signed by any
 /// current admin device. The parsed snapshot carries the stable account id;
 /// the event author becomes the roster signer and DCK wrapping key.
@@ -81,6 +92,53 @@ pub fn apply_remote_app_keys_event(
     };
     let decision = account.apply_signed_app_keys(snapshot, record);
     Ok(AppKeysApply::Applied(decision))
+}
+
+/// Apply a signed roster delivered over device-link/FIPS.
+///
+/// A brand-new linked device only accepts the first roster from the admin it
+/// explicitly requested approval from. Once it has a current roster, it must
+/// continue accepting newer rosters signed by a current admin so it learns
+/// about devices approved after itself.
+pub fn apply_device_link_roster_event(
+    config: &mut AppConfig,
+    event: &Event,
+    admin_device_pubkey: &str,
+) -> Result<DeviceLinkRosterApply, RelayError> {
+    let snapshot = parse_app_keys_event(event)?;
+    let signer_pubkey = event.pubkey.to_hex();
+    let Some(account) = config.account.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if snapshot.owner_pubkey != account.owner_pubkey
+        || signer_pubkey != admin_device_pubkey
+        || !snapshot.is_admin(admin_device_pubkey)
+    {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+
+    if account.app_keys.as_ref() == Some(&snapshot) {
+        return Ok(DeviceLinkRosterApply::Current);
+    }
+
+    let has_current_roster = account.app_keys.is_some();
+    let pending_from_admin = account
+        .outbound_device_link_request
+        .as_ref()
+        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_pubkey);
+    if !has_current_roster && !pending_from_admin {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+    if pending_from_admin && !snapshot.contains(&account.device_pubkey) {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+
+    match apply_remote_app_keys_event(config, event)? {
+        AppKeysApply::Applied(decision) => Ok(DeviceLinkRosterApply::Applied(decision)),
+        AppKeysApply::NotOurOwner | AppKeysApply::UnauthorizedSigner => {
+            Ok(DeviceLinkRosterApply::Ignored)
+        }
+    }
 }
 
 fn can_accept_app_keys_from(
