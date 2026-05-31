@@ -191,6 +191,8 @@ enum FileProviderStorage {
 
     private struct ProviderEntry: Decodable {
         let path: String
+        let parentPath: String
+        let displayName: String
         let kind: String
         let size: UInt64
         let version: String?
@@ -198,6 +200,8 @@ enum FileProviderStorage {
 
         enum CodingKeys: String, CodingKey {
             case path
+            case parentPath = "parent_path"
+            case displayName = "display_name"
             case kind
             case size
             case version
@@ -211,8 +215,17 @@ enum FileProviderStorage {
     }
 
     private struct ProviderResolvedPath: Decodable {
+        let parentPath: String
+        let displayName: String
         let path: String
         let error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case parentPath = "parent_path"
+            case displayName = "display_name"
+            case path
+            case error
+        }
     }
 
     static var baseDirectory: URL {
@@ -347,7 +360,7 @@ enum FileProviderStorage {
         guard let parent = path(for: containerIdentifier) else { return [] }
         let list = providerList()
         let items = list.entries
-            .filter { parentPath(for: $0.path) == parent }
+            .filter { $0.parentPath == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             .map { item(for: $0, anchor: list.anchor) }
         debugLog("children parent=\(parent.isEmpty ? "/" : parent) count=\(items.count)")
@@ -451,19 +464,19 @@ enum FileProviderStorage {
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination = try resolvedPath(parent: parent, name: template.filename)
-        NSLog("Iris Drive FileProvider create path=\(destination)")
+        NSLog("Iris Drive FileProvider create path=\(destination.path)")
         invalidateProviderListCache()
         if (template.contentType ?? .data).conforms(to: .folder) {
-            _ = try runIDrive(arguments: ["provider", "mkdir", destination])
+            _ = try runIDrive(arguments: ["provider", "mkdir", destination.path])
         } else if let contents {
-            _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
+            _ = try runIDrive(arguments: ["provider", "write", destination.path, contents.path])
         } else {
             let empty = try emptyTemporaryFile()
-            _ = try runIDrive(arguments: ["provider", "write", destination, empty.path])
+            _ = try runIDrive(arguments: ["provider", "write", destination.path, empty.path])
         }
         let item = optimisticItem(for: destination, template: template, contents: contents)
         invalidateProviderListCache()
-        NSLog("Iris Drive FileProvider created path=\(destination) optimistic=true")
+        NSLog("Iris Drive FileProvider created path=\(destination.path) optimistic=true")
         return item
     }
 
@@ -473,6 +486,10 @@ enum FileProviderStorage {
         contents: URL?
     ) throws -> FileProviderItem? {
         guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
+        }
+        let list = providerList()
+        guard let originalEntry = list.entries.first(where: { $0.path == original }) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         NSLog("Iris Drive FileProvider modify path=\(original)")
@@ -492,20 +509,20 @@ enum FileProviderStorage {
             }
             parent = resolvedParent
         } else {
-            parent = parentPath(for: original)
+            parent = originalEntry.parentPath
         }
-        let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
+        let name = changedFields.contains(.filename) ? item.filename : originalEntry.displayName
         let destination = try resolvedPath(parent: parent, name: name, excluding: original)
         invalidateProviderListCache()
-        if destination != original {
-            _ = try runIDrive(arguments: ["provider", "rename", original, destination])
+        if destination.path != original {
+            _ = try runIDrive(arguments: ["provider", "rename", original, destination.path])
         }
         if let contents, !(item.contentType ?? .data).conforms(to: .folder) {
-            _ = try runIDrive(arguments: ["provider", "write", destination, contents.path])
+            _ = try runIDrive(arguments: ["provider", "write", destination.path, contents.path])
         }
         let updated = optimisticItem(for: destination, template: item, contents: contents)
         invalidateProviderListCache()
-        NSLog("Iris Drive FileProvider modified path=\(destination) optimistic=true")
+        NSLog("Iris Drive FileProvider modified path=\(destination.path) optimistic=true")
         return updated
     }
 
@@ -605,11 +622,11 @@ enum FileProviderStorage {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
             ? UTType.folder
-            : UTType(filenameExtension: (entry.path as NSString).pathExtension) ?? .data
+            : UTType(filenameExtension: (entry.displayName as NSString).pathExtension) ?? .data
         return FileProviderItem(
             itemIdentifier: identifier(for: entry.path),
-            parentItemIdentifier: identifier(for: parentPath(for: entry.path)),
-            filename: fileName(for: entry.path),
+            parentItemIdentifier: identifier(for: entry.parentPath),
+            filename: entry.displayName,
             contentType: contentType,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: displayDate(from: entry.modifiedAt),
@@ -624,7 +641,7 @@ enum FileProviderStorage {
     }
 
     private static func optimisticItem(
-        for path: String,
+        for resolved: ProviderResolvedPath,
         template: NSFileProviderItem,
         contents: URL?
     ) -> FileProviderItem {
@@ -632,16 +649,16 @@ enum FileProviderStorage {
         let size = isDirectory ? nil : NSNumber(value: fileSize(at: contents))
         let contentType = isDirectory
             ? UTType.folder
-            : UTType(filenameExtension: (path as NSString).pathExtension) ?? .data
+            : UTType(filenameExtension: (resolved.displayName as NSString).pathExtension) ?? .data
         return FileProviderItem(
-            itemIdentifier: identifier(for: path),
-            parentItemIdentifier: identifier(for: parentPath(for: path)),
-            filename: fileName(for: path),
+            itemIdentifier: identifier(for: resolved.path),
+            parentItemIdentifier: identifier(for: resolved.parentPath),
+            filename: resolved.displayName,
             contentType: contentType,
             itemSize: size,
             created: Date(),
             modified: Date(),
-            versionIdentifier: "\(providerItemVersionPrefix):optimistic:\(path):\(size?.stringValue ?? "dir")"
+            versionIdentifier: "\(providerItemVersionPrefix):optimistic:\(resolved.path):\(size?.stringValue ?? "dir")"
         )
     }
 
@@ -881,22 +898,6 @@ enum FileProviderStorage {
         return directory
     }
 
-    private static func parentPath(for path: String) -> String {
-        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let slash = value.lastIndex(of: "/") else {
-            return ""
-        }
-        return String(value[..<slash])
-    }
-
-    private static func fileName(for path: String) -> String {
-        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let slash = value.lastIndex(of: "/") else {
-            return value
-        }
-        return String(value[value.index(after: slash)...])
-    }
-
     private static func isSafeRelativePath(_ path: String) -> Bool {
         !path.isEmpty
             && !path.hasPrefix("/")
@@ -907,7 +908,7 @@ enum FileProviderStorage {
         parent: String,
         name: String,
         excluding: String = ""
-    ) throws -> String {
+    ) throws -> ProviderResolvedPath {
         var arguments = ["provider", "resolve-path", parent, name]
         if !excluding.isEmpty {
             arguments.append(excluding)
@@ -920,7 +921,7 @@ enum FileProviderStorage {
         guard !resolved.path.isEmpty else {
             throw providerError("provider path resolver returned no path")
         }
-        return resolved.path
+        return resolved
     }
 
     private static func appGroupApplicationSupportDirectory() -> URL {

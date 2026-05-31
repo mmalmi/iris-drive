@@ -140,6 +140,8 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
 #[derive(Debug, Serialize)]
 struct ProviderListEntry {
     path: String,
+    parent_path: String,
+    display_name: String,
     kind: &'static str,
     size: u64,
     version: String,
@@ -252,11 +254,12 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &display_name,
                     excluding_path.as_deref(),
                 );
+                let (resolved_parent_path, resolved_display_name) = split_provider_path(&path)?;
                 println!(
                     "{}",
                     json!({
-                        "parent_path": parent_path,
-                        "display_name": display_name,
+                        "parent_path": resolved_parent_path,
+                        "display_name": resolved_display_name,
                         "path": path,
                         "error": "",
                     })
@@ -412,6 +415,8 @@ async fn provider_entries(
             entries.push(ProviderListEntry {
                 modified_at: modified_at_by_path.get(&path).copied(),
                 path,
+                parent_path: parent.clone(),
+                display_name: child.name,
                 kind,
                 size: child.size,
                 version: cid.to_string(),
@@ -810,7 +815,8 @@ pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .map(|segment| {
-            if segment == "." || segment == ".." {
+            if segment == "." || segment == ".." || segment.contains('\\') || segment.contains(':')
+            {
                 anyhow::bail!("invalid virtual path component: {segment}");
             }
             Ok(segment)

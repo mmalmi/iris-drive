@@ -14,6 +14,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.json.JSONObject
 import to.iris.drive.app.core.NativeCore
 
 class IrisDriveDocumentStoreTest {
@@ -61,6 +62,7 @@ class IrisDriveDocumentStoreTest {
         val file = store.createDocument(directory.documentId, "text/markdown", "plan.md")
 
         assertEquals(listOf("plan.md"), store.childDocuments(directory.documentId).map { it.displayName })
+        assertTrue(store.isChildDocument(IrisDriveDocumentStore.ROOT_DOCUMENT_ID, file.documentId))
         assertTrue(store.isChildDocument(directory.documentId, file.documentId))
         assertThrows(FileNotFoundException::class.java) {
             store.queryDocument("root/../outside.txt")
@@ -118,8 +120,22 @@ class IrisDriveDocumentStoreTest {
         assertEquals("second", store.readDocumentText(second.documentId))
     }
 
-    private fun newStore(): IrisDriveDocumentStore =
-        IrisDriveDocumentStore(temporaryFolder.newFolder("drive-provider"))
+    private fun newStore(): IrisDriveDocumentStore {
+        val dataDir = temporaryFolder.newFolder("drive-provider")
+        val handle = NativeCore.appNew(dataDir.absolutePath, "provider-test")
+        try {
+            NativeCore.dispatchJson(
+                handle,
+                JSONObject()
+                    .put("type", "create_profile")
+                    .put("device_label", "Android provider test")
+                    .toString(),
+            )
+        } finally {
+            NativeCore.appFree(handle)
+        }
+        return IrisDriveDocumentStore(dataDir)
+    }
 
     private fun textSource(text: String): File =
         temporaryFolder.newFile().also { it.writeText(text) }

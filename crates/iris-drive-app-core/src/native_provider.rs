@@ -17,6 +17,8 @@ const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[derive(Debug, Serialize)]
 struct ProviderListEntry {
     path: String,
+    parent_path: String,
+    display_name: String,
     kind: &'static str,
     size: u64,
     version: String,
@@ -148,9 +150,10 @@ fn run_native_provider_resolve_path(
             &display_name,
             excluding_path.as_deref(),
         );
+        let (resolved_parent_path, resolved_display_name) = split_provider_path(&path)?;
         Ok(json!({
-            "parent_path": parent_path,
-            "display_name": display_name,
+            "parent_path": resolved_parent_path,
+            "display_name": resolved_display_name,
             "path": path,
             "error": "",
         }))
@@ -320,6 +323,8 @@ where
             let modified_at = modified_at_by_path.get(&child.id).copied();
             entries.push(ProviderListEntry {
                 path: child.id,
+                parent_path: parent.clone(),
+                display_name: child.name,
                 kind,
                 size: item.size,
                 version: provider.anchor().await.as_str().to_owned(),

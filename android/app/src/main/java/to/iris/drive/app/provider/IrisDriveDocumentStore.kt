@@ -44,7 +44,7 @@ internal class IrisDriveDocumentStore(
             path
         }
         return providerEntries()
-            .filter { parentOf(it.path) == parentPath }
+            .filter { it.parentPath == parentPath }
             .map { it.toDocumentEntry() }
             .sortedWith(
                 compareBy<IrisDriveDocumentEntry> { !it.isDirectory }
@@ -110,7 +110,10 @@ internal class IrisDriveDocumentStore(
             throw FileNotFoundException(documentId)
         }
         val oldPath = pathForDocumentId(documentId)
-        val parentPath = parentOf(oldPath)
+        val parentPath = providerEntries()
+            .firstOrNull { it.path == oldPath }
+            ?.parentPath
+            ?: throw FileNotFoundException(documentId)
         val targetPath = resolvedProviderPath(parentPath, displayName, excluding = oldPath)
         if (targetPath == oldPath) return documentId
         requireNativeOk(NativeCore.providerRenameJson(dataDir.absolutePath, oldPath, targetPath))
@@ -129,7 +132,9 @@ internal class IrisDriveDocumentStore(
             } else {
                 pathForDocumentId(documentId)
             }
-            childPath == parentPath || childPath.startsWith("$parentPath/")
+            childPath == parentPath ||
+                (parentPath.isEmpty() && childPath.isNotEmpty()) ||
+                childPath.startsWith("$parentPath/")
         }.getOrDefault(false)
 
     fun readDocumentToTemp(documentId: String): File {
@@ -183,6 +188,8 @@ internal class IrisDriveDocumentStore(
             } else {
                 ProviderEntry(
                     path = path,
+                    parentPath = entry.optString("parent_path"),
+                    displayName = entry.optString("display_name"),
                     kind = entry.optString("kind"),
                     size = entry.optLong("size"),
                 )
@@ -193,8 +200,8 @@ internal class IrisDriveDocumentStore(
     private fun ProviderEntry.toDocumentEntry(): IrisDriveDocumentEntry =
         IrisDriveDocumentEntry(
             documentId = documentIdForPath(path),
-            displayName = path.substringAfterLast('/'),
-            mimeType = if (isDirectory) DIRECTORY_MIME_TYPE else inferMimeType(path),
+            displayName = displayName,
+            mimeType = if (isDirectory) DIRECTORY_MIME_TYPE else inferMimeType(displayName),
             size = if (isDirectory) 0 else size,
             lastModified = 0,
             isDirectory = isDirectory,
@@ -233,8 +240,6 @@ internal class IrisDriveDocumentStore(
 
     private fun documentIdForPath(path: String): String = "$ROOT_DOCUMENT_ID/${path.trim('/')}"
 
-    private fun parentOf(path: String): String = path.substringBeforeLast('/', missingDelimiterValue = "")
-
     private fun tempFile(prefix: String): File {
         val dir = File(dataDir, "provider-tmp")
         dir.mkdirs()
@@ -248,6 +253,8 @@ internal class IrisDriveDocumentStore(
 
     private data class ProviderEntry(
         val path: String,
+        val parentPath: String,
+        val displayName: String,
         val kind: String,
         val size: Long,
     ) {

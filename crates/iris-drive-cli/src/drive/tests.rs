@@ -208,3 +208,46 @@ fn provider_import_retries_windows_transient_missing_store_reads() {
         "config: invalid json"
     ));
 }
+
+#[test]
+fn provider_list_entry_serializes_core_path_metadata() {
+    let entry = ProviderListEntry {
+        path: "Reports/nested.txt".to_string(),
+        parent_path: "Reports".to_string(),
+        display_name: "nested.txt".to_string(),
+        kind: "file",
+        size: 12,
+        version: "root".to_string(),
+        modified_at: None,
+    };
+
+    let value = serde_json::to_value(entry).unwrap();
+
+    assert_eq!(value["parent_path"], "Reports");
+    assert_eq!(value["display_name"], "nested.txt");
+}
+
+#[test]
+fn provider_resolve_path_reports_collision_display_name() {
+    let entries = vec![ProviderListEntry {
+        path: "Reports/Shared_file.txt".to_string(),
+        parent_path: "Reports".to_string(),
+        display_name: "Shared_file.txt".to_string(),
+        kind: "file",
+        size: 5,
+        version: "root".to_string(),
+        modified_at: None,
+    }];
+
+    let path = unique_provider_path(&entries, "Reports", "Shared_file.txt", None);
+    let (parent_path, display_name) = split_provider_path(&path).unwrap();
+
+    assert_eq!(parent_path, "Reports");
+    assert_eq!(display_name, "Shared_file (2).txt");
+}
+
+#[test]
+fn provider_path_normalization_rejects_native_separator_aliases() {
+    assert!(normalize_provider_path("Reports\\note.txt").is_err());
+    assert!(normalize_provider_path("Reports:note.txt").is_err());
+}

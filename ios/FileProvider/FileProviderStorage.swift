@@ -19,6 +19,8 @@ enum FileProviderStorage {
 
     private struct ProviderEntry: Decodable {
         var path: String
+        var parentPath: String
+        var displayName: String
         var kind: String
         var size: UInt64
         var version: String?
@@ -26,6 +28,8 @@ enum FileProviderStorage {
 
         enum CodingKeys: String, CodingKey {
             case path
+            case parentPath = "parent_path"
+            case displayName = "display_name"
             case kind
             case size
             case version
@@ -120,7 +124,7 @@ enum FileProviderStorage {
         guard let parent = path(for: containerIdentifier) else { return [] }
         let state = loadStateForEnumeration()
         return state.entries
-            .filter { parentPath(for: $0.path) == parent }
+            .filter { $0.parentPath == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             .map { item(for: $0, anchor: state.anchor) }
     }
@@ -167,7 +171,7 @@ enum FileProviderStorage {
         let destination = try resolvedPath(parent: parent, name: template.filename)
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
-                IrisDriveNativeProvider.mkdir(dataDir: baseDirectory.path, path: destination)
+                IrisDriveNativeProvider.mkdir(dataDir: baseDirectory.path, path: destination.path)
             )
         } else {
             let source: URL
@@ -179,7 +183,7 @@ enum FileProviderStorage {
             try runProviderMutation(
                 IrisDriveNativeProvider.write(
                     dataDir: baseDirectory.path,
-                    path: destination,
+                    path: destination.path,
                     sourcePath: source.path
                 )
             )
@@ -214,6 +218,9 @@ enum FileProviderStorage {
         guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
+        guard let originalEntry = loadStateForEnumeration().entries.first(where: { $0.path == original }) else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
+        }
         if changedFields.contains(.parentItemIdentifier),
            item.parentItemIdentifier == .trashContainer {
             try deleteItem(identifier: item.itemIdentifier)
@@ -221,15 +228,15 @@ enum FileProviderStorage {
         }
         let parent = changedFields.contains(.parentItemIdentifier)
             ? (path(for: item.parentItemIdentifier) ?? "")
-            : parentPath(for: original)
-        let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
+            : originalEntry.parentPath
+        let name = changedFields.contains(.filename) ? item.filename : originalEntry.displayName
         let destination = try resolvedPath(parent: parent, name: name, excluding: original)
-        if destination != original {
+        if destination.path != original {
             try runProviderMutation(
                 IrisDriveNativeProvider.rename(
                     dataDir: baseDirectory.path,
                     oldPath: original,
-                    newPath: destination
+                    newPath: destination.path
                 )
             )
         }
@@ -237,7 +244,7 @@ enum FileProviderStorage {
             try runProviderMutation(
                 IrisDriveNativeProvider.write(
                     dataDir: baseDirectory.path,
-                    path: destination,
+                    path: destination.path,
                     sourcePath: contents.path
                 )
             )
@@ -361,11 +368,11 @@ enum FileProviderStorage {
         let isDirectory = entry.kind == "directory"
         let type = isDirectory
             ? UTType.folder
-            : UTType(filenameExtension: (entry.path as NSString).pathExtension) ?? .data
+            : UTType(filenameExtension: (entry.displayName as NSString).pathExtension) ?? .data
         return FileProviderItem(
             itemIdentifier: identifier(for: entry.path),
-            parentItemIdentifier: identifier(for: parentPath(for: entry.path)),
-            filename: fileName(for: entry.path),
+            parentItemIdentifier: identifier(for: entry.parentPath),
+            filename: entry.displayName,
             contentType: type,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: displayDate(from: entry.modifiedAt),
@@ -375,23 +382,23 @@ enum FileProviderStorage {
     }
 
     private static func optimisticItem(
-        for path: String,
+        for resolved: NativeProviderResolvedPath,
         template: NSFileProviderItem,
         contents: URL?
     ) -> FileProviderItem {
         let isDirectory = (template.contentType ?? .data).conforms(to: .folder)
         let contentType = isDirectory
             ? UTType.folder
-            : UTType(filenameExtension: (path as NSString).pathExtension) ?? .data
+            : UTType(filenameExtension: (resolved.displayName as NSString).pathExtension) ?? .data
         return FileProviderItem(
-            itemIdentifier: identifier(for: path),
-            parentItemIdentifier: identifier(for: parentPath(for: path)),
-            filename: fileName(for: path),
+            itemIdentifier: identifier(for: resolved.path),
+            parentItemIdentifier: identifier(for: resolved.parentPath),
+            filename: resolved.displayName,
             contentType: contentType,
             itemSize: isDirectory ? nil : NSNumber(value: fileSize(at: contents)),
             created: Date(),
             modified: Date(),
-            versionIdentifier: "optimistic:\(path):\(UUID().uuidString)"
+            versionIdentifier: "optimistic:\(resolved.path):\(UUID().uuidString)"
         )
     }
 
@@ -469,7 +476,7 @@ enum FileProviderStorage {
         parent: String,
         name: String,
         excluding: String = ""
-    ) throws -> String {
+    ) throws -> NativeProviderResolvedPath {
         let resolved = IrisDriveNativeProvider.resolvePath(
             dataDir: baseDirectory.path,
             parentPath: parent,
@@ -482,23 +489,7 @@ enum FileProviderStorage {
         guard !resolved.path.isEmpty else {
             throw providerError("provider path resolver returned no path")
         }
-        return resolved.path
-    }
-
-    private static func parentPath(for path: String) -> String {
-        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let slash = value.lastIndex(of: "/") else {
-            return ""
-        }
-        return String(value[..<slash])
-    }
-
-    private static func fileName(for path: String) -> String {
-        let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let slash = value.lastIndex(of: "/") else {
-            return value
-        }
-        return String(value[value.index(after: slash)...])
+        return resolved
     }
 
     private static func isSafeRelativePath(_ path: String) -> Bool {

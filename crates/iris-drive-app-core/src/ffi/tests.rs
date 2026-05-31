@@ -706,6 +706,19 @@ fn provider_list_includes_summary_and_change_key() {
             .as_str()
             .is_some_and(|key| { key.contains("Reports/nested.txt") && key.contains("file") })
     );
+    let entries = provider["entries"].as_array().unwrap();
+    let reports = entries
+        .iter()
+        .find(|entry| entry["path"] == "Reports")
+        .unwrap();
+    assert_eq!(reports["parent_path"], "");
+    assert_eq!(reports["display_name"], "Reports");
+    let nested = entries
+        .iter()
+        .find(|entry| entry["path"] == "Reports/nested.txt")
+        .unwrap();
+    assert_eq!(nested["parent_path"], "Reports");
+    assert_eq!(nested["display_name"], "nested.txt");
 }
 
 #[test]
@@ -743,7 +756,7 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     );
 
     assert_eq!(resolved["parent_path"], "Reports");
-    assert_eq!(resolved["display_name"], "Shared_file.txt");
+    assert_eq!(resolved["display_name"], "Shared_file (2).txt");
     assert_eq!(resolved["path"], "Reports/Shared_file (2).txt");
     assert!(resolved["error"].as_str().unwrap_or_default().is_empty());
 }
