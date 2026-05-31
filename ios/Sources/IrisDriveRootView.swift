@@ -590,7 +590,7 @@ private struct AddDeviceSheet: View {
     @Binding var isPresented: Bool
 
     private var canAddManualDevice: Bool {
-        !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func submitManualDevice() {

@@ -65,6 +65,9 @@ internal fun DevicesPanel(
     var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
+    val manualRequestIsComplete = remember(request) {
+        NativeCore.isCompleteLinkInput(request)
+    }
 
     CardSection(title = "Devices", trailing = "${devices.size}") {
         if (canApprove) {
@@ -124,6 +127,7 @@ internal fun DevicesPanel(
             inboundRequests = inboundRequests,
             canApprove = canApprove,
             request = request,
+            manualRequestIsComplete = manualRequestIsComplete,
             label = label,
             onRequestChange = { request = it },
             onLabelChange = { label = it },
@@ -210,6 +214,7 @@ private fun AddDeviceDialog(
     inboundRequests: List<DeviceLinkRequestState>,
     canApprove: Boolean,
     request: String,
+    manualRequestIsComplete: Boolean,
     label: String,
     onRequestChange: (String) -> Unit,
     onLabelChange: (String) -> Unit,
@@ -220,7 +225,7 @@ private fun AddDeviceDialog(
     onAdded: () -> Unit,
 ) {
     fun submitManualDevice() {
-        if (!canApprove || request.isBlank()) return
+        if (!canApprove || !manualRequestIsComplete) return
         onApproveDevice(request, label)
         onAdded()
     }
@@ -292,7 +297,7 @@ private fun AddDeviceDialog(
         confirmButton = {
             Button(
                 onClick = { submitManualDevice() },
-                enabled = canApprove && request.isNotBlank(),
+                enabled = canApprove && manualRequestIsComplete,
                 modifier = Modifier.testTag("manualDeviceAdd"),
             ) {
                 Text("Add")

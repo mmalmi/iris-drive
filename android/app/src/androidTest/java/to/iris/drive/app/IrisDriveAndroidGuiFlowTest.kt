@@ -6,6 +6,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
@@ -130,6 +131,24 @@ class IrisDriveAndroidGuiFlowTest {
         val updated = appState(owner.handle)
         assertEquals(2, updated.devices.size)
         assertTrue(updated.devices.any { it.label == "Android UI linked" })
+    }
+
+    @Test
+    fun addDeviceDialogRequiresCompleteNativeLinkInput() {
+        val state = AppState(
+            account = accountState(),
+            setupState = "authorized",
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
+        compose.onNodeWithTag("addDeviceButton").activate()
+        compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
+            .performTextInput("npub1short")
+
+        compose.onNodeWithTag("manualDeviceAdd").assertIsNotEnabled()
     }
 
     @Test
