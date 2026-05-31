@@ -118,6 +118,8 @@ final class IrisDriveNativeCore {
     }
 }
 
+extension IrisDriveNativeCore: @unchecked Sendable {}
+
 enum IrisDriveNativeProvider {
     static func list(dataDir: String) -> String {
         dataDir.withCString { dataDirPointer in

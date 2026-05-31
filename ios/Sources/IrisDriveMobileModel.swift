@@ -3,60 +3,6 @@ import Foundation
 import SwiftUI
 import UIKit
 
-struct IrisDriveDevice: Identifiable, Equatable {
-    var id: String { detail }
-    var label: String
-    var role: String
-    var state: String
-    var detail: String
-    var isCurrentDevice: Bool
-    var isOnline: Bool
-    var canRevoke: Bool
-    var canAppointAdmin: Bool
-    var canDemoteAdmin: Bool
-}
-
-struct IrisDriveDeviceLinkRequest: Identifiable, Equatable {
-    var id: String { devicePubkey }
-    var devicePubkey: String
-    var label: String
-    var requestedAt: UInt64
-    var requestLink: String
-}
-
-struct IrisDriveBackup: Identifiable, Equatable {
-    var id: String { detail }
-    var label: String
-    var state: String
-    var detail: String
-}
-
-struct IrisDriveRoot: Identifiable, Equatable {
-    var id: String { name }
-    var name: String
-    var status: String
-    var path: String
-}
-
-enum IrisDriveSharedContainer {
-    static let appGroupIdentifier = "group.to.iris.drive"
-    static let storageDirectoryName = "IrisDrive"
-
-    static var baseDirectory: URL {
-        let uiTestBaseDir = ProcessInfo.processInfo.environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let uiTestBaseDir, !uiTestBaseDir.isEmpty {
-            return URL(fileURLWithPath: uiTestBaseDir, isDirectory: true)
-        }
-        if let shared = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) {
-            return shared.appendingPathComponent(storageDirectoryName, isDirectory: true)
-        }
-        fatalError("Iris Drive app group is unavailable")
-    }
-}
-
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveFileProviderDisplayName = "Iris Drive"
 private let defaultRelay = "wss://relay.damus.io"
@@ -65,6 +11,7 @@ private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
 private let foregroundSyncIntervalNanoseconds: UInt64 = 5_000_000_000
+private let nativeBackgroundStackSize = 8 * 1024 * 1024
 #if DEBUG
 private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
@@ -422,7 +369,7 @@ final class IrisDriveMobileModel: ObservableObject {
         foregroundSyncTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                self.syncOnceIfRunning()
+                await self.syncOnceIfRunning()
                 do {
                     try await Task.sleep(nanoseconds: foregroundSyncIntervalNanoseconds)
                 } catch {
@@ -437,15 +384,15 @@ final class IrisDriveMobileModel: ObservableObject {
         foregroundSyncTask = nil
     }
 
-    private func syncOnceIfRunning() {
+    private func syncOnceIfRunning() async {
         guard isSetupComplete else {
-            refresh()
+            await refreshInBackground()
             return
         }
         if syncRunning {
-            restartSync()
+            await dispatchInBackground(["type": "restart_sync"])
         } else {
-            refresh()
+            await refreshInBackground()
         }
     }
 
@@ -804,14 +751,56 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func dispatch(_ action: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: action),
-              let actionJson = String(data: data, encoding: .utf8)
-        else {
+        guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
             statusDetail = "Unable to encode action."
             return
         }
         applyStateJson(nativeCore.dispatchJson(actionJson))
+    }
+
+    private func dispatchInBackground(_ action: [String: Any]) async {
+        guard let actionJson = encodeNativeAction(action) else {
+            statusTitle = "Native action failed"
+            statusDetail = "Unable to encode action."
+            return
+        }
+        let json = await runNativeInBackground { nativeCore in
+            nativeCore.dispatchJson(actionJson)
+        }
+        guard !Task.isCancelled else { return }
+        applyStateJson(json)
+    }
+
+    private func refreshInBackground() async {
+        let json = await runNativeInBackground { nativeCore in
+            nativeCore.refreshJson()
+        }
+        guard !Task.isCancelled else { return }
+        applyStateJson(json)
+        ensureFileProviderDomainIfProfileExists()
+    }
+
+    private func runNativeInBackground(
+        _ operation: @escaping @Sendable (IrisDriveNativeCore) -> String
+    ) async -> String {
+        let nativeCore = nativeCore
+        return await withCheckedContinuation { continuation in
+            let thread = Thread {
+                continuation.resume(returning: operation(nativeCore))
+            }
+            thread.name = "IrisDriveNativeCore"
+            thread.qualityOfService = .utility
+            thread.stackSize = nativeBackgroundStackSize
+            thread.start()
+        }
+    }
+
+    private func encodeNativeAction(_ action: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: action) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private func applyStateJson(_ json: String) {

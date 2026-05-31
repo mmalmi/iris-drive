@@ -57,13 +57,6 @@ struct IrisDriveRootView: View {
                 }
                 .tag(MainTab.settings)
             }
-            .task {
-                while model.isSetupComplete {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    model.refresh()
-                }
-            }
         }
     }
 }

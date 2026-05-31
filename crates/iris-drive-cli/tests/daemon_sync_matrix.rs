@@ -438,3 +438,5 @@ async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_on
 
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
+#[path = "daemon_sync_matrix/provider_visibility_tests.rs"]
+mod provider_visibility_tests;
