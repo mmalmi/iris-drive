@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store};
+use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, sha256, to_hex};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::diff::{PathChange, path_diff};
@@ -20,6 +20,7 @@ use crate::error::ProviderError;
 use crate::provider::{DirItem, Item, ItemKind, ProviderFs, SyncAnchor};
 
 const MODIFIED_AT_META_KEY: &str = "modified_at";
+const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
 
 /// Hook called after every successful mutation. Lets a daemon publish
 /// the new root over Nostr / observe revisions / etc. Errors are
@@ -308,7 +309,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             &cid,
             size,
             link_type_for_size(size),
-            Some(modified_at_meta()),
+            Some(file_meta(&[], None)),
         )
         .await
         .map_err(map_err)?;
@@ -519,7 +520,7 @@ impl<S: Store> HashTreeProviderFs<S> {
             &cid,
             size,
             link_type_for_size(size),
-            Some(with_modified_at(meta)),
+            Some(file_meta(bytes, meta)),
         )
         .await
         .map_err(map_err)?;
@@ -613,17 +614,18 @@ fn set_entry_with_meta<'a, S: Store>(
     })
 }
 
-fn modified_at_meta() -> HashMap<String, serde_json::Value> {
-    with_modified_at(None)
-}
-
-fn with_modified_at(
+fn file_meta(
+    bytes: &[u8],
     meta: Option<HashMap<String, serde_json::Value>>,
 ) -> HashMap<String, serde_json::Value> {
     let mut meta = meta.unwrap_or_default();
     meta.insert(
         MODIFIED_AT_META_KEY.to_string(),
         serde_json::Value::Number(unix_now_seconds().into()),
+    );
+    meta.insert(
+        WHOLE_FILE_HASH_META_KEY.to_string(),
+        serde_json::Value::String(to_hex(&sha256(bytes))),
     );
     meta
 }
