@@ -52,7 +52,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 
-private const val ProviderRoot = "content://to.iris.drive.documents/document/root"
+private val ProviderRoot: String
+    get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
 
 private fun isCompleteDeviceLinkOwnerInput(value: String): Boolean {
     val trimmed = value.trim()

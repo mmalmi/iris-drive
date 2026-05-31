@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGE_NAME="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.debug}"
-MAIN_ACTIVITY="${IRIS_DRIVE_ANDROID_ACTIVITY:-to.iris.drive.debug/to.iris.drive.app.MainActivity}"
+PACKAGE_NAME="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}"
+MAIN_ACTIVITY="${IRIS_DRIVE_ANDROID_ACTIVITY:-to.iris.drive.uitest/to.iris.drive.app.MainActivity}"
 DEBUG_ACTION_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_ACTION_EXTRA:-to.iris.drive.DEBUG_ACTION}"
 DEBUG_OWNER_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_OWNER_EXTRA:-to.iris.drive.DEBUG_OWNER}"
-APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
+APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/app-uiTest.apk}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-android-gui-owner)"
@@ -23,6 +23,10 @@ cleanup() {
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
     wait "$OWNER_DAEMON_PID" 2>/dev/null || true
+  fi
+  if [[ "${IRIS_DRIVE_ANDROID_KEEP_TEST_APP:-false}" != "true" && -n "${ADB:-}" && -n "$serial" ]]; then
+    "$ADB" -s "$serial" uninstall "$PACKAGE_NAME" >/dev/null 2>&1 || true
+    "$ADB" -s "$serial" uninstall "$PACKAGE_NAME.test" >/dev/null 2>&1 || true
   fi
   rm -rf "$OWNER_CONFIG"
   rm -rf "$OWNER_SOURCE_DIR"
@@ -207,7 +211,7 @@ fi
 "$ADB" -s "$serial" wait-for-device
 (
   cd "$ROOT"
-  ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedDebugAndroidTest \
+  ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
     -Pandroid.testInstrumentationRunnerArguments.class=to.iris.drive.app.IrisDriveAndroidGuiFlowTest
 )
 

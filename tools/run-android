@@ -57,6 +57,12 @@ case "$cmd" in
   install|installDebug)
     exec "$GRADLE" -p "$ANDROID_DIR" :app:installDebug "$@"
     ;;
+  ui-test|connectedUiTestAndroidTest)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:connectedUiTestAndroidTest "$@"
+    ;;
+  ui-test-build|assembleUiTest)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleUiTest "$@"
+    ;;
   *)
     exec "$GRADLE" -p "$ANDROID_DIR" "$cmd" "$@"
     ;;

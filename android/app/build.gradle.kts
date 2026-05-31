@@ -12,6 +12,7 @@ val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
 android {
     namespace = "to.iris.drive.app"
     compileSdk = 36
+    testBuildType = "uiTest"
 
     defaultConfig {
         applicationId = "to.iris.drive"
@@ -20,6 +21,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders["documentsProviderAuthority"] = "to.iris.drive.documents"
+        buildConfigField("String", "DOCUMENTS_PROVIDER_AUTHORITY", "\"to.iris.drive.documents\"")
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -30,6 +33,18 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+        }
+        create("uiTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".uitest"
+            versionNameSuffix = "-uitest"
+            matchingFallbacks += listOf("debug")
+            manifestPlaceholders["documentsProviderAuthority"] = "to.iris.drive.uitest.documents"
+            buildConfigField(
+                "String",
+                "DOCUMENTS_PROVIDER_AUTHORITY",
+                "\"to.iris.drive.uitest.documents\"",
+            )
         }
         release {
             isMinifyEnabled = false
@@ -80,7 +95,7 @@ tasks.register<Exec>("buildRustArm64") {
 }
 
 tasks.matching { task ->
-    task.name in listOf("mergeDebugNativeLibs", "mergeReleaseNativeLibs")
+    task.name in listOf("mergeDebugNativeLibs", "mergeUiTestNativeLibs", "mergeReleaseNativeLibs")
 }.configureEach {
     dependsOn("buildRustArm64")
 }
@@ -105,4 +120,5 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest:1.9.2")
+    add("uiTestImplementation", "androidx.compose.ui:ui-test-manifest:1.9.2")
 }

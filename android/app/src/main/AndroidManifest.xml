@@ -92,7 +92,7 @@
 
         <provider
             android:name=".provider.IrisDriveDocumentsProvider"
-            android:authorities="@string/documents_provider_authority"
+            android:authorities="${documentsProviderAuthority}"
             android:exported="true"
             android:grantUriPermissions="true"
             android:permission="android.permission.MANAGE_DOCUMENTS">

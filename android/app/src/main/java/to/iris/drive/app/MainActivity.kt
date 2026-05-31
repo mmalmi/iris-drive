@@ -205,7 +205,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openDriveFolder() {
         runCatching {
-            startActivity(irisDriveFilesIntent(getString(R.string.documents_provider_authority)))
+            startActivity(irisDriveFilesIntent(BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY))
         }.onFailure {
             Toast.makeText(this, "No app can open the drive folder", Toast.LENGTH_SHORT).show()
         }
@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
 
     private fun providerRootDocumentUri(): String =
         DocumentsContract.buildDocumentUri(
-            getString(R.string.documents_provider_authority),
+            BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY,
             DOCUMENTS_ROOT_DOCUMENT_ID,
         ).toString()
 
