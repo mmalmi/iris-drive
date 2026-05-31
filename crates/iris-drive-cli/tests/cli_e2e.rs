@@ -273,13 +273,22 @@ fn backup_targets_can_be_added_listed_and_removed() {
     assert!(targets.iter().any(|target| target["kind"] == "fips"));
 
     let status = run_json(dir.path(), &["status"]);
-    assert_eq!(status["network"]["backup_target_count"], 2);
+    assert_eq!(status["network"]["backup_target_count"], 3);
     assert_eq!(
         status["network"]["backup_targets"]
             .as_array()
             .unwrap()
             .len(),
-        2
+        3
+    );
+    assert!(
+        status["network"]["backup_targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|target| target["kind"] == "blossom"
+                && target["target"] == "https://upload.iris.to"
+                && target["label"] == "Blossom fallback")
     );
 
     let removed = run_json(dir.path(), &["backups", "remove", "https://backup.example"]);
@@ -337,9 +346,12 @@ async fn backup_sync_uploads_private_root_to_blossom_target() {
 
     let status = run_json(cfg.path(), &["status"]);
     let targets = status["network"]["backup_targets"].as_array().unwrap();
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0]["last_sync"]["state"], "synced");
-    assert_eq!(targets[0]["last_sync"]["root_cid"], reports[0]["root_cid"]);
+    let target = targets
+        .iter()
+        .find(|target| target["kind"] == "blossom" && target["target"] == blossom.url)
+        .expect("synced Blossom backup target");
+    assert_eq!(target["last_sync"]["state"], "synced");
+    assert_eq!(target["last_sync"]["root_cid"], reports[0]["root_cid"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

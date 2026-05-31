@@ -79,7 +79,7 @@ pub(crate) fn cmd_backups(config_dir: &std::path::Path, sub: BackupsCmd) -> Resu
     println!(
         "{}",
         json!({
-            "backup_targets": backup_targets_status(&config),
+            "backup_targets": configured_backup_targets_status(&config),
         })
     );
     Ok(())

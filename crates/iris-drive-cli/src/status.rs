@@ -219,18 +219,48 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
 }
 
 pub(crate) fn backup_targets_status(config: &AppConfig) -> Vec<Value> {
+    visible_backup_targets(config)
+        .iter()
+        .map(backup_target_status)
+        .collect()
+}
+
+pub(crate) fn configured_backup_targets_status(config: &AppConfig) -> Vec<Value> {
     effective_backup_targets(config)
         .iter()
         .map(backup_target_status)
         .collect()
 }
 
+fn visible_backup_targets(config: &AppConfig) -> Vec<BackupTarget> {
+    let mut targets = effective_backup_targets(config);
+    for target in visible_default_blossom_backup_targets(config) {
+        if !targets.iter().any(|existing| existing.id == target.id) {
+            targets.push(target);
+        }
+    }
+    targets
+}
+
+fn visible_default_blossom_backup_targets(config: &AppConfig) -> Vec<BackupTarget> {
+    config
+        .blossom_servers
+        .iter()
+        .filter(|server| is_default_blossom_server(server))
+        .filter_map(|server| parse_backup_target(server, None).ok())
+        .collect()
+}
+
 pub(crate) fn backup_target_status(target: &BackupTarget) -> Value {
+    let label = target.label.as_deref().or_else(|| {
+        (target.kind == BackupTargetKind::Blossom && is_default_blossom_server(&target.target))
+            .then_some("Blossom fallback")
+    });
     json!({
         "id": target.id.as_str(),
         "kind": backup_target_kind_label(target.kind),
         "target": target.target.as_str(),
-        "label": target.label.as_deref(),
+        "label": label,
         "enabled": target.enabled,
         "last_sync": target.last_sync.as_ref().map(backup_target_sync_status),
         "last_check": target.last_check.as_ref().map(backup_target_check_status),

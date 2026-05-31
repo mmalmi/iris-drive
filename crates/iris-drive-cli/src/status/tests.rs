@@ -60,3 +60,17 @@ fn local_gateway_status_reports_disabled_resolver() {
     assert_eq!(status["host"], "nhash.iris.localhost");
     assert!(status.get("portal_url").is_none());
 }
+
+#[test]
+fn status_lists_default_blossom_server_as_backup_target() {
+    let config = AppConfig::default();
+    let targets = backup_targets_status(&config);
+
+    let target = targets
+        .iter()
+        .find(|target| target["kind"] == "blossom" && target["target"] == "https://upload.iris.to")
+        .expect("default Blossom server should be visible in backup targets");
+
+    assert_eq!(target["enabled"], true);
+    assert_eq!(target["label"], "Blossom fallback");
+}
