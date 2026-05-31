@@ -1,3 +1,5 @@
+use iris_drive_core::{DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame};
+
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
     pub(crate) key: String,
@@ -5,15 +7,6 @@ pub(crate) struct DirectRootEvent {
     kind: u16,
     json: String,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct DirectRootFrame {
-    key: String,
-    event_id: String,
-    event_json: String,
-}
-
-pub(crate) const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
 
 #[derive(Default)]
 pub(crate) struct DirectRootExchange {

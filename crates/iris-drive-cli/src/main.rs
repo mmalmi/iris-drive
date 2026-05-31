@@ -26,7 +26,7 @@ use iris_drive_core::{
 };
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 mod account;
@@ -81,7 +81,6 @@ const STATUS_PROBE_TIMEOUT_SECS: u64 = 2;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 const ROOT_UPDATE_THROTTLE_MS: u64 = 150;
-const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 30;
 const LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];

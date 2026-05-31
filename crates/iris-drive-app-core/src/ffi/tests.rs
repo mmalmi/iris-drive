@@ -683,6 +683,80 @@ fn provider_modified_at_index_ignores_unix_epoch_sentinel() {
     assert_eq!(index.get("new-note.txt"), Some(&1_700_000_000));
 }
 
+#[test]
+fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let linked_dir = tempfile::tempdir().unwrap();
+    let mut owner = iris_drive_core::Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let mut linked = iris_drive_core::Account::link(
+        linked_dir.path(),
+        owner.state.owner_pubkey.clone(),
+        Some("Phone".into()),
+    )
+    .unwrap();
+    let linked_pubkey = linked.state.device_pubkey.clone();
+    linked
+        .state
+        .queue_outbound_device_link_request(
+            owner.state.device_pubkey.clone(),
+            &owner.state.device_link_secret,
+            123,
+        )
+        .unwrap();
+    owner
+        .approve_device(&linked_pubkey, Some("Phone".into()))
+        .unwrap();
+
+    let first_roster_event = iris_drive_core::nostr_events::build_app_keys_event(
+        owner.device.keys(),
+        owner.state.app_keys.as_ref().unwrap(),
+    )
+    .unwrap();
+    let mut linked_config = AppConfig {
+        account: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    linked_config.upsert_drive(iris_drive_core::Drive::primary(&owner.state.owner_pubkey));
+    iris_drive_core::relay_sync::apply_device_link_roster_event(
+        &mut linked_config,
+        &first_roster_event,
+        &owner.state.device_pubkey,
+    )
+    .unwrap();
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .unwrap();
+
+    let third_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    owner
+        .approve_device(&third_device, Some("Pixel".into()))
+        .unwrap();
+    let updated_roster_event = iris_drive_core::nostr_events::build_app_keys_event(
+        owner.device.keys(),
+        owner.state.app_keys.as_ref().unwrap(),
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime
+        .block_on(iris_drive_core::apply_direct_root_event(
+            linked_dir.path(),
+            &updated_roster_event,
+            None,
+        ))
+        .unwrap();
+
+    let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let linked_roster = linked_config
+        .account
+        .as_ref()
+        .unwrap()
+        .app_keys
+        .as_ref()
+        .unwrap();
+    assert!(linked_roster.contains(&third_device));
+}
+
 fn apply_latest_app_keys_event(from: &Path, to: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
     let app_keys_event = nostr_sdk::Event::from_json(

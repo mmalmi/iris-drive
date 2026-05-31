@@ -25,6 +25,7 @@ use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::device_link_transport::{DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC};
+use crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC;
 use crate::identity::DeviceIdentity;
 
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
@@ -126,16 +127,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
-        let transport =
-            Arc::new(
-                HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
-                    .with_request_timeout(FIPS_REQUEST_TIMEOUT)
-                    .with_request_retry_interval(FIPS_REQUEST_RETRY_INTERVAL)
-                    .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS)
-                    .with_unconfigured_app_message_topics(
-                        device_link_unconfigured_app_message_topics(),
-                    ),
-            );
+        let transport = Arc::new(
+            HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
+                .with_request_timeout(FIPS_REQUEST_TIMEOUT)
+                .with_request_retry_interval(FIPS_REQUEST_RETRY_INTERVAL)
+                .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS)
+                .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
+        );
         transport
             .set_peer_configs_with_routing_peers(
                 authorized_device_fips_peers(config, &transport_settings),
@@ -280,8 +278,12 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 }
 
-fn device_link_unconfigured_app_message_topics() -> [&'static str; 2] {
-    [DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC]
+fn unconfigured_app_message_topics() -> [&'static str; 3] {
+    [
+        DEVICE_LINK_REQUEST_APP_TOPIC,
+        DEVICE_LINK_ROSTER_APP_TOPIC,
+        DIRECT_ROOT_APP_TOPIC,
+    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

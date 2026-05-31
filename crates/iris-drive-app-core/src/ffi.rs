@@ -551,9 +551,6 @@ impl NativeAppRuntime {
             let Some(state) = config.account.as_ref() else {
                 return;
             };
-            if !device_link_exchange_needed(state) {
-                return;
-            }
             if self
                 .device_link_exchange_running
                 .swap(true, Ordering::AcqRel)
@@ -1416,10 +1413,7 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
     let config_dir = Path::new(data_dir);
     let startup_config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let Some(startup_state) = startup_config.account.as_ref() else {
-        return Ok(());
-    };
-    if !device_link_exchange_needed(startup_state) {
+    if startup_config.account.is_none() {
         return Ok(());
     }
 
@@ -1438,6 +1432,7 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
     let mut sent_requests = BTreeMap::new();
     let mut sent_rosters = BTreeMap::new();
     let mut acked_rosters = BTreeSet::new();
+    let mut direct_roots = iris_drive_core::DirectRootExchange::default();
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(
         DEVICE_LINK_EXCHANGE_TICK_SECS,
     ));
@@ -1446,14 +1441,18 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if !drive_device_link_exchange_tick(
+                let _ = drive_device_link_exchange_tick(
                     config_dir,
                     &sync,
                     &mut sent_requests,
                     &mut sent_rosters,
                     &acked_rosters,
-                ).await? {
-                    break;
+                ).await?;
+                if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
+                    tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
+                }
+                if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
+                    tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
                 }
             }
             message = app_messages.recv() => {
@@ -1466,6 +1465,14 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
                             &mut acked_rosters,
                         ).await {
                             tracing::warn!(error = %error, topic = message.topic, "handling native device-link FIPS message failed");
+                            continue;
+                        }
+                        if let Err(error) = direct_roots.handle_app_message(
+                            config_dir,
+                            &sync,
+                            &message,
+                        ).await {
+                            tracing::warn!(error = %error, topic = message.topic, "handling native direct-root FIPS message failed");
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -1492,9 +1499,6 @@ async fn drive_device_link_exchange_tick(
     let Some(state) = config.account.as_ref() else {
         return Ok(false);
     };
-    if !device_link_exchange_needed(state) {
-        return Ok(false);
-    }
 
     sync.refresh_authorized_peers(&config).await;
     send_native_pending_device_link_request(sync, state, sent_requests).await?;
@@ -1938,12 +1942,6 @@ fn device_link_roster_fingerprint(
         "{}:{}:{}",
         device_pubkey, app_keys.created_at, app_keys.dck_generation
     )
-}
-
-#[cfg(not(test))]
-fn device_link_exchange_needed(state: &iris_drive_core::AccountState) -> bool {
-    let _ = state;
-    true
 }
 
 #[derive(Debug, Deserialize)]

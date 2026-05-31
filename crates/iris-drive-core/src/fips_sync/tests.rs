@@ -600,18 +600,19 @@ fn admin_endpoint_options_allow_open_device_link_requests() {
 }
 
 #[test]
-fn device_link_roster_is_allowed_before_peer_is_configured() {
+fn signed_control_topics_are_allowed_before_peer_is_configured() {
     assert_eq!(
-        super::device_link_unconfigured_app_message_topics(),
+        super::unconfigured_app_message_topics(),
         [
             crate::device_link_transport::DEVICE_LINK_REQUEST_APP_TOPIC,
             crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC,
+            crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC,
         ]
     );
 }
 
 #[tokio::test]
-async fn unconfigured_device_link_roster_app_message_is_delivered() {
+async fn unconfigured_signed_control_app_messages_are_delivered() {
     let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
     let admin_endpoint = FakeEndpoint::new("admin", network.clone()).await;
     let phone_endpoint = FakeEndpoint::new("phone", network).await;
@@ -621,7 +622,7 @@ async fn unconfigured_device_link_roster_app_message_is_delivered() {
     ));
     let phone_transport = Arc::new(
         HashtreeFipsTransport::new(phone_endpoint, Arc::new(MemoryStore::new()))
-            .with_unconfigured_app_message_topics(device_link_unconfigured_app_message_topics()),
+            .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
     );
     phone_transport
         .set_peers(vec!["configured-but-not-admin".to_string()])
@@ -649,6 +650,26 @@ async fn unconfigured_device_link_roster_app_message_is_delivered() {
         crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC
     );
     assert_eq!(message.data, b"signed roster");
+
+    admin_transport
+        .send_app_message(
+            "phone",
+            crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC,
+            b"signed direct root".to_vec(),
+        )
+        .await
+        .unwrap();
+
+    let message = tokio::time::timeout(Duration::from_millis(250), app_messages.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(message.peer_id, "admin");
+    assert_eq!(
+        message.topic,
+        crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC
+    );
+    assert_eq!(message.data, b"signed direct root");
 
     admin_task.abort();
     phone_task.abort();

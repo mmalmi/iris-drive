@@ -5,6 +5,7 @@ pub mod blossom_sync;
 pub mod config;
 pub mod device_link_invite;
 pub mod device_link_transport;
+pub mod direct_root_transport;
 pub mod fips_sync;
 
 /// Convenience constructor: a `BlossomClient` wired with the given
@@ -61,6 +62,11 @@ pub use conflict::{
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,
 };
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
+pub use direct_root_transport::{
+    DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootEvent, DirectRootExchange,
+    DirectRootFrame, apply_direct_root_event, build_current_direct_root_events,
+    direct_root_mesh_stream,
+};
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use hashtree_fips_transport::FipsAppMessage;
