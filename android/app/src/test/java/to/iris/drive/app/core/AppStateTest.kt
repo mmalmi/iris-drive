@@ -43,7 +43,7 @@ class AppStateTest {
                     pubkey = "device-b",
                     label = "Tablet",
                     role = "member",
-                    state = "Authorized",
+                    state = "Linked",
                     detail = "device-b",
                     isCurrentDevice = false,
                     isOnline = false,
@@ -55,6 +55,7 @@ class AppStateTest {
         )
 
         assertEquals(2, state.authorizedDeviceCount)
+        assertEquals(1, state.onlineDeviceCount)
         assertTrue(state.isSetupComplete)
         assertEquals("admin", state.devices[0].role)
         assertTrue(state.devices[0].isCurrentDevice)

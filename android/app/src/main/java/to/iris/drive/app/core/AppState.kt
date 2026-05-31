@@ -17,7 +17,10 @@ internal data class AppState(
     val visibleFileBytes: Long = 0,
 ) {
     val authorizedDeviceCount: Int
-        get() = devices.count { it.state.equals("authorized", ignoreCase = true) || it.role == "admin" }
+        get() = devices.size
+
+    val onlineDeviceCount: Int
+        get() = devices.count { it.isOnline }
 
     val isSetupComplete: Boolean
         get() = account?.authorizationState == "authorized"

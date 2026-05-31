@@ -75,14 +75,15 @@ internal fun DevicesPanel(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Icon(
                     painterResource(R.drawable.ic_drive),
-                    contentDescription = null,
+                    contentDescription = device.onlineIndicatorDescription,
+                    modifier = Modifier.testTag("deviceStatusIndicator"),
                     tint = if (device.isOnline) Teal else Muted,
                 )
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(device.label, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${device.role.ifBlank { "member" }} | ${device.state} | ${device.onlineLabel}",
+                        "${device.role.ifBlank { "member" }} | ${device.state}",
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -151,8 +152,11 @@ internal fun DevicesPanel(
     }
 }
 
-private val DeviceState.onlineLabel: String
-    get() = if (isOnline) "Online" else "Offline"
+private val DeviceState.onlineIndicatorDescription: String
+    get() {
+        val title = label.ifBlank { "Device" }
+        return "$title ${if (isOnline) "online" else "offline"}"
+    }
 
 @Composable
 private fun DeleteDeviceDialog(

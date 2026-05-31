@@ -257,10 +257,10 @@ class IrisDriveAndroidGuiFlowTest {
         assertFalse(pixel.isOnline)
 
         render(state = approved)
+        compose.onNodeWithText("0/2 devices", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Pixel"))
         compose.onNodeWithText("Pixel").assertIsDisplayed()
-        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
-        compose.onAllNodesWithText("Online", substring = true).assertCountEquals(0)
+        compose.onNodeWithContentDescription("Pixel offline").assertIsDisplayed()
     }
 
     @Test

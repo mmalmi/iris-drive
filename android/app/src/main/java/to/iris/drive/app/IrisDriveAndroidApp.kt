@@ -721,7 +721,7 @@ private fun StatusPanel(state: AppState) {
             }
         }
         Text(
-            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.authorizedDeviceCount} devices",
+            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} devices",
             color = Muted,
         )
     }
@@ -732,7 +732,7 @@ private fun SummaryPanel(state: AppState) {
     CardSection(title = "Summary", trailing = "${state.fileCount} files") {
         StatRow("Files", state.fileCount.toString())
         StatRow("Storage", byteString(state.visibleFileBytes))
-        StatRow("Devices", state.authorizedDeviceCount.toString())
+        StatRow("Devices", "${state.onlineDeviceCount}/${state.authorizedDeviceCount}")
     }
 }
 
