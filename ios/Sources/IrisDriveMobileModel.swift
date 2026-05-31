@@ -63,6 +63,7 @@ private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
+private let fileProviderPathIdentifierPrefix = "path:"
 #if DEBUG
 private let fileProviderDebugRegistrationVersion = 1
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
@@ -101,6 +102,9 @@ final class IrisDriveMobileModel: ObservableObject {
     private let nativeCore: IrisDriveNativeCore
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
+    private var currentProviderSignalKey = ""
+    private var lastProviderSignalKey = ""
+    private var currentProviderDirectoryPaths: [String] = []
 
     init() {
         nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
@@ -204,6 +208,7 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.markFileProviderRegistrationCurrent()
                     self.fileProviderStatus = "Files provider registered"
                     self.rebuildDerivedState()
+                    self.signalFileProviderIfNeeded()
                     completion?(true)
                 }
                 return
@@ -231,6 +236,9 @@ final class IrisDriveMobileModel: ObservableObject {
                         ? "Files provider registered"
                         : "Files provider unavailable"
                     self.rebuildDerivedState()
+                    if exists {
+                        self.signalFileProviderIfNeeded()
+                    }
                     completion?(exists)
                 }
             }
@@ -394,6 +402,7 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.markFileProviderRegistrationCurrent()
                     self.fileProviderStatus = "Files provider registered"
                     self.rebuildDerivedState()
+                    self.signalFileProviderIfNeeded()
                     completion?(true)
                 }
             }
@@ -696,6 +705,9 @@ final class IrisDriveMobileModel: ObservableObject {
             syncRunning = false
             statusTitle = "Ready"
             statusDetail = "Waiting for this device to be linked."
+            currentProviderSignalKey = ""
+            lastProviderSignalKey = ""
+            currentProviderDirectoryPaths = []
             return
         }
 
@@ -742,6 +754,9 @@ final class IrisDriveMobileModel: ObservableObject {
         let stats = loadProviderStats()
         fileCount = stats.fileCount
         visibleFileBytes = stats.visibleFileBytes
+        currentProviderSignalKey = stats.signalKey
+        currentProviderDirectoryPaths = stats.directoryPaths
+        signalFileProviderIfNeeded()
         backups = state.ui.backups.map { backup in
             IrisDriveBackup(
                 label: backup.label,
@@ -829,6 +844,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private struct ProviderState: Decodable {
+        var anchor: String?
         var entries: [ProviderEntry]
     }
 
@@ -840,18 +856,56 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func loadProviderStats() -> (
         fileCount: Int,
-        visibleFileBytes: UInt64
+        visibleFileBytes: UInt64,
+        signalKey: String,
+        directoryPaths: [String]
     ) {
         guard let data = IrisDriveNativeProvider
             .list(dataDir: IrisDriveSharedContainer.baseDirectory.path)
             .data(using: .utf8),
               let state = try? JSONDecoder().decode(ProviderState.self, from: data)
         else {
-            return (0, 0)
+            return (0, 0, "", [])
         }
         let fileEntries = state.entries.filter { $0.kind != "directory" }
         let visibleFileBytes = fileEntries.reduce(UInt64(0)) { $0 + $1.size }
-        return (fileEntries.count, visibleFileBytes)
+        let directoryPaths = state.entries
+            .filter { $0.kind == "directory" }
+            .map(\.path)
+        let entryKey = state.entries
+            .map { "\($0.kind):\($0.path):\($0.size)" }
+            .sorted()
+            .joined(separator: "|")
+        return (
+            fileEntries.count,
+            visibleFileBytes,
+            "\(state.anchor ?? "unknown")|\(entryKey)",
+            directoryPaths
+        )
+    }
+
+    private func signalFileProviderIfNeeded() {
+        guard isSetupComplete, !currentProviderSignalKey.isEmpty else { return }
+        guard currentProviderSignalKey != lastProviderSignalKey else { return }
+        let domain = irisDriveFileProviderDomain()
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        lastProviderSignalKey = currentProviderSignalKey
+        var identifiers: [NSFileProviderItemIdentifier] = [.rootContainer, .workingSet]
+        identifiers.append(contentsOf: currentProviderDirectoryPaths.map(fileProviderIdentifier))
+        for identifier in identifiers {
+            manager.signalEnumerator(for: identifier) { error in
+                if let error {
+                    NSLog("Iris Drive Files provider signal failed for \(identifier.rawValue): \(error)")
+                }
+            }
+        }
+    }
+
+    private func fileProviderIdentifier(for path: String) -> NSFileProviderItemIdentifier {
+        guard !path.isEmpty else { return .rootContainer }
+        return NSFileProviderItemIdentifier(
+            "\(fileProviderPathIdentifierPrefix)\(Data(path.utf8).base64EncodedString())"
+        )
     }
 
     private func isDeviceLink(_ url: URL) -> Bool {
