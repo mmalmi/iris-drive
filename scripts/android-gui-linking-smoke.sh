@@ -14,6 +14,8 @@ OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
 OWNER_DAEMON_PID=""
 OWNER_FIPS_PORT=""
 OWNER_HOST_ADDR="${IRIS_DRIVE_ANDROID_HOST_ADDR:-}"
+USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-false}"
+LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
 serial="${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 cleanup() {
@@ -78,6 +80,13 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
+}
+
+bool_true() {
+  case "$1" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 android_host_addr() {
@@ -149,6 +158,13 @@ owner_inbound_request_url() {
     | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("account") or {}).get("inbound_device_link_requests") or []); print(next(r["url"] for r in reqs if r.get("device_npub") == expected and r.get("url"))) ' "$expected_device"
 }
 
+dump_android_debug_files() {
+  echo "--- Android debug-state.json ---" >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
+  echo "--- Android native-fips-status.json ---" >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/native-fips-status.json >&2 || true
+}
+
 ADB="$(resolve_adb)"
 serial="$(select_serial "$ADB")"
 if [[ -z "$serial" ]]; then
@@ -187,14 +203,31 @@ fi
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
 owner_device_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$owner_json")"
-OWNER_FIPS_PORT="$(unused_loopback_port)"
-owner_host_addr="$(android_host_addr)"
-owner_fips_peer="$owner_device_npub=$owner_host_addr:$OWNER_FIPS_PORT"
-IRIS_DRIVE_FIPS_UDP_BIND_ADDR="0.0.0.0:$OWNER_FIPS_PORT" \
-  IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="$owner_host_addr:$OWNER_FIPS_PORT" \
-  IRIS_DRIVE_FIPS_UDP_PUBLIC=false \
-  IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false \
-  IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false \
+owner_fips_addr="default-graph"
+owner_daemon_env=(
+  IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true
+  IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
+)
+android_fips_args=(
+  --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true
+  --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC true
+)
+if bool_true "$USE_DIRECT_STATIC_PEER"; then
+  OWNER_FIPS_PORT="$(unused_loopback_port)"
+  owner_host_addr="$(android_host_addr)"
+  owner_fips_peer="$owner_device_npub=$owner_host_addr:$OWNER_FIPS_PORT"
+  owner_fips_addr="$owner_host_addr:$OWNER_FIPS_PORT"
+  owner_daemon_env+=(
+    "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$OWNER_FIPS_PORT"
+    "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$owner_host_addr:$OWNER_FIPS_PORT"
+    IRIS_DRIVE_FIPS_UDP_PUBLIC=false
+  )
+  android_fips_args+=(
+    --es IRIS_DRIVE_FIPS_STATIC_PEERS "$owner_fips_peer"
+    --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:0"
+  )
+fi
+env "${owner_daemon_env[@]}" \
   "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \
   >"$OWNER_DAEMON_LOG" 2>&1 &
 OWNER_DAEMON_PID="$!"
@@ -208,24 +241,21 @@ fi
 "$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" link-device \
   --es "$DEBUG_OWNER_EXTRA" "$owner_invite" \
-  --es IRIS_DRIVE_FIPS_STATIC_PEERS "$owner_fips_peer" \
-  --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP false \
-  --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC false \
-  --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:0" \
-  --es IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR "" >/dev/null
+  "${android_fips_args[@]}" >/dev/null
 
 if ! wait_for_debug_state \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
   15; then
   echo "FAIL: Android did not create a real awaiting linked-device profile after the GUI link-this-device test." >&2
-  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
+  dump_android_debug_files
   exit 1
 fi
 
 linked_device="$("$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_pubkey"])')"
-if ! wait_for_owner_inbound_request "$linked_device" 30; then
+if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
   echo "FAIL: owner did not receive the Android GUI device-link request over FIPS." >&2
+  dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
@@ -243,4 +273,4 @@ fi
 echo "ANDROID_GUI_LINKING_SMOKE_OK"
 echo "serial=$serial"
 echo "owner_config=$OWNER_CONFIG"
-echo "owner_fips_addr=$owner_host_addr:$OWNER_FIPS_PORT"
+echo "owner_fips_addr=$owner_fips_addr"

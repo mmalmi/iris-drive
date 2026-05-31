@@ -1,6 +1,8 @@
 package to.iris.drive.app
 
 import android.content.Context
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -9,8 +11,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -59,8 +61,8 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onAllNodesWithText("Setup").assertCountEquals(0)
-        compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().activate()
+        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().activate()
 
         val state = appState(handle)
         assertEquals("authorized", state.account?.authorizationState)
@@ -80,8 +82,8 @@ class IrisDriveAndroidGuiFlowTest {
             },
         )
 
-        compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
+        compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
         compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput(owner.invite)
 
         val linked = appState(linkedHandle).account
@@ -105,10 +107,10 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("driveContent").performScrollToNode(hasTestTag("addDeviceButton"))
-        compose.onNodeWithTag("addDeviceButton").performClick()
+        compose.onNodeWithTag("addDeviceButton").activate()
         compose.onNodeWithTag("manualDeviceId").assertIsDisplayed().performTextInput(linked.devicePubkey)
         compose.onNodeWithTag("manualDeviceName").assertIsDisplayed().performTextInput("Android UI linked")
-        compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().performClick()
+        compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().activate()
 
         val updated = appState(owner.handle)
         assertEquals(2, updated.devices.size)
@@ -184,6 +186,10 @@ class IrisDriveAndroidGuiFlowTest {
 
     private fun appState(handle: Long): AppState =
         AppState.fromJson(NativeCore.stateJson(handle))
+
+    private fun SemanticsNodeInteraction.activate() {
+        performSemanticsAction(SemanticsActions.OnClick)
+    }
 
     private data class TestProfile(
         val handle: Long,

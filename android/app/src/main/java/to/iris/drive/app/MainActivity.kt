@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.system.Os
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyDebugEnvironment(intent)
         NativeCore.initializeAndroidContext(applicationContext)
         nativeHandle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
         refresh()
@@ -112,6 +114,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        applyDebugEnvironment(intent)
         handleDebugIntent(intent)
     }
 
@@ -234,6 +237,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun applyDebugEnvironment(intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        val extras = intent?.extras ?: return
+        extras.keySet()
+            .filter { it.startsWith(DEBUG_ENV_EXTRA_PREFIX) }
+            .forEach { key ->
+                val value = extras.getString(key) ?: return@forEach
+                runCatching {
+                    Os.setenv(key, value, true)
+                }
+            }
+    }
+
     private fun writeDebugState() {
         if (!BuildConfig.DEBUG) return
         runCatching {
@@ -265,6 +281,7 @@ class MainActivity : ComponentActivity() {
         const val DEBUG_OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
         const val DEBUG_REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
         const val DEBUG_STATE_FILE = "debug-state.json"
+        private const val DEBUG_ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
         private const val DOCUMENTS_ROOT_ID = "iris-drive"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
     }
