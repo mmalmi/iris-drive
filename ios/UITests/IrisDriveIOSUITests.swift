@@ -75,6 +75,22 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["Devices"].isSelected)
     }
 
+    func testMyDriveFileCountMatchesExpected() throws {
+        let expected = try requiredEnvironment("IRIS_DRIVE_UI_TEST_EXPECTED_FILE_COUNT")
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let row = app.descendants(matching: .any)["filesSummaryRow"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        let deadline = Date().addingTimeInterval(45)
+        var actual = accessibilityValue(row)
+        while Date() < deadline, actual != expected {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            actual = accessibilityValue(row)
+        }
+        XCTAssertEqual(actual, expected, "Files row: \(row.debugDescription)")
+    }
+
     func testApprovedLinkedDeviceLeavesWaiting() throws {
         let app = launchApp()
 
@@ -167,5 +183,9 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
         XCTAssertTrue(element.waitForExistence(timeout: 2))
         XCTAssertTrue(element.isHittable)
+    }
+
+    private func accessibilityValue(_ element: XCUIElement) -> String {
+        (element.value as? String ?? element.label).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

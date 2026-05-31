@@ -1955,8 +1955,6 @@ struct NativeFipsStatus {
     #[serde(default)]
     connected_peers: Vec<String>,
     #[serde(default)]
-    mesh_peers: Vec<String>,
-    #[serde(default)]
     error: Option<String>,
 }
 
@@ -2129,7 +2127,6 @@ fn devices_from_account(
                         .connected_peers
                         .iter()
                         .any(|peer| peer == &device_npub)
-                        || status.mesh_peers.iter().any(|peer| peer == &device_npub)
                 });
             let role = device_role_label(device.role).to_owned();
             UiDevice {

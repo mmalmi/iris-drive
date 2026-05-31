@@ -76,13 +76,14 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let authorized = authorized_device_pubkeys(account);
+        let merge_devices = iris_drive_core::projection::merge_device_pubkeys(account, drive);
 
-        // Fetch each authorized device's tree + tombstones from htree.
+        // Fetch each trusted device root's tree + tombstones from htree.
         // With `--at N`, this device's own root walks back N revisions
         // via the `.hashtree/prev` chain; other devices' roots stay at their
         // current state.
         let mut snapshots_data = Vec::new();
-        for device_pubkey in &authorized {
+        for device_pubkey in &merge_devices {
             let Some(root) = drive.device_roots.get(device_pubkey) else {
                 continue; // device hasn't published its root yet
             };
@@ -97,7 +98,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             snapshots_data.push((device_pubkey.clone(), root.clone(), files, tombstones));
         }
 
-        let authorized_refs: Vec<&str> = authorized.iter().map(String::as_str).collect();
+        let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
         let snapshots: Vec<DeviceSnapshot> = snapshots_data
             .iter()
             .map(|(pk, root, files, tombs)| DeviceSnapshot {
@@ -108,7 +109,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             })
             .collect();
 
-        let view = merge_drives(&authorized_refs, &snapshots);
+        let view = merge_drives(&merge_device_refs, &snapshots);
 
         println!(
             "{}",

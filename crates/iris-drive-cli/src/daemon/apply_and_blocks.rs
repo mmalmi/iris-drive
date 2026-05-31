@@ -209,6 +209,10 @@ pub(crate) fn spawn_root_apply_followup(
     }
     let expected_projection_root_key =
         root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection);
+    let root_cid_for_materialize = root_cid_to_pull
+        .as_ref()
+        .filter(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
+        .cloned();
 
     tokio::spawn(async move {
         if let Some(root_cid) = root_cid_to_pull {
@@ -281,6 +285,31 @@ pub(crate) fn spawn_root_apply_followup(
             }
         }
 
+        if root_cid_for_materialize.is_some() {
+            match materialize_primary_merged_root_for_followup(&config_dir).await {
+                Ok(Some(report)) => println!(
+                    "{}",
+                    json!({
+                        "event": "merged_root_materialized",
+                        "root_cid": report.root_cid,
+                        "file_count": report.file_count,
+                        "top_level_entries": report.top_level_entries,
+                    })
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "merged_root_materialize_error",
+                            "error": format!("{error:#}"),
+                        })
+                    );
+                    return;
+                }
+            }
+        }
+
         if should_refresh_projection {
             if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
                 println!(
@@ -338,6 +367,32 @@ pub(crate) fn spawn_root_apply_followup(
             );
         }
     });
+}
+
+async fn materialize_primary_merged_root_for_followup(
+    config_dir: &Path,
+) -> Result<Option<iris_drive_core::ImportReport>> {
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let mut daemon =
+        iris_drive_core::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
+    daemon
+        .materialize_primary_merged_root()
+        .await
+        .context("materializing merged root")
+}
+
+fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
+    let Some(account) = config.account.as_ref() else {
+        return false;
+    };
+    config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .is_some_and(|drive| {
+            drive
+                .device_roots
+                .iter()
+                .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+        })
 }
 
 #[allow(clippy::too_many_lines)]

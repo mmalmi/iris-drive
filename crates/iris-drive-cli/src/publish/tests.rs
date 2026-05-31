@@ -56,6 +56,23 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
 }
 
 #[test]
+fn direct_root_republishes_after_short_native_cadence() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_key(key, now));
+    assert!(!exchange.should_publish_key(
+        key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
+    ));
+    assert!(exchange.should_publish_key(
+        key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
+}
+
+#[test]
 fn unchanged_mount_visible_root_is_not_publishable() {
     let root = Cid::encrypted([0x11; 32], [0x22; 32]);
     let other = Cid::encrypted([0x33; 32], [0x44; 32]);

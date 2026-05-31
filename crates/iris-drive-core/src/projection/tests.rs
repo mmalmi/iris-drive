@@ -261,6 +261,59 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
 }
 
 #[tokio::test]
+async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink() {
+    let cfg_dir = tempdir().unwrap();
+    let mut account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let old_pixel = nostr_sdk::Keys::generate().public_key().to_hex();
+    let new_pixel = nostr_sdk::Keys::generate().public_key().to_hex();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    account
+        .approve_device(&old_pixel, Some("Pixel".into()))
+        .unwrap();
+    let owner_root = index_device_file_root(
+        &tree,
+        &account.state.device_pubkey,
+        "mac.txt",
+        b"from mac",
+        1,
+        10,
+    )
+    .await;
+    let old_pixel_root =
+        index_device_file_root(&tree, &old_pixel, "pixel.txt", b"from old pixel", 1, 11).await;
+
+    account.revoke_device(&old_pixel).unwrap();
+    account
+        .approve_device(&new_pixel, Some("Pixel".into()))
+        .unwrap();
+
+    let mut config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+    );
+    drive.device_roots.insert(
+        old_pixel,
+        DeviceRootRef::from_meta(old_pixel_root.0.to_string(), 11, &old_pixel_root.1),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let paths = view
+        .view
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["mac.txt", "pixel.txt"]);
+}
+
+#[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
     let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
@@ -557,6 +610,34 @@ async fn index_device_note_root(
         created_at: published_at,
     };
     let root = index_device_note_root_with_meta(tree, bytes, published_at, meta.clone()).await;
+    (root, meta)
+}
+
+async fn index_device_file_root(
+    tree: &HashTree<MemoryStore>,
+    device_id: &str,
+    path: &str,
+    bytes: &[u8],
+    device_seq: u64,
+    published_at: i64,
+) -> (Cid, DriveRootMeta) {
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: device_id.to_string(),
+        device_seq,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: published_at,
+    };
+    let source = tempdir().unwrap();
+    std::fs::write(source.path().join(path), bytes).unwrap();
+    let root =
+        index_dir_with_history_and_meta(tree, source.path(), None, published_at, Some(&meta))
+            .await
+            .unwrap();
     (root, meta)
 }
 

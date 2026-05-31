@@ -35,6 +35,7 @@ pub(crate) fn cmd_sync(
                 "fips_download_error": report.fips_download_error,
                 "blossom_download": report.blossom_download.as_ref().map(download_report_json),
                 "blossom_download_error": report.blossom_download_error,
+                "materialized_root_cid": report.materialized_root_cid,
             })
         );
         Ok::<_, anyhow::Error>(())

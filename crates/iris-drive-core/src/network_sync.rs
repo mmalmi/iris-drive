@@ -41,6 +41,7 @@ pub struct NetworkSyncReport {
     pub fips_download_error: Option<String>,
     pub blossom_download: Option<DownloadReport>,
     pub blossom_download_error: Option<String>,
+    pub materialized_root_cid: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -154,6 +155,21 @@ pub async fn sync_once_with_fips(
         &mut report,
     )
     .await;
+    if root_cids_to_download
+        .iter()
+        .any(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
+        && (report.fips_download.is_some() || report.blossom_download.is_some())
+    {
+        let mut daemon =
+            Daemon::open(config_dir).context("opening daemon to materialize merged root")?;
+        if let Some(import) = daemon
+            .materialize_primary_merged_root()
+            .await
+            .context("materializing merged root")?
+        {
+            report.materialized_root_cid = Some(import.root_cid);
+        }
+    }
 
     let _ = client.disconnect().await;
     Ok(report)
@@ -213,6 +229,18 @@ fn files_root_apply_label(outcome: &relay_sync::FilesRootApply) -> &'static str 
         relay_sync::FilesRootApply::UnknownDrive => "unknown_drive",
         relay_sync::FilesRootApply::StaleTimestamp => "stale",
     }
+}
+
+fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
+    let Some(account) = config.account.as_ref() else {
+        return false;
+    };
+    config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {
+        drive
+            .device_roots
+            .iter()
+            .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+    })
 }
 
 async fn download_roots(

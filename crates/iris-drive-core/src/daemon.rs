@@ -23,6 +23,7 @@ use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
     layer_history_and_meta_on_root, layer_history_and_meta_on_root_with_tombstone_base_and_paths,
     layer_prev_link, layer_root_meta, local_visible_root_for_mount_import, read_conflict_records,
+    read_root_meta,
 };
 use crate::paths::{config_path_in, key_path_in, sync_cache_path_in};
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
@@ -274,6 +275,49 @@ impl Daemon {
     pub async fn import_visible_root(&mut self, root: Cid) -> Result<ImportReport, DaemonError> {
         self.import_visible_root_with_tombstone_base(root, None)
             .await
+    }
+
+    /// Publish this device's causal root for the currently merged drive view.
+    ///
+    /// Remote device roots are inputs. Once their blocks are local, this folds
+    /// the merged visible view into this device's own root and records the
+    /// observed source roots in `.hashtree/root.json`, so later roster changes
+    /// do not make already-accepted files depend on a removed device root.
+    pub async fn materialize_primary_merged_root(
+        &mut self,
+    ) -> Result<Option<ImportReport>, DaemonError> {
+        let Some(account) = self.config.account.clone() else {
+            return Ok(None);
+        };
+        let drive = self
+            .config
+            .drive(PRIMARY_DRIVE_ID)
+            .ok_or(DaemonError::PrimaryDriveMissing)?
+            .clone();
+        if drive.device_roots.is_empty() {
+            return Ok(None);
+        }
+
+        let merged = crate::primary_merged_root(&self.tree, &self.config).await?;
+        if let Some(current) = drive.device_roots.get(&account.device_pubkey) {
+            let current_cid =
+                Cid::parse(&current.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+            let current_visible =
+                crate::indexer::filter_ignored_entries_from_root(&self.tree, &current_cid).await?;
+            if current_visible == merged.root_cid
+                && current_root_observes_drive_roots(
+                    &self.tree,
+                    &current_cid,
+                    &account.device_pubkey,
+                    &drive,
+                )
+                .await?
+            {
+                return Ok(None);
+            }
+        }
+
+        self.import_visible_root(merged.root_cid).await.map(Some)
     }
 
     pub async fn import_visible_root_with_tombstone_base(
@@ -629,6 +673,31 @@ impl Daemon {
             created_at,
         })
     }
+}
+
+async fn current_root_observes_drive_roots(
+    tree: &HashTree<FsBlobStore>,
+    current_root: &Cid,
+    current_device: &str,
+    drive: &crate::config::Drive,
+) -> Result<bool, DaemonError> {
+    let Some(meta) = read_root_meta(tree, current_root).await? else {
+        return Ok(false);
+    };
+    Ok(drive.device_roots.iter().all(|(device_id, root)| {
+        device_id == current_device
+            || root.local_only
+            || root.device_seq == 0
+            || meta
+                .observed
+                .get(device_id)
+                .is_some_and(|observed| root_observation_covers(observed, root))
+    }))
+}
+
+fn root_observation_covers(observed: &RootObservation, root: &DeviceRootRef) -> bool {
+    observed.root_cid == root.root_cid
+        || (root.device_seq > 0 && observed.device_seq >= root.device_seq)
 }
 
 fn unix_now() -> i64 {

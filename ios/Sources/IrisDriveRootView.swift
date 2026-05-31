@@ -431,6 +431,9 @@ private struct DriveHomeView: View {
 
             Section("Summary") {
                 LabeledContent("Files", value: "\(model.fileCount)")
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("filesSummaryRow")
+                    .accessibilityValue("\(model.fileCount)")
                 LabeledContent("Storage", value: byteString(model.visibleFileBytes))
                 Button(action: showDevices) {
                     LabeledContent("Devices", value: deviceSummaryText)

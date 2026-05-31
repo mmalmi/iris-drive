@@ -8,6 +8,8 @@ use crate::identity::Identity;
 use crate::root_meta::DriveRootMeta;
 use tempfile::tempdir;
 
+mod convergence;
+
 fn init_config(dir: &Path) -> Identity {
     let identity = Identity::generate(key_path_in(dir));
     identity.save().unwrap();

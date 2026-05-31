@@ -331,6 +331,9 @@ pub async fn apply_direct_root_event(
             .as_ref()
             .filter(|_| should_download)
             .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
+        let materialize_after_download = root_cid
+            .as_deref()
+            .is_some_and(|root_cid| root_cid_belongs_to_peer(&config, root_cid));
         let changed = matches!(outcome, crate::relay_sync::DriveRootApply::Applied);
         config.save(config_path_in(config_dir))?;
         if let Some(sync) = sync {
@@ -339,9 +342,32 @@ pub async fn apply_direct_root_event(
                 download_direct_root(sync, &root_cid).await?;
             }
         }
-        return Ok(changed);
+        let materialized = if sync.is_some() && materialize_after_download {
+            let mut daemon =
+                crate::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
+            daemon
+                .materialize_primary_merged_root()
+                .await
+                .context("materializing merged root")?
+                .is_some()
+        } else {
+            false
+        };
+        return Ok(changed || materialized);
     }
     Ok(false)
+}
+
+fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
+    let Some(account) = config.account.as_ref() else {
+        return false;
+    };
+    config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {
+        drive
+            .device_roots
+            .iter()
+            .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+    })
 }
 
 async fn download_direct_root(sync: &FsFipsBlockSync, root_cid: &str) -> Result<()> {

@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
 use crate::account::AccountState;
-use crate::config::{AppConfig, DeviceRootRef};
+use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::conflict::conflict_filename;
 use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
 use crate::merge::{
@@ -80,9 +80,10 @@ pub async fn primary_merged_view<S: Store>(
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let authorized = authorized_device_pubkeys(account);
+    let merge_devices = merge_device_pubkeys(account, drive);
 
     let mut snapshots_data = Vec::new();
-    for device_pubkey in &authorized {
+    for device_pubkey in &merge_devices {
         let Some(root) = drive.device_roots.get(device_pubkey) else {
             continue;
         };
@@ -98,7 +99,7 @@ pub async fn primary_merged_view<S: Store>(
         snapshots_data.push((device_pubkey.clone(), root, files, tombstones));
     }
 
-    let authorized_refs: Vec<&str> = authorized.iter().map(String::as_str).collect();
+    let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
     let snapshots: Vec<DeviceSnapshot<'_>> = snapshots_data
         .iter()
         .map(|(device_pubkey, root, files, tombstones)| DeviceSnapshot {
@@ -108,7 +109,7 @@ pub async fn primary_merged_view<S: Store>(
             tombstones: tombstones.clone(),
         })
         .collect();
-    let mut view = merge_drives(&authorized_refs, &snapshots);
+    let mut view = merge_drives(&merge_device_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
     Ok(PrimaryMergedView {
         view,
@@ -255,14 +256,14 @@ pub async fn primary_merged_root<S: Store>(
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
-    let authorized = authorized_device_pubkeys(account);
+    let merge_devices = merge_device_pubkeys(account, drive);
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
     let target_dirs = merged_user_directory_paths(
         tree,
         drive,
-        &authorized,
+        &merge_devices,
         &merged.view.suppressed_by_tombstone,
     )
     .await?;
@@ -565,6 +566,17 @@ fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
         .unwrap_or_default();
     if !devices.contains(&state.device_pubkey) {
         devices.push(state.device_pubkey.clone());
+    }
+    devices
+}
+
+#[must_use]
+pub fn merge_device_pubkeys(account: &AccountState, drive: &Drive) -> Vec<String> {
+    let mut devices = authorized_device_pubkeys(account);
+    for device_pubkey in drive.device_roots.keys() {
+        if !devices.contains(device_pubkey) {
+            devices.push(device_pubkey.clone());
+        }
     }
     devices
 }
