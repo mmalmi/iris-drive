@@ -371,7 +371,7 @@ on waitForSetupText(appName, expected, timeoutSeconds)
   error "Timed out waiting for setup text: " & expected
 end waitForSetupText
 
-on clickSetupButton(appName, buttonName, fallbackIndex)
+on clickSetupButton(appName, buttonName, alternateIndex)
   tell application "System Events"
     tell process appName
       set frontmost to true
@@ -379,7 +379,7 @@ on clickSetupButton(appName, buttonName, fallbackIndex)
       if exists button buttonName of controls then
         click button buttonName of controls
       else
-        click button fallbackIndex of controls
+        click button alternateIndex of controls
       end if
     end tell
   end tell

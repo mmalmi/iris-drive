@@ -209,7 +209,7 @@ fn bootstrap_first_launch_with(config_dir: &Path) -> Result<()> {
 }
 
 /// Spawn `idrive daemon` from the same directory as this binary if
-/// present, otherwise fall back to `idrive` on PATH.
+/// present, otherwise use `idrive` on PATH.
 fn spawn_daemon() -> std::io::Result<Child> {
     let same_dir = std::env::current_exe()
         .ok()

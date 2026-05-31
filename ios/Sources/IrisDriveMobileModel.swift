@@ -729,9 +729,9 @@ final class IrisDriveMobileModel: ObservableObject {
         relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
         relay = relays.first ?? defaultRelay
         devices = state.ui.devices.map { device in
-            let fallbackLabel = device.label.isEmpty ? "Device" : device.label
+            let displayLabel = device.label.isEmpty ? "Device" : device.label
             return IrisDriveDevice(
-                label: device.isCurrentDevice ? "This device" : fallbackLabel,
+                label: device.isCurrentDevice ? "This device" : displayLabel,
                 role: roleTitle(device.role),
                 state: deviceStateTitle(device.state),
                 detail: device.detail,

@@ -873,12 +873,12 @@ mod tests {
     }
 
     #[test]
-    fn drive_root_event_with_zero_published_at_falls_back_to_wall_clock() {
+    fn drive_root_event_with_zero_published_at_uses_wall_clock() {
         let device = Keys::generate();
         let owner = Keys::generate().public_key().to_hex();
         let root = DeviceRootRef::legacy(
             Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
-            0, // caller hasn't stamped — should fall back
+            0, // caller has not stamped; use wall-clock time
             1,
         );
         let event = build_drive_root_event(

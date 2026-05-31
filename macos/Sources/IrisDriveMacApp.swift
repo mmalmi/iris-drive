@@ -919,7 +919,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func bootstrapAndStartDaemon() {
         let idrive = idriveExecutableURL()
         if idrive == nil {
-            NSLog("Iris Drive bundled idrive helper not found; falling back to PATH")
+            NSLog("Iris Drive bundled idrive helper not found; using PATH lookup")
         }
 
         let paths = runtimePaths()
@@ -1417,7 +1417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         return IrisDriveRuntimePaths(
-            configDirectory: fileProviderApplicationSupportFallbackDirectory()
+            configDirectory: fileProviderApplicationSupportDirectory()
                 .appendingPathComponent("Config", isDirectory: true)
         )
     }
@@ -1462,14 +1462,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         IrisDriveEnvironment.flag(name)
     }
 
-    private func fileProviderApplicationSupportFallbackDirectory() -> URL {
+    private func fileProviderApplicationSupportDirectory() -> URL {
         IrisDriveAppGroup.applicationSupportDirectory(
             teamIdentifier: currentProcessTeamIdentifier()
         )
     }
 
     private func persistedFileProviderRuntime() -> FileProviderRuntimeConfig? {
-        let url = fileProviderApplicationSupportFallbackDirectory()
+        let url = fileProviderApplicationSupportDirectory()
             .appendingPathComponent(irisDriveFileProviderRuntimeFileName)
         guard let data = try? Data(contentsOf: url) else {
             return nil
@@ -1874,7 +1874,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var directories = [URL]()
         directories.append(paths.configDirectory.deletingLastPathComponent())
         if ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] == nil {
-            directories.append(fileProviderApplicationSupportFallbackDirectory())
+            directories.append(fileProviderApplicationSupportDirectory())
         }
 
         var seen = Set<String>()

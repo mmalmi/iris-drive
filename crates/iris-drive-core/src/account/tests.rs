@@ -38,7 +38,7 @@ fn default_device_label_prefers_hostname() {
 }
 
 #[test]
-fn empty_device_label_falls_back_to_pubkey_label() {
+fn empty_device_label_uses_pubkey_label() {
     let pubkey = "abcdef12".to_string() + &"34".repeat(28);
     assert_eq!(
         resolve_device_label_with_hostname(Some("   ".into()), None, &pubkey).as_deref(),

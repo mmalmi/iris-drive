@@ -4,14 +4,14 @@
 //! that device's contribution to the drive. The merged drive view is
 //! computed by walking every authorized device's tree and resolving
 //! per-path conflicts with causal root metadata. Publication time is
-//! only a fallback for legacy roots without `device_seq` / observations.
+//! only legacy ordering for roots without `device_seq` / observations.
 //!
 //! Tombstones are stored alongside regular files under a reserved
 //! `.hashtree/tombstones/` subtree in each device's root. A tombstone
 //! is a leaf whose path is `.hashtree/tombstones/<mirror of original
 //! path>` and whose content is the unix-seconds timestamp at which
 //! the file was removed. Tombstones participate in the same causal
-//! ordering as writes; timestamp ordering is only the legacy fallback.
+//! ordering as writes; timestamp ordering is only for legacy roots.
 //!
 //! This module is pure logic — it takes pre-fetched per-device entry
 //! and tombstone lists and produces a `MergedView`. The actual htree
@@ -386,7 +386,7 @@ fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
-        RootRelation::Concurrent => fallback_newer(
+        RootRelation::Concurrent => legacy_order_newer(
             candidate.entry.published_at,
             &candidate.device_pubkey,
             existing.entry.published_at,
@@ -404,7 +404,7 @@ fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &Tombstone
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
-        RootRelation::Concurrent => fallback_newer(
+        RootRelation::Concurrent => legacy_order_newer(
             candidate.tombstoned_at,
             &candidate.device_pubkey,
             existing.tombstoned_at,
@@ -522,7 +522,12 @@ fn roots_are_causal(root: &DeviceRootRef) -> bool {
     root.device_seq > 0 || !root.parents.is_empty() || !root.observed.is_empty()
 }
 
-fn fallback_newer(left_time: i64, left_device: &str, right_time: i64, right_device: &str) -> bool {
+fn legacy_order_newer(
+    left_time: i64,
+    left_device: &str,
+    right_time: i64,
+    right_device: &str,
+) -> bool {
     left_time > right_time || (left_time == right_time && left_device > right_device)
 }
 

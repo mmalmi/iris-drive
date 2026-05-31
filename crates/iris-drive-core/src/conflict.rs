@@ -1,7 +1,7 @@
 //! File-level conflict resolution.
 //!
 //! Iris Drive uses last-writer-wins by published timestamp with a rename
-//! fallback on irreconcilable conflicts — same model Drive and Dropbox
+//! conflict copy on irreconcilable conflicts — same model Drive and Dropbox
 //! ship. CRDTs are not used in v1.
 //!
 //! `resolve` is a pure function: given snapshots of (base, local, remote)

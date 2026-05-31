@@ -748,23 +748,23 @@ public static partial class WindowsCloudFiles
         }
         catch (DllNotFoundException error)
         {
-            return Fallback(path, $"Cloud Files API unavailable: {error.Message}");
+            return NativeProviderUnavailable(path, $"Cloud Files API unavailable: {error.Message}");
         }
         catch (EntryPointNotFoundException error)
         {
-            return Fallback(path, $"Cloud Files API unavailable: {error.Message}");
+            return NativeProviderUnavailable(path, $"Cloud Files API unavailable: {error.Message}");
         }
         catch (Win32Exception error)
         {
-            return Fallback(path, $"Cloud Files operation failed: {error.Message}");
+            return NativeProviderUnavailable(path, $"Cloud Files operation failed: {error.Message}");
         }
         catch (COMException error)
         {
-            return Fallback(path, $"Cloud Files operation failed: {error.Message}");
+            return NativeProviderUnavailable(path, $"Cloud Files operation failed: {error.Message}");
         }
     }
 
-    private static DriveFolderPreparation Fallback(string path, string warning) =>
+    private static DriveFolderPreparation NativeProviderUnavailable(string path, string warning) =>
         new(path, nativeSyncRootReady: false, warning);
 
     private static IReadOnlyList<WindowsCloudLocalStateEntry> SnapshotLocalState(

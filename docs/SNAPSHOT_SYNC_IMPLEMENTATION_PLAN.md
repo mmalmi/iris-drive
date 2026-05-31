@@ -92,12 +92,12 @@ Field rules:
 - `parents` are the roots this root directly replaces or incorporates.
 - `observed` is the compact vector-clock-style view of other authorized
   devices at publish time.
-- `created_at` is useful for display, ordering lists, and fallback sorting.
+- `created_at` is useful for display, ordering lists, and legacy sorting.
 - The owner/device signature is still the authority for authenticity.
 
 For compatibility, old roots without this metadata are treated as legacy roots
-with unknown causality and fall back to current timestamp behavior until all
-active devices have republished.
+with unknown causality and use current timestamp behavior until all active
+devices have republished.
 
 ## File entry model
 
@@ -158,7 +158,7 @@ device snapshots.
 5. If a tombstone causally descends from a write, delete the path.
 6. If a write causally descends from a tombstone, restore the path.
 7. If candidates are concurrent and differ, create or update a conflict record.
-8. Use wall-clock time and device id only as deterministic fallback ordering
+8. Use wall-clock time and device id only as deterministic legacy ordering
    for display and stable file naming.
 
 Concurrent write/delete is a conflict. The resolver should preserve the file
@@ -201,7 +201,7 @@ Move `sync.rs` from two-way whole enumeration toward snapshot application:
 8. Publish a new signed local root only after local provider state has been
    indexed into a complete snapshot.
 
-The current full-enumeration path can remain as a fallback and test harness,
+The current full-enumeration path can remain as a debug and test harness,
 but the production engine should use root anchors and path diffs.
 
 ## Hashtree work
@@ -295,7 +295,7 @@ Required cases:
 - Add `DriveRootMeta` and root metadata read/write helpers.
 - Attach `.hashtree/root.json` during indexing.
 - Extend `DeviceRootRef` with `device_seq`, `parents`, and observed roots.
-- Keep `published_at` for display and migration fallback.
+- Keep `published_at` for display and migration ordering.
 - Add migration tests for old roots.
 
 ### Phase B: causal merge
@@ -323,7 +323,7 @@ Required cases:
 
 - Add or consume hashtree item diff.
 - Replace production full-enumeration sync with root-anchor diff sync.
-- Keep full enumeration only as fallback/debug.
+- Keep full enumeration only for debug and first-sync cases.
 - Add provider tests that apply diffs without fetching whole-file bytes unless
   bytes are actually needed.
 

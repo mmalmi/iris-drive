@@ -150,7 +150,7 @@ async fn overlay_download_uses_direct_fips_when_mesh_peer_is_absent() {
 
     let source_store = Arc::new(MemoryStore::new());
     let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
-    let (file_cid, _) = source_tree.put(b"hello direct fallback").await.unwrap();
+    let (file_cid, _) = source_tree.put(b"hello direct remote").await.unwrap();
     let root_cid = source_tree
         .put_directory(vec![DirEntry {
             name: "hello.txt".to_string(),

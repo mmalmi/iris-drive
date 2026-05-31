@@ -290,9 +290,9 @@ pub(crate) fn wait_for_mounted_dir(timeout: Duration) -> Option<PathBuf> {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let fallback = default_drive_dir();
-    if wait_for_path(&fallback, Duration::from_millis(100)) {
-        return Some(fallback);
+    let default_folder = default_drive_dir();
+    if wait_for_path(&default_folder, Duration::from_millis(100)) {
+        return Some(default_folder);
     }
     None
 }

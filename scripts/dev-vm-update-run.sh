@@ -587,7 +587,7 @@ build_static_peer_hints() {
   for i in "${!ALL_LABELS[@]}"; do
     ip="$(detect_remote_overlay_ip "${ALL_KINDS[$i]}" "${ALL_SSH_HOSTS[$i]}" "${ALL_LABELS[$i]}" || true)"
     if [[ -z "$ip" ]]; then
-      log "warning: could not detect nvpn IP for ${ALL_LABELS[$i]} on ${ALL_SSH_HOSTS[$i]}; native FIPS may need WebRTC or relay fallback"
+      log "warning: could not detect nvpn IP for ${ALL_LABELS[$i]} on ${ALL_SSH_HOSTS[$i]}; native FIPS may need WebRTC or relay transport"
       continue
     fi
     ALL_OVERLAY_IPS[$i]="$ip"
@@ -2207,7 +2207,7 @@ try {
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
 } catch {
-  Write-Log "interactive scheduled launch failed, falling back to SSH session launch: $_"
+  Write-Log "interactive scheduled launch failed, using SSH session launch: $_"
   Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
 }
 Start-Sleep -Seconds 8

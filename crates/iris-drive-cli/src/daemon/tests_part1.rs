@@ -196,7 +196,7 @@ fn event_block_pull_retry_budget_stays_short_without_blossom() {
 }
 
 #[test]
-fn event_block_pull_timeout_allows_blossom_fallback_window() {
+fn event_block_pull_timeout_allows_blossom_retry_window() {
     let config = AppConfig {
         blossom_servers: vec!["http://127.0.0.1:12345".to_string()],
         ..AppConfig::default()

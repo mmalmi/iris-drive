@@ -331,7 +331,7 @@ pub struct Drive {
     pub role: DriveRole,
     /// Per-device drive roots, keyed by `device_pubkey` (hex). Every
     /// authorized device publishes its own root tree; the merged view
-    /// is computed causally across all entries, with timestamp fallback
+    /// is computed causally across all entries, with timestamp ordering
     /// for legacy roots (see [`crate::merge::merge_drives`]).
     /// Single-device installs carry exactly one entry here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -355,7 +355,7 @@ pub struct DeviceRootRef {
     /// htree root CID the device most recently published.
     pub root_cid: String,
     /// Unix-seconds publication time. Used for display and as the
-    /// deterministic fallback when a legacy root has no causal fields.
+    /// deterministic ordering when a legacy root has no causal fields.
     pub published_at: i64,
     /// DCK generation this root was sealed with. Lets readers detect
     /// stale device roots that pre-date a rotation.

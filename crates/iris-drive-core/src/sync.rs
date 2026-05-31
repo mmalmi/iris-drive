@@ -5,7 +5,7 @@
 //!
 //! `sync_with_cache` uses provider anchors and `changes_since(Some(_))`
 //! after the first accepted base; full enumeration remains the first-sync
-//! and explicit fallback path.
+//! and explicit full-scan path.
 //!
 //! Conflict policy: keep both sides. Local stays at the original path;
 //! the remote's bytes land in `name (conflict from peer).ext` on the

@@ -12,7 +12,7 @@
 //!   root CID, collect every current hash, push each blob to the
 //!   configured write servers via `BlossomClient::upload_if_missing`.
 //! - **Download** (after a remote drive-root event): walk the same
-//!   tree, but through a [`WriteBackBlossomStore`] that falls back to
+//!   tree, but through a [`WriteBackBlossomStore`] that reads from
 //!   Blossom on local-store miss and persists the fetched bytes back
 //!   to local. The live sync block walker skips old `.hashtree/prev` history
 //!   targets so current sync is not blocked by stale historical bytes.

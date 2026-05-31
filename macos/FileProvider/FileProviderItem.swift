@@ -154,7 +154,7 @@ enum FileProviderStorage {
         guard let data = line.data(using: .utf8) else { return }
 
         let urls = [
-            fallbackApplicationSupportDirectory()
+            appGroupApplicationSupportDirectory()
                 .appendingPathComponent(debugLogFileName, isDirectory: false),
         ]
         for url in urls {
@@ -213,7 +213,7 @@ enum FileProviderStorage {
         if let configuredRuntime, runtimeIsUsable(configuredRuntime) {
             return configuredRuntime
         } else if configuredRuntime != nil {
-            debugLog("configured runtime inaccessible; falling back to runtime file")
+            debugLog("configured runtime inaccessible; using runtime file")
         }
         for directory in runtimeDirectories {
             let url = directory.appendingPathComponent(runtimeFileName)
@@ -246,7 +246,7 @@ enum FileProviderStorage {
 
     private static var runtimeDirectories: [URL] {
         var directories = [URL]()
-        directories.append(fallbackApplicationSupportDirectory())
+        directories.append(appGroupApplicationSupportDirectory())
 
         var seen = Set<String>()
         return directories.filter { directory in
@@ -827,7 +827,7 @@ enum FileProviderStorage {
             && !path.split(separator: "/").contains("..")
     }
 
-    private static func fallbackApplicationSupportDirectory() -> URL {
+    private static func appGroupApplicationSupportDirectory() -> URL {
         IrisDriveAppGroup.applicationSupportDirectory(
             teamIdentifier: currentProcessTeamIdentifier()
         )

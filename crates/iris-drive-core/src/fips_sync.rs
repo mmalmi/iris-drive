@@ -37,7 +37,7 @@ const DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
-/// defaults so native Iris instances can join the same fallback overlay when
+/// defaults so native Iris instances can join the same relay overlay when
 /// direct device-to-device UDP/WebRTC is unavailable.
 const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
     (

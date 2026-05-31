@@ -13,7 +13,7 @@ sync, but content-addressed, peer-aware, and free of DNS/SSL/CDN dependencies.
 
 OS-visible drives are virtual provider surfaces only: FileProvider, FUSE,
 Windows Cloud Files/WinFsp, SAF, or the platform equivalent over htree/provider
-roots. Iris Drive should not silently fall back to a normal user folder.
+roots. Iris Drive should not silently substitute a normal user folder.
 
 ## Downloads
 

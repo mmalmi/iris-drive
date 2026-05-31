@@ -194,7 +194,7 @@ fn observed_same_sequence_with_different_root_is_not_descendant() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(
         view.files[0].source_device, "dev-a",
-        "timestamp fallback should win when ancestry is unknown"
+        "legacy timestamp ordering should win when ancestry is unknown"
     );
     assert_eq!(view.conflicts, vec!["x".to_string()]);
 }

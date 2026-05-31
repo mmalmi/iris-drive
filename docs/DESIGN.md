@@ -219,8 +219,9 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 - **Apple FileProvider App Store entitlement** can be denied or take 6+ weeks.
   Development on own devices is unaffected (dev capability self-enables). Have
-  a fallback: FUSE-T mount under `~/Iris Drive` on macOS shippable through
-  Developer-ID signed + notarized distribution while waiting on App Store.
+  an alternate distribution path: FUSE-T mount under `~/Iris Drive` on macOS
+  shippable through Developer-ID signed + notarized distribution while waiting
+  on App Store.
 - **Background sync on iOS** is famously restrictive. Plan for "syncs when app
   is foreground or when iOS feels like waking the extension." Same constraint
   as Drive/Dropbox; not solvable.
