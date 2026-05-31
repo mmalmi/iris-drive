@@ -884,6 +884,31 @@ snapshot() {
     LC_ALL=C sort
 }
 
+filter_ignored_snapshot_paths() {
+  python3 -c '
+import sys
+
+ignored_names = {".ds_store", ".hashtree", ".trash", "$recycle.bin", "thumbs.db", "desktop.ini"}
+
+def ignored(name: str) -> bool:
+    lower = name.lower()
+    return (
+        lower in ignored_names
+        or name.startswith("._")
+        or lower.startswith(".trash-")
+        or name.endswith("~")
+        or (name.startswith("#") and name.endswith("#"))
+        or lower.endswith(".sbak")
+    )
+
+for line in sys.stdin:
+    path = line.rstrip("\n").split("\t")[-1]
+    if any(ignored(part) for part in path.split("/")):
+        continue
+    sys.stdout.write(line)
+'
+}
+
 projection_snapshot() {
   local label="$1"
   local kind
@@ -905,7 +930,7 @@ Get-ChildItem -LiteralPath \$base -File -Recurse -Force | ForEach-Object {
   Write-Output (\"\$hash`t\$([string]\$_.Length)`t\$relative\")
 } | Sort-Object
 "
-    remote_exec "$label" "$script" | tr -d '\r'
+    remote_exec "$label" "$script" | tr -d '\r' | filter_ignored_snapshot_paths
     return
   fi
   local root
@@ -929,7 +954,7 @@ for path in sorted(p for p in base.rglob('*') if p.is_file()):
     print(f\"{hashlib.sha256(data).hexdigest()}\\t{len(data)}\\t{rel}\")
 PY
 "
-  remote_exec "$label" "$script" | tr -d '\r'
+  remote_exec "$label" "$script" | tr -d '\r' | filter_ignored_snapshot_paths
 }
 
 union_snapshots() {
@@ -1056,7 +1081,11 @@ wait_for_source_snapshot() {
   local label="$1"
   local step="$2"
   local expected
-  expected="$(snapshot "$label")"
+  if projection_enabled "$label"; then
+    expected="$(projection_snapshot "$label")"
+  else
+    expected="$(snapshot "$label")"
+  fi
   EXPECTED_SNAPSHOT="$expected"
   EXPECTED_SOURCE_LABEL="$label"
   EXPECTED_SOURCE_FILE_COUNT="$(snapshot_file_count "$expected")"
