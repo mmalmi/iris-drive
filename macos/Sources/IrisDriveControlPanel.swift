@@ -35,6 +35,22 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "gearshape.fill"
         }
     }
+
+    static var initialScreenshotSelection: IrisDrivePanelTab {
+        guard IrisDriveScreenshotFixtures.enabled else {
+            return .drive
+        }
+        switch IrisDriveScreenshotFixtures.tabArgument {
+        case "device", "devices", "peers":
+            return .peers
+        case "backup", "backups":
+            return .backups
+        case "setting", "settings":
+            return .settings
+        default:
+            return .drive
+        }
+    }
 }
 
 private enum IrisDriveSetupMode {
@@ -58,7 +74,7 @@ let setupButtonMinHeight: CGFloat = 44
 struct IrisDriveControlPanel: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
-    @State private var selectedTab = IrisDrivePanelTab.drive
+    @State private var selectedTab = IrisDrivePanelTab.initialScreenshotSelection
     @State private var relayInput = ""
     @State private var backupInput = ""
     @State private var backupLabel = ""
