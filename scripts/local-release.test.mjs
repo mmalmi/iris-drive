@@ -212,3 +212,23 @@ test('local-release build-only mode does not stage existing unsigned artifacts',
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Release build steps: \(none\)/)
 })
+
+test('local-release dry-run routes iOS builds through the TestFlight script', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--only',
+      'ios',
+      '--tag',
+      'v9.9.9',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/ios-build ios-testflight/)
+  assert.doesNotMatch(result.stdout, /Would archive\/export\/upload/)
+})

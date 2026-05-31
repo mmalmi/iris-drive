@@ -532,21 +532,16 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
   }
 }
 
-function buildIosTestFlight({ env, dryRun }) {
+function buildIosTestFlight({ env, tag, dryRun }) {
   if (!dryRun && process.platform !== 'darwin') {
     throw new SkipStepError('iOS TestFlight builds must be created on macOS.')
   }
-  const archivePath = String(env.IRIS_DRIVE_IOS_ARCHIVE_PATH ?? '').trim()
-  if (dryRun) {
-    console.log('Would archive/export/upload the iOS app to TestFlight')
-    return
-  }
-  if (!archivePath) {
-    throw new Error(
-      'Set IRIS_DRIVE_IOS_ARCHIVE_PATH and run the iOS archive/export/upload flow for TestFlight.',
-    )
-  }
-  console.log(`Would use iOS archive path ${archivePath}`)
+  const publicTestFlight = String(env.IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT ?? '').trim() === '1'
+  const command = publicTestFlight ? 'ios-testflight-public' : 'ios-testflight'
+  run('bash', [join(repoRoot, 'scripts', 'ios-build'), command], {
+    dryRun,
+    env: { ...env, IRIS_DRIVE_RELEASE_TAG: tag },
+  })
 }
 
 function buildReleaseArtifacts({ env, tag, options }) {
@@ -561,7 +556,7 @@ function buildReleaseArtifacts({ env, tag, options }) {
     ['linux', () => buildLinuxArtifacts({ env, tag, dryRun: options.dryRun })],
     ['windows', () => buildWindowsArtifacts({ env, tag, dryRun: options.dryRun })],
     ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun })],
-    ['ios', () => buildIosTestFlight({ env, dryRun: options.dryRun })],
+    ['ios', () => buildIosTestFlight({ env, tag, dryRun: options.dryRun })],
   ])
   for (const step of steps) {
     const builder = builders.get(step)

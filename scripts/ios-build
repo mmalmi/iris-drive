@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+load_env_file_defaults() {
+  local env_file="$1"
+  local line key value
+
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+
+    key="${line%%=*}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key:-}" ]] && continue
+
+    value="${line#*=}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done <"$env_file"
+}
+
+load_env_file_defaults "$ROOT/.env.release.local"
+
+IOS_DIR="$ROOT/ios"
+DIST_DIR="${IRIS_DRIVE_IOS_DIST_DIR:-$ROOT/dist/ios}"
+ARCHIVE_PATH="${IRIS_DRIVE_IOS_ARCHIVE_PATH:-$DIST_DIR/IrisDriveIOS.xcarchive}"
+EXPORT_DIR="${IRIS_DRIVE_IOS_EXPORT_DIR:-$DIST_DIR/export}"
+EXPORT_OPTIONS="$DIST_DIR/ExportOptions.plist"
+PROJECT="$IOS_DIR/IrisDriveIOS.xcodeproj"
+SCHEME="${IRIS_DRIVE_IOS_SCHEME:-IrisDriveIOS}"
+CONFIGURATION="${IRIS_DRIVE_IOS_CONFIGURATION:-Release}"
+TEAM_ID="${IRIS_DRIVE_IOS_TEAM_ID:-${IRIS_DRIVE_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}}"
+BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-to.iris.drive.ios}"
+FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-to.iris.drive.ios.FileProvider}"
+SHARE_EXTENSION_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID:-to.iris.drive.ios.ShareExtension}"
+RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
+RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/release"
+RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
+IOS_UPLOAD_TRANSPORT="${IRIS_DRIVE_IOS_UPLOAD_TRANSPORT:-HTTP}"
+IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
+TRANSPORTER="${IRIS_DRIVE_ITMS_TRANSPORTER:-/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter}"
+ASC_AUTH_ARGS=()
+
+usage() {
+  cat <<'EOF'
+usage: scripts/ios-build <command>
+
+commands:
+  ios-rust                 build release Rust app-core for iphoneos
+  ios-project              regenerate the Xcode project
+  ios-archive              archive the app for App Store Connect
+  ios-export               export an IPA from the archive
+  ios-upload               upload the exported IPA to App Store Connect
+  ios-testflight           archive + export + upload for internal TestFlight
+  ios-testflight-public    archive + export + upload as public-TestFlight capable
+  ios-release-artifacts    alias for ios-testflight
+
+env:
+  IRIS_DRIVE_ASC_AUTH_KEY_PATH or IRIS_DRIVE_ASC_KEY_PATH
+  IRIS_DRIVE_ASC_AUTH_KEY_ID   or IRIS_DRIVE_ASC_KEY_ID
+  IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
+  IRIS_DRIVE_IOS_TEAM_ID
+  IRIS_DRIVE_IOS_INTERNAL_ONLY=false for public-TestFlight capable exports
+  IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND optional shell command after upload
+EOF
+}
+
+require_darwin() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "iOS release builds must run on macOS." >&2
+    exit 1
+  fi
+}
+
+bool_is_true() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_dir() {
+  mkdir -p "$1"
+}
+
+require_var() {
+  local name="$1"
+  if [[ -z "${!name:-}" ]]; then
+    echo "$name is required." >&2
+    exit 2
+  fi
+}
+
+asc_key_path() {
+  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_PATH:-${IRIS_DRIVE_ASC_KEY_PATH:-}}"
+}
+
+asc_key_id() {
+  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ID:-${IRIS_DRIVE_ASC_KEY_ID:-}}"
+}
+
+asc_issuer_id() {
+  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-${IRIS_DRIVE_ASC_ISSUER_ID:-}}"
+}
+
+load_asc_auth_args() {
+  local key_path key_id issuer_id
+  ASC_AUTH_ARGS=()
+  key_path="$(asc_key_path)"
+  key_id="$(asc_key_id)"
+  issuer_id="$(asc_issuer_id)"
+  if [[ -z "$key_path" && -z "$key_id" && -z "$issuer_id" ]]; then
+    return 0
+  fi
+  [[ -n "$key_path" ]] || { echo "IRIS_DRIVE_ASC_KEY_PATH is required when ASC auth is configured." >&2; exit 2; }
+  [[ -n "$key_id" ]] || { echo "IRIS_DRIVE_ASC_KEY_ID is required when ASC auth is configured." >&2; exit 2; }
+  [[ -n "$issuer_id" ]] || { echo "IRIS_DRIVE_ASC_ISSUER_ID is required when ASC auth is configured." >&2; exit 2; }
+  ASC_AUTH_ARGS=(
+    -authenticationKeyPath "$key_path" \
+    -authenticationKeyID "$key_id" \
+    -authenticationKeyIssuerID "$issuer_id"
+  )
+}
+
+workspace_version() {
+  python3 - "$ROOT/Cargo.toml" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"', text)
+if not match:
+    raise SystemExit("Could not find workspace package version")
+print(match.group(1))
+PY
+}
+
+build_number_from_version() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+match = re.match(r"^(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+if not match:
+    raise SystemExit(f"Version is not semver-shaped: {sys.argv[1]}")
+major, minor, patch = map(int, match.groups())
+print(major * 1_000_000 + minor * 1_000 + patch)
+PY
+}
+
+marketing_version() {
+  printf '%s' "${IRIS_DRIVE_IOS_MARKETING_VERSION:-$(workspace_version)}"
+}
+
+build_number() {
+  local version
+  version="$(marketing_version)"
+  printf '%s' "${IRIS_DRIVE_IOS_BUILD_NUMBER:-$(build_number_from_version "$version")}"
+}
+
+run_ios_rust() {
+  require_darwin
+  cargo build -p iris-drive-app-core --release --target "$RUST_IOS_TARGET"
+  if [[ ! -f "$RUST_STATIC_LIB" ]]; then
+    echo "Static app-core library not found at $RUST_STATIC_LIB" >&2
+    exit 1
+  fi
+}
+
+run_ios_project() {
+  require_darwin
+  if command -v xcodegen >/dev/null 2>&1; then
+    (cd "$IOS_DIR" && xcodegen generate)
+  elif [[ ! -d "$PROJECT" ]]; then
+    echo "$PROJECT is missing and xcodegen is not installed." >&2
+    exit 1
+  fi
+}
+
+run_ios_archive() {
+  local version build
+  require_darwin
+  ensure_dir "$DIST_DIR"
+  rm -rf "$ARCHIVE_PATH"
+  run_ios_rust
+  run_ios_project
+  version="$(marketing_version)"
+  build="$(build_number)"
+  load_asc_auth_args
+
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -destination "generic/platform=iOS" \
+    -archivePath "$ARCHIVE_PATH" \
+    -allowProvisioningUpdates \
+    "${ASC_AUTH_ARGS[@]}" \
+    DEVELOPMENT_TEAM="$TEAM_ID" \
+    MARKETING_VERSION="$version" \
+    CURRENT_PROJECT_VERSION="$build" \
+    LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+    OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+    archive
+}
+
+write_export_options() {
+  local internal_only signing_style
+  if bool_is_true "$IOS_INTERNAL_ONLY"; then
+    internal_only="<true/>"
+  else
+    internal_only="<false/>"
+  fi
+
+  signing_style="automatic"
+  if [[ -n "${IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID:-}" \
+    && -n "${IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID:-}" \
+    && -n "${IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID:-}" ]]; then
+    signing_style="manual"
+  fi
+
+  cat >"$EXPORT_OPTIONS" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>destination</key>
+  <string>export</string>
+  <key>teamID</key>
+  <string>$TEAM_ID</string>
+  <key>signingStyle</key>
+  <string>$signing_style</string>
+  <key>uploadSymbols</key>
+  <true/>
+  <key>uploadBitcode</key>
+  <false/>
+  <key>testFlightInternalTestingOnly</key>
+  $internal_only
+EOF
+
+  if [[ "$signing_style" == "manual" ]]; then
+    cat >>"$EXPORT_OPTIONS" <<EOF
+  <key>signingCertificate</key>
+  <string>${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>$BUNDLE_ID</key>
+    <string>$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID</string>
+    <key>$FILE_PROVIDER_BUNDLE_ID</key>
+    <string>$IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID</string>
+    <key>$SHARE_EXTENSION_BUNDLE_ID</key>
+    <string>$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID</string>
+  </dict>
+EOF
+  fi
+
+  cat >>"$EXPORT_OPTIONS" <<'EOF'
+</dict>
+</plist>
+EOF
+}
+
+run_ios_export() {
+  require_darwin
+  [[ -d "$ARCHIVE_PATH" ]] || { echo "Archive not found: $ARCHIVE_PATH" >&2; exit 1; }
+  rm -rf "$EXPORT_DIR"
+  ensure_dir "$EXPORT_DIR"
+  write_export_options
+  load_asc_auth_args
+
+  xcodebuild \
+    -exportArchive \
+    -archivePath "$ARCHIVE_PATH" \
+    -exportPath "$EXPORT_DIR" \
+    -exportOptionsPlist "$EXPORT_OPTIONS" \
+    -allowProvisioningUpdates \
+    "${ASC_AUTH_ARGS[@]}"
+}
+
+ipa_path() {
+  find "$EXPORT_DIR" -maxdepth 1 -name '*.ipa' -type f -print -quit 2>/dev/null
+}
+
+run_ios_upload() {
+  local ipa key_id issuer_id
+  require_darwin
+  ipa="$(ipa_path)"
+  [[ -n "$ipa" ]] || { echo "No IPA found in $EXPORT_DIR; run ios-export first." >&2; exit 1; }
+  key_id="$(asc_key_id)"
+  issuer_id="$(asc_issuer_id)"
+  [[ -n "$key_id" ]] || { echo "IRIS_DRIVE_ASC_KEY_ID is required for upload." >&2; exit 2; }
+  [[ -n "$issuer_id" ]] || { echo "IRIS_DRIVE_ASC_ISSUER_ID is required for upload." >&2; exit 2; }
+  [[ -x "$TRANSPORTER" ]] || {
+    echo "iTMSTransporter not found: $TRANSPORTER" >&2
+    echo "Install Apple's Transporter app or set IRIS_DRIVE_ITMS_TRANSPORTER." >&2
+    exit 1
+  }
+
+  "$TRANSPORTER" \
+    -m upload \
+    -assetFile "$ipa" \
+    -apiKey "$key_id" \
+    -apiIssuer "$issuer_id" \
+    -t "$IOS_UPLOAD_TRANSPORT" \
+    -v informational \
+    -throughput
+
+  if [[ -n "${IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND:-}" ]]; then
+    IRIS_DRIVE_IOS_IPA_PATH="$ipa" \
+      IRIS_DRIVE_IOS_MARKETING_VERSION="$(marketing_version)" \
+      IRIS_DRIVE_IOS_BUILD_NUMBER="$(build_number)" \
+      bash -lc "$IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND"
+  fi
+}
+
+run_ios_testflight() {
+  IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
+  run_ios_archive
+  run_ios_export
+  run_ios_upload
+}
+
+run_ios_testflight_public() {
+  IOS_INTERNAL_ONLY=false
+  run_ios_archive
+  run_ios_export
+  run_ios_upload
+}
+
+case "${1:-}" in
+  ios-rust) run_ios_rust ;;
+  ios-project) run_ios_project ;;
+  ios-archive) run_ios_archive ;;
+  ios-export) run_ios_export ;;
+  ios-upload) run_ios_upload ;;
+  ios-testflight|ios-release-artifacts) run_ios_testflight ;;
+  ios-testflight-public) run_ios_testflight_public ;;
+  -h|--help|help|"") usage ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

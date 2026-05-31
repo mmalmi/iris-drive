@@ -237,10 +237,13 @@ node scripts/local-release.mjs --build --only macos
 node scripts/local-release.mjs --build --only linux
 node scripts/local-release.mjs --build --only windows
 node scripts/local-release.mjs --build --only android
+node scripts/local-release.mjs --build --only ios
 ```
 
 Use `--dry-run` to print the planned artifact names and commands without
-building. `just release` runs the same build entrypoint.
+building. The iOS step runs `scripts/ios-build ios-testflight`; set
+`IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1` for the public-TestFlight-capable export.
+`just release` runs the same build entrypoint.
 
 4. Stage the release tree:
 
