@@ -68,6 +68,67 @@ async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_running_device_link_approval_clears_waiting_quickly() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+    configure_local_blossom(owner_cfg.path(), &blossom.url);
+    configure_local_blossom(linked_cfg.path(), &blossom.url);
+
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let linked = run_json(
+        linked_cfg.path(),
+        &["link", owner_npub, "--label", "iphone"],
+    );
+    let request = linked["device_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let owner_log = owner_cfg.path().join("owner.log");
+    let linked_log = linked_cfg.path().join("linked.log");
+    let owner_daemon = DaemonChild::spawn(
+        owner_cfg.path(),
+        &relay.url,
+        owner_log,
+        unused_loopback_port(),
+    );
+    let linked_daemon = DaemonChild::spawn(
+        linked_cfg.path(),
+        &relay.url,
+        linked_log,
+        unused_loopback_port(),
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let approved_at = Instant::now();
+    run_json(
+        owner_cfg.path(),
+        &["approve", &request, "--label", "iphone"],
+    );
+
+    let fast_window = Duration::from_secs(6);
+    while approved_at.elapsed() < fast_window {
+        let status = run_json(linked_cfg.path(), &["status"]);
+        if status["account"]["authorization_state"] == "authorized" {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    panic!(
+        "linked device stayed awaiting_approval for {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
+        approved_at.elapsed(),
+        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
+        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
+        owner_daemon.log(),
+        linked_daemon.log(),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_three_vm_initial_merge_from_all_peers_and_conflicts() {
     let _guard = live_daemon_test_guard().await;
     let conflict_path = "initial/conflict.txt";

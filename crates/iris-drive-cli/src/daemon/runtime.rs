@@ -277,8 +277,8 @@ pub(crate) fn cmd_daemon(
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut device_link_timer = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(DEVICE_LINK_TICK_SECS),
+            std::time::Duration::from_secs(DEVICE_LINK_TICK_SECS),
         );
         device_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_device_link_requests = BTreeMap::new();

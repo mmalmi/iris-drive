@@ -39,7 +39,7 @@ const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(not(test))]
 const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
 #[cfg(not(test))]
-const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 10;
+const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(not(test))]
 const DEVICE_LINK_EXCHANGE_TICK_SECS: u64 = 1;
 

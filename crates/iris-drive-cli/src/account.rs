@@ -343,7 +343,8 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
-pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 30;
+pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
+pub(crate) const DEVICE_LINK_TICK_SECS: u64 = 1;
 
 pub(crate) async fn send_pending_device_link_request(
     config_dir: &Path,
