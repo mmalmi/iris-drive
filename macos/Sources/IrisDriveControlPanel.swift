@@ -772,13 +772,7 @@ struct IrisDriveControlPanel: View {
     }
 
     private var relayRows: [IrisDriveRelayStatus] {
-        let byURL = status.relayStatuses.reduce(into: [String: IrisDriveRelayStatus]()) {
-            partial, relay in
-            partial[relay.url] = relay
-        }
-        return status.relays.map { relay in
-            byURL[relay] ?? IrisDriveRelayStatus(url: relay, status: "configured")
-        }
+        status.relayStatuses
     }
 
     @ViewBuilder
