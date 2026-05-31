@@ -101,6 +101,7 @@ enum FileProviderStorage {
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
     private static let contentCacheDirectoryName = "FileProviderContentCache"
+    private static let providerItemVersionPrefix = "iris-drive-provider-v2"
     private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
     private static let providerListCacheTTL: TimeInterval = 1.0
     private static let providerListCacheLock = NSLock()
@@ -598,7 +599,7 @@ enum FileProviderStorage {
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: nil,
             modified: nil,
-            versionIdentifier: "\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size)"
+            versionIdentifier: "\(providerItemVersionPrefix):\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size)"
         )
     }
 
@@ -620,7 +621,7 @@ enum FileProviderStorage {
             itemSize: size,
             created: Date(),
             modified: Date(),
-            versionIdentifier: "optimistic:\(path):\(size?.stringValue ?? "dir")"
+            versionIdentifier: "\(providerItemVersionPrefix):optimistic:\(path):\(size?.stringValue ?? "dir")"
         )
     }
 
