@@ -1,14 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
   describeAsset,
+  plannedReleaseAssetNames,
   readWorkspaceVersionTag,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
@@ -119,4 +122,64 @@ test('validateReleaseAssetSet rejects unsigned Android public artifacts', () => 
     () => validateReleaseAssetSet(['iris-drive-v0.2.27-android-arm64-unsigned.apk']),
     /unsigned Android/,
   )
+})
+
+test('plannedReleaseAssetNames names the public release artifacts', () => {
+  assert.deepEqual(plannedReleaseAssetNames('0.2.27', ['macos', 'linux', 'windows', 'android']), [
+    'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
+    'iris-drive-v0.2.27-macos-arm64.dmg',
+    'idrive-v0.2.27-x86_64-unknown-linux-musl.tar.gz',
+    'iris-drive-v0.2.27-linux-x64.deb',
+    'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
+    'iris-drive-v0.2.27-windows-x64-setup.exe',
+    'iris-drive-v0.2.27-android-arm64.apk',
+    'iris-drive-v0.2.27-android-arm64.aab',
+  ])
+})
+
+test('plannedReleaseAssetNames covers the complete final release validator', () => {
+  const names = plannedReleaseAssetNames('v0.2.27', ['macos', 'linux', 'windows', 'android'])
+  assert.doesNotThrow(() => validateReleaseAssetSet(names, { requireCompleteAppRelease: true }))
+})
+
+test('local-release dry-run validates planned build assets over partial existing dist assets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-cli-test-'))
+  const assetDir = join(root, 'dist')
+  const stageDir = join(root, 'stage')
+  mkdirSync(assetDir)
+  writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--publish',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,linux,windows,android',
+      '--asset-dir',
+      assetDir,
+      '--stage-dir',
+      stageDir,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: '/tmp/iris-drive-test.jks',
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        IRIS_DRIVE_WINDOWS_INSTALLER_PATH: '/tmp/IrisDriveSetup.exe',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
 })

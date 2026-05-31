@@ -142,6 +142,30 @@ export function validateReleaseAssetSet(
   }
 }
 
+export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = {}) {
+  const normalizedTag = normalizeTag(tag)
+  const names = []
+  const selected = new Set(steps)
+  if (selected.has('macos')) {
+    names.push(`idrive-${normalizedTag}-aarch64-apple-darwin.tar.gz`)
+    names.push(`iris-drive-${normalizedTag}-macos-arm64.dmg`)
+  }
+  if (selected.has('linux')) {
+    names.push(`idrive-${normalizedTag}-x86_64-unknown-linux-musl.tar.gz`)
+    names.push(`iris-drive-${normalizedTag}-linux-x64.deb`)
+  }
+  if (selected.has('windows')) {
+    names.push(`idrive-${normalizedTag}-x86_64-pc-windows-msvc.zip`)
+    names.push(`iris-drive-${normalizedTag}-windows-x64-setup.exe`)
+  }
+  if (selected.has('android')) {
+    const suffix = signedAndroid ? '' : '-unsigned'
+    names.push(`iris-drive-${normalizedTag}-android-arm64${suffix}.apk`)
+    names.push(`iris-drive-${normalizedTag}-android-arm64${suffix}.aab`)
+  }
+  return names
+}
+
 export function buildZapstorePublishPlan({
   tag,
   assetDir,

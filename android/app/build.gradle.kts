@@ -8,6 +8,15 @@ import org.gradle.api.tasks.Exec
 
 val repoRoot = layout.projectDirectory.dir("../..")
 val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val hasReleaseSigning =
+    releaseKeystorePath != null &&
+        releaseKeystorePassword != null &&
+        releaseKeyAlias != null &&
+        releaseKeyPassword != null
 
 android {
     namespace = "to.iris.drive.app"
@@ -26,6 +35,17 @@ android {
 
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("releaseEnv") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
@@ -48,6 +68,9 @@ android {
         }
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("releaseEnv")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

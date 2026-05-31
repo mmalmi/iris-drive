@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -22,8 +23,10 @@ import {
   buildZapstorePublishPlan,
   normalizeTag,
   parseEnvFile,
+  plannedReleaseAssetNames,
   readWorkspaceVersionTag,
   renderReleaseNotes,
+  splitCsv,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
@@ -32,14 +35,18 @@ const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const distDir = join(repoRoot, 'dist')
 const defaultEnvFiles = [join(repoRoot, '.env.release.local'), join(repoRoot, '.env.zapstore.local')]
+const defaultBuildSteps = ['macos', 'linux', 'windows', 'android', 'ios']
+
+class SkipStepError extends Error {}
 
 function usage() {
   console.log(`Usage: node scripts/local-release.mjs [options]
 
-Stage existing dist artifacts as a hashtree updater release, and optionally
+Build or stage dist artifacts as a hashtree updater release, and optionally
 publish the staged release tree.
 
 Options:
+  --build                Build selected platform artifacts into dist before staging
   --publish              Publish the staged tree with htree release publish
   --final                Publish as final/latest instead of draft
   --draft                Publish as draft (default when --publish is set)
@@ -48,6 +55,9 @@ Options:
   --asset-dir <path>     Artifact directory (default: dist)
   --stage-dir <path>     Staging directory
   --env-file <path>      Extra dotenv file to load
+  --only <csv>           With --build, limit steps to macos,linux,windows,android,ios
+  --skip <csv>           With --build, skip named steps
+  --allow-partial        With --build, continue after unavailable platform builders
   --skip-zapstore        With --final, skip publishing the Android APK to Zapstore
   --dry-run              Print actions without copying or publishing
   --help                 Show this help`)
@@ -55,6 +65,7 @@ Options:
 
 function parseArgs(argv) {
   const options = {
+    build: false,
     publish: false,
     draft: true,
     tag: null,
@@ -62,6 +73,9 @@ function parseArgs(argv) {
     assetDir: null,
     stageDir: null,
     envFiles: [],
+    only: null,
+    skip: new Set(),
+    allowPartial: false,
     skipZapstore: false,
     dryRun: false,
   }
@@ -72,6 +86,9 @@ function parseArgs(argv) {
       case '-h':
         usage()
         process.exit(0)
+      case '--build':
+        options.build = true
+        break
       case '--publish':
         options.publish = true
         break
@@ -97,6 +114,17 @@ function parseArgs(argv) {
         break
       case '--env-file':
         options.envFiles.push(resolve(repoRoot, argv[++index] ?? ''))
+        break
+      case '--only':
+        options.only = new Set(splitCsv(argv[++index] ?? ''))
+        break
+      case '--skip':
+        for (const step of splitCsv(argv[++index] ?? '')) {
+          options.skip.add(step)
+        }
+        break
+      case '--allow-partial':
+        options.allowPartial = true
         break
       case '--skip-zapstore':
         options.skipZapstore = true
@@ -126,16 +154,27 @@ function quote(arg) {
   return /[^\w./:-]/.test(value) ? JSON.stringify(value) : value
 }
 
-function run(command, args, { capture = false, dryRun = false, env = process.env } = {}) {
+function psSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+function run(command, args, {
+  capture = false,
+  cwd = repoRoot,
+  dryRun = false,
+  env = process.env,
+  input = undefined,
+} = {}) {
   const rendered = [command, ...args].map(quote).join(' ')
   console.log(`$ ${rendered}`)
   if (dryRun) {
     return ''
   }
   const result = spawnSync(command, args, {
-    cwd: repoRoot,
+    cwd,
     env,
     encoding: 'utf8',
+    input,
     stdio: capture ? 'pipe' : 'inherit',
   })
   if (result.status !== 0) {
@@ -151,6 +190,394 @@ function commandExists(command) {
       ? spawnSync('where', [command], { stdio: 'ignore' })
       : spawnSync('sh', ['-lc', `command -v "${command}"`], { stdio: 'ignore' })
   return result.status === 0
+}
+
+function cargoTargetDir(env = process.env) {
+  const configured = String(env.CARGO_TARGET_DIR ?? '').trim()
+  return configured ? resolve(repoRoot, configured) : join(repoRoot, 'target')
+}
+
+function findFirstFile(root, matcher) {
+  if (!existsSync(root)) {
+    return null
+  }
+  const entry = readdirSync(root).sort().find((candidate) => matcher(candidate))
+  return entry ? join(root, entry) : null
+}
+
+function selectedBuildSteps(options) {
+  const steps = options.only ? [...options.only] : defaultBuildSteps
+  return steps.filter((step) => !options.skip.has(step))
+}
+
+function writeUnixInstallScript(path, executable) {
+  writeFileSync(
+    path,
+    `#!/bin/bash
+set -e
+
+INSTALL_DIR="\${1:-/usr/local/bin}"
+install -d "\${INSTALL_DIR}"
+install -m 755 ${executable} "\${INSTALL_DIR}/"
+`,
+  )
+  chmodSync(path, 0o755)
+}
+
+function writeUnixReadme(path) {
+  writeFileSync(
+    path,
+    `idrive - Iris Drive CLI
+==========================
+
+Binary included:
+  idrive  - CLI and daemon helper
+
+Quick install:
+  ./install.sh
+  ./install.sh ~/.local/bin
+`,
+  )
+}
+
+function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
+  const bundleDir = join(distDir, 'idrive')
+  const tarPath = join(distDir, `idrive-${targetTriple}.tar`)
+  const unversioned = `${tarPath}.gz`
+  const versioned = join(distDir, `idrive-${tag}-${targetTriple}.tar.gz`)
+  if (!dryRun) {
+    if (!existsSync(binaryPath)) {
+      throw new Error(`Missing idrive binary for ${targetTriple}: ${binaryPath}`)
+    }
+    rmSync(bundleDir, { recursive: true, force: true })
+    mkdirSync(bundleDir, { recursive: true })
+    copyFileSync(binaryPath, join(bundleDir, 'idrive'))
+    chmodSync(join(bundleDir, 'idrive'), 0o755)
+    writeUnixInstallScript(join(bundleDir, 'install.sh'), 'idrive')
+    writeUnixReadme(join(bundleDir, 'README.txt'))
+  }
+  run('tar', ['-cf', tarPath, '-C', distDir, 'idrive/README.txt', 'idrive/install.sh', 'idrive/idrive'], {
+    dryRun,
+  })
+  run('gzip', ['-n', '-f', tarPath], { dryRun })
+  if (!dryRun) {
+    copyFileSync(unversioned, versioned)
+  }
+}
+
+function macosDeveloperIdIdentity(env, dryRun) {
+  const requested = String(env.IRIS_DRIVE_MACOS_SIGN_IDENTITY ?? '').trim()
+  if (requested) {
+    return requested
+  }
+  if (dryRun) {
+    return 'Developer ID Application: Example (TEAMID)'
+  }
+  const identities = run('security', ['find-identity', '-v', '-p', 'codesigning'], {
+    capture: true,
+  })
+  const match = identities.match(/"([^"]*Developer ID Application[^"]*)"/)
+  return match?.[1] ?? ''
+}
+
+function macosTeamIdentifier(identity, env, dryRun) {
+  const direct = String(env.IRIS_DRIVE_MACOS_TEAM_ID ?? '').trim()
+  if (direct) {
+    return direct
+  }
+  const parenthesized = identity.match(/\(([A-Z0-9]+)\)\s*$/)
+  if (parenthesized) {
+    return parenthesized[1]
+  }
+  if (dryRun) {
+    return 'TEAMID'
+  }
+  const certPem = run('security', ['find-certificate', '-c', identity, '-p'], { capture: true })
+  const subject = run('openssl', ['x509', '-noout', '-subject', '-nameopt', 'RFC2253'], {
+    capture: true,
+    input: certPem,
+  })
+  const match = subject.match(/(?:^|,)OU=([^,]+)/)
+  return match?.[1] ?? ''
+}
+
+function prepareMacosEntitlements(sourcePath, outputPath, teamId, dryRun) {
+  if (dryRun) {
+    console.log(`Would prepare entitlements ${sourcePath} for team ${teamId}`)
+    return
+  }
+  const text = readFileSync(sourcePath, 'utf8').replace(/\$\(TeamIdentifierPrefix\)/g, `${teamId}.`)
+  writeFileSync(outputPath, text)
+}
+
+function buildMacosArtifacts({ env, tag, dryRun }) {
+  if (!dryRun && (process.platform !== 'darwin' || process.arch !== 'arm64')) {
+    throw new SkipStepError('macOS release artifacts must be built on Apple Silicon macOS.')
+  }
+  run('cargo', ['build', '--release', '-p', 'idrive', '--target', 'aarch64-apple-darwin'], {
+    env,
+    dryRun,
+  })
+  packageUnixCliTarball({
+    binaryPath: join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'idrive'),
+    targetTriple: 'aarch64-apple-darwin',
+    tag,
+    dryRun,
+  })
+
+  if (commandExists('xcodegen')) {
+    run('xcodegen', ['generate'], { cwd: join(repoRoot, 'macos'), dryRun, env })
+  }
+  const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
+  run(
+    'xcodebuild',
+    [
+      '-project',
+      join(repoRoot, 'macos', 'IrisDriveMac.xcodeproj'),
+      '-scheme',
+      'IrisDriveMac',
+      '-configuration',
+      'Release',
+      '-derivedDataPath',
+      derivedData,
+      'CODE_SIGNING_ALLOWED=NO',
+      'build',
+    ],
+    { dryRun, env },
+  )
+  const appPath = join(derivedData, 'Build', 'Products', 'Release', 'Iris Drive.app')
+  const appexPath = join(appPath, 'Contents', 'PlugIns', 'IrisDriveFileProvider.appex')
+  const idrivePath = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'idrive')
+  const identity = macosDeveloperIdIdentity(env, dryRun)
+  if (!identity) {
+    throw new Error('Missing Developer ID Application identity for macOS release signing.')
+  }
+  const teamId = macosTeamIdentifier(identity, env, dryRun)
+  if (!teamId) {
+    throw new Error(`Could not resolve Team ID for macOS signing identity: ${identity}`)
+  }
+  const signingDir = join(repoRoot, 'macos', '.build', 'ReleaseSigning')
+  const appEntitlements = join(signingDir, 'IrisDriveMac.entitlements')
+  const appexEntitlements = join(signingDir, 'IrisDriveFileProvider.entitlements')
+  if (!dryRun) {
+    if (!existsSync(appPath)) {
+      throw new Error(`Missing built macOS app: ${appPath}`)
+    }
+    mkdirSync(signingDir, { recursive: true })
+    prepareMacosEntitlements(join(repoRoot, 'macos', 'Release.entitlements'), appEntitlements, teamId, dryRun)
+    prepareMacosEntitlements(
+      join(repoRoot, 'macos', 'FileProvider', 'Release.entitlements'),
+      appexEntitlements,
+      teamId,
+      dryRun,
+    )
+    copyFileSync(idrivePath, join(appPath, 'Contents', 'MacOS', 'idrive'))
+    chmodSync(join(appPath, 'Contents', 'MacOS', 'idrive'), 0o755)
+    if (existsSync(appexPath)) {
+      copyFileSync(idrivePath, join(appexPath, 'Contents', 'MacOS', 'idrive'))
+      chmodSync(join(appexPath, 'Contents', 'MacOS', 'idrive'), 0o755)
+    }
+  }
+  run('codesign', ['--force', '--sign', identity, join(appPath, 'Contents', 'MacOS', 'idrive')], {
+    dryRun,
+  })
+  if (!dryRun && existsSync(appexPath)) {
+    run('codesign', ['--force', '--sign', identity, join(appexPath, 'Contents', 'MacOS', 'idrive')])
+    run('codesign', ['--force', '--sign', identity, '--entitlements', appexEntitlements, appexPath])
+  }
+  run('codesign', ['--force', '--sign', identity, '--entitlements', appEntitlements, appPath], {
+    dryRun,
+  })
+  run('codesign', ['--verify', '--deep', '--strict', appPath], { dryRun })
+
+  const dmgPath = join(distDir, `iris-drive-${tag}-macos-arm64.dmg`)
+  if (!dryRun) {
+    mkdirSync(distDir, { recursive: true })
+    rmSync(dmgPath, { force: true })
+  }
+  run('hdiutil', ['create', '-volname', 'Iris Drive', '-srcfolder', appPath, '-ov', '-format', 'UDZO', dmgPath], {
+    dryRun,
+  })
+}
+
+function buildLinuxArtifacts({ env, tag, dryRun }) {
+  if (!dryRun && process.platform !== 'linux') {
+    throw new SkipStepError('Linux release artifacts must be built on Linux.')
+  }
+  if (!dryRun && !commandExists('cargo-deb')) {
+    throw new Error('Missing cargo-deb; install it before building Linux release artifacts.')
+  }
+  run('rustup', ['target', 'add', 'x86_64-unknown-linux-musl'], { dryRun, env })
+  run('cargo', ['build', '--release', '--target', 'x86_64-unknown-linux-musl', '-p', 'idrive'], {
+    dryRun,
+    env,
+  })
+  packageUnixCliTarball({
+    binaryPath: join(cargoTargetDir(env), 'x86_64-unknown-linux-musl', 'release', 'idrive'),
+    targetTriple: 'x86_64-unknown-linux-musl',
+    tag,
+    dryRun,
+  })
+  run('cargo', ['build', '--release', '--manifest-path', join(repoRoot, 'linux', 'Cargo.toml')], {
+    dryRun,
+    env,
+  })
+  run('cargo', ['deb', '--no-build'], { cwd: join(repoRoot, 'linux'), dryRun, env })
+  const debPath = findFirstFile(join(repoRoot, 'linux', 'target', 'debian'), (entry) =>
+    entry.endsWith('.deb'),
+  )
+  if (!dryRun) {
+    if (!debPath) {
+      throw new Error('Expected Linux .deb output was not produced.')
+    }
+    mkdirSync(distDir, { recursive: true })
+    copyFileSync(debPath, join(distDir, `iris-drive-${tag}-linux-x64.deb`))
+  }
+}
+
+function androidSigningIsComplete(env) {
+  return Boolean(
+    env.ANDROID_KEYSTORE_PATH &&
+      env.ANDROID_KEYSTORE_PASSWORD &&
+      env.ANDROID_KEY_ALIAS &&
+      env.ANDROID_KEY_PASSWORD,
+  )
+}
+
+function buildAndroidArtifacts({ env, tag, dryRun }) {
+  if (!dryRun && !commandExists('cargo-ndk')) {
+    throw new Error('Missing cargo-ndk; install it before building Android release artifacts.')
+  }
+  const signed = androidSigningIsComplete(env)
+  if (!dryRun && !signed && String(env.IRIS_DRIVE_ALLOW_UNSIGNED_ANDROID ?? '').trim() !== '1') {
+    throw new Error(
+      'Android release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD.',
+    )
+  }
+  run('bash', [join(repoRoot, 'tools', 'run-android'), ':app:assembleRelease', ':app:bundleRelease'], {
+    env,
+    dryRun,
+  })
+  const apkPath = findFirstFile(
+    join(repoRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release'),
+    (entry) => entry.endsWith('.apk'),
+  )
+  const aabPath = findFirstFile(
+    join(repoRoot, 'android', 'app', 'build', 'outputs', 'bundle', 'release'),
+    (entry) => entry.endsWith('.aab'),
+  )
+  if (!dryRun) {
+    if (!apkPath || !aabPath) {
+      throw new Error('Expected Android APK/AAB outputs were not produced.')
+    }
+    const suffix = signed ? '' : '-unsigned'
+    mkdirSync(distDir, { recursive: true })
+    copyFileSync(apkPath, join(distDir, `iris-drive-${tag}-android-arm64${suffix}.apk`))
+    copyFileSync(aabPath, join(distDir, `iris-drive-${tag}-android-arm64${suffix}.aab`))
+  }
+}
+
+function buildWindowsArtifacts({ env, tag, dryRun }) {
+  if (!dryRun && process.platform !== 'win32') {
+    throw new SkipStepError('Windows release artifacts must be built on Windows.')
+  }
+  run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      join(repoRoot, 'scripts', 'windows-publish.ps1'),
+      '-Configuration',
+      'Release',
+    ],
+    { dryRun, env },
+  )
+  const cliPath = join(repoRoot, 'target', 'release', 'idrive.exe')
+  const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
+  if (!dryRun) {
+    if (!existsSync(cliPath)) {
+      throw new Error(`Missing Windows idrive.exe: ${cliPath}`)
+    }
+    mkdirSync(distDir, { recursive: true })
+  }
+  run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      `Compress-Archive -Path ${psSingleQuote(cliPath)} -DestinationPath ${psSingleQuote(cliZipPath)} -Force`,
+    ],
+    { dryRun, env },
+  )
+  const installerPath = String(env.IRIS_DRIVE_WINDOWS_INSTALLER_PATH ?? '').trim()
+  if (dryRun) {
+    console.log(
+      'Would copy the signed Windows installer from IRIS_DRIVE_WINDOWS_INSTALLER_PATH into dist',
+    )
+    return
+  }
+  if (!installerPath) {
+    throw new Error(
+      'Set IRIS_DRIVE_WINDOWS_INSTALLER_PATH to the signed Iris Drive Windows x64 installer.',
+    )
+  }
+  if (!dryRun) {
+    if (!existsSync(installerPath)) {
+      throw new Error(`Missing Windows installer: ${installerPath}`)
+    }
+    mkdirSync(distDir, { recursive: true })
+    copyFileSync(installerPath, join(distDir, `iris-drive-${tag}-windows-x64-setup.exe`))
+  }
+}
+
+function buildIosTestFlight({ env, dryRun }) {
+  if (!dryRun && process.platform !== 'darwin') {
+    throw new SkipStepError('iOS TestFlight builds must be created on macOS.')
+  }
+  const archivePath = String(env.IRIS_DRIVE_IOS_ARCHIVE_PATH ?? '').trim()
+  if (dryRun) {
+    console.log('Would archive/export/upload the iOS app to TestFlight')
+    return
+  }
+  if (!archivePath) {
+    throw new Error(
+      'Set IRIS_DRIVE_IOS_ARCHIVE_PATH and run the iOS archive/export/upload flow for TestFlight.',
+    )
+  }
+  console.log(`Would use iOS archive path ${archivePath}`)
+}
+
+function buildReleaseArtifacts({ env, tag, options }) {
+  const steps = selectedBuildSteps(options)
+  const signedAndroid = androidSigningIsComplete(env)
+  console.log(`Release build steps: ${steps.join(', ') || '(none)'}`)
+  console.log(
+    `Planned dist artifacts: ${plannedReleaseAssetNames(tag, steps, { signedAndroid }).join(', ') || '(none)'}`,
+  )
+  const builders = new Map([
+    ['macos', () => buildMacosArtifacts({ env, tag, dryRun: options.dryRun })],
+    ['linux', () => buildLinuxArtifacts({ env, tag, dryRun: options.dryRun })],
+    ['windows', () => buildWindowsArtifacts({ env, tag, dryRun: options.dryRun })],
+    ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun })],
+    ['ios', () => buildIosTestFlight({ env, dryRun: options.dryRun })],
+  ])
+  for (const step of steps) {
+    const builder = builders.get(step)
+    if (!builder) {
+      throw new Error(`Unknown release build step: ${step}`)
+    }
+    try {
+      builder()
+    } catch (error) {
+      if (error instanceof SkipStepError && options.allowPartial) {
+        console.warn(`Skipping ${step}: ${error.message}`)
+        continue
+      }
+      throw error
+    }
+  }
 }
 
 function collectReleaseAssetPaths(assetDir, tag) {
@@ -178,12 +605,24 @@ function stageRelease({
   stageDir,
   draft,
   dryRun,
+  plannedAssetNames = [],
   requireCompleteAppRelease = false,
 }) {
   const assetPaths = collectReleaseAssetPaths(assetDir, tag)
-  validateReleaseAssetSet(assetPaths.map((assetPath) => basename(assetPath)), {
+  const assetNames = assetPaths.map((assetPath) => basename(assetPath))
+  const hasPlannedDryRunAssets = dryRun && plannedAssetNames.length > 0
+  const validationNames = hasPlannedDryRunAssets
+    ? plannedAssetNames
+    : assetNames.length > 0
+      ? assetNames
+      : plannedAssetNames
+  validateReleaseAssetSet(validationNames, {
     requireCompleteAppRelease,
   })
+  if (hasPlannedDryRunAssets) {
+    console.log(`Would stage ${plannedAssetNames.length} planned asset(s) into ${stageDir}`)
+    return
+  }
   if (assetPaths.length === 0) {
     throw new Error(`No dist assets found for ${tag} in ${assetDir}`)
   }
@@ -286,11 +725,23 @@ function main() {
   const stageDir =
     options.stageDir || join(os.tmpdir(), `iris-drive-release-${tag.replace(/[^\w.-]/g, '_')}`)
   const commit = resolveReleaseCommit(tag, options.dryRun)
+  const buildSteps = selectedBuildSteps(options)
+  const signedAndroid = androidSigningIsComplete(env)
+  const plannedAssetNames = options.build
+    ? plannedReleaseAssetNames(tag, buildSteps, { signedAndroid })
+    : []
 
   console.log(`Release tag: ${tag}`)
   console.log(`Release tree: ${releaseTree}`)
   console.log(`Asset dir: ${assetDir}`)
   console.log(`Stage dir: ${stageDir}`)
+
+  if (options.build) {
+    buildReleaseArtifacts({ env, tag, options })
+    if (options.dryRun && !options.publish) {
+      return
+    }
+  }
 
   stageRelease({
     tag,
@@ -299,6 +750,7 @@ function main() {
     stageDir,
     draft: options.publish ? options.draft : true,
     dryRun: options.dryRun,
+    plannedAssetNames,
     requireCompleteAppRelease: options.publish && !options.draft,
   })
 

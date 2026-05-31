@@ -162,17 +162,17 @@ e2e-4devices *args:
 e2e-5devices *args:
     ./scripts/cross-vm-five-platform-e2e.sh {{args}}
 
-release:
-    cargo build --workspace --release
+release *args:
+    node scripts/local-release.mjs --build {{args}}
 
 release-gate *args:
     ./scripts/release-gate.sh {{args}}
 
 release-publish:
-    node scripts/local-release.mjs --publish
+    node scripts/local-release.mjs --build --publish
 
 release-final:
-    node scripts/local-release.mjs --final
+    node scripts/local-release.mjs --build --final
 
 test:
     cargo test --workspace

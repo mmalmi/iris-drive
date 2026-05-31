@@ -230,7 +230,18 @@ The full gate runs the five-platform lab (`just e2e-5devices`) and requires
 the Linux, Windows, macOS, iOS, and Android hosts/devices configured in the
 local environment.
 
-3. Build platform artifacts into `dist/`.
+3. Build platform artifacts into `dist/`:
+
+```bash
+node scripts/local-release.mjs --build --only macos
+node scripts/local-release.mjs --build --only linux
+node scripts/local-release.mjs --build --only windows
+node scripts/local-release.mjs --build --only android
+```
+
+Use `--dry-run` to print the planned artifact names and commands without
+building. `just release` runs the same build entrypoint.
+
 4. Stage the release tree:
 
 ```bash
