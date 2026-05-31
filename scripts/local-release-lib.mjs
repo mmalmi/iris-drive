@@ -73,6 +73,9 @@ export function describeAsset(name) {
   if (/^idrive-v.*-x86_64-unknown-linux-musl\.tar\.gz$/.test(name)) {
     return 'Linux x64 idrive CLI'
   }
+  if (/^idrive-v.*-x86_64-unknown-linux-gnu\.tar\.gz$/.test(name)) {
+    return 'Linux x64 idrive CLI'
+  }
   if (/^idrive-v.*-aarch64-unknown-linux-musl\.tar\.gz$/.test(name)) {
     return 'Linux ARM64 idrive CLI'
   }
@@ -151,7 +154,7 @@ export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = 
     names.push(`iris-drive-${normalizedTag}-macos-arm64.dmg`)
   }
   if (selected.has('linux')) {
-    names.push(`idrive-${normalizedTag}-x86_64-unknown-linux-musl.tar.gz`)
+    names.push(`idrive-${normalizedTag}-x86_64-unknown-linux-gnu.tar.gz`)
     names.push(`iris-drive-${normalizedTag}-linux-x64.deb`)
   }
   if (selected.has('windows')) {
@@ -206,6 +209,7 @@ function idriveTarget(name) {
     'aarch64-apple-darwin',
     'x86_64-apple-darwin',
     'x86_64-unknown-linux-musl',
+    'x86_64-unknown-linux-gnu',
     'aarch64-unknown-linux-musl',
     'x86_64-pc-windows-msvc',
     'aarch64-pc-windows-msvc',

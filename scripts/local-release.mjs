@@ -407,14 +407,14 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
   if (!dryRun && !commandExists('cargo-deb')) {
     throw new Error('Missing cargo-deb; install it before building Linux release artifacts.')
   }
-  run('rustup', ['target', 'add', 'x86_64-unknown-linux-musl'], { dryRun, env })
-  run('cargo', ['build', '--release', '--target', 'x86_64-unknown-linux-musl', '-p', 'idrive'], {
+  const targetTriple = 'x86_64-unknown-linux-gnu'
+  run('cargo', ['build', '--release', '--target', targetTriple, '-p', 'idrive'], {
     dryRun,
     env,
   })
   packageUnixCliTarball({
-    binaryPath: join(cargoTargetDir(env), 'x86_64-unknown-linux-musl', 'release', 'idrive'),
-    targetTriple: 'x86_64-unknown-linux-musl',
+    binaryPath: join(cargoTargetDir(env), targetTriple, 'release', 'idrive'),
+    targetTriple,
     tag,
     dryRun,
   })

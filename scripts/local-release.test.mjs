@@ -63,6 +63,10 @@ test('describeAsset labels idrive release assets', () => {
     describeAsset('idrive-v0.2.27-x86_64-pc-windows-msvc.zip'),
     'Windows x64 idrive CLI',
   )
+  assert.equal(
+    describeAsset('idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz'),
+    'Linux x64 idrive CLI',
+  )
 })
 
 test('buildZapstorePublishPlan fails on missing required publish inputs', () => {
@@ -128,7 +132,7 @@ test('plannedReleaseAssetNames names the public release artifacts', () => {
   assert.deepEqual(plannedReleaseAssetNames('0.2.27', ['macos', 'linux', 'windows', 'android']), [
     'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
     'iris-drive-v0.2.27-macos-arm64.dmg',
-    'idrive-v0.2.27-x86_64-unknown-linux-musl.tar.gz',
+    'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
     'iris-drive-v0.2.27-linux-x64.deb',
     'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
     'iris-drive-v0.2.27-windows-x64-setup.exe',
