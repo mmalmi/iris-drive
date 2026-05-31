@@ -312,8 +312,8 @@ enum FileProviderStorage {
             filename: fileName(for: entry.path),
             contentType: type,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
-            created: displayDate(from: entry.modifiedAt) ?? providerFallbackDate(),
-            modified: displayDate(from: entry.modifiedAt) ?? providerFallbackDate(),
+            created: displayDate(from: entry.modifiedAt) ?? providerReferenceDate(),
+            modified: displayDate(from: entry.modifiedAt) ?? providerReferenceDate(),
             versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
         )
     }
@@ -370,7 +370,7 @@ enum FileProviderStorage {
         state.entries
             .compactMap { displayDate(from: $0.modifiedAt) }
             .max()
-            ?? providerFallbackDate()
+            ?? providerReferenceDate()
     }
 
     private static func displayDate(from unixSeconds: Int64?) -> Date? {
@@ -378,7 +378,7 @@ enum FileProviderStorage {
         return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
     }
 
-    private static func providerFallbackDate() -> Date {
+    private static func providerReferenceDate() -> Date {
         let values = try? baseDirectory.resourceValues(
             forKeys: [.contentModificationDateKey, .creationDateKey]
         )
