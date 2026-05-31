@@ -19,6 +19,7 @@
 - After relevant checks pass, commit and push to `htree://self/iris-drive`.
 - No need to await Nostr publishes.
 - No fallbacks: fix root causes; if impossible, show the error.
+- Don't commit local hostnames or other private things, use env files
 
 ## Naming
 
