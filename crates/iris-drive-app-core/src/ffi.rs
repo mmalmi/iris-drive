@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 #[cfg(not(test))]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -767,6 +768,8 @@ struct ProviderListEntry {
     kind: &'static str,
     size: u64,
     version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_at: Option<i64>,
 }
 
 pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
@@ -843,7 +846,8 @@ fn native_provider_import_shared_file(
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-        let entries = provider_entries(&provider).await?;
+        let modified_at_by_path = BTreeMap::new();
+        let entries = provider_entries(&provider, &modified_at_by_path).await?;
         let path = unique_provider_path(&entries, &display_name);
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
@@ -855,11 +859,22 @@ fn native_provider_import_shared_file(
 fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
-        let (_daemon, provider, visible_root) = native_provider(data_dir).await?;
-        let entries = provider_entries(&provider).await?;
+        let daemon = iris_drive_core::Daemon::open(data_dir)
+            .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
+        let visible_view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .context("building provider view")?;
+        let modified_at_by_path = provider_modified_at_index(&visible_view);
+        let visible_root = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .context("building provider root")?;
+        let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
+            .await
+            .context("opening provider root")?;
+        let entries = provider_entries(&provider, &modified_at_by_path).await?;
         Ok(json!({
             "anchor": provider.anchor().await.as_str(),
-            "root_cid": visible_root.to_string(),
+            "root_cid": visible_root.root_cid.to_string(),
             "entries": entries,
         }))
     })
@@ -974,7 +989,10 @@ async fn native_provider(
     Ok((daemon, provider, visible.root_cid))
 }
 
-async fn provider_entries<P>(provider: &P) -> anyhow::Result<Vec<ProviderListEntry>>
+async fn provider_entries<P>(
+    provider: &P,
+    modified_at_by_path: &BTreeMap<String, i64>,
+) -> anyhow::Result<Vec<ProviderListEntry>>
 where
     P: ProviderFs<ItemId = String>,
 {
@@ -992,16 +1010,43 @@ where
                 }
                 ItemKind::File => "file",
             };
+            let modified_at = modified_at_by_path.get(&child.id).copied();
             entries.push(ProviderListEntry {
                 path: child.id,
                 kind,
                 size: item.size,
                 version: provider.anchor().await.as_str().to_owned(),
+                modified_at,
             });
         }
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
+}
+
+fn provider_modified_at_index(
+    view: &iris_drive_core::projection::PrimaryMergedView,
+) -> BTreeMap<String, i64> {
+    let mut index = BTreeMap::new();
+    for entry in &view.view.files {
+        remember_provider_modified_at(&mut index, &entry.path, entry.published_at);
+        let mut path = entry.path.as_str();
+        while let Some((parent, _name)) = path.rsplit_once('/') {
+            remember_provider_modified_at(&mut index, parent, entry.published_at);
+            path = parent;
+        }
+    }
+    index
+}
+
+fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
+    if path.is_empty() || modified_at <= 0 {
+        return;
+    }
+    index
+        .entry(path.to_owned())
+        .and_modify(|existing| *existing = (*existing).max(modified_at))
+        .or_insert(modified_at);
 }
 
 async fn import_provider_mutation<P>(

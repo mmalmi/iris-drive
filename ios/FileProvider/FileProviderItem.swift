@@ -71,22 +71,26 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 }
 
 extension FileProviderItem {
-    static func root(anchor: String? = nil) -> FileProviderItem {
+    static func root(anchor: String? = nil, modified: Date? = nil) -> FileProviderItem {
         FileProviderItem(
             itemIdentifier: .rootContainer,
             parentItemIdentifier: .rootContainer,
-            filename: "My Drive",
+            filename: "Iris Drive",
             contentType: .folder,
+            created: modified,
+            modified: modified,
             versionIdentifier: "root:\(anchor ?? "initial")"
         )
     }
 
-    static func trash(anchor: String? = nil) -> FileProviderItem {
+    static func trash(anchor: String? = nil, modified: Date? = nil) -> FileProviderItem {
         FileProviderItem(
             itemIdentifier: .trashContainer,
             parentItemIdentifier: .rootContainer,
             filename: ".Trash",
             contentType: .folder,
+            created: modified,
+            modified: modified,
             versionIdentifier: "trash:\(anchor ?? "initial")"
         )
     }

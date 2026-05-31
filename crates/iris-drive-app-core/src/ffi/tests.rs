@@ -661,6 +661,14 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
             .iter()
             .any(|entry| entry["path"] == "owner-note.txt")
     );
+    let owner_note = entries
+        .iter()
+        .find(|entry| entry["path"] == "owner-note.txt")
+        .expect("provider list includes owner note");
+    assert!(
+        owner_note["modified_at"].as_i64().is_some_and(|modified_at| modified_at > 0),
+        "provider list should include non-epoch modification time: {owner_note:#?}"
+    );
 }
 
 fn apply_latest_app_keys_event(from: &Path, to: &Path) {

@@ -58,14 +58,15 @@ enum IrisDriveSharedContainer {
 }
 
 private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
-private let irisDriveFileProviderDisplayName = "My Drive"
+private let irisDriveFileProviderDisplayName = "Iris Drive"
 private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
+private let foregroundSyncIntervalNanoseconds: UInt64 = 5_000_000_000
 #if DEBUG
-private let fileProviderDebugRegistrationVersion = 1
+private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
 #endif
 
@@ -105,6 +106,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var currentProviderSignalKey = ""
     private var lastProviderSignalKey = ""
     private var currentProviderDirectoryPaths: [String] = []
+    private var foregroundSyncTask: Task<Void, Never>?
 
     init() {
         nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
@@ -413,6 +415,38 @@ final class IrisDriveMobileModel: ObservableObject {
     func refresh() {
         applyStateJson(nativeCore.refreshJson())
         ensureFileProviderDomainIfProfileExists()
+    }
+
+    func startForegroundSyncLoop() {
+        guard foregroundSyncTask == nil else { return }
+        foregroundSyncTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                self.syncOnceIfRunning()
+                do {
+                    try await Task.sleep(nanoseconds: foregroundSyncIntervalNanoseconds)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    func stopForegroundSyncLoop() {
+        foregroundSyncTask?.cancel()
+        foregroundSyncTask = nil
+    }
+
+    private func syncOnceIfRunning() {
+        guard isSetupComplete else {
+            refresh()
+            return
+        }
+        if syncRunning {
+            restartSync()
+        } else {
+            refresh()
+        }
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
@@ -852,6 +886,16 @@ final class IrisDriveMobileModel: ObservableObject {
         var path: String
         var kind: String
         var size: UInt64
+        var version: String?
+        var modifiedAt: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case path
+            case kind
+            case size
+            case version
+            case modifiedAt = "modified_at"
+        }
     }
 
     private func loadProviderStats() -> (
@@ -873,7 +917,7 @@ final class IrisDriveMobileModel: ObservableObject {
             .filter { $0.kind == "directory" }
             .map(\.path)
         let entryKey = state.entries
-            .map { "\($0.kind):\($0.path):\($0.size)" }
+            .map { "\($0.kind):\($0.path):\($0.size):\($0.version ?? ""):\($0.modifiedAt ?? 0)" }
             .sorted()
             .joined(separator: "|")
         return (

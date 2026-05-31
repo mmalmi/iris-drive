@@ -20,6 +20,15 @@ enum FileProviderStorage {
         var kind: String
         var size: UInt64
         var version: String?
+        var modifiedAt: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case path
+            case kind
+            case size
+            case version
+            case modifiedAt = "modified_at"
+        }
     }
 
     private struct ProviderList: Decodable {
@@ -68,10 +77,10 @@ enum FileProviderStorage {
     static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
         let state = loadStateForEnumeration()
         if identifier == .rootContainer || identifier == .workingSet {
-            return .root(anchor: state.anchor)
+            return .root(anchor: state.anchor, modified: stateModifiedDate(state))
         }
         if identifier == .trashContainer {
-            return .trash(anchor: state.anchor)
+            return .trash(anchor: state.anchor, modified: stateModifiedDate(state))
         }
         guard let path = path(for: identifier),
               let entry = state.entries.first(where: { $0.path == path })
@@ -116,7 +125,11 @@ enum FileProviderStorage {
 
     static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
         let state = loadStateForEnumeration()
-        var items = [FileProviderItem.root(anchor: state.anchor), FileProviderItem.trash(anchor: state.anchor)]
+        let modified = stateModifiedDate(state)
+        var items = [
+            FileProviderItem.root(anchor: state.anchor, modified: modified),
+            FileProviderItem.trash(anchor: state.anchor, modified: modified),
+        ]
         items.append(contentsOf: state.entries.map { item(for: $0, anchor: state.anchor) })
         return (items, syncAnchor(for: state.anchor))
     }
@@ -299,9 +312,9 @@ enum FileProviderStorage {
             filename: fileName(for: entry.path),
             contentType: type,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
-            created: nil,
-            modified: nil,
-            versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size)"
+            created: displayDate(from: entry.modifiedAt) ?? providerFallbackDate(),
+            modified: displayDate(from: entry.modifiedAt) ?? providerFallbackDate(),
+            versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
         )
     }
 
@@ -351,6 +364,25 @@ enum FileProviderStorage {
             return 0
         }
         return UInt64(size)
+    }
+
+    private static func stateModifiedDate(_ state: ProviderState) -> Date {
+        state.entries
+            .compactMap { displayDate(from: $0.modifiedAt) }
+            .max()
+            ?? providerFallbackDate()
+    }
+
+    private static func displayDate(from unixSeconds: Int64?) -> Date? {
+        guard let unixSeconds, unixSeconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
+    }
+
+    private static func providerFallbackDate() -> Date {
+        let values = try? baseDirectory.resourceValues(
+            forKeys: [.contentModificationDateKey, .creationDateKey]
+        )
+        return values?.contentModificationDate ?? values?.creationDate ?? Date()
     }
 
     private static func syncAnchor(for anchor: String) -> NSFileProviderSyncAnchor {
