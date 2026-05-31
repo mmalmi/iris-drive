@@ -46,7 +46,7 @@ Build or stage dist artifacts as a hashtree updater release, and optionally
 publish the staged release tree.
 
 Options:
-  --build                Build selected platform artifacts into dist before staging
+  --build                Build selected platform artifacts into dist
   --publish              Publish the staged tree with htree release publish
   --final                Publish as final/latest instead of draft
   --draft                Publish as draft (default when --publish is set)
@@ -738,7 +738,7 @@ function main() {
 
   if (options.build) {
     buildReleaseArtifacts({ env, tag, options })
-    if (options.dryRun && !options.publish) {
+    if (!options.publish) {
       return
     }
   }

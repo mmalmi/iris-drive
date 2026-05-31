@@ -187,3 +187,28 @@ test('local-release dry-run validates planned build assets over partial existing
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
 })
+
+test('local-release build-only mode does not stage existing unsigned artifacts', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-build-only-test-'))
+  const assetDir = join(root, 'dist')
+  mkdirSync(assetDir)
+  writeFileSync(join(assetDir, 'iris-drive-v9.9.9-android-arm64-unsigned.apk'), 'unsigned')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      '',
+      '--asset-dir',
+      assetDir,
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Release build steps: \(none\)/)
+})
