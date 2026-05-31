@@ -1,18 +1,29 @@
 package to.iris.drive.app.provider
 
+import android.content.Context
+import android.provider.DocumentsContract.Document
+import androidx.test.core.app.ApplicationProvider
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.FileNotFoundException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import to.iris.drive.app.core.NativeCore
 
 class IrisDriveDocumentStoreTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Before
+    fun setUp() {
+        NativeCore.initializeAndroidContext(ApplicationProvider.getApplicationContext<Context>())
+    }
 
     @Test
     fun createRenameAndDeleteFileUnderRoot() {
@@ -23,7 +34,7 @@ class IrisDriveDocumentStoreTest {
             "text/plain",
             "note.txt",
         )
-        store.fileForDocument(created.documentId).writeText("hello")
+        store.writeDocumentFromTemp(created.documentId, textSource("hello"))
 
         val queried = store.queryDocument(created.documentId)
         assertEquals("note.txt", queried.displayName)
@@ -44,7 +55,7 @@ class IrisDriveDocumentStoreTest {
 
         val directory = store.createDocument(
             IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
-            IrisDriveDocumentStore.DIRECTORY_MIME_TYPE,
+            Document.MIME_TYPE_DIR,
             "Projects",
         )
         val file = store.createDocument(directory.documentId, "text/markdown", "plan.md")
@@ -83,7 +94,7 @@ class IrisDriveDocumentStoreTest {
         )
 
         assertEquals("Shared_note.txt", imported.displayName)
-        assertEquals("shared bytes", store.fileForDocument(imported.documentId).readText())
+        assertEquals("shared bytes", store.readDocumentText(imported.documentId))
     }
 
     @Test
@@ -104,9 +115,21 @@ class IrisDriveDocumentStoreTest {
         )
 
         assertEquals("note (2).txt", second.displayName)
-        assertEquals("second", store.fileForDocument(second.documentId).readText())
+        assertEquals("second", store.readDocumentText(second.documentId))
     }
 
     private fun newStore(): IrisDriveDocumentStore =
         IrisDriveDocumentStore(temporaryFolder.newFolder("drive-provider"))
+
+    private fun textSource(text: String): File =
+        temporaryFolder.newFile().also { it.writeText(text) }
+
+    private fun IrisDriveDocumentStore.readDocumentText(documentId: String): String {
+        val file = readDocumentToTemp(documentId)
+        return try {
+            file.readText()
+        } finally {
+            file.delete()
+        }
+    }
 }

@@ -194,18 +194,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openDriveFolder() {
-        val uri = DocumentsContract.buildRootUri(
-            getString(R.string.documents_provider_authority),
-            DOCUMENTS_ROOT_ID,
-        )
         runCatching {
-            startActivity(
-                Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                    .putExtra(DocumentsContract.EXTRA_INITIAL_URI, uri)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    .addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),
-            )
+            startActivity(irisDriveFilesIntent(getString(R.string.documents_provider_authority)))
         }.onFailure {
             Toast.makeText(this, "No app can open the drive folder", Toast.LENGTH_SHORT).show()
         }
@@ -301,7 +291,6 @@ class MainActivity : ComponentActivity() {
         const val DEBUG_STATE_FILE = "debug-state.json"
         const val DEBUG_PROVIDER_LIST_FILE = "debug-provider-list.json"
         private const val DEBUG_ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
-        private const val DOCUMENTS_ROOT_ID = "iris-drive"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
     }
 }
