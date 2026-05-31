@@ -1,0 +1,543 @@
+package to.iris.drive.app
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.BackupState
+
+@Composable
+internal fun AuthenticatedContent(
+    padding: PaddingValues,
+    selectedTab: MainTab,
+    onSelectTab: (MainTab) -> Unit,
+    state: AppState,
+    onStartSync: () -> Unit,
+    onStopSync: () -> Unit,
+    onCopyOwnerKey: () -> Unit,
+    onCopyDeviceKey: () -> Unit,
+    onCopyLinkInvite: () -> Unit,
+    onCopySnapshotLink: () -> Unit,
+    onOpenSnapshotLink: () -> Unit,
+    onOpenDriveFolder: () -> Unit,
+    onApproveDevice: (String, String) -> Unit,
+    onResetInvite: () -> Unit,
+    onDeleteDevice: (String) -> Unit,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
+    onLogout: () -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
+) {
+    when (selectedTab) {
+        MainTab.MyDrive -> DriveContent(
+            padding = padding,
+            state = state,
+            onShowDevices = { onSelectTab(MainTab.Devices) },
+            onStartSync = onStartSync,
+            onStopSync = onStopSync,
+            onCopySnapshotLink = onCopySnapshotLink,
+            onOpenSnapshotLink = onOpenSnapshotLink,
+            onOpenDriveFolder = onOpenDriveFolder,
+        )
+        MainTab.Devices -> DevicesContent(
+            padding = padding,
+            state = state,
+            onCopyLinkInvite = onCopyLinkInvite,
+            onApproveDevice = onApproveDevice,
+            onResetInvite = onResetInvite,
+            onDeleteDevice = onDeleteDevice,
+            onAppointAdmin = onAppointAdmin,
+            onDemoteAdmin = onDemoteAdmin,
+        )
+        MainTab.Backups -> BackupsContent(
+            padding = padding,
+            state = state,
+        )
+        MainTab.Settings -> SettingsContent(
+            padding = padding,
+            state = state,
+            onCopyOwnerKey = onCopyOwnerKey,
+            onCopyDeviceKey = onCopyDeviceKey,
+            onLogout = onLogout,
+            onAddRelay = onAddRelay,
+            onRemoveRelay = onRemoveRelay,
+            onResetRelays = onResetRelays,
+        )
+    }
+}
+
+@Composable
+private fun DriveContent(
+    padding: PaddingValues,
+    state: AppState,
+    onShowDevices: () -> Unit,
+    onStartSync: () -> Unit,
+    onStopSync: () -> Unit,
+    onCopySnapshotLink: () -> Unit,
+    onOpenSnapshotLink: () -> Unit,
+    onOpenDriveFolder: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .testTag("driveContent"),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            StatusPanel(state = state)
+        }
+        item {
+            SummaryPanel(state = state, onShowDevices = onShowDevices)
+        }
+        item {
+            ProviderPanel(
+                snapshotLink = state.snapshotLink,
+                onOpenDriveFolder = onOpenDriveFolder,
+                onCopySnapshotLink = onCopySnapshotLink,
+                onOpenSnapshotLink = onOpenSnapshotLink,
+            )
+        }
+        item {
+            SyncPanel(
+                state = state,
+                onStartSync = onStartSync,
+                onStopSync = onStopSync,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DevicesContent(
+    padding: PaddingValues,
+    state: AppState,
+    onCopyLinkInvite: () -> Unit,
+    onApproveDevice: (String, String) -> Unit,
+    onResetInvite: () -> Unit,
+    onDeleteDevice: (String) -> Unit,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .testTag("devicesContent"),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            DevicesPanel(
+                devices = state.devices,
+                linkInvite = state.account?.deviceLinkInvite.orEmpty(),
+                inboundRequests = state.account?.inboundDeviceLinkRequests.orEmpty(),
+                canApprove = state.account?.hasOwnerSigningAuthority == true,
+                onCopyLinkInvite = onCopyLinkInvite,
+                onApproveDevice = onApproveDevice,
+                onResetInvite = onResetInvite,
+                onDeleteDevice = onDeleteDevice,
+                onAppointAdmin = onAppointAdmin,
+                onDemoteAdmin = onDemoteAdmin,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackupsContent(
+    padding: PaddingValues,
+    state: AppState,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .testTag("backupsContent"),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            BackupsPanel(backups = state.backups)
+        }
+    }
+}
+
+@Composable
+private fun SettingsContent(
+    padding: PaddingValues,
+    state: AppState,
+    onCopyOwnerKey: () -> Unit,
+    onCopyDeviceKey: () -> Unit,
+    onLogout: () -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .testTag("settingsContent"),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            SettingsPanel(
+                state = state,
+                onCopyOwnerKey = onCopyOwnerKey,
+                onCopyDeviceKey = onCopyDeviceKey,
+                onLogout = onLogout,
+                onAddRelay = onAddRelay,
+                onRemoveRelay = onRemoveRelay,
+                onResetRelays = onResetRelays,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusPanel(state: AppState) {
+    val statusText = if (state.sync.running) "Up to date" else "Paused"
+    CardSection(title = "My Drive", trailing = statusText.lowercase()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Image(
+                painter = painterResource(id = R.drawable.brand_icon),
+                contentDescription = "Iris Drive",
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.size(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Iris Drive", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
+                Text(statusText, color = if (state.sync.running) Teal else Muted, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Text(
+            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} devices",
+            color = Muted,
+        )
+    }
+}
+
+@Composable
+private fun SummaryPanel(state: AppState, onShowDevices: () -> Unit) {
+    CardSection(title = "Summary", trailing = "${state.fileCount} files") {
+        StatRow("Files", state.fileCount.toString())
+        StatRow("Storage", byteString(state.visibleFileBytes))
+        TextButton(
+            onClick = onShowDevices,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("devicesSummaryButton"),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Devices", color = Muted)
+                Text(
+                    "${state.onlineDeviceCount}/${state.authorizedDeviceCount} online",
+                    color = Ink,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncPanel(
+    state: AppState,
+    onStartSync: () -> Unit,
+    onStopSync: () -> Unit,
+) {
+    CardSection(title = "Sync", trailing = if (state.sync.running) "on" else "paused") {
+        StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "on" else "paused" })
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (state.sync.running) {
+                OutlinedButton(onClick = onStopSync) {
+                    Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Pause")
+                }
+            } else {
+                Button(onClick = onStartSync) {
+                    Icon(painterResource(R.drawable.ic_play), contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Resume")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderPanel(
+    snapshotLink: String,
+    onOpenDriveFolder: () -> Unit,
+    onCopySnapshotLink: () -> Unit,
+    onOpenSnapshotLink: () -> Unit,
+) {
+    CardSection(title = "Files", trailing = "files") {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SoftTeal, RoundedCornerShape(8.dp))
+                .padding(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(painterResource(R.drawable.ic_drive), contentDescription = null, tint = Teal)
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Iris Drive", fontWeight = FontWeight.SemiBold)
+                    Text("Available in Android Files", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        Button(onClick = onOpenDriveFolder) {
+            Icon(painterResource(R.drawable.ic_drive), contentDescription = null)
+            Spacer(Modifier.size(8.dp))
+            Text("Open in Files")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = onCopySnapshotLink,
+                enabled = snapshotLink.isNotBlank(),
+            ) {
+                Text("Copy drive.iris.to link")
+            }
+            OutlinedButton(
+                onClick = onOpenSnapshotLink,
+                enabled = snapshotLink.isNotBlank(),
+            ) {
+                Text("View on drive.iris.to")
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackupsPanel(backups: List<BackupState>) {
+    CardSection(title = "Backups", trailing = "${backups.size}") {
+        if (backups.isEmpty()) {
+            Text("No Blossom remotes configured", color = Muted)
+        }
+        backups.forEach { backup ->
+            Text(backup.label, fontWeight = FontWeight.SemiBold)
+            Text(backup.state, color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(backup.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SettingsPanel(
+    state: AppState,
+    onCopyOwnerKey: () -> Unit,
+    onCopyDeviceKey: () -> Unit,
+    onLogout: () -> Unit,
+    onAddRelay: (String) -> Unit,
+    onRemoveRelay: (String) -> Unit,
+    onResetRelays: () -> Unit,
+) {
+    var relayInput by remember { mutableStateOf("") }
+    var confirmLogout by remember { mutableStateOf(false) }
+    val account = state.account
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Log out") },
+            text = { Text("Remove this local Iris Drive profile from Android?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    },
+                ) {
+                    Text("Log out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    CardSection(title = "Settings", trailing = "network") {
+        Text("Relays", fontWeight = FontWeight.SemiBold)
+        state.relays.forEach { relay ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(relay, color = Muted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { onRemoveRelay(relay) }) {
+                    Icon(painterResource(R.drawable.ic_delete), contentDescription = "Remove relay")
+                }
+            }
+        }
+        OutlinedTextField(
+            value = relayInput,
+            onValueChange = { relayInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Relay URL") },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = {
+                    onAddRelay(relayInput)
+                    relayInput = ""
+                },
+                enabled = relayInput.isNotBlank(),
+            ) {
+                Text("Add relay")
+            }
+            OutlinedButton(onClick = onResetRelays) {
+                Text("Reset relay")
+            }
+        }
+        Text("Owner key", fontWeight = FontWeight.SemiBold)
+        Text(account?.ownerPubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Device key", fontWeight = FontWeight.SemiBold)
+        Text(account?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onCopyOwnerKey) {
+                Text("Copy owner key")
+            }
+            OutlinedButton(onClick = onCopyDeviceKey) {
+                Text("Copy device key")
+            }
+        }
+        OutlinedButton(onClick = { confirmLogout = true }) {
+            Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)
+            Spacer(Modifier.size(8.dp))
+            Text("Log out", color = Danger)
+        }
+    }
+}
+
+@Composable
+internal fun Notice(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
+            .padding(12.dp),
+    ) {
+        Text(text, color = Danger)
+    }
+}
+
+@Composable
+internal fun CardSection(
+    title: String,
+    trailing: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            SectionHeader(title, trailing)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, trailing: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        Text(trailing, color = Muted, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun StatRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = Muted)
+        Text(value.ifBlank { "-" }, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun byteString(bytes: Long): String {
+    if (bytes <= 0L) return "0 bytes"
+    val units = listOf("bytes", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var index = 0
+    while (value >= 1000.0 && index < units.lastIndex) {
+        value /= 1000.0
+        index += 1
+    }
+    return if (index == 0) {
+        "${bytes} bytes"
+    } else {
+        String.format("%.1f %s", value, units[index])
+    }
+}

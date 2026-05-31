@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -114,7 +115,8 @@ class IrisDriveAndroidGuiFlowTest {
             },
         )
 
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasTestTag("addDeviceButton"))
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
         compose.onNodeWithTag("addDeviceButton").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
             .performTextInput(linked.devicePubkey)
@@ -245,6 +247,55 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun authenticatedAppShowsBottomTabsAndSeparateDevicesView() {
+        val owner = createOwnerProfile("Android UI owner")
+
+        render(state = appState(owner.handle))
+
+        compose.onNodeWithTag("tabMyDrive").assertIsDisplayed()
+        compose.onNodeWithTag("tabDevices").assertIsDisplayed()
+        compose.onNodeWithTag("tabBackups").assertIsDisplayed()
+        compose.onNodeWithTag("tabSettings").assertIsDisplayed()
+        compose.onNodeWithTag("driveContent").assertIsDisplayed()
+
+        compose.onNodeWithTag("tabDevices").activate()
+
+        compose.onNodeWithTag("devicesContent").assertIsDisplayed()
+        compose.onAllNodesWithTag("driveContent").assertCountEquals(0)
+    }
+
+    @Test
+    fun devicesViewUsesOnlineStatusDots() {
+        val state = AppState(
+            account = accountState(),
+            devices = listOf(
+                deviceState(
+                    pubkey = "device-a",
+                    label = "Pixel",
+                    isCurrentDevice = true,
+                    canRevoke = false,
+                ),
+                deviceState(
+                    pubkey = "device-b",
+                    label = "Tablet",
+                    isCurrentDevice = false,
+                    canRevoke = true,
+                ),
+            ),
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithContentDescription("Pixel online").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
+        compose.onNodeWithTag("deviceStatusDotOnline").assertIsDisplayed()
+        compose.onNodeWithTag("deviceStatusDotOffline").assertIsDisplayed()
+        compose.onNodeWithText("admin | Authorized | Online").assertIsDisplayed()
+        compose.onNodeWithText("member | Authorized | Offline").assertIsDisplayed()
+    }
+
+    @Test
     fun acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui() {
         val owner = createOwnerProfile("Mac")
         val linked = createLinkedProfile(owner.invite)
@@ -258,7 +309,8 @@ class IrisDriveAndroidGuiFlowTest {
 
         render(state = approved)
         compose.onNodeWithText("0/2 devices", substring = true).assertIsDisplayed()
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Pixel"))
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Pixel"))
         compose.onNodeWithText("Pixel").assertIsDisplayed()
         compose.onNodeWithContentDescription("Pixel offline").assertIsDisplayed()
     }
@@ -308,7 +360,8 @@ class IrisDriveAndroidGuiFlowTest {
             onDeleteDevice = { deletedDevices += it },
         )
 
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasContentDescription("Delete Tablet"))
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasContentDescription("Delete Tablet"))
         compose.onNodeWithContentDescription("Delete Tablet").assertIsDisplayed().activate()
         assertTrue(deletedDevices.isEmpty())
         compose.onNodeWithText("Delete device?").assertIsDisplayed()

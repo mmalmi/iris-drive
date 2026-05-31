@@ -2,6 +2,7 @@ package to.iris.drive.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,6 +36,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,17 +77,12 @@ internal fun DevicesPanel(
         }
         devices.forEach { device ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(
-                    painterResource(R.drawable.ic_drive),
-                    contentDescription = device.onlineIndicatorDescription,
-                    modifier = Modifier.testTag("deviceStatusIndicator"),
-                    tint = if (device.isOnline) Teal else Muted,
-                )
+                DeviceStatusDot(device = device)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(device.label, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${device.role.ifBlank { "member" }} | ${device.state}",
+                        "${device.role.ifBlank { "member" }} | ${device.state} | ${device.onlineStateText}",
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -151,6 +150,25 @@ internal fun DevicesPanel(
         )
     }
 }
+
+@Composable
+private fun DeviceStatusDot(device: DeviceState) {
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .background(
+                color = if (device.isOnline) OnlineGreen else Muted,
+                shape = CircleShape,
+            )
+            .semantics { contentDescription = device.onlineIndicatorDescription }
+            .testTag(if (device.isOnline) "deviceStatusDotOnline" else "deviceStatusDotOffline"),
+    )
+}
+
+private val OnlineGreen = Color(0xFF16A34A)
+
+private val DeviceState.onlineStateText: String
+    get() = if (isOnline) "Online" else "Offline"
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {
