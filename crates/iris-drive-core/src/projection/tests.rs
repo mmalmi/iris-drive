@@ -6,7 +6,7 @@ use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
 use crate::merge::DeviceFileEntry;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
-use hashtree_core::{HashTreeConfig, MemoryStore, sha256};
+use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore, sha256};
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -26,6 +26,7 @@ fn may_replace_destination_preserves_unimported_deletions() {
         hash: [1; 32],
         size: 5,
         whole_file_hash: None,
+        modified_at: None,
     };
 
     assert!(may_replace_destination(None, None, false));
@@ -96,6 +97,62 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    let (file_cid, file_size) = tree.put_file(b"legacy").await.unwrap();
+    let source_root = tree
+        .put_directory(vec![
+            DirEntry::from_cid("legacy.txt", &file_cid)
+                .with_size(file_size)
+                .with_link_type(LinkType::File),
+        ])
+        .await
+        .unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: account.state.device_pubkey.clone(),
+        device_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 1_800_000_000,
+    };
+
+    let mut config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    assert_eq!(view.view.files[0].modified_at, None);
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    let entries = tree.list_directory(&merged.root_cid).await.unwrap();
+    let legacy = entries
+        .iter()
+        .find(|entry| entry.name == "legacy.txt")
+        .expect("legacy file remains visible");
+    assert!(
+        legacy
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+            .is_none(),
+        "legacy entry should not get a synthetic modified_at: {legacy:#?}"
     );
 }
 

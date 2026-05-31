@@ -15,8 +15,8 @@ use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
 use crate::merge::{
-    CONFLICTS_PREFIX, META_DIR, PREV_LINK_PATH, ROOT_META_PATH, WHOLE_FILE_HASH_META_KEY,
-    walk_device_tree,
+    CONFLICTS_PREFIX, META_DIR, MODIFIED_AT_META_KEY, PREV_LINK_PATH, ROOT_META_PATH,
+    WHOLE_FILE_HASH_META_KEY, walk_device_tree,
 };
 use crate::root_meta::DriveRootMeta;
 

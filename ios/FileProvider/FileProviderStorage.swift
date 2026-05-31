@@ -1,5 +1,6 @@
 import Foundation
 import FileProvider
+import ImageIO
 import UniformTypeIdentifiers
 
 enum FileProviderStorage {
@@ -278,6 +279,60 @@ enum FileProviderStorage {
         return output
     }
 
+    static func thumbnailData(
+        for identifier: NSFileProviderItemIdentifier,
+        requestedSize size: CGSize
+    ) throws -> Data? {
+        guard let item = item(for: identifier) else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
+        }
+        guard item.contentType.conforms(to: .image) else {
+            debugLog("thumbnail unsupported type identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let url = try contentsURL(for: identifier)
+        let maxPixelSize = thumbnailMaxPixelSize(for: size)
+        guard let source = CGImageSourceCreateWithURL(
+            url as CFURL,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ) else {
+            debugLog("thumbnail source unavailable identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            debugLog("thumbnail image unavailable identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw providerError("thumbnail destination unavailable")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw providerError("thumbnail encode failed")
+        }
+        debugLog("thumbnail generated identifier=\(identifier.rawValue) bytes=\(data.length)")
+        return data as Data
+    }
+
     private static func loadStateForEnumeration() -> ProviderState {
         do {
             return try loadProviderBackedState()
@@ -313,8 +368,8 @@ enum FileProviderStorage {
             filename: fileName(for: entry.path),
             contentType: type,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
-            created: displayDate(from: entry.modifiedAt) ?? providerReferenceDate(),
-            modified: displayDate(from: entry.modifiedAt) ?? providerReferenceDate(),
+            created: displayDate(from: entry.modifiedAt),
+            modified: displayDate(from: entry.modifiedAt),
             versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
         )
     }
@@ -367,23 +422,19 @@ enum FileProviderStorage {
         return UInt64(size)
     }
 
-    private static func stateModifiedDate(_ state: ProviderState) -> Date {
+    private static func thumbnailMaxPixelSize(for size: CGSize) -> Int {
+        max(64, Int(ceil(max(size.width, size.height))))
+    }
+
+    private static func stateModifiedDate(_ state: ProviderState) -> Date? {
         state.entries
             .compactMap { displayDate(from: $0.modifiedAt) }
             .max()
-            ?? providerReferenceDate()
     }
 
     private static func displayDate(from unixSeconds: Int64?) -> Date? {
         guard let unixSeconds, unixSeconds >= minDisplayUnixSeconds else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-    }
-
-    private static func providerReferenceDate() -> Date {
-        let values = try? baseDirectory.resourceValues(
-            forKeys: [.contentModificationDateKey, .creationDateKey]
-        )
-        return values?.contentModificationDate ?? values?.creationDate ?? Date()
     }
 
     private static func syncAnchor(for anchor: String) -> NSFileProviderSyncAnchor {

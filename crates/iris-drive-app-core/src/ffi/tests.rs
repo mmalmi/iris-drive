@@ -692,8 +692,12 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
 #[test]
 fn provider_modified_at_index_ignores_unix_epoch_sentinel() {
     let mut index = std::collections::BTreeMap::new();
-    super::remember_provider_modified_at(&mut index, "old-note.txt", 1);
-    super::remember_provider_modified_at(&mut index, "new-note.txt", 1_700_000_000);
+    crate::provider_metadata::remember_provider_modified_at(&mut index, "old-note.txt", 1);
+    crate::provider_metadata::remember_provider_modified_at(
+        &mut index,
+        "new-note.txt",
+        1_700_000_000,
+    );
 
     assert!(!index.contains_key("old-note.txt"));
     assert_eq!(index.get("new-note.txt"), Some(&1_700_000_000));

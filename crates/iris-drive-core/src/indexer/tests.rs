@@ -5,6 +5,7 @@ use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use hashtree_core::{DEFAULT_CHUNK_SIZE, HashTreeConfig, MemoryStore, sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
 use tempfile::tempdir;
 
 fn new_tree() -> HashTree<MemoryStore> {
@@ -241,6 +242,34 @@ async fn indexed_large_files_preserve_whole_file_hash_metadata() {
 }
 
 #[tokio::test]
+async fn indexed_files_preserve_modified_at_metadata() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("note.txt");
+    std::fs::write(&file_path, b"note").unwrap();
+    let modified_at = 1_700_000_123;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&file_path)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(modified_at as u64))
+        .unwrap();
+    let tree = new_tree();
+
+    let root = index_dir(&tree, dir.path()).await.unwrap();
+
+    let listing = tree.list_directory(&root).await.unwrap();
+    let stored = listing[0]
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+        .and_then(serde_json::Value::as_i64);
+    assert_eq!(stored, Some(modified_at));
+    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+    assert!(tombstones.is_empty());
+    assert_eq!(files[0].modified_at, Some(modified_at));
+}
+
+#[tokio::test]
 async fn conflict_records_round_trip_and_are_not_user_visible() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
@@ -408,7 +437,7 @@ async fn visible_root_history_filters_ignored_entries_before_diffing() {
     let trash_cid = tree.put(b"bye").await.unwrap().0;
     let trash_file = DirEntry::from_cid("removed.txt".to_string(), &trash_cid)
         .with_size(3)
-        .with_meta(file_entry_meta(&hashtree_core::sha256(b"bye")));
+        .with_meta(file_entry_meta(&hashtree_core::sha256(b"bye"), None));
     let trash_files_cid = tree.put_directory(vec![trash_file]).await.unwrap();
     let mut trash_files_entry = DirEntry::from_cid("files".to_string(), &trash_files_cid);
     trash_files_entry.link_type = LinkType::Dir;
@@ -417,7 +446,7 @@ async fn visible_root_history_filters_ignored_entries_before_diffing() {
     trash_entry.link_type = LinkType::Dir;
     let kept_entry = DirEntry::from_cid("kept.txt".to_string(), &kept_cid)
         .with_size(10)
-        .with_meta(file_entry_meta(&hashtree_core::sha256(b"still here")));
+        .with_meta(file_entry_meta(&hashtree_core::sha256(b"still here"), None));
     let visible_root = tree
         .put_directory(vec![trash_entry, kept_entry])
         .await

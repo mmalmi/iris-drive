@@ -13,8 +13,8 @@ use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::conflict::conflict_filename;
 use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
 use crate::merge::{
-    DeviceSnapshot, MergedConflictFile, MergedConflictKind, MergedEntry, MergedView, merge_drives,
-    walk_device_tree,
+    DeviceSnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
+    MergedView, merge_drives, walk_device_tree,
 };
 
 #[derive(Debug, Error)]
@@ -184,6 +184,7 @@ fn visible_conflict_entry(
         hash: parse_conflict_hash(&file.content_cid_hash, original_path)?,
         size: file.size,
         whole_file_hash: parse_conflict_whole_file_hash(file, original_path)?,
+        modified_at: file.modified_at,
         source_device: file.device_id.clone(),
         published_at,
     })
@@ -279,7 +280,8 @@ pub async fn primary_merged_root<S: Store>(
             key: source.key,
         };
         let (parent, name) = split_visible_path(&entry.path)?;
-        root = set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source).await?;
+        root =
+            set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source, entry).await?;
     }
 
     Ok(PrimaryMergedRoot {
@@ -398,6 +400,7 @@ async fn set_visible_entry_with_meta<S: Store>(
     name: &str,
     cid: &Cid,
     source: &hashtree_core::TreeEntry,
+    merged: &MergedEntry,
 ) -> Result<Cid, ProjectionError> {
     let parent_cid = if parent.is_empty() {
         root.clone()
@@ -426,7 +429,7 @@ async fn set_visible_entry_with_meta<S: Store>(
         size: source.size,
         key: cid.key,
         link_type: source.link_type,
-        meta: source.meta.clone(),
+        meta: visible_entry_meta(source, merged),
     });
     let new_parent_cid = tree.put_directory(entries).await?;
     if parent.is_empty() {
@@ -445,6 +448,22 @@ async fn set_visible_entry_with_meta<S: Store>(
     )
     .await
     .map_err(Into::into)
+}
+
+fn visible_entry_meta(
+    source: &hashtree_core::TreeEntry,
+    merged: &MergedEntry,
+) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+    let mut meta = source.meta.clone().unwrap_or_default();
+    if !meta.contains_key(MODIFIED_AT_META_KEY)
+        && let Some(modified_at) = merged.modified_at.filter(|value| *value > 0)
+    {
+        meta.insert(
+            MODIFIED_AT_META_KEY.to_string(),
+            serde_json::Value::Number(modified_at.into()),
+        );
+    }
+    (!meta.is_empty()).then_some(meta)
 }
 
 async fn merged_user_directory_paths<S: Store>(

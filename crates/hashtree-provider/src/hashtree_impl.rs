@@ -8,15 +8,18 @@
 //! tokio `Mutex` so concurrent writers can't race on the
 //! read-old-root → compute-new-root → swap sequence.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store};
+use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::diff::{PathChange, path_diff};
 use crate::error::ProviderError;
 use crate::provider::{DirItem, Item, ItemKind, ProviderFs, SyncAnchor};
+
+const MODIFIED_AT_META_KEY: &str = "modified_at";
 
 /// Hook called after every successful mutation. Lets a daemon publish
 /// the new root over Nostr / observe revisions / etc. Errors are
@@ -118,6 +121,7 @@ impl<S: Store> HashTreeProviderFs<S> {
                 cid: root,
                 link_type: LinkType::Dir,
                 size: 0,
+                meta: None,
             });
         }
         let (parent_segs, name) = Self::split_path(id)?;
@@ -138,6 +142,7 @@ impl<S: Store> HashTreeProviderFs<S> {
             },
             link_type: entry.link_type,
             size: entry.size,
+            meta: entry.meta,
         })
     }
 
@@ -165,6 +170,7 @@ struct ResolvedEntry {
     cid: Cid,
     link_type: LinkType,
     size: u64,
+    meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 fn map_err(e: HashTreeError) -> ProviderError {
@@ -294,18 +300,18 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
 
         let (cid, size) = self.tree.put(&[]).await.map_err(map_err)?;
         let parent_segs = Self::segments(parent);
-        let new_root = self
-            .tree
-            .set_entry(
-                &self.current_root().await,
-                &parent_segs,
-                name,
-                &cid,
-                size,
-                link_type_for_size(size),
-            )
-            .await
-            .map_err(map_err)?;
+        let new_root = set_entry_with_meta(
+            &self.tree,
+            &self.current_root().await,
+            &parent_segs,
+            name,
+            &cid,
+            size,
+            link_type_for_size(size),
+            Some(modified_at_meta()),
+        )
+        .await
+        .map_err(map_err)?;
         self.apply_new_root(new_root).await?;
         Ok(Item {
             id,
@@ -365,7 +371,8 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         // Read existing, apply, put.
         let existing = self.read_full(&resolved).await?;
         let new_bytes = apply_write(existing, offset, data);
-        self.replace_file_bytes(id, &new_bytes).await?;
+        self.replace_file_bytes(id, &new_bytes, resolved.meta)
+            .await?;
         Ok(data.len() as u32)
     }
 
@@ -377,7 +384,8 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
         let existing = self.read_full(&resolved).await?;
         let new_bytes = apply_truncate(existing, size);
-        self.replace_file_bytes(id, &new_bytes).await?;
+        self.replace_file_bytes(id, &new_bytes, resolved.meta)
+            .await?;
         Ok(())
     }
 
@@ -430,18 +438,18 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
 
         let new_parent_segs = Self::segments(new_parent);
-        let mut new_root = self
-            .tree
-            .set_entry(
-                &self.current_root().await,
-                &new_parent_segs,
-                new_name,
-                &resolved.cid,
-                resolved.size,
-                resolved.link_type,
-            )
-            .await
-            .map_err(map_err)?;
+        let mut new_root = set_entry_with_meta(
+            &self.tree,
+            &self.current_root().await,
+            &new_parent_segs,
+            new_name,
+            &resolved.cid,
+            resolved.size,
+            resolved.link_type,
+            resolved.meta,
+        )
+        .await
+        .map_err(map_err)?;
         let old_parent_segs = Self::segments(old_parent);
         new_root = self
             .tree
@@ -495,23 +503,137 @@ impl<S: Store> HashTreeProviderFs<S> {
             .unwrap_or_default())
     }
 
-    async fn replace_file_bytes(&self, id: &str, bytes: &[u8]) -> Result<(), ProviderError> {
+    async fn replace_file_bytes(
+        &self,
+        id: &str,
+        bytes: &[u8],
+        meta: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<(), ProviderError> {
         let (parent_segs, name) = Self::split_path(id)?;
         let (cid, size) = self.tree.put(bytes).await.map_err(map_err)?;
-        let new_root = self
-            .tree
-            .set_entry(
-                &self.current_root().await,
-                &parent_segs,
-                name,
-                &cid,
-                size,
-                link_type_for_size(size),
-            )
-            .await
-            .map_err(map_err)?;
+        let new_root = set_entry_with_meta(
+            &self.tree,
+            &self.current_root().await,
+            &parent_segs,
+            name,
+            &cid,
+            size,
+            link_type_for_size(size),
+            Some(with_modified_at(meta)),
+        )
+        .await
+        .map_err(map_err)?;
         self.apply_new_root(new_root).await
     }
+}
+
+fn set_entry_with_meta<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    root: &'a Cid,
+    path: &'a [&'a str],
+    name: &'a str,
+    entry_cid: &'a Cid,
+    size: u64,
+    link_type: LinkType,
+    meta: Option<HashMap<String, serde_json::Value>>,
+) -> futures::future::BoxFuture<'a, Result<Cid, HashTreeError>> {
+    Box::pin(async move {
+        if path.is_empty() {
+            let mut entries = tree
+                .list_directory(root)
+                .await?
+                .into_iter()
+                .filter(|entry| entry.name != name)
+                .map(|entry| DirEntry {
+                    name: entry.name,
+                    hash: entry.hash,
+                    size: entry.size,
+                    key: entry.key,
+                    link_type: entry.link_type,
+                    meta: entry.meta,
+                })
+                .collect::<Vec<_>>();
+            entries.push(DirEntry {
+                name: name.to_string(),
+                hash: entry_cid.hash,
+                size,
+                key: entry_cid.key,
+                link_type,
+                meta,
+            });
+            return tree.put_directory(entries).await;
+        }
+
+        let entries = tree.list_directory(root).await?;
+        let segment = path[0];
+        let child = entries
+            .iter()
+            .find(|entry| entry.name == segment && entry.link_type == LinkType::Dir)
+            .ok_or_else(|| HashTreeError::PathNotFound(path.join("/")))?;
+        let child_cid = Cid {
+            hash: child.hash,
+            key: child.key,
+        };
+        let new_child = set_entry_with_meta(
+            tree,
+            &child_cid,
+            &path[1..],
+            name,
+            entry_cid,
+            size,
+            link_type,
+            meta,
+        )
+        .await?;
+        let updated = entries
+            .into_iter()
+            .map(|entry| {
+                if entry.name == segment {
+                    DirEntry {
+                        name: entry.name,
+                        hash: new_child.hash,
+                        size: entry.size,
+                        key: new_child.key,
+                        link_type: LinkType::Dir,
+                        meta: entry.meta,
+                    }
+                } else {
+                    DirEntry {
+                        name: entry.name,
+                        hash: entry.hash,
+                        size: entry.size,
+                        key: entry.key,
+                        link_type: entry.link_type,
+                        meta: entry.meta,
+                    }
+                }
+            })
+            .collect();
+        tree.put_directory(updated).await
+    })
+}
+
+fn modified_at_meta() -> HashMap<String, serde_json::Value> {
+    with_modified_at(None)
+}
+
+fn with_modified_at(
+    meta: Option<HashMap<String, serde_json::Value>>,
+) -> HashMap<String, serde_json::Value> {
+    let mut meta = meta.unwrap_or_default();
+    meta.insert(
+        MODIFIED_AT_META_KEY.to_string(),
+        serde_json::Value::Number(unix_now_seconds().into()),
+    );
+    meta
+}
+
+fn unix_now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 fn apply_write(mut existing: Vec<u8>, offset: u64, data: &[u8]) -> Vec<u8> {

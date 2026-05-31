@@ -39,6 +39,7 @@ fn file(path: &str, hash_byte: u8, size: u64) -> DeviceFileEntry {
         hash: [hash_byte; 32],
         size,
         whole_file_hash: None,
+        modified_at: None,
     }
 }
 
@@ -53,6 +54,7 @@ fn file_with_whole_hash(
         hash: [cid_hash_byte; 32],
         size,
         whole_file_hash: Some([whole_hash_byte; 32]),
+        modified_at: None,
     }
 }
 

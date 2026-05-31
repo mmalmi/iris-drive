@@ -126,6 +126,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
                         "size": e.size,
                         "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
                         "source_device": e.source_device,
+                        "modified_at": e.modified_at,
                         "published_at": e.published_at,
                     }))
                     .collect::<Vec<_>>(),
@@ -142,6 +143,8 @@ struct ProviderListEntry {
     kind: &'static str,
     size: u64,
     version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_at: Option<i64>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -189,7 +192,14 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         match command {
             ProviderCmd::List => {
                 let phase = std::time::Instant::now();
-                let entries = provider_entries(daemon.tree(), &visible.root_cid).await?;
+                let visible_view =
+                    iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                        .await
+                        .context("building virtual provider timestamp index")?;
+                let modified_at_by_path = provider_modified_at_index(&visible_view);
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command listed entries"
@@ -229,7 +239,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             }
             ProviderCmd::HydrateCache { dir } => {
                 let phase = std::time::Instant::now();
-                let entries = provider_entries(daemon.tree(), &visible.root_cid).await?;
+                let modified_at_by_path = BTreeMap::new();
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
                 let report = hydrate_provider_cache(&provider, &entries, &dir).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
@@ -325,6 +338,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
 async fn provider_entries(
     tree: &HashTree<FsBlobStore>,
     root: &Cid,
+    modified_at_by_path: &BTreeMap<String, i64>,
 ) -> Result<Vec<ProviderListEntry>> {
     let mut entries = Vec::new();
     let mut stack = vec![(String::new(), root.clone())];
@@ -349,6 +363,7 @@ async fn provider_entries(
                 LinkType::Blob | LinkType::File => "file",
             };
             entries.push(ProviderListEntry {
+                modified_at: modified_at_by_path.get(&path).copied(),
                 path,
                 kind,
                 size: child.size,
@@ -358,6 +373,34 @@ async fn provider_entries(
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+fn provider_modified_at_index(
+    view: &iris_drive_core::projection::PrimaryMergedView,
+) -> BTreeMap<String, i64> {
+    let mut index = BTreeMap::new();
+    for entry in &view.view.files {
+        let Some(modified_at) = entry.modified_at else {
+            continue;
+        };
+        remember_provider_modified_at(&mut index, &entry.path, modified_at);
+        let mut path = entry.path.as_str();
+        while let Some((parent, _name)) = path.rsplit_once('/') {
+            remember_provider_modified_at(&mut index, parent, modified_at);
+            path = parent;
+        }
+    }
+    index
+}
+
+fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
+    if path.is_empty() || modified_at < 946_684_800 {
+        return;
+    }
+    index
+        .entry(path.to_owned())
+        .and_modify(|existing| *existing = (*existing).max(modified_at))
+        .or_insert(modified_at);
 }
 
 #[derive(Default)]

@@ -370,6 +370,7 @@ mod tests {
             content_hash: hash.into(),
             content_cid_hash: format!("cid-{hash}"),
             size: 10,
+            modified_at: None,
         }
     }
 

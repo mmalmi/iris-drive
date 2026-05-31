@@ -104,6 +104,7 @@ enum FileProviderStorage {
     private static let providerItemVersionPrefix = "iris-drive-provider-v2"
     private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
     private static let providerListCacheTTL: TimeInterval = 1.0
+    private static let minDisplayUnixSeconds: Int64 = 946_684_800
     private static let providerListCacheLock = NSLock()
     private static let contentCacheLock = NSLock()
     private static var providerListCache: (loadedAt: Date, list: ProviderList)?
@@ -193,6 +194,15 @@ enum FileProviderStorage {
         let kind: String
         let size: UInt64
         let version: String?
+        let modifiedAt: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case path
+            case kind
+            case size
+            case version
+            case modifiedAt = "modified_at"
+        }
     }
 
     private struct ProviderSnapshot: Codable {
@@ -597,10 +607,15 @@ enum FileProviderStorage {
             filename: fileName(for: entry.path),
             contentType: contentType,
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
-            created: nil,
-            modified: nil,
-            versionIdentifier: "\(providerItemVersionPrefix):\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size)"
+            created: displayDate(from: entry.modifiedAt),
+            modified: displayDate(from: entry.modifiedAt),
+            versionIdentifier: "\(providerItemVersionPrefix):\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
         )
+    }
+
+    private static func displayDate(from unixSeconds: Int64?) -> Date? {
+        guard let unixSeconds, unixSeconds >= minDisplayUnixSeconds else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
     }
 
     private static func optimisticItem(

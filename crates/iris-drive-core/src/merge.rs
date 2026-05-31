@@ -54,6 +54,11 @@ pub const CONFLICTS_PREFIX: &str = ".hashtree/conflicts";
 /// CID hash or encrypted node hash.
 pub const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
 
+/// Directory-entry metadata key carrying the user-visible file mtime as Unix
+/// seconds. This lives on the htree link so provider surfaces can expose a
+/// stable per-file timestamp instead of the device-root publish time.
+pub const MODIFIED_AT_META_KEY: &str = "modified_at";
+
 /// Reserved entry path for the directory-revision back-link. A
 /// directory whose contents have a prior version stores that previous
 /// version's `Cid` (hash + key) at this path. Walking the chain
@@ -76,6 +81,8 @@ pub struct DeviceFileEntry {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whole_file_hash: Option<[u8; 32]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
 }
 
 /// One tombstone from a device's tree.
@@ -108,6 +115,8 @@ pub struct MergedEntry {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whole_file_hash: Option<[u8; 32]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
     pub source_device: String,
     pub published_at: i64,
 }
@@ -129,6 +138,8 @@ pub struct MergedConflictFile {
     pub content_hash: String,
     pub content_cid_hash: String,
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
 }
 
 /// Tombstone-producing side of a conflicted path.
@@ -228,6 +239,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 hash: f.hash,
                 size: f.size,
                 whole_file_hash: f.whole_file_hash,
+                modified_at: f.modified_at,
                 source_device: snap.device_pubkey.to_string(),
                 published_at: snap.root.published_at,
             };
@@ -374,6 +386,7 @@ fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
         content_hash: to_hex(&identity_hash(&write.entry)),
         content_cid_hash: to_hex(&write.entry.hash),
         size: write.entry.size,
+        modified_at: write.entry.modified_at,
     }
 }
 
@@ -647,6 +660,7 @@ fn walk_dir_recursive<'a, S: Store>(
                     hash: entry.hash,
                     size: entry.size,
                     whole_file_hash: whole_file_hash_from_meta(entry.meta.as_ref()),
+                    modified_at: modified_at_from_meta(entry.meta.as_ref()),
                 });
             }
         }
@@ -660,6 +674,14 @@ fn whole_file_hash_from_meta(
     meta.and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
         .and_then(serde_json::Value::as_str)
         .and_then(|s| from_hex(s).ok())
+}
+
+fn modified_at_from_meta(
+    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
+) -> Option<i64> {
+    meta.and_then(|m| m.get(MODIFIED_AT_META_KEY))
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value > 0)
 }
 
 #[cfg(test)]

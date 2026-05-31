@@ -2,7 +2,7 @@ import CoreGraphics
 import FileProvider
 import Foundation
 
-final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, NSFileProviderThumbnailing {
     private let domain: NSFileProviderDomain
 
     required init(domain: NSFileProviderDomain) {

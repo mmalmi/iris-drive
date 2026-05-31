@@ -409,6 +409,7 @@ fn index_dir_inner<'a, S: Store>(
                 let bytes = std::fs::read(&path)?;
                 let size = bytes.len() as u64;
                 let whole_file_hash = hashtree_core::sha256(&bytes);
+                let modified_at = file_modified_unix_seconds(&metadata);
                 let (cid, _) = tree.put(&bytes).await?;
                 let link_type = if size > hashtree_core::DEFAULT_CHUNK_SIZE as u64 {
                     LinkType::File
@@ -417,7 +418,7 @@ fn index_dir_inner<'a, S: Store>(
                 };
                 let mut e = DirEntry::from_cid(name, &cid)
                     .with_size(size)
-                    .with_meta(file_entry_meta(&whole_file_hash));
+                    .with_meta(file_entry_meta(&whole_file_hash, modified_at));
                 e.link_type = link_type;
                 entries.push(e);
             }
@@ -428,9 +429,27 @@ fn index_dir_inner<'a, S: Store>(
     })
 }
 
-fn file_entry_meta(whole_file_hash: &[u8; 32]) -> HashMap<String, serde_json::Value> {
-    HashMap::from([(
+fn file_entry_meta(
+    whole_file_hash: &[u8; 32],
+    modified_at: Option<i64>,
+) -> HashMap<String, serde_json::Value> {
+    let mut meta = HashMap::from([(
         WHOLE_FILE_HASH_META_KEY.to_string(),
         serde_json::Value::String(to_hex(whole_file_hash)),
-    )])
+    )]);
+    if let Some(modified_at) = modified_at {
+        meta.insert(
+            MODIFIED_AT_META_KEY.to_string(),
+            serde_json::Value::Number(modified_at.into()),
+        );
+    }
+    meta
+}
+
+fn file_modified_unix_seconds(metadata: &std::fs::Metadata) -> Option<i64> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }

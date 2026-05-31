@@ -27,6 +27,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::actions::NativeAppAction;
+#[cfg(not(test))]
+use crate::native_fips;
+use crate::provider_metadata::provider_modified_at_index;
 use crate::state::{
     NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiPaths, UiState,
     UiSyncRoot, UiSyncStatus,
@@ -41,7 +44,6 @@ pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
-const MIN_PROVIDER_DISPLAY_UNIX_SECS: i64 = 946_684_800;
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(not(test))]
@@ -1023,31 +1025,6 @@ where
     Ok(entries)
 }
 
-fn provider_modified_at_index(
-    view: &iris_drive_core::projection::PrimaryMergedView,
-) -> BTreeMap<String, i64> {
-    let mut index = BTreeMap::new();
-    for entry in &view.view.files {
-        remember_provider_modified_at(&mut index, &entry.path, entry.published_at);
-        let mut path = entry.path.as_str();
-        while let Some((parent, _name)) = path.rsplit_once('/') {
-            remember_provider_modified_at(&mut index, parent, entry.published_at);
-            path = parent;
-        }
-    }
-    index
-}
-
-fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
-    if path.is_empty() || modified_at < MIN_PROVIDER_DISPLAY_UNIX_SECS {
-        return;
-    }
-    index
-        .entry(path.to_owned())
-        .and_modify(|existing| *existing = (*existing).max(modified_at))
-        .or_insert(modified_at);
-}
-
 async fn import_provider_mutation<P>(
     daemon: &mut iris_drive_core::Daemon,
     provider: &P,
@@ -2002,7 +1979,7 @@ async fn write_native_fips_status(
 ) -> Result<(), String> {
     let direct_devices = sync.connected_peer_ids().await;
     let mesh_devices = sync.mesh_peer_ids().await;
-    let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
+    let online_devices = native_fips::online_device_ids(&direct_devices, &mesh_devices);
     let value = json!({
         "running": error.is_none(),
         "updated_at": unix_now_seconds(),
@@ -2171,17 +2148,6 @@ fn devices_from_account(
                 can_demote_admin: false,
             }
         })
-        .collect()
-}
-
-#[cfg(not(test))]
-fn fips_online_device_ids(direct_devices: &[String], mesh_devices: &[String]) -> Vec<String> {
-    direct_devices
-        .iter()
-        .chain(mesh_devices)
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect()
 }
 
