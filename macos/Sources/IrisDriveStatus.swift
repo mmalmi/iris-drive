@@ -136,26 +136,18 @@ struct IrisDriveFipsStatus: Equatable {
         rosterPeerCount = (json["roster_peer_count"] as? NSNumber)?.intValue ?? 0
         rosterOnlineDeviceCount =
             (json["roster_online_device_count"] as? NSNumber)?.intValue
-            ?? (json["roster_online_peer_count"] as? NSNumber)?.intValue
-            ?? (json["roster_connected_peer_count"] as? NSNumber)?.intValue
             ?? 0
         rosterDirectDeviceCount =
             (json["roster_direct_device_count"] as? NSNumber)?.intValue
-            ?? (json["roster_connected_peer_count"] as? NSNumber)?.intValue
             ?? 0
         onlineDeviceCount =
             (json["online_device_count"] as? NSNumber)?.intValue
-            ?? (json["online_peer_count"] as? NSNumber)?.intValue
-            ?? (json["connected_peer_count"] as? NSNumber)?.intValue
             ?? 0
         directDeviceCount =
             (json["direct_device_count"] as? NSNumber)?.intValue
-            ?? (json["direct_peer_count"] as? NSNumber)?.intValue
-            ?? (json["connected_peer_count"] as? NSNumber)?.intValue
             ?? 0
         meshDeviceCount =
             (json["mesh_device_count"] as? NSNumber)?.intValue
-            ?? (json["mesh_peer_count"] as? NSNumber)?.intValue
             ?? 0
         otherPeerCount = (json["other_peer_count"] as? NSNumber)?.intValue ?? 0
         peerStatuses = (json["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init)
