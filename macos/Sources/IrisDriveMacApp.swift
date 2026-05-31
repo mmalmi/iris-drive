@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
     private var fileProviderSignalWorkItem: DispatchWorkItem?
+    private var pendingFileProviderDirectoryPaths: [String]?
     private var fileProviderRepairInFlight = false
     private var fileProviderReimportInFlight = false
     private var lastFileProviderRepairAt = Date.distantPast
@@ -1557,9 +1558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             self.updateLinkMenuState()
-            self.signalFileProviderDomainForExternalStatusIfNeeded(
-                key: Self.fileProviderSignalKey(json)
-            )
+            self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "status changed")
             NSLog("Iris Drive control panel updated")
         }
     }
@@ -1744,9 +1743,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
             self.updateLinkMenuState()
-            self.signalFileProviderDomainForExternalStatusIfNeeded(
-                key: Self.externalFileProviderSignalKey(json)
-            )
+            self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "external status changed")
             NSLog("Iris Drive control panel updated from external daemon status")
         }
     }
@@ -1792,24 +1789,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func signalFileProviderDomain() {
+    private func signalFileProviderDomain(directoryPaths: [String]? = nil) {
         guard fileProviderIntegrationEnabled else { return }
         if !Thread.isMainThread {
             DispatchQueue.main.async { [weak self] in
-                self?.signalFileProviderDomain()
+                self?.signalFileProviderDomain(directoryPaths: directoryPaths)
             }
             return
         }
+        if let directoryPaths {
+            pendingFileProviderDirectoryPaths = directoryPaths
+        }
         guard fileProviderSignalWorkItem == nil else { return }
         let workItem = DispatchWorkItem { [weak self] in
-            self?.fileProviderSignalWorkItem = nil
-            self?.performFileProviderDomainSignal()
+            guard let self else { return }
+            let directoryPaths = self.pendingFileProviderDirectoryPaths
+            self.pendingFileProviderDirectoryPaths = nil
+            self.fileProviderSignalWorkItem = nil
+            self.performFileProviderDomainSignal(directoryPaths: directoryPaths)
         }
         fileProviderSignalWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
-    private func performFileProviderDomainSignal() {
+    private func performFileProviderDomainSignal(directoryPaths: [String]?) {
         guard fileProviderIntegrationEnabled else { return }
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else { return }
@@ -1820,7 +1823,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ],
             manager: manager
         )
-        signalFileProviderDirectoryEnumerators(manager: manager)
+        if let directoryPaths {
+            signalFileProviderEnumerators(
+                Self.fileProviderDirectorySignalIdentifiers(for: directoryPaths),
+                manager: manager
+            )
+        } else {
+            signalFileProviderDirectoryEnumerators(manager: manager)
+        }
     }
 
     private func signalFileProviderEnumerators(
@@ -1847,12 +1857,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             do {
-                let data = try self.runIDrive(
-                    idrive,
-                    arguments: ["provider", "list"],
-                    paths: paths
+                let summary = try self.providerSignalSummary(idrive: idrive, paths: paths)
+                let identifiers = Self.fileProviderDirectorySignalIdentifiers(
+                    for: summary.directoryPaths
                 )
-                let identifiers = try Self.fileProviderDirectorySignalIdentifiers(from: data)
                 self.signalFileProviderEnumerators(identifiers, manager: manager)
             } catch {
                 NSLog("Iris Drive FileProvider directory signal skipped: \(error)")
@@ -1860,11 +1868,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func providerSignalSummary(
+        idrive: URL?,
+        paths: IrisDriveRuntimePaths
+    ) throws -> ProviderSignalSummary {
+        let data = try runIDrive(
+            idrive,
+            arguments: ["provider", "list"],
+            paths: paths
+        )
+        return try JSONDecoder().decode(ProviderSignalSummary.self, from: data)
+    }
+
     private static func fileProviderDirectorySignalIdentifiers(
-        from data: Data
-    ) throws -> [(NSFileProviderItemIdentifier, String)] {
-        let list = try JSONDecoder().decode(FileProviderProviderList.self, from: data)
-        return list.directoryPaths
+        for directoryPaths: [String]
+    ) -> [(NSFileProviderItemIdentifier, String)] {
+        directoryPaths
             .sorted()
             .map { (fileProviderIdentifier(for: $0), "directory \($0)") }
     }
@@ -1879,11 +1898,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    private struct FileProviderProviderList: Decodable {
+    private struct ProviderSignalSummary: Decodable {
+        let anchor: String?
         let directoryPaths: [String]
+        let changeKey: String
+
+        var effectiveChangeKey: String {
+            changeKey.isEmpty ? anchor ?? "" : changeKey
+        }
 
         enum CodingKeys: String, CodingKey {
+            case anchor
             case directoryPaths = "directory_paths"
+            case changeKey = "change_key"
         }
     }
 
@@ -1948,8 +1975,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func signalFileProviderDomainForExternalStatusIfNeeded(key: String) {
+    private func signalFileProviderDomainForProviderChangeIfNeeded(reason: String) {
         guard fileProviderIntegrationEnabled else { return }
+        guard let paths = runtimePathsForMenu else { return }
+        let idrive = idriveExecutableURL()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            do {
+                let summary = try self.providerSignalSummary(idrive: idrive, paths: paths)
+                DispatchQueue.main.async {
+                    self.signalFileProviderDomainIfNeeded(summary: summary, reason: reason)
+                }
+            } catch {
+                NSLog("Iris Drive FileProvider provider summary skipped: \(error)")
+            }
+        }
+    }
+
+    private func signalFileProviderDomainIfNeeded(
+        summary: ProviderSignalSummary,
+        reason: String
+    ) {
+        let key = summary.effectiveChangeKey
+        guard !key.isEmpty else { return }
         let now = Date()
         let changed = key != lastExternalFileProviderSignalKey
         guard changed || now.timeIntervalSince(lastExternalFileProviderSignalAt) >= 10 else {
@@ -1957,75 +2005,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         lastExternalFileProviderSignalKey = key
         lastExternalFileProviderSignalAt = now
-        signalFileProviderDomain()
+        signalFileProviderDomain(directoryPaths: summary.directoryPaths)
         if changed {
-            scheduleFileProviderReimport(reason: "external status changed", key: key)
+            scheduleFileProviderReimport(reason: reason, key: key)
         }
-    }
-
-    private static func externalFileProviderSignalKey(_ json: [String: Any]) -> String {
-        var parts = [String]()
-        parts.append(json["root_cid"] as? String ?? "")
-        parts.append(json["root_key"] as? String ?? "")
-        if let lastBlockSync = json["last_block_sync"] as? [String: Any] {
-            parts.append(lastBlockSync["root_cid"] as? String ?? "")
-            parts.append(lastBlockSync["transport"] as? String ?? "")
-            parts.append("\(Self.intValue(lastBlockSync["fetched"]) ?? 0)")
-            parts.append("\(Self.intValue(lastBlockSync["already_local"]) ?? 0)")
-            parts.append("\(Self.intValue(lastBlockSync["total_hashes"]) ?? 0)")
-        }
-        if let blockSyncByRoot = json["block_sync_by_root"] as? [String: Any] {
-            for root in blockSyncByRoot.keys.sorted() {
-                parts.append(root)
-                guard let sync = blockSyncByRoot[root] as? [String: Any] else { continue }
-                parts.append(sync["transport"] as? String ?? "")
-                parts.append("\(Self.intValue(sync["fetched"]) ?? 0)")
-                parts.append("\(Self.intValue(sync["already_local"]) ?? 0)")
-                parts.append("\(Self.intValue(sync["total_hashes"]) ?? 0)")
-            }
-        }
-        return parts.joined(separator: "|")
-    }
-
-    private static func fileProviderSignalKey(_ json: [String: Any]) -> String {
-        var parts = [externalFileProviderSignalKey(json)]
-        if let hashtree = json["hashtree"] as? [String: Any] {
-            parts.append(hashtree["current_root_cid"] as? String ?? "")
-            parts.append("\(Self.intValue(hashtree["file_count"]) ?? 0)")
-            parts.append("\(Self.intValue(hashtree["top_level_entries"]) ?? 0)")
-        }
-        if let drives = json["drives"] as? [[String: Any]] {
-            for drive in drives {
-                parts.append([
-                    drive["drive_id"] as? String ?? "",
-                    drive["last_root_cid"] as? String ?? "",
-                    "\(Self.intValue(drive["device_root_count"]) ?? 0)",
-                ].joined(separator: ":"))
-            }
-        }
-        if let peers = json["peers"] as? [[String: Any]] {
-            for peer in peers {
-                parts.append([
-                    peer["device_npub"] as? String ?? peer["device_pubkey"] as? String ?? "",
-                    peer["root_cid"] as? String ?? "",
-                    peer["sync_state"] as? String ?? "",
-                    "\(peer["root_available"] as? Bool ?? false)",
-                    "\(peer["fips_online"] as? Bool ?? false)",
-                ].joined(separator: ":"))
-                if let lastBlockSync = peer["last_block_sync"] as? [String: Any] {
-                    parts.append([
-                        peer["device_npub"] as? String ?? peer["device_pubkey"] as? String ?? "",
-                        "blocks",
-                        lastBlockSync["root_cid"] as? String ?? "",
-                        lastBlockSync["transport"] as? String ?? "",
-                        "\(Self.intValue(lastBlockSync["fetched"]) ?? 0)",
-                        "\(Self.intValue(lastBlockSync["already_local"]) ?? 0)",
-                        "\(Self.intValue(lastBlockSync["total_hashes"]) ?? 0)",
-                    ].joined(separator: ":"))
-                }
-            }
-        }
-        return parts.sorted().joined(separator: "|")
     }
 
     private func schedulePeerStatusRefresh() {

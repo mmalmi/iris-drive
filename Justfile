@@ -170,6 +170,7 @@ structure:
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
     ./scripts/check-macos-normalized-status.sh
+    ./scripts/check-macos-provider-summary.sh
     ./scripts/check-dev-vm-update-run.sh
     ./scripts/check-source-file-size.sh
 
