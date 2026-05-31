@@ -57,7 +57,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         openInFiles.tap()
 
         let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        XCTAssertTrue(waitForFilesOpenOrError(in: app, files: files, timeout: 15))
+        assertFilesOpen(in: app, files: files, timeout: 15)
     }
 
     func testApprovedLinkedDeviceLeavesWaiting() throws {
@@ -115,25 +115,27 @@ final class IrisDriveIOSUITests: XCTestCase {
         app.tabBars.buttons["My Drive"].tap()
     }
 
-    private func waitForFilesOpenOrError(
+    private func assertFilesOpen(
         in app: XCUIApplication,
         files: XCUIApplication,
         timeout: TimeInterval
-    ) -> Bool {
+    ) {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if files.state == .runningForeground,
-               files.descendants(matching: .any)["My Drive"].exists {
-                return true
+               files.descendants(matching: .any)["Iris Drive"].exists {
+                return
             }
-            if app.state == .runningForeground,
-               app.staticTexts["Open in Files failed"].exists,
-               app.staticTexts["openInFilesError"].exists {
-                return true
+            if app.state == .runningForeground {
+                let error = app.staticTexts["openInFilesError"]
+                if error.exists {
+                    XCTFail("Open in Files failed: \(error.label)")
+                    return
+                }
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        return false
+        XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
     }
 
     private func requiredEnvironment(_ name: String) throws -> String {

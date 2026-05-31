@@ -292,7 +292,12 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.showFileProviderError("Files could not locate Iris Drive.")
                     return
                 }
-                UIApplication.shared.open(url, options: [:]) { [weak self] opened in
+                guard let filesURL = self.filesAppURL(for: url) else {
+                    NSLog("Iris Drive Files provider URL unsupported: \(url.absoluteString)")
+                    self.showFileProviderError("Files could not locate Iris Drive.")
+                    return
+                }
+                UIApplication.shared.open(filesURL, options: [:]) { [weak self] opened in
                     Task { @MainActor in
                         guard let self else { return }
                         guard self.fileProviderOpenAttempt == attempt else { return }
@@ -302,13 +307,25 @@ final class IrisDriveMobileModel: ObservableObject {
                             self.fileProviderStatus = "Files provider open"
                             self.rebuildDerivedState()
                         } else {
-                            NSLog("Iris Drive Files provider open failed: \(url.absoluteString)")
+                            NSLog(
+                                "Iris Drive Files provider open failed: " +
+                                    "\(filesURL.absoluteString) from \(url.absoluteString)"
+                            )
                             self.showFileProviderError("Files refused to open Iris Drive.")
                         }
                     }
                 }
             }
         }
+    }
+
+    private func filesAppURL(for userVisibleURL: URL) -> URL? {
+        guard userVisibleURL.isFileURL else {
+            return userVisibleURL
+        }
+        var components = URLComponents(url: userVisibleURL, resolvingAgainstBaseURL: false)
+        components?.scheme = "shareddocuments"
+        return components?.url
     }
 
     private func showFileProviderError(_ message: String) {
