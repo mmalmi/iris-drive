@@ -72,5 +72,5 @@ fn status_lists_default_blossom_server_as_backup_target() {
         .expect("default Blossom server should be visible in backup targets");
 
     assert_eq!(target["enabled"], true);
-    assert_eq!(target["label"], "Blossom fallback");
+    assert_eq!(target["label"], "Blossom remote");
 }

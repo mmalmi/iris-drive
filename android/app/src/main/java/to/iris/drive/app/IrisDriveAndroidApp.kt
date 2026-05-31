@@ -813,7 +813,7 @@ private fun ProviderPanel(
 private fun BackupsPanel(backups: List<BackupState>) {
     CardSection(title = "Backups", trailing = "${backups.size}") {
         if (backups.isEmpty()) {
-            Text("No fallback servers configured", color = Muted)
+            Text("No Blossom remotes configured", color = Muted)
         }
         backups.forEach { backup ->
             Text(backup.label, fontWeight = FontWeight.SemiBold)

@@ -29,7 +29,7 @@ pub enum ConfigError {
 pub const DEFAULT_RELAYS: &[&str] = hashtree_config::DEFAULT_RELAYS;
 
 /// Default Blossom servers for new installs — HTTP blob hosts used as a
-/// fallback/cache for htree block replication. Direct FIPS transfer between
+/// remote cache for htree block replication. Direct FIPS transfer between
 /// authorized Iris Drive instances is preferred when peers are online.
 /// `upload.iris.to` rejects unencrypted uploads, matching Iris Drive's
 /// private-by-default model.

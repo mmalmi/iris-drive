@@ -2,7 +2,7 @@
 //!
 //! Nostr relay events carry Iris Drive metadata: the device roster and
 //! per-device root CIDs. This module moves the actual hashtree blocks directly
-//! between authorized devices. Blossom remains useful as a public fallback, but
+//! between authorized devices. Blossom remains useful as a public remote, but
 //! the local app should first ask peer instances over FIPS.
 
 use std::sync::{Arc, Mutex};

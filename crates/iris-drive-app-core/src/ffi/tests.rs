@@ -76,6 +76,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.sync.status, "running");
     assert!(!state.ui.relays.is_empty());
     assert!(!state.ui.backups.is_empty());
+    assert_eq!(state.ui.backups[0].label, "Blossom remote");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
 
     let state = app.dispatch(NativeAppAction::StartSync);

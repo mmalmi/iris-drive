@@ -24,7 +24,7 @@ equivalent to desktop.
 | Owner device revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |
 | Relay add/reset controls | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | Direct FIPS block sync | Yes | Yes | Yes | Harness daemon peer; app pending | Harness daemon peer; app pending |
-| Blossom fallback server list | Yes | Yes | Yes | Read-only list | Read-only list |
+| Blossom remote server list | Yes | Yes | Yes | Read-only list | Read-only list |
 | Hashtree config/block/root paths | Yes | Yes | Yes | App-group runtime/config/block paths | App files path only |
 | Tray/menu-bar control | Yes | Yes | Yes | N/A | N/A |
 | Close to tray/menu-bar | Yes | Yes | Yes | N/A | N/A |
@@ -57,8 +57,8 @@ The minimum parity smoke for native desktop shells is:
 8. Confirm the three native visible directories have matching path/content manifests and no unintended conflict copies.
 
 Block replication now tries direct hashtree-over-FIPS transfer between
-authorized Iris Drive instances first. Blossom remains configured as a
-fallback/cache path, not the primary sync transport.
+authorized Iris Drive instances first. Blossom remains configured as a remote
+cache path, not the primary direct sync transport.
 
 ## Mobile test target
 

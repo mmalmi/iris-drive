@@ -601,7 +601,7 @@ impl NativeAppRuntime {
             .blossom_servers
             .iter()
             .map(|server| UiBackup {
-                label: "Blossom fallback".to_owned(),
+                label: "Blossom remote".to_owned(),
                 state: "configured".to_owned(),
                 detail: server.clone(),
             })
@@ -2005,7 +2005,7 @@ fn default_backups() -> Vec<UiBackup> {
     DEFAULT_BLOSSOM_SERVERS
         .iter()
         .map(|server| UiBackup {
-            label: "Blossom fallback".to_owned(),
+            label: "Blossom remote".to_owned(),
             state: "configured".to_owned(),
             detail: (*server).to_owned(),
         })

@@ -61,7 +61,7 @@ No separate daemon process, no IPC — `iris-drive-app-core` links
   hashtree; it consumes it and contributes upstream.
 - **`~/src/fips`** — peer-to-peer transport. Iris Drive consumes it through
   hashtree/FIPS for direct block replication and keeps Blossom as an optional
-  fallback/cache.
+  remote cache.
 - **`~/src/squirreldisk`** — disk-usage pie chart analyzer. Reference only for
   the "what's using space" UI idea in Phase 7; not a code dependency. Look at
   it for visualization inspiration, no obligation to extract or reuse.

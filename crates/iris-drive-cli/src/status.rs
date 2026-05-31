@@ -254,7 +254,7 @@ fn visible_default_blossom_backup_targets(config: &AppConfig) -> Vec<BackupTarge
 pub(crate) fn backup_target_status(target: &BackupTarget) -> Value {
     let label = target.label.as_deref().or_else(|| {
         (target.kind == BackupTargetKind::Blossom && is_default_blossom_server(&target.target))
-            .then_some("Blossom fallback")
+            .then_some("Blossom remote")
     });
     json!({
         "id": target.id.as_str(),

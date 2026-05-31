@@ -288,7 +288,7 @@ fn backup_targets_can_be_added_listed_and_removed() {
             .iter()
             .any(|target| target["kind"] == "blossom"
                 && target["target"] == "https://upload.iris.to"
-                && target["label"] == "Blossom fallback")
+                && target["label"] == "Blossom remote")
     );
 
     let removed = run_json(dir.path(), &["backups", "remove", "https://backup.example"]);

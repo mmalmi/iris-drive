@@ -126,7 +126,8 @@ See the platform READMEs for focused instructions:
 - Imports local source trees into the persistent htree block store and exposes a
   merged virtual primary drive view through native provider bridges.
 - Replicates blocks directly over hashtree-over-[FIPS] between authorized
-  devices when peers are reachable; Blossom remains a fallback/cache path.
+  devices when peers are reachable; Blossom remains a configured remote/cache
+  path.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.
