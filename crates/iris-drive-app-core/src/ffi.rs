@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
+use hashtree_core::{Cid, NHashData, nhash_encode_full};
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(not(test))]
@@ -21,7 +22,7 @@ use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, DeviceRole, 
 use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::actions::NativeAppAction;
@@ -31,7 +32,10 @@ use crate::state::{
 };
 
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
+const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
+const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
+const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(not(test))]
 const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
 #[cfg(not(test))]
@@ -105,8 +109,8 @@ impl NativeAppRuntime {
         let mut state = NativeAppState::default();
         state.ui.paths = paths_for(&data_dir);
         state.ui.sync = UiSyncStatus {
-            running: false,
-            status: "paused".to_owned(),
+            running: true,
+            status: "running".to_owned(),
         };
 
         let mut runtime = Self {
@@ -162,9 +166,7 @@ impl NativeAppRuntime {
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
             NativeAppAction::ResetRelays => self.reset_relays(),
-            NativeAppAction::StartSync | NativeAppAction::RestartSync => {
-                self.set_sync_running(true);
-            }
+            NativeAppAction::StartSync | NativeAppAction::RestartSync => self.start_sync(),
             NativeAppAction::StopSync => self.set_sync_running(false),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
@@ -193,6 +195,8 @@ impl NativeAppRuntime {
         };
         if let Err(error) = self.finish_account_init(&account) {
             self.state.error = error;
+        } else {
+            self.set_sync_running(true);
         }
     }
 
@@ -218,6 +222,8 @@ impl NativeAppRuntime {
         };
         if let Err(error) = self.finish_account_init(&account) {
             self.state.error = error;
+        } else {
+            self.set_sync_running(true);
         }
     }
 
@@ -262,6 +268,8 @@ impl NativeAppRuntime {
         }
         if let Err(error) = self.finish_account_init(&account) {
             self.state.error = error;
+        } else {
+            self.set_sync_running(true);
         }
     }
 
@@ -556,7 +564,7 @@ impl NativeAppRuntime {
             backups: default_backups(),
             paths,
             sync,
-            snapshot_link: "https://drive.iris.to/snapshot/local".to_owned(),
+            snapshot_link: String::new(),
             ..UiState::default()
         };
 
@@ -592,7 +600,6 @@ impl NativeAppRuntime {
         };
 
         let Some(account) = config.account.as_ref() else {
-            update_snapshot_link(&mut self.state);
             return;
         };
         self.state.ui.account = Some(UiAccount {
@@ -605,9 +612,10 @@ impl NativeAppRuntime {
             device_link_invite: device_link_invite_url(account),
             inbound_device_link_requests: inbound_device_link_requests(account),
         });
-        self.state.ui.devices = devices_from_account(account, self.state.ui.sync.running);
+        let fips_status = load_native_fips_status(Path::new(&self.data_dir));
+        self.state.ui.devices = devices_from_account(account, fips_status.as_ref());
         self.refresh_device_actions();
-        update_snapshot_link(&mut self.state);
+        update_snapshot_link(&mut self.state, &config);
     }
 
     fn can_manage_devices(&self) -> bool {
@@ -650,6 +658,19 @@ impl NativeAppRuntime {
             running,
             status: if running { "running" } else { "paused" }.to_owned(),
         };
+    }
+
+    fn start_sync(&mut self) {
+        self.set_sync_running(true);
+        match run_native_sync_once(&self.data_dir) {
+            Ok(report) => {
+                self.state.ui.sync.status = native_sync_status_label(&report).to_owned();
+            }
+            Err(error) => {
+                self.state.ui.sync.status = "sync error".to_owned();
+                self.state.error = format!("syncing drive: {error:#}");
+            }
+        }
     }
 
     fn add_root(&mut self, name: &str, local_path: &str) {
@@ -1051,6 +1072,39 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
     }))
 }
 
+fn run_native_sync_once(data_dir: &str) -> anyhow::Result<iris_drive_core::NetworkSyncReport> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(iris_drive_core::network_sync_once(
+        Path::new(data_dir),
+        &[],
+        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+    ))
+}
+
+#[cfg(test)]
+fn run_native_sync_once_with_drive_root_events_for_test(
+    config_dir: &Path,
+    events: &[nostr_sdk::Event],
+) -> anyhow::Result<iris_drive_core::DriveRootEventApplyReport> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let report = iris_drive_core::apply_drive_root_events(config_dir, &mut config, events)?;
+        config.save(config_path_in(config_dir))?;
+        Ok(report)
+    })
+}
+
+fn native_sync_status_label(report: &iris_drive_core::NetworkSyncReport) -> &'static str {
+    if report.fips_download.is_some() || report.blossom_download.is_some() {
+        "synced"
+    } else if report.drive_root_events_applied > 0 || report.files_root_event_outcome == "applied" {
+        "root synced"
+    } else {
+        "up to date"
+    }
+}
+
 fn authorized_device_pubkeys(state: &iris_drive_core::AccountState) -> Vec<String> {
     let mut devices: Vec<String> = state
         .app_keys
@@ -1273,7 +1327,11 @@ fn run_device_link_exchange(data_dir: &str) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("building device-link exchange runtime: {error}"))?;
-    runtime.block_on(run_device_link_exchange_async(data_dir))
+    let result = runtime.block_on(run_device_link_exchange_async(data_dir));
+    if let Err(error) = &result {
+        write_native_fips_error(Path::new(data_dir), error);
+    }
+    result
 }
 
 #[cfg(not(test))]
@@ -1296,6 +1354,9 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
     let sync = iris_drive_core::FipsBlockSync::start(&device, local, &startup_config)
         .await
         .map_err(|error| format!("starting FIPS device-link exchange: {error}"))?;
+    if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
+        tracing::warn!(error = %error, "writing native FIPS status failed");
+    }
     let mut app_messages = sync.subscribe_app_messages();
     let mut sent_requests = BTreeMap::new();
     let mut sent_rosters = BTreeMap::new();
@@ -1368,6 +1429,9 @@ async fn drive_device_link_exchange_tick(
         acked_rosters,
     )
     .await?;
+    if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
+        tracing::warn!(error = %error, "writing native FIPS status failed");
+    }
     Ok(true)
 }
 
@@ -1691,6 +1755,27 @@ async fn handle_native_device_link_roster(
         )
         .await?;
     }
+    if accepted {
+        match iris_drive_core::sync_once_with_fips(
+            config_dir,
+            &[],
+            std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+            Some(sync),
+        )
+        .await
+        {
+            Ok(report) => tracing::debug!(
+                drive_root_events_applied = report.drive_root_events_applied,
+                fips_download = report.fips_download.is_some(),
+                blossom_download = report.blossom_download.is_some(),
+                "synced drive roots after native device-link roster"
+            ),
+            Err(error) => tracing::warn!(
+                error = %error,
+                "syncing drive roots after native device-link roster failed"
+            ),
+        }
+    }
     Ok(true)
 }
 
@@ -1784,6 +1869,85 @@ fn device_link_exchange_needed(state: &iris_drive_core::AccountState) -> bool {
     true
 }
 
+#[derive(Debug, Deserialize)]
+struct NativeFipsStatus {
+    #[serde(default)]
+    running: bool,
+    #[serde(default)]
+    endpoint_npub: Option<String>,
+    #[serde(default)]
+    updated_at: u64,
+    #[serde(default)]
+    connected_peers: Vec<String>,
+    #[serde(default)]
+    mesh_peers: Vec<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl NativeFipsStatus {
+    fn is_fresh(&self) -> bool {
+        self.running
+            && self.error.as_deref().unwrap_or_default().is_empty()
+            && unix_now_seconds().saturating_sub(self.updated_at) <= NATIVE_FIPS_STATUS_FRESH_SECS
+    }
+}
+
+fn native_fips_status_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(NATIVE_FIPS_STATUS_FILE_NAME)
+}
+
+fn load_native_fips_status(config_dir: &Path) -> Option<NativeFipsStatus> {
+    let data = std::fs::read(native_fips_status_path(config_dir)).ok()?;
+    serde_json::from_slice(&data).ok()
+}
+
+#[cfg(not(test))]
+async fn write_native_fips_status(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let value = json!({
+        "running": error.is_none(),
+        "updated_at": unix_now_seconds(),
+        "endpoint_npub": sync.endpoint_npub(),
+        "discovery_scope": sync.discovery_scope(),
+        "authorized_peers": sync.authorized_peer_ids().await,
+        "connected_peers": sync.connected_peer_ids().await,
+        "mesh_peers": sync.mesh_peer_ids().await,
+        "peer_statuses": sync.fips_peer_statuses().await,
+        "error": error,
+    });
+    write_native_fips_status_value(config_dir, &value)
+}
+
+#[cfg(not(test))]
+fn write_native_fips_error(config_dir: &Path, error: &str) {
+    let value = json!({
+        "running": false,
+        "updated_at": unix_now_seconds(),
+        "connected_peers": [],
+        "mesh_peers": [],
+        "peer_statuses": [],
+        "error": error,
+    });
+    if let Err(write_error) = write_native_fips_status_value(config_dir, &value) {
+        tracing::warn!(error = %write_error, "writing native FIPS error failed");
+    }
+}
+
+#[cfg(not(test))]
+fn write_native_fips_status_value(
+    config_dir: &Path,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let path = native_fips_status_path(config_dir);
+    let data =
+        serde_json::to_vec(value).map_err(|error| format!("encoding FIPS status: {error}"))?;
+    std::fs::write(&path, data).map_err(|error| format!("writing {}: {error}", path.display()))
+}
+
 fn paths_for(data_dir: &str) -> UiPaths {
     UiPaths {
         data_dir: data_dir.to_owned(),
@@ -1865,31 +2029,42 @@ fn device_role_label(role: DeviceRole) -> &'static str {
 
 fn devices_from_account(
     state: &iris_drive_core::AccountState,
-    sync_running: bool,
+    fips_status: Option<&NativeFipsStatus>,
 ) -> Vec<UiDevice> {
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
+    let fips_is_fresh = fips_status.is_some_and(NativeFipsStatus::is_fresh);
 
     app_keys
         .devices
         .iter()
         .map(|device| {
             let is_current = device.pubkey == state.device_pubkey;
+            let device_npub = account_npub(&device.pubkey);
+            let is_online = fips_is_fresh
+                && fips_status.is_some_and(|status| {
+                    if is_current {
+                        return status
+                            .endpoint_npub
+                            .as_deref()
+                            .is_none_or(|endpoint| endpoint == device_npub);
+                    }
+                    status
+                        .connected_peers
+                        .iter()
+                        .any(|peer| peer == &device_npub)
+                        || status.mesh_peers.iter().any(|peer| peer == &device_npub)
+                });
             let role = device_role_label(device.role).to_owned();
             UiDevice {
-                pubkey: account_npub(&device.pubkey),
+                pubkey: device_npub.clone(),
                 label: device.label.clone().unwrap_or_default(),
-                state: if role == "admin" {
-                    "Admin"
-                } else {
-                    "Authorized"
-                }
-                .to_owned(),
+                state: "Linked".to_owned(),
                 role,
-                detail: account_npub(&device.pubkey),
+                detail: device_npub,
                 is_current_device: is_current,
-                is_online: sync_running,
+                is_online,
                 can_revoke: false,
                 can_appoint_admin: false,
                 can_demote_admin: false,
@@ -2108,13 +2283,37 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn update_snapshot_link(state: &mut NativeAppState) {
-    let owner = state
-        .ui
+fn update_snapshot_link(state: &mut NativeAppState, config: &AppConfig) {
+    state.ui.snapshot_link = current_primary_root_cid(config)
+        .and_then(|root| drive_iris_to_nhash_url_for_root(&root))
+        .unwrap_or_default();
+}
+
+fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
+    config
         .account
         .as_ref()
-        .map_or("local", |account| account.owner_pubkey.as_str());
-    state.ui.snapshot_link = format!("https://drive.iris.to/snapshot/{owner}");
+        .and_then(|account| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
+                .map(|root| root.root_cid.clone())
+        })
+        .or_else(|| {
+            config
+                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+                .and_then(|drive| drive.last_root_cid.clone())
+        })
+}
+
+fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
+    let cid = Cid::parse(root_cid).ok()?;
+    let nhash = nhash_encode_full(&NHashData {
+        hash: cid.hash,
+        decrypt_key: cid.key,
+    })
+    .ok()?;
+    Some(format!("https://drive.iris.to/#/{nhash}"))
 }
 
 #[cfg(test)]

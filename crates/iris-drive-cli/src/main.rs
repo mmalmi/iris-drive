@@ -163,7 +163,6 @@ fn run_cli() -> ExitCode {
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
-        Command::Materialize { dir } => cmd_materialize(&config_dir, &dir),
         Command::List { at } => cmd_list(&config_dir, at),
         Command::Provider(command) => cmd_provider(&config_dir, command),
         Command::History { limit } => cmd_history(&config_dir, limit),
@@ -464,7 +463,7 @@ mod daemon_lock_tests {
     }
 
     #[tokio::test]
-    async fn direct_mesh_sync_events_skip_materialized_only_roots() {
+    async fn direct_mesh_sync_events_skip_local_only_roots() {
         let cfg_dir = tempdir().unwrap();
         let work = tempdir().unwrap();
         cmd_init(
@@ -476,7 +475,7 @@ mod daemon_lock_tests {
         )
         .unwrap();
 
-        std::fs::write(work.path().join("from-peer.txt"), b"materialized copy").unwrap();
+        std::fs::write(work.path().join("from-peer.txt"), b"local-only copy").unwrap();
         let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
         daemon.import_source_dir(work.path()).await.unwrap();
 
@@ -490,7 +489,7 @@ mod daemon_lock_tests {
             .device_roots
             .get_mut(&state.device_pubkey)
             .unwrap()
-            .materialized_only = true;
+            .local_only = true;
         config.upsert_drive(drive);
         config.save(config_path_in(cfg_dir.path())).unwrap();
 
@@ -503,7 +502,7 @@ mod daemon_lock_tests {
                 .iter()
                 .all(|event| !event.key.starts_with("drive-root:")
                     && !event.key.starts_with("files-root:")),
-            "materialized-only roots must not be announced as local edits: {events:#?}"
+            "local-only roots must not be announced as local edits: {events:#?}"
         );
     }
 
@@ -532,7 +531,7 @@ mod daemon_lock_tests {
             .unwrap()
             .clone();
 
-        std::fs::write(work.path().join("peer.txt"), b"materialized peer").unwrap();
+        std::fs::write(work.path().join("peer.txt"), b"local-only peer").unwrap();
         let account = daemon.config().account.as_ref().unwrap().clone();
         let first_cid = Cid::parse(&first.root_cid).unwrap();
         let second_time = first_root.published_at + 1;
@@ -542,7 +541,7 @@ mod daemon_lock_tests {
             device_id: account.device_pubkey.clone(),
             device_seq: first_root.device_seq + 1,
             dck_generation: first_root.dck_generation,
-            materialized_only: true,
+            local_only: true,
             parents: vec![iris_drive_core::RootParent {
                 device_id: account.device_pubkey.clone(),
                 device_seq: first_root.device_seq,
@@ -587,7 +586,7 @@ mod daemon_lock_tests {
             events
                 .iter()
                 .all(|event| !event.key.contains(&second.to_string())),
-            "materialized parent root must stay local-only: {events:#?}"
+            "local-only parent root must stay local-only: {events:#?}"
         );
     }
 

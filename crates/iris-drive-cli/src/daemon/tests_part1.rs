@@ -324,7 +324,7 @@ fn windows_cloud_detects_missing_previous_local_state_after_rename_to_event() {
 
 #[test]
 fn windows_cloud_recreated_placeholder_counts_as_missing_local_file() {
-    let materialized = WindowsCloudLocalStateEntry {
+    let projected = WindowsCloudLocalStateEntry {
         path: "renames/src.txt".to_string(),
         kind: "file".to_string(),
         size: 7,
@@ -346,9 +346,9 @@ fn windows_cloud_recreated_placeholder_counts_as_missing_local_file() {
         provider_version: None,
     };
 
-    assert!(windows_cloud_previous_local_state_reparse_counts_as_missing(&materialized, true));
+    assert!(windows_cloud_previous_local_state_reparse_counts_as_missing(&projected, true));
     assert!(
-        !windows_cloud_previous_local_state_reparse_counts_as_missing(&materialized, false)
+        !windows_cloud_previous_local_state_reparse_counts_as_missing(&projected, false)
     );
     assert!(!windows_cloud_previous_local_state_reparse_counts_as_missing(&placeholder, true));
     assert!(!windows_cloud_previous_local_state_reparse_counts_as_missing(&directory, true));

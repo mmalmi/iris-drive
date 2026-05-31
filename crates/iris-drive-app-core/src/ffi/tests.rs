@@ -1,8 +1,10 @@
 use super::{FfiApp, normalize_pubkey};
 use crate::NativeAppAction;
 use hashtree_provider::{HashTreeProviderFs, ProviderFs};
-use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
+use iris_drive_core::{AppConfig, DeviceRootRef, Drive};
+use nostr_sdk::JsonUtil;
+use std::path::Path;
 
 #[test]
 fn dispatch_adds_updates_and_removes_roots() {
@@ -69,18 +71,55 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.devices.len(), 1);
     assert_eq!(state.ui.devices[0].label, "Pixel");
     assert_eq!(state.ui.devices[0].role, "admin");
-    assert!(state.ui.snapshot_link.contains(&account.owner_pubkey));
+    assert!(state.ui.snapshot_link.is_empty());
+    assert!(state.ui.sync.running);
+    assert_eq!(state.ui.sync.status, "running");
     assert!(!state.ui.relays.is_empty());
     assert!(!state.ui.backups.is_empty());
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
 
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
-    assert_eq!(state.ui.sync.status, "running");
+    assert_eq!(state.ui.sync.status, "up to date");
 
     let state = app.dispatch(NativeAppAction::StopSync);
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
+}
+
+#[test]
+fn snapshot_link_uses_drive_iris_nhash_route() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Pixel".to_owned(),
+    });
+    let account = created.ui.account.as_ref().expect("account exists");
+    let root_cid = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
+                    :1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+        .replace(char::is_whitespace, "");
+
+    let config_path = config_path_in(dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let mut drive = Drive::primary(&account.owner_pubkey);
+    drive.last_root_cid = Some(root_cid.clone());
+    drive.device_roots.insert(
+        account.device_pubkey.clone(),
+        DeviceRootRef::legacy(root_cid, 1, 0),
+    );
+    config.upsert_drive(drive);
+    config.save(&config_path).unwrap();
+
+    let refreshed = app.refresh();
+
+    assert!(
+        refreshed
+            .ui
+            .snapshot_link
+            .starts_with("https://drive.iris.to/#/nhash1")
+    );
+    assert!(!refreshed.ui.snapshot_link.contains("/snapshot/"));
 }
 
 #[test]
@@ -208,6 +247,72 @@ fn owner_can_approve_and_revoke_linked_devices() {
 }
 
 #[test]
+fn native_fips_status_drives_device_online_presence() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let owner_account = owner.ui.account.unwrap();
+    let owner_npub = owner_account.owner_pubkey;
+    let current_device = owner_account.device_pubkey;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        owner_pubkey: owner_npub,
+        device_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.account.unwrap();
+    let linked_device = linked_account.device_pubkey;
+
+    let approved = app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.device_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty());
+    assert!(approved.ui.devices.iter().all(|device| !device.is_online));
+
+    write_native_fips_status_fixture(
+        owner_dir.path(),
+        &current_device,
+        &[linked_device.as_str()],
+        &[],
+        super::unix_now_seconds(),
+    );
+    let refreshed = app.refresh();
+    let current = refreshed
+        .ui
+        .devices
+        .iter()
+        .find(|device| device.pubkey == current_device)
+        .expect("current device in roster");
+    assert!(current.is_current_device);
+    assert!(current.is_online);
+    assert_eq!(current.state, "Linked");
+    let linked = refreshed
+        .ui
+        .devices
+        .iter()
+        .find(|device| device.pubkey == linked_device)
+        .expect("linked device in roster");
+    assert!(!linked.is_current_device);
+    assert!(linked.is_online);
+    assert_eq!(linked.state, "Linked");
+
+    write_native_fips_status_fixture(
+        owner_dir.path(),
+        &current_device,
+        &[],
+        &[],
+        super::unix_now_seconds().saturating_sub(120),
+    );
+    let stale = app.refresh();
+    assert!(stale.ui.devices.iter().all(|device| !device.is_online));
+}
+
+#[test]
 fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
@@ -263,6 +368,25 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     assert!(approved.ui.devices.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
+}
+
+fn write_native_fips_status_fixture(
+    dir: &Path,
+    endpoint_npub: &str,
+    connected_peers: &[&str],
+    mesh_peers: &[&str],
+    updated_at: u64,
+) {
+    let path = dir.join(super::NATIVE_FIPS_STATUS_FILE_NAME);
+    let value = serde_json::json!({
+        "running": true,
+        "updated_at": updated_at,
+        "endpoint_npub": endpoint_npub,
+        "connected_peers": connected_peers,
+        "mesh_peers": mesh_peers,
+        "error": null,
+    });
+    std::fs::write(path, value.to_string()).unwrap();
 }
 
 #[test]
@@ -329,4 +453,115 @@ fn import_file_action_writes_shared_file_into_provider_root() {
         let bytes = provider.read(&path, 0, item.size).await.unwrap();
         assert_eq!(bytes, b"from share sheet");
     });
+}
+
+#[test]
+fn native_sync_applies_remote_drive_root_into_provider_listing() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner_state = owner_app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let owner_account = owner_state.ui.account.unwrap();
+
+    let source_dir = tempfile::tempdir().unwrap();
+    std::fs::write(source_dir.path().join("owner-note.txt"), b"from owner").unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let mut daemon = iris_drive_core::Daemon::open(owner_dir.path()).unwrap();
+        daemon.import_source_dir(source_dir.path()).await.unwrap();
+    });
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        owner_pubkey: owner_account.device_link_invite,
+        device_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.account.unwrap();
+    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.device_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let app_keys_event = nostr_sdk::Event::from_json(
+        &owner_config
+            .account
+            .as_ref()
+            .unwrap()
+            .app_keys_event
+            .as_ref()
+            .unwrap()
+            .event_json,
+    )
+    .unwrap();
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut linked_config, &app_keys_event)
+        .unwrap();
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .unwrap();
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_account_state = owner_config.account.as_ref().unwrap();
+    let owner =
+        iris_drive_core::Account::load(owner_account_state.clone(), owner_dir.path()).unwrap();
+    let drive = owner_config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .unwrap();
+    let root = drive
+        .device_roots
+        .get(&owner_account_state.device_pubkey)
+        .unwrap();
+    let authorized = owner_account_state
+        .app_keys
+        .as_ref()
+        .unwrap()
+        .devices
+        .iter()
+        .map(|device| device.pubkey.clone())
+        .collect::<Vec<_>>();
+    let drive_root_event = iris_drive_core::nostr_events::build_drive_root_event(
+        owner.device.keys(),
+        &owner_account_state.owner_pubkey,
+        iris_drive_core::PRIMARY_DRIVE_ID,
+        root,
+        &authorized,
+    )
+    .unwrap();
+    copy_blocks(owner_dir.path(), linked_dir.path());
+
+    super::run_native_sync_once_with_drive_root_events_for_test(
+        linked_dir.path(),
+        &[drive_root_event],
+    )
+    .unwrap();
+
+    let provider = super::native_provider_list_json(&linked_dir.path().display().to_string());
+    let entries = provider["entries"].as_array().unwrap();
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["path"] == "owner-note.txt")
+    );
+}
+
+fn copy_blocks(from: &Path, to: &Path) {
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let from_path = entry.path();
+            let to_path = to.join(entry.file_name());
+            if from_path.is_dir() {
+                copy_dir(&from_path, &to_path);
+            } else {
+                std::fs::copy(&from_path, &to_path).unwrap();
+            }
+        }
+    }
+
+    copy_dir(&from.join("blocks"), &to.join("blocks"));
 }

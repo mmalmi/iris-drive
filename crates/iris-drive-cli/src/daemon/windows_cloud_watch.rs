@@ -228,9 +228,9 @@ async fn import_windows_cloud_root_changes_and_publish(
                     }
                 }
                 let local_paths = if full {
-                    windows_cloud_local_materialized_paths(sync_root)?
+                    windows_cloud_local_projected_paths(sync_root)?
                 } else {
-                    windows_cloud_recent_local_materialized_paths(sync_root)?
+                    windows_cloud_recent_local_projected_paths(sync_root)?
                 };
                 for path in local_paths {
                     if apply_windows_cloud_upsert(&provider, sync_root, &path, &placeholder_paths)

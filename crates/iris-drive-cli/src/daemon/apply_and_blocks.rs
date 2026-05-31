@@ -72,8 +72,8 @@ pub(crate) async fn apply_one_event(
             config.clone(),
             root_cid_to_pull,
             fips_blocks,
-            followup.materialize,
-            "materialized_drive_root",
+            followup.refresh_projection,
+            "projected_drive_root",
             mount_refresh,
         );
         return Ok(());
@@ -147,7 +147,7 @@ pub(crate) fn apply_files_root_event(
         root_cid_to_pull,
         fips_blocks,
         was_applied,
-        "materialized_files_root",
+        "projected_files_root",
         mount_refresh,
     );
     Ok(())
@@ -156,7 +156,7 @@ pub(crate) fn apply_files_root_event(
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct DriveRootFollowupPlan {
     pull_blocks: bool,
-    materialize: bool,
+    refresh_projection: bool,
 }
 
 fn drive_root_followup_plan(
@@ -166,7 +166,7 @@ fn drive_root_followup_plan(
 ) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
-        materialize: was_applied || (stale_current_root && !root_blocks_already_synced),
+        refresh_projection: was_applied || (stale_current_root && !root_blocks_already_synced),
     }
 }
 
@@ -186,7 +186,7 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
         .drives
         .iter()
         .flat_map(|drive| drive.device_roots.values())
-        .filter(|root| !root.materialized_only)
+        .filter(|root| !root.local_only)
         .filter(|root| !root_has_successful_block_sync(config_dir, &root.root_cid))
         .map(|root| root.root_cid.clone())
         .collect::<BTreeSet<_>>()
@@ -200,21 +200,21 @@ pub(crate) fn spawn_root_apply_followup(
     config: AppConfig,
     root_cid_to_pull: Option<String>,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
-    should_materialize: bool,
-    materialize_event: &'static str,
+    should_refresh_projection: bool,
+    projection_event: &'static str,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
 ) {
-    if root_cid_to_pull.is_none() && !should_materialize {
+    if root_cid_to_pull.is_none() && !should_refresh_projection {
         return;
     }
-    let expected_materialize_root_key =
-        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_materialize);
+    let expected_projection_root_key =
+        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection);
 
     tokio::spawn(async move {
         if let Some(root_cid) = root_cid_to_pull {
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
-                if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref())
+                if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
                 {
                     println!(
                         "{}",
@@ -229,7 +229,7 @@ pub(crate) fn spawn_root_apply_followup(
                     tokio::time::sleep(std::time::Duration::from_secs(*delay_secs)).await;
                     if root_apply_followup_is_stale(
                         &config_dir,
-                        expected_materialize_root_key.as_ref(),
+                        expected_projection_root_key.as_ref(),
                     ) {
                         println!(
                             "{}",
@@ -274,20 +274,20 @@ pub(crate) fn spawn_root_apply_followup(
                         "event": "block_download_error",
                         "root_cid": root_cid,
                         "error": error,
-                        "materialize_skipped": should_materialize,
+                        "projection_refresh_skipped": should_refresh_projection,
                     })
                 );
                 return;
             }
         }
 
-        if should_materialize {
-            if root_apply_followup_is_stale(&config_dir, expected_materialize_root_key.as_ref()) {
+        if should_refresh_projection {
+            if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
                 println!(
                     "{}",
                     json!({
-                        "event": "root_apply_materialize_skipped_stale",
-                        "root_key": root_apply_followup_key_label(expected_materialize_root_key.as_ref()),
+                        "event": "root_apply_projection_refresh_skipped_stale",
+                        "root_key": root_apply_followup_key_label(expected_projection_root_key.as_ref()),
                     })
                 );
                 return;
@@ -301,7 +301,7 @@ pub(crate) fn spawn_root_apply_followup(
                             "{}",
                             json!({
                                 "event": "windows_cloud_projection_refreshed",
-                                "trigger": materialize_event,
+                                "trigger": projection_event,
                                 "root": sync_root.display().to_string(),
                                 "entry_count": report.entry_count,
                                 "removed_paths": report.removed_paths,
@@ -313,7 +313,7 @@ pub(crate) fn spawn_root_apply_followup(
                         "{}",
                         json!({
                             "event": "windows_cloud_projection_refresh_error",
-                            "trigger": materialize_event,
+                            "trigger": projection_event,
                             "root": sync_root.display().to_string(),
                             "error": format!("{error:#}"),
                         })
@@ -321,7 +321,7 @@ pub(crate) fn spawn_root_apply_followup(
                 }
             }
             if let Some(tx) = mount_refresh {
-                if tx.send(materialize_event).await.is_err() {
+                if tx.send(projection_event).await.is_err() {
                     println!(
                         "{}",
                         json!({"event": "mount_refresh_error", "error": "mount refresh worker stopped"})

@@ -250,7 +250,7 @@ pub(crate) fn cmd_daemon(
             None,
             fips_blocks.clone(),
             true,
-            "startup_materialized",
+            "startup_projection",
             mount_refresh_tx.clone(),
         );
         spawn_initial_publish(

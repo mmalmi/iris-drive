@@ -161,22 +161,6 @@ pub(crate) async fn start_fips_block_sync(
         .context("starting direct FIPS block sync")
 }
 
-pub(crate) async fn download_roots_over_fips(
-    fips: &FsFipsBlockSync,
-    root_cid_strs: &[String],
-    policy: FipsDownloadPolicy,
-) -> Result<DownloadReport> {
-    let mut totals = DownloadReport::default();
-    for cid_str in root_cid_strs {
-        let cid = Cid::parse(cid_str).with_context(|| format!("parsing root cid {cid_str}"))?;
-        let report = download_tree_over_fips_with_retry(fips, &cid, policy)
-            .await
-            .with_context(|| format!("downloading tree over FIPS for {cid_str}"))?;
-        add_download_report(&mut totals, report);
-    }
-    Ok(totals)
-}
-
 pub(crate) async fn download_tree_over_fips_with_retry(
     fips: &FsFipsBlockSync,
     root: &Cid,

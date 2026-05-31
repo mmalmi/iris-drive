@@ -23,7 +23,7 @@ use crate::app_keys::{AppKeysEventRecord, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
     KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag,
-    build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
+    build_app_keys_event, build_drive_root_publish_event, build_private_hashtree_root_event,
     drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
     parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
@@ -229,7 +229,7 @@ pub fn apply_remote_files_root_event(
         device_seq: 0,
         parents: Vec::new(),
         observed: std::collections::BTreeMap::new(),
-        materialized_only: false,
+        local_only: false,
     };
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
@@ -319,7 +319,7 @@ pub async fn publish_drive_root(
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
 ) -> Result<nostr_sdk::EventId, RelayError> {
-    let event = build_drive_root_event(
+    let event = build_drive_root_publish_event(
         device_keys,
         owner_pubkey_hex,
         drive_id,

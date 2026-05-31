@@ -190,7 +190,7 @@ async fn root_metadata_is_embedded_under_hashtree_and_not_user_visible() {
         device_id: "device-a".into(),
         device_seq: 2,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: vec![RootParent {
             device_id: "device-a".into(),
             device_seq: 1,

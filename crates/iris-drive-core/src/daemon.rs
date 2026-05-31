@@ -121,8 +121,8 @@ pub enum DaemonError {
     Uninitialized,
     #[error("index: {0}")]
     Index(#[from] IndexError),
-    #[error("materialize: {0}")]
-    Materialize(#[from] crate::MaterializeError),
+    #[error("projection: {0}")]
+    Projection(#[from] crate::ProjectionError),
     #[error("sync cache: {0}")]
     SyncCache(#[from] SyncCacheError),
     #[error("store: {0}")]
@@ -565,7 +565,7 @@ impl Daemon {
                 || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
-            device_root.materialized_only = false;
+            device_root.local_only = false;
             updated
                 .device_roots
                 .insert(account.device_pubkey.clone(), device_root);
@@ -623,7 +623,7 @@ impl Daemon {
             device_id: account.device_pubkey.clone(),
             device_seq,
             dck_generation,
-            materialized_only: false,
+            local_only: false,
             parents,
             observed,
             created_at,

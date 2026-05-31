@@ -28,7 +28,7 @@ pub enum ItemKind {
     Directory,
 }
 
-/// A filesystem entry materialized for an OS adapter.
+/// A filesystem entry projected for an OS adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item<Id> {
     pub id: Id,

@@ -14,4 +14,15 @@ internal object NativeCore {
     external fun refreshJson(handle: Long): String
     external fun dispatchJson(handle: Long, actionJson: String): String
     external fun qrMatrixJson(text: String): String
+    external fun providerListJson(dataDir: String): String
+    external fun providerReadJson(dataDir: String, path: String, outputPath: String): String
+    external fun providerWriteJson(dataDir: String, path: String, sourcePath: String): String
+    external fun providerMkdirJson(dataDir: String, path: String): String
+    external fun providerDeleteJson(dataDir: String, path: String): String
+    external fun providerRenameJson(dataDir: String, oldPath: String, newPath: String): String
+    external fun providerImportSharedFileJson(
+        dataDir: String,
+        displayName: String,
+        sourcePath: String,
+    ): String
 }

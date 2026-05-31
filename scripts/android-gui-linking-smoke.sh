@@ -10,6 +10,7 @@ APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/ap
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-android-gui-owner)"
+OWNER_SOURCE_DIR="$(mktemp -d -t iris-drive-android-gui-owner-files)"
 OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
 OWNER_DAEMON_PID=""
 OWNER_FIPS_PORT=""
@@ -24,6 +25,7 @@ cleanup() {
     wait "$OWNER_DAEMON_PID" 2>/dev/null || true
   fi
   rm -rf "$OWNER_CONFIG"
+  rm -rf "$OWNER_SOURCE_DIR"
   rm -f "$OWNER_DAEMON_LOG"
 }
 trap cleanup EXIT
@@ -158,11 +160,41 @@ owner_inbound_request_url() {
     | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("account") or {}).get("inbound_device_link_requests") or []); print(next(r["url"] for r in reqs if r.get("device_npub") == expected and r.get("url"))) ' "$expected_device"
 }
 
+wait_for_android_authorized() {
+  local expected_device="$1"
+  local seconds="$2"
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; ui=s.get("ui",{}); a=ui.get("account") or {}; devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == expected and d.get("is_current_device") for d in devices); raise SystemExit(0 if ok else 1)' "$expected_device" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_for_android_provider_entry() {
+  local expected_path="$1"
+  local seconds="$2"
+  for _ in $(seq 1 "$((seconds * 2))"); do
+    "$ADB" -s "$serial" shell am start -n "$MAIN_ACTIVITY" \
+      --es "$DEBUG_ACTION_EXTRA" dump-provider-list >/dev/null
+    if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-provider-list.json 2>/dev/null \
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; entries=s.get("entries") or []; raise SystemExit(0 if any(e.get("path") == expected for e in entries) else 1)' "$expected_path" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 dump_android_debug_files() {
   echo "--- Android debug-state.json ---" >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
   echo "--- Android native-fips-status.json ---" >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/native-fips-status.json >&2 || true
+  echo "--- Android debug-provider-list.json ---" >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-provider-list.json >&2 || true
 }
 
 ADB="$(resolve_adb)"
@@ -203,6 +235,8 @@ fi
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
 owner_device_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$owner_json")"
+printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.txt"
+"$IDRIVE" --config-dir "$OWNER_CONFIG" import "$OWNER_SOURCE_DIR" >/dev/null
 owner_fips_addr="default-graph"
 owner_daemon_env=(
   IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true
@@ -270,7 +304,36 @@ if [[ "$roster_size" != "2" ]]; then
   exit 1
 fi
 
-echo "ANDROID_GUI_LINKING_SMOKE_OK"
+publish_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" publish --timeout 10)"
+if ! python3 -c 'import json,sys; s=json.load(sys.stdin); raise SystemExit(0 if s.get("published_drive_root") and not s.get("drive_root_publish_error") else 1)' <<<"$publish_json"; then
+  echo "FAIL: CLI owner did not publish the drive root containing android-smoke.txt." >&2
+  echo "$publish_json" >&2
+  exit 1
+fi
+
+if ! wait_for_android_authorized "$linked_device" "$LINK_TIMEOUT_SECS"; then
+  echo "FAIL: Android did not leave Waiting for approval after the owner approved its request." >&2
+  dump_android_debug_files
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+
+"$ADB" -s "$serial" shell am start -n "$MAIN_ACTIVITY" \
+  --es "$DEBUG_ACTION_EXTRA" start-sync \
+  "${android_fips_args[@]}" >/dev/null
+
+if ! wait_for_android_provider_entry "android-smoke.txt" "$LINK_TIMEOUT_SECS"; then
+  echo "FAIL: Android provider did not expose the owner file after approval and sync." >&2
+  dump_android_debug_files
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  echo "--- Owner publish JSON ---" >&2
+  echo "$publish_json" >&2
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+
+echo "ANDROID_GUI_LINKING_AND_SYNC_SMOKE_OK"
 echo "serial=$serial"
 echo "owner_config=$OWNER_CONFIG"
 echo "owner_fips_addr=$owner_fips_addr"

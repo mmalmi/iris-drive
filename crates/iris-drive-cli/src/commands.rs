@@ -137,11 +137,6 @@ pub(crate) enum Command {
         /// Source directory to import once.
         dir: PathBuf,
     },
-    /// Materialize the merged primary drive into a normal folder.
-    Materialize {
-        /// Directory to update.
-        dir: PathBuf,
-    },
     /// List the merged view of the primary drive — files across every
     /// authorized device's tree with LWW resolution applied. On a
     /// single-device install this is just that device's tree.
@@ -390,8 +385,8 @@ pub(crate) enum ProviderCmd {
         output: PathBuf,
     },
     /// Export the current virtual root into a provider-owned private cache.
-    #[command(name = "materialize-cache", hide = true)]
-    MaterializeCache {
+    #[command(name = "hydrate-cache", hide = true)]
+    HydrateCache {
         /// Cache directory to update.
         dir: PathBuf,
     },

@@ -4,8 +4,9 @@ use crate::account::Account;
 use crate::app_keys::DeviceEntry;
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
+use crate::merge::DeviceFileEntry;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
-use hashtree_core::{HashTreeConfig, MemoryStore};
+use hashtree_core::{HashTreeConfig, MemoryStore, sha256};
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -47,7 +48,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
         device_id: account.state.device_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 1,
@@ -119,7 +120,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         device_id: remote_device.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,
@@ -135,7 +136,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         device_id: account.state.device_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::from([(
             remote_device.clone(),
@@ -218,7 +219,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
         device_id: account.state.device_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 1,
@@ -363,7 +364,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         device_id: account.state.device_pubkey.clone(),
         device_seq: 2,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 10,
@@ -378,7 +379,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         device_id: peer_device.clone(),
         device_seq: 2,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: vec![RootParent {
             device_id: peer_device.clone(),
             device_seq: 1,
@@ -467,7 +468,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
 }
 
 #[tokio::test]
-async fn primary_merged_view_ignores_materialized_root_publish_time() {
+async fn primary_merged_view_ignores_local_only_root_publish_time() {
     let cfg_dir = tempdir().unwrap();
     let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
@@ -483,7 +484,7 @@ async fn primary_merged_view_ignores_materialized_root_publish_time() {
         device_id: account.state.device_pubkey.clone(),
         device_seq: 2,
         dck_generation: 1,
-        materialized_only: true,
+        local_only: true,
         parents: vec![RootParent {
             device_id: account.state.device_pubkey.clone(),
             device_seq: 1,
@@ -494,7 +495,7 @@ async fn primary_merged_view_ignores_materialized_root_publish_time() {
     };
     let owner_mirror = index_device_note_root_with_meta(
         &tree,
-        b"materialized mirror",
+        b"local-only mirror",
         20,
         owner_mirror_meta.clone(),
     )
@@ -550,7 +551,7 @@ async fn index_device_note_root(
         device_id: device_id.to_string(),
         device_seq,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: published_at,

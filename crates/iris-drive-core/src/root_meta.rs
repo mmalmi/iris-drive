@@ -29,8 +29,10 @@ pub struct DriveRootMeta {
     pub device_id: String,
     pub device_seq: u64,
     pub dck_generation: u64,
+    /// Local bookkeeping root that should not be announced as this
+    /// device's own edit.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub materialized_only: bool,
+    pub local_only: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<RootParent>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

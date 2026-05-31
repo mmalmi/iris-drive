@@ -1,17 +1,21 @@
 package to.iris.drive.app
 
 import android.content.Context
+import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
@@ -26,9 +30,11 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.core.SyncState
 
 @RunWith(AndroidJUnit4::class)
 class IrisDriveAndroidGuiFlowTest {
@@ -108,13 +114,72 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("driveContent").performScrollToNode(hasTestTag("addDeviceButton"))
         compose.onNodeWithTag("addDeviceButton").activate()
-        compose.onNodeWithTag("manualDeviceId").assertIsDisplayed().performTextInput(linked.devicePubkey)
-        compose.onNodeWithTag("manualDeviceName").assertIsDisplayed().performTextInput("Android UI linked")
+        compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
+            .performTextInput(linked.devicePubkey)
+        compose.onNodeWithTag("manualDeviceName").performScrollTo().assertIsDisplayed()
+            .performTextInput("Android UI linked")
         compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().activate()
 
         val updated = appState(owner.handle)
         assertEquals(2, updated.devices.size)
         assertTrue(updated.devices.any { it.label == "Android UI linked" })
+    }
+
+    @Test
+    fun documentsProviderListsNativeProviderRoot() {
+        cleanTargetFilesDir()
+        val handle = NativeCore.appNew(context.filesDir.absolutePath, "ui-test").also(nativeHandles::add)
+        dispatch(handle, NativeActions.createProfile("Android UI provider"))
+        val source = File(context.cacheDir, "native-provider-source.txt")
+        source.writeText("from native provider")
+
+        val write = JSONObject(
+            NativeCore.providerWriteJson(
+                context.filesDir.absolutePath,
+                "provider-note.txt",
+                source.absolutePath,
+            ),
+        )
+        assertTrue(write.optString("error"), write.optString("error").isBlank())
+
+        val uri = DocumentsContract.buildChildDocumentsUri(
+            context.getString(R.string.documents_provider_authority),
+            "root",
+        )
+        context.contentResolver.query(
+            uri,
+            arrayOf(Document.COLUMN_DISPLAY_NAME),
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            assertTrue(cursor != null)
+            val names = buildList {
+                while (cursor!!.moveToNext()) {
+                    add(cursor.getString(0))
+                }
+            }
+            assertTrue(names.toString(), names.contains("provider-note.txt"))
+        }
+    }
+
+    @Test
+    fun syncPanelShowsOnlyTheAvailableAction() {
+        val owner = createOwnerProfile("Android UI owner")
+        val running = appState(owner.handle)
+
+        val stateFlow = render(state = running)
+
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Pause"))
+        compose.onNodeWithText("Pause").assertIsDisplayed()
+        compose.onAllNodesWithText("Resume").assertCountEquals(0)
+
+        stateFlow.value = running.copy(sync = SyncState(running = false, status = "paused"))
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Resume"))
+        compose.onNodeWithText("Resume").assertIsDisplayed()
+        compose.onAllNodesWithText("Pause").assertCountEquals(0)
     }
 
     private fun render(
@@ -123,7 +188,7 @@ class IrisDriveAndroidGuiFlowTest {
         onLinkDevice: (String, String) -> Unit = { _, _ -> },
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
         onAddRoot: (String, String) -> Unit = { _, _ -> },
-    ) {
+    ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
         compose.setContent {
             IrisDriveAndroidApp(
@@ -148,6 +213,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onStopSync = {},
             )
         }
+        return stateFlow
     }
 
     private fun createOwnerProfile(label: String): TestProfile {
@@ -177,6 +243,10 @@ class IrisDriveAndroidGuiFlowTest {
         val dir = File(context.cacheDir, "iris-drive-ui-${UUID.randomUUID()}")
         dir.mkdirs()
         return NativeCore.appNew(dir.absolutePath, "ui-test").also(nativeHandles::add)
+    }
+
+    private fun cleanTargetFilesDir() {
+        context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
     }
 
     private fun dispatch(handle: Long, action: String): AppState {

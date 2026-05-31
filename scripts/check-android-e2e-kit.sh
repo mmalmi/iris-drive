@@ -59,7 +59,7 @@ require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Add Device"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy owner key"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open in Files"
-require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Open snapshot link"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "View on drive.iris.to"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Reset relay"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Text(\"Setup\")"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy request link"

@@ -600,6 +600,61 @@ fn admin_endpoint_options_allow_open_device_link_requests() {
 }
 
 #[test]
+fn device_link_roster_is_allowed_before_peer_is_configured() {
+    assert_eq!(
+        super::device_link_unconfigured_app_message_topics(),
+        [
+            crate::device_link_transport::DEVICE_LINK_REQUEST_APP_TOPIC,
+            crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn unconfigured_device_link_roster_app_message_is_delivered() {
+    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
+    let admin_endpoint = FakeEndpoint::new("admin", network.clone()).await;
+    let phone_endpoint = FakeEndpoint::new("phone", network).await;
+    let admin_transport = Arc::new(HashtreeFipsTransport::new(
+        admin_endpoint,
+        Arc::new(MemoryStore::new()),
+    ));
+    let phone_transport = Arc::new(
+        HashtreeFipsTransport::new(phone_endpoint, Arc::new(MemoryStore::new()))
+            .with_unconfigured_app_message_topics(device_link_unconfigured_app_message_topics()),
+    );
+    phone_transport
+        .set_peers(vec!["configured-but-not-admin".to_string()])
+        .await;
+    let mut app_messages = phone_transport.subscribe_app_messages();
+    let admin_task = admin_transport.start();
+    let phone_task = phone_transport.start();
+
+    admin_transport
+        .send_app_message(
+            "phone",
+            crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC,
+            b"signed roster".to_vec(),
+        )
+        .await
+        .unwrap();
+
+    let message = tokio::time::timeout(Duration::from_millis(250), app_messages.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(message.peer_id, "admin");
+    assert_eq!(
+        message.topic,
+        crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC
+    );
+    assert_eq!(message.data, b"signed roster");
+
+    admin_task.abort();
+    phone_task.abort();
+}
+
+#[test]
 fn bool_env_parser_accepts_common_spellings() {
     for value in ["1", "true", "TRUE", "yes", "on"] {
         assert_eq!(parse_bool_env_value(value), Some(true));

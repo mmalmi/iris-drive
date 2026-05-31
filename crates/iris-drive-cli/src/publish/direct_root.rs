@@ -390,7 +390,7 @@ pub(crate) async fn publishable_device_root(
     let Some(root) = drive.device_roots.get(&state.device_pubkey).cloned() else {
         return Ok(None);
     };
-    if !root.materialized_only {
+    if !root.local_only {
         return Ok(Some(root));
     }
     publishable_parent_root(config_dir, state, root).await
@@ -439,7 +439,7 @@ pub(crate) async fn publishable_parent_root(
                 root.dck_generation,
             ),
         };
-        if !parent_root.materialized_only {
+        if !parent_root.local_only {
             return Ok(Some(parent_root));
         }
         root = parent_root;

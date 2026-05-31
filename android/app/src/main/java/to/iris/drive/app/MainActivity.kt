@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         applyDebugEnvironment(intent)
         NativeCore.initializeAndroidContext(applicationContext)
         nativeHandle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
-        refresh()
+        refresh(::autoStartSyncIfNeeded)
         refreshJob = lifecycleScope.launch {
             while (true) {
                 delay(2_000)
@@ -63,19 +63,19 @@ class MainActivity : ComponentActivity() {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 onCreateProfile = { deviceLabel ->
-                    dispatch(NativeActions.createProfile(deviceLabel))
+                    dispatch(NativeActions.createProfile(deviceLabel), ::autoStartSyncIfNeeded)
                 },
                 onRestoreProfile = { secret, deviceLabel ->
-                    dispatch(NativeActions.restoreProfile(secret, deviceLabel))
+                    dispatch(NativeActions.restoreProfile(secret, deviceLabel), ::autoStartSyncIfNeeded)
                 },
                 onLinkDevice = { ownerPubkey, deviceLabel ->
-                    dispatch(NativeActions.linkDevice(ownerPubkey, deviceLabel))
+                    dispatch(NativeActions.linkDevice(ownerPubkey, deviceLabel), ::autoStartSyncIfNeeded)
                 },
                 onCopyText = ::copyToClipboard,
                 onOpenUrl = ::openUrl,
                 onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->
-                    dispatch(NativeActions.approveDevice(request, label))
+                    dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
                 },
                 onResetInvite = { dispatch(NativeActions.resetInvite()) },
                 onRevokeDevice = { devicePubkey ->
@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun refresh() {
+    private fun refresh(onState: ((AppState) -> Unit)? = null) {
         val handle = nativeHandle
         if (handle == 0L) return
         lifecycleScope.launch(Dispatchers.IO) {
@@ -137,11 +137,12 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
+                onState?.invoke(state)
             }
         }
     }
 
-    private fun dispatch(actionJson: String) {
+    private fun dispatch(actionJson: String, onState: ((AppState) -> Unit)? = null) {
         val handle = nativeHandle
         if (handle == 0L) return
         lifecycleScope.launch(Dispatchers.IO) {
@@ -149,7 +150,14 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
+                onState?.invoke(state)
             }
+        }
+    }
+
+    private fun autoStartSyncIfNeeded(state: AppState) {
+        if (state.sync.running && (state.isSetupComplete || state.isAwaitingApproval)) {
+            startSyncService()
         }
     }
 
@@ -233,6 +241,8 @@ class MainActivity : ComponentActivity() {
                     providerRootDocumentUri(),
                 ),
             )
+            "start-sync" -> dispatch(NativeActions.startSync())
+            "dump-provider-list" -> writeDebugProviderList()
             "refresh" -> refresh()
         }
     }
@@ -254,6 +264,14 @@ class MainActivity : ComponentActivity() {
         if (!BuildConfig.DEBUG) return
         runCatching {
             File(filesDir, DEBUG_STATE_FILE).writeText(NativeCore.stateJson(nativeHandle))
+        }
+    }
+
+    private fun writeDebugProviderList() {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            File(filesDir, DEBUG_PROVIDER_LIST_FILE)
+                .writeText(NativeCore.providerListJson(filesDir.absolutePath))
         }
     }
 
@@ -281,6 +299,7 @@ class MainActivity : ComponentActivity() {
         const val DEBUG_OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
         const val DEBUG_REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
         const val DEBUG_STATE_FILE = "debug-state.json"
+        const val DEBUG_PROVIDER_LIST_FILE = "debug-provider-list.json"
         private const val DEBUG_ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
         private const val DOCUMENTS_ROOT_ID = "iris-drive"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"

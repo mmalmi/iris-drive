@@ -204,8 +204,8 @@ async fn prune_ignored_provider_paths(
     Ok(pruned)
 }
 
-fn windows_cloud_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
-    windows_cloud_local_materialized_paths_since(root, None)
+fn windows_cloud_local_projected_paths(root: &Path) -> Result<Vec<String>> {
+    windows_cloud_local_projected_paths_since(root, None)
 }
 
 const WINDOWS_CLOUD_RECENT_RESCAN_SECS: u64 = 300;
@@ -217,16 +217,16 @@ fn windows_cloud_cached_delete_recovery_enabled() -> bool {
     std::env::var("IRIS_DRIVE_WINDOWS_CLOUD_FULL_RESCAN").is_ok_and(|value| value == "1")
 }
 
-fn windows_cloud_recent_local_materialized_paths(root: &Path) -> Result<Vec<String>> {
+fn windows_cloud_recent_local_projected_paths(root: &Path) -> Result<Vec<String>> {
     let cutoff = std::time::SystemTime::now()
         .checked_sub(std::time::Duration::from_secs(
             WINDOWS_CLOUD_RECENT_RESCAN_SECS,
         ))
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-    windows_cloud_local_materialized_paths_since(root, Some(cutoff))
+    windows_cloud_local_projected_paths_since(root, Some(cutoff))
 }
 
-fn windows_cloud_local_materialized_paths_since(
+fn windows_cloud_local_projected_paths_since(
     root: &Path,
     modified_since: Option<std::time::SystemTime>,
 ) -> Result<Vec<String>> {

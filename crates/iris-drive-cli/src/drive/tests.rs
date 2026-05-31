@@ -37,7 +37,7 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveR
         device_id: remote.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,

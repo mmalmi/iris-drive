@@ -4,6 +4,8 @@ import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
@@ -68,11 +70,26 @@ class IrisDriveDocumentsProvider : DocumentsProvider() {
         mode: String,
         signal: CancellationSignal?,
     ): ParcelFileDescriptor {
-        val file = store().fileForDocument(documentId)
-        if (!file.isFile) {
-            throw FileNotFoundException(documentId)
+        val store = store()
+        val writable = mode.contains('w') || mode.contains('+')
+        val file = if (writable) {
+            runCatching { store.readDocumentToTemp(documentId) }.getOrElse { store.emptyWriteTemp() }
+        } else {
+            store.readDocumentToTemp(documentId)
         }
-        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode))
+        return ParcelFileDescriptor.open(
+            file,
+            ParcelFileDescriptor.parseMode(mode),
+            Handler(Looper.getMainLooper()),
+        ) { error ->
+            try {
+                if (writable && error == null) {
+                    store.writeDocumentFromTemp(documentId, file)
+                }
+            } finally {
+                file.delete()
+            }
+        }
     }
 
     override fun openDocumentThumbnail(
@@ -86,7 +103,7 @@ class IrisDriveDocumentsProvider : DocumentsProvider() {
     private fun store(): IrisDriveDocumentStore {
         val appContext = context ?: throw FileNotFoundException("context unavailable")
         return IrisDriveDocumentStore(
-            File(appContext.filesDir, "drive-provider"),
+            appContext.filesDir,
             appContext.getString(R.string.app_name),
         )
     }

@@ -72,7 +72,7 @@ async fn import_visible_root_records_mount_deletions_as_tombstones() {
         .get(&account.state.device_pubkey)
         .unwrap();
     assert_eq!(report.root_cid, root.root_cid);
-    assert!(!root.materialized_only);
+    assert!(!root.local_only);
     assert_eq!(root.device_seq, 2);
 
     let root_cid = Cid::parse(&root.root_cid).unwrap();
@@ -124,7 +124,7 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
         device_id: remote.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,
@@ -234,7 +234,7 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
         device_id: remote.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,
@@ -335,7 +335,7 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
         device_id: remote.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,
@@ -453,7 +453,7 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
         device_id: remote.clone(),
         device_seq: 1,
         dck_generation: 1,
-        materialized_only: false,
+        local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::new(),
         created_at: 100,

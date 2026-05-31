@@ -212,7 +212,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
 
     for snap in snapshots {
-        if snap.root.materialized_only {
+        if snap.root.local_only {
             continue;
         }
         if !allow.contains(snap.device_pubkey) {

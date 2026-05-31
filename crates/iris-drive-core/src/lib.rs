@@ -34,10 +34,11 @@ pub mod gateway;
 pub mod history;
 pub mod identity;
 pub mod indexer;
-pub mod materialize;
 pub mod merge;
+pub mod network_sync;
 pub mod nostr_events;
 pub mod paths;
+pub mod projection;
 pub mod relay_sync;
 pub mod root_meta;
 pub mod sync;
@@ -68,15 +69,18 @@ pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
     path_has_ignored_component, read_conflict_records, should_ignore_name,
 };
-pub use materialize::{
-    MaterializeError, MaterializeReport, PrimaryMergedRoot, PrimaryMergedView,
-    materialize_primary_drive, primary_merged_root, primary_merged_view,
-};
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,
     MergedConflictFile, MergedConflictKind, MergedConflictTombstone, MergedEntry, MergedView,
     ROOT_META_PATH, TOMBSTONE_PREFIX, WHOLE_FILE_HASH_META_KEY, merge_drives,
     original_path_from_tombstone, tombstone_path,
+};
+pub use network_sync::{
+    DriveRootEventApplyReport, NetworkSyncReport, apply_drive_root_events,
+    authorized_device_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
+};
+pub use projection::{
+    PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sync::{

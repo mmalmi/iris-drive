@@ -195,7 +195,7 @@ internal fun IrisDriveAndroidApp(
                     onCopyOwnerKey = { onCopyText("Owner key", activeAccount.ownerPubkey) },
                     onCopyDeviceKey = { onCopyText("Device key", activeAccount.devicePubkey) },
                     onCopyLinkInvite = { onCopyText("Invite link", activeAccount.deviceLinkInvite) },
-                    onCopySnapshotLink = { onCopyText("Snapshot link", state.snapshotLink) },
+                    onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
@@ -605,7 +605,7 @@ private fun DriveContent(
         item {
             ProviderPanel(
                 state = state,
-                snapshotLink = state.snapshotLink.ifBlank { "https://drive.iris.to/snapshot/local" },
+                snapshotLink = state.snapshotLink,
                 onOpenDriveFolder = onOpenDriveFolder,
                 onCopySnapshotLink = onCopySnapshotLink,
                 onOpenSnapshotLink = onOpenSnapshotLink,
@@ -691,15 +691,18 @@ private fun SyncPanel(
     CardSection(title = "Sync", trailing = if (state.sync.running) "on" else "paused") {
         StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "on" else "paused" })
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onStartSync, enabled = !state.sync.running) {
-                Icon(painterResource(R.drawable.ic_play), contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text("Resume")
-            }
-            OutlinedButton(onClick = onStopSync, enabled = state.sync.running) {
-                Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text("Pause")
+            if (state.sync.running) {
+                OutlinedButton(onClick = onStopSync) {
+                    Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Pause")
+                }
+            } else {
+                Button(onClick = onStartSync) {
+                    Icon(painterResource(R.drawable.ic_play), contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Resume")
+                }
             }
         }
     }
@@ -735,11 +738,17 @@ private fun ProviderPanel(
             Text("Open in Files")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCopySnapshotLink) {
-                Text("Copy snapshot link")
+            OutlinedButton(
+                onClick = onCopySnapshotLink,
+                enabled = snapshotLink.isNotBlank(),
+            ) {
+                Text("Copy drive.iris.to link")
             }
-            OutlinedButton(onClick = onOpenSnapshotLink) {
-                Text("Open snapshot link")
+            OutlinedButton(
+                onClick = onOpenSnapshotLink,
+                enabled = snapshotLink.isNotBlank(),
+            ) {
+                Text("View on drive.iris.to")
             }
         }
     }

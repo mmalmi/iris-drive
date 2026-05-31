@@ -299,6 +299,115 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_qrMatrixJson(
     jni_json_string(env, &result)
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerListJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    jni_json_string(env, &native_provider_list_json(&data_dir))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerReadJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    path: JString<'_>,
+    output_path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let path = jni_string_lossy(&mut env, &path);
+    let output_path = jni_string_lossy(&mut env, &output_path);
+    jni_json_string(
+        env,
+        &native_provider_read_json(&data_dir, &path, &output_path),
+    )
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerWriteJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    path: JString<'_>,
+    source_path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let path = jni_string_lossy(&mut env, &path);
+    let source_path = jni_string_lossy(&mut env, &source_path);
+    jni_json_string(
+        env,
+        &native_provider_write_json(&data_dir, &path, &source_path),
+    )
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerMkdirJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let path = jni_string_lossy(&mut env, &path);
+    jni_json_string(env, &native_provider_mkdir_json(&data_dir, &path))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerDeleteJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let path = jni_string_lossy(&mut env, &path);
+    jni_json_string(env, &native_provider_delete_json(&data_dir, &path))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerRenameJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    old_path: JString<'_>,
+    new_path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let old_path = jni_string_lossy(&mut env, &old_path);
+    let new_path = jni_string_lossy(&mut env, &new_path);
+    jni_json_string(
+        env,
+        &native_provider_rename_json(&data_dir, &old_path, &new_path),
+    )
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerImportSharedFileJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    display_name: JString<'_>,
+    source_path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let display_name = jni_string_lossy(&mut env, &display_name);
+    let source_path = jni_string_lossy(&mut env, &source_path);
+    jni_json_string(
+        env,
+        &native_provider_import_shared_file_json(&data_dir, &display_name, &source_path),
+    )
+}
+
 fn app_from_handle(
     handle: *const IrisDriveAppHandle,
 ) -> Result<&'static IrisDriveAppHandle, &'static str> {

@@ -43,7 +43,7 @@ class ShareActivity : ComponentActivity() {
     private fun importIntent(intent: Intent?): Int {
         if (intent == null) return 0
         val store = IrisDriveDocumentStore(
-            File(filesDir, "drive-provider"),
+            filesDir,
             getString(R.string.app_name),
         )
         var imported = 0

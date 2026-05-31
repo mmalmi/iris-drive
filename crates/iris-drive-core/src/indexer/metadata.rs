@@ -258,7 +258,7 @@ async fn layer_tombstones<S: Store>(
     for (orig_path, ts) in tombstones {
         tombstone_tree.insert(orig_path, *ts);
     }
-    let tombstone_root = materialize_tombstone_dir(tree, &tombstone_tree).await?;
+    let tombstone_root = build_tombstone_dir(tree, &tombstone_tree).await?;
     let meta_root = tree
         .put_directory(vec![
             DirEntry::from_cid("tombstones", &tombstone_root).with_link_type(LinkType::Dir),
@@ -298,14 +298,14 @@ impl TombstoneDir {
     }
 }
 
-fn materialize_tombstone_dir<'a, S: Store>(
+fn build_tombstone_dir<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir: &'a TombstoneDir,
 ) -> futures::future::BoxFuture<'a, Result<Cid, IndexError>> {
     Box::pin(async move {
         let mut entries = Vec::with_capacity(dir.dirs.len() + dir.files.len());
         for (name, child) in &dir.dirs {
-            let cid = materialize_tombstone_dir(tree, child).await?;
+            let cid = build_tombstone_dir(tree, child).await?;
             entries.push(DirEntry::from_cid(name, &cid).with_link_type(LinkType::Dir));
         }
         for (name, tombstoned_at) in &dir.files {

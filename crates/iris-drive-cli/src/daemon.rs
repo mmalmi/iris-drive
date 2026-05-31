@@ -90,7 +90,7 @@ fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<S
 fn root_apply_followup_key(
     config: &AppConfig,
     root_cid_to_pull: Option<&str>,
-    should_materialize: bool,
+    should_refresh_projection: bool,
 ) -> Option<RootApplyFollowupKey> {
     if let Some(root_cid) = root_cid_to_pull
         && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
@@ -105,7 +105,7 @@ fn root_apply_followup_key(
             return Some(RootApplyFollowupKey::DeviceRoots(roots));
         }
     }
-    if should_materialize {
+    if should_refresh_projection {
         return merged_drive_roots_key(config).map(RootApplyFollowupKey::MergedDriveRoots);
     }
     None

@@ -59,41 +59,6 @@ pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::P
     })
 }
 
-pub(crate) fn cmd_materialize(
-    config_dir: &std::path::Path,
-    target_dir: &std::path::Path,
-) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .context("building tokio runtime")?;
-    runtime.block_on(async {
-        let daemon = Daemon::open(config_dir)
-            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-        let report = iris_drive_core::materialize_primary_drive(
-            daemon.tree_handle(),
-            daemon.config(),
-            target_dir,
-        )
-        .await
-        .with_context(|| format!("materializing {}", target_dir.display()))?;
-        println!(
-            "{}",
-            json!({
-                "target_dir": target_dir.display().to_string(),
-                "written": report.written,
-                "updated": report.updated,
-                "deleted": report.deleted,
-                "unchanged": report.unchanged,
-                "skipped": report.skipped,
-                "changed": report.changed(),
-            })
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-}
-
 pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -261,13 +226,13 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
-            ProviderCmd::MaterializeCache { dir } => {
+            ProviderCmd::HydrateCache { dir } => {
                 let phase = std::time::Instant::now();
                 let entries = provider_entries(daemon.tree(), &visible.root_cid).await?;
-                let report = materialize_provider_cache(&provider, &entries, &dir).await?;
+                let report = hydrate_provider_cache(&provider, &entries, &dir).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
-                    "provider command materialized private cache"
+                    "provider command hydrated private cache"
                 );
                 println!(
                     "{}",
@@ -404,7 +369,7 @@ struct ProviderCacheReport {
     skipped: usize,
 }
 
-async fn materialize_provider_cache(
+async fn hydrate_provider_cache(
     provider: &HashTreeProviderFs<FsBlobStore>,
     entries: &[ProviderListEntry],
     target_dir: &Path,

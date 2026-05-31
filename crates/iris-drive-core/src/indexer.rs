@@ -129,7 +129,7 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
 /// Like [`index_dir_with_history_and_meta`], but starts from a hashtree root
 /// that already represents the user-visible directory. This is used by
 /// virtual mounts / file-provider adapters where bytes live in hashtree rather
-/// than a normal materialized folder on disk.
+/// than a normal folder on disk.
 pub async fn layer_history_and_meta_on_root<S: Store>(
     tree: &HashTree<S>,
     root: Cid,

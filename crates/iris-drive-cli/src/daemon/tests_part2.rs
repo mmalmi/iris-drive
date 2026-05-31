@@ -13,7 +13,7 @@ async fn windows_cloud_rescan_upserts_nested_local_file() {
     )
     .unwrap();
 
-    for path in windows_cloud_local_materialized_paths(sync_root.path()).unwrap() {
+    for path in windows_cloud_local_projected_paths(sync_root.path()).unwrap() {
         apply_windows_cloud_upsert(&provider, sync_root.path(), &path, &BTreeSet::new())
             .await
             .unwrap();
@@ -547,38 +547,38 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
 }
 
 #[test]
-fn stale_drive_root_followup_materializes_until_blocks_sync() {
+fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
     assert_eq!(
         drive_root_followup_plan(false, true, false),
         DriveRootFollowupPlan {
             pull_blocks: true,
-            materialize: true,
+            refresh_projection: true,
         }
     );
     assert_eq!(
         drive_root_followup_plan(false, true, true),
         DriveRootFollowupPlan {
             pull_blocks: true,
-            materialize: false,
+            refresh_projection: false,
         }
     );
     assert_eq!(
         drive_root_followup_plan(true, false, false),
         DriveRootFollowupPlan {
             pull_blocks: true,
-            materialize: true,
+            refresh_projection: true,
         }
     );
 }
 
 #[test]
-fn startup_root_sync_collects_unsynced_non_materialized_roots() {
+fn startup_root_sync_collects_unsynced_remote_roots() {
     let config_dir = tempfile::tempdir().unwrap();
     let synced = DeviceRootRef::legacy("already-synced", 10, 1);
     let needs_sync = DeviceRootRef::legacy("needs-sync", 20, 1);
     let duplicate = DeviceRootRef::legacy("needs-sync", 21, 1);
-    let mut materialized = DeviceRootRef::legacy("materialized-only", 30, 1);
-    materialized.materialized_only = true;
+    let mut projected = DeviceRootRef::legacy("local-only", 30, 1);
+    projected.local_only = true;
     let mut drive = Drive {
         owner_pubkey: "owner".to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
@@ -595,7 +595,7 @@ fn startup_root_sync_collects_unsynced_non_materialized_roots() {
     drive.device_roots.insert("device-c".to_string(), duplicate);
     drive
         .device_roots
-        .insert("device-d".to_string(), materialized);
+        .insert("device-d".to_string(), projected);
     let mut config = AppConfig::default();
     config.drives.push(drive);
     record_block_sync(

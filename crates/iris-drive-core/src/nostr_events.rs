@@ -249,16 +249,79 @@ pub fn drive_root_d_tag(owner_pubkey_hex: &str, drive_id: &str) -> String {
 
 /// Build a signed drive-root event. Signed by the **device key**;
 /// `device_keys.public_key()` becomes the event author, and the
-/// merge engine attributes the published root to that device. The
-/// `published_at` field of the resulting `DeviceRootRef` is set to
-/// the moment this event was built, by way of the event's
-/// `created_at`.
+/// merge engine attributes the published root to that device.
+///
+/// This builder preserves `root.published_at` when present so build/parse
+/// roundtrips remain stable. Live publishing should use
+/// [`build_drive_root_publish_event`] so the replaceable event advances
+/// even when the root CID is unchanged.
 pub fn build_drive_root_event(
     device_keys: &Keys,
     owner_pubkey_hex: &str,
     drive_id: &str,
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
+) -> Result<Event, WireError> {
+    build_drive_root_event_at(
+        device_keys,
+        owner_pubkey_hex,
+        drive_id,
+        root,
+        authorized_device_pubkeys,
+        drive_root_timestamp_from_root(root),
+    )
+}
+
+/// Build a signed drive-root event for live relay publishing.
+///
+/// Relays treat Iris Drive roots as replaceable events. If the root CID did
+/// not change but the authorized recipient set did, reusing the old
+/// `created_at` causes relays to reject the event and the newly linked device
+/// never receives its root-key wrap.
+pub fn build_drive_root_publish_event(
+    device_keys: &Keys,
+    owner_pubkey_hex: &str,
+    drive_id: &str,
+    root: &DeviceRootRef,
+    authorized_device_pubkeys: &[String],
+) -> Result<Event, WireError> {
+    let stored_ts = if root.published_at > 0 {
+        u64::try_from(root.published_at).unwrap_or(0)
+    } else {
+        0
+    };
+    let ts = unix_now_secs().max(stored_ts.saturating_add(1));
+    build_drive_root_event_at(
+        device_keys,
+        owner_pubkey_hex,
+        drive_id,
+        root,
+        authorized_device_pubkeys,
+        ts,
+    )
+}
+
+fn drive_root_timestamp_from_root(root: &DeviceRootRef) -> u64 {
+    if root.published_at > 0 {
+        u64::try_from(root.published_at).unwrap_or(0)
+    } else {
+        unix_now_secs()
+    }
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn build_drive_root_event_at(
+    device_keys: &Keys,
+    owner_pubkey_hex: &str,
+    drive_id: &str,
+    root: &DeviceRootRef,
+    authorized_device_pubkeys: &[String],
+    created_at: u64,
 ) -> Result<Event, WireError> {
     let root_cid =
         Cid::parse(&root.root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
@@ -297,22 +360,12 @@ pub fn build_drive_root_event(
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
-    // If the caller hasn't set published_at, fall back to wall-clock
-    // now so the event carries a meaningful timestamp; otherwise echo
-    // the application-level value to keep build/parse stable.
-    let ts = if root.published_at > 0 {
-        u64::try_from(root.published_at).unwrap_or(0)
-    } else {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    };
     let builder = EventBuilder::new(
         Kind::from(KIND_DRIVE_ROOT),
         content_json,
         [Tag::identifier(d_tag)],
     )
-    .custom_created_at(nostr_sdk::Timestamp::from(ts));
+    .custom_created_at(nostr_sdk::Timestamp::from(created_at));
     let event = builder
         .to_event(device_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
@@ -391,7 +444,7 @@ fn parse_drive_root_event_inner(
         device_seq: content.device_seq,
         parents: content.parents,
         observed: content.observed,
-        materialized_only: false,
+        local_only: false,
     };
     Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
 }
@@ -638,7 +691,7 @@ mod tests {
             device_seq: 3,
             parents: vec![parent.clone()],
             observed: observed.clone(),
-            materialized_only: false,
+            local_only: false,
         };
 
         let event = build_drive_root_event(
@@ -839,6 +892,29 @@ mod tests {
         let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
         // Should be roughly now, not 0.
         assert!(parsed_root.published_at > 1_500_000_000);
+    }
+
+    #[test]
+    fn drive_root_publish_event_advances_past_stored_root_timestamp() {
+        let device = Keys::generate();
+        let owner = Keys::generate().public_key().to_hex();
+        let root = DeviceRootRef::legacy(
+            Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
+            1_700_000_000,
+            1,
+        );
+
+        let event = build_drive_root_publish_event(
+            &device,
+            &owner,
+            "main",
+            &root,
+            &[device.public_key().to_hex()],
+        )
+        .unwrap();
+        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
+
+        assert!(parsed_root.published_at > root.published_at);
     }
 
     #[test]

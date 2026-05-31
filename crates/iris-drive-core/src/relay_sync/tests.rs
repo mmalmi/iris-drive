@@ -38,7 +38,7 @@ fn causal_encrypted_root(
         device_seq,
         parents: Vec::new(),
         observed: std::collections::BTreeMap::new(),
-        materialized_only: false,
+        local_only: false,
     }
 }
 

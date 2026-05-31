@@ -351,7 +351,6 @@ pub struct Drive {
 /// publishes its own complete root tree. Causal fields are optional
 /// for legacy roots; new roots fill them from `.hashtree/root.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct DeviceRootRef {
     /// htree root CID the device most recently published.
     pub root_cid: String,
@@ -372,11 +371,10 @@ pub struct DeviceRootRef {
     /// snapshot, keyed by device id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub observed: BTreeMap<String, RootObservation>,
-    /// This root was imported after materializing another device's root.
-    /// It is useful as local base state, but should not be announced as
-    /// this device's own edit.
+    /// Local bookkeeping root that can be used as base state but should
+    /// not be announced as this device's own edit.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub materialized_only: bool,
+    pub local_only: bool,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -399,7 +397,7 @@ impl DeviceRootRef {
             device_seq: 0,
             parents: Vec::new(),
             observed: BTreeMap::new(),
-            materialized_only: false,
+            local_only: false,
         }
     }
 
@@ -412,7 +410,7 @@ impl DeviceRootRef {
             device_seq: meta.device_seq,
             parents: meta.parents.clone(),
             observed: meta.observed.clone(),
-            materialized_only: meta.materialized_only,
+            local_only: meta.local_only,
         }
     }
 
@@ -535,7 +533,7 @@ dck_generation = 1
         assert_eq!(root.device_seq, 0);
         assert!(root.parents.is_empty());
         assert!(root.observed.is_empty());
-        assert!(!root.materialized_only);
+        assert!(!root.local_only);
     }
 
     #[test]
@@ -590,7 +588,7 @@ dck_generation = 1
                 device_seq: 7,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
-                materialized_only: false,
+                local_only: false,
             },
         );
         newer_drive.last_root_cid = Some("newer".into());
@@ -612,7 +610,7 @@ dck_generation = 1
                 device_seq: 6,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
-                materialized_only: false,
+                local_only: false,
             },
         );
         drive.last_root_cid = Some("stale".into());
@@ -642,7 +640,7 @@ dck_generation = 1
                 device_seq: 1,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
-                materialized_only: false,
+                local_only: false,
             },
         );
         older.upsert_drive(older_drive);
@@ -663,7 +661,7 @@ dck_generation = 1
                 device_seq: 2,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
-                materialized_only: false,
+                local_only: false,
             },
         );
         newer.save(&path).unwrap();

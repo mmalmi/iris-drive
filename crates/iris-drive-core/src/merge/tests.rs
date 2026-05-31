@@ -29,7 +29,7 @@ fn causal_root(
                 )
             })
             .collect(),
-        materialized_only: false,
+        local_only: false,
     }
 }
 
@@ -449,10 +449,10 @@ fn tombstone_in_one_device_wipes_across_others_when_newer() {
 }
 
 #[test]
-fn materialized_only_roots_do_not_compete_with_source_roots() {
+fn local_only_roots_do_not_compete_with_source_roots() {
     let remote_v2 = causal_root("remote-v2", 100, 2, &[]);
     let mut local_mirror_v1 = causal_root("local-mirror-v1", 200, 1, &[("remote", 1, "remote-v1")]);
-    local_mirror_v1.materialized_only = true;
+    local_mirror_v1.local_only = true;
 
     let view = merge_drives(
         &["local", "remote"],
@@ -474,10 +474,10 @@ fn materialized_only_roots_do_not_compete_with_source_roots() {
 }
 
 #[test]
-fn materialized_only_roots_do_not_block_source_tombstones() {
+fn local_only_roots_do_not_block_source_tombstones() {
     let remote_delete = causal_root("remote-delete", 100, 2, &[]);
     let mut local_mirror_v1 = causal_root("local-mirror-v1", 200, 1, &[("remote", 1, "remote-v1")]);
-    local_mirror_v1.materialized_only = true;
+    local_mirror_v1.local_only = true;
 
     let view = merge_drives(
         &["local", "remote"],

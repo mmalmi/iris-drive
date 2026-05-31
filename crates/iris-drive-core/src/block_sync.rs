@@ -13,7 +13,7 @@ use hashtree_core::{Cid, Hash, HashTree, HashTreeError, LinkType, Store};
 use crate::indexer::should_ignore_name;
 use crate::merge::{META_DIR, PREV_LINK_PATH};
 
-/// Collect blocks needed to read and materialize the current root.
+/// Collect blocks needed to read the current root.
 ///
 /// This includes visible directory/file content and current `.hashtree`
 /// metadata such as tombstones, root metadata, and conflict records. It
