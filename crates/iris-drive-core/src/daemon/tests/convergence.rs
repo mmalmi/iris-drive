@@ -72,11 +72,13 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .get(&account.state.device_pubkey)
         .unwrap();
     assert_eq!(root.device_seq, 2);
+    assert!(root.local_only);
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let meta = crate::indexer::read_root_meta(daemon.tree(), &root_cid)
         .await
         .unwrap()
         .expect("materialized root has causal metadata");
+    assert!(meta.local_only);
     assert_eq!(
         meta.observed
             .get(&remote)

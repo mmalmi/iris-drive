@@ -78,6 +78,10 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!state.ui.backups.is_empty());
     assert_eq!(state.ui.backups[0].label, "Blossom remote");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
+    assert_eq!(state.ui.setup_state, "authorized");
+    assert_eq!(state.ui.primary_status, "ready");
+    assert_eq!(state.ui.authorized_device_count, 1);
+    assert_eq!(state.ui.online_device_count, 0);
 
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
@@ -86,6 +90,55 @@ fn profile_actions_populate_mobile_parity_state() {
     let state = app.dispatch(NativeAppAction::StopSync);
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
+}
+
+#[test]
+fn uninitialized_state_exposes_summary_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let state = app.state();
+
+    assert_eq!(state.ui.setup_state, "not_configured");
+    assert_eq!(state.ui.primary_status, "not_setup");
+    assert_eq!(state.ui.authorized_device_count, 0);
+    assert_eq!(state.ui.online_device_count, 0);
+    assert_eq!(state.ui.file_count, 0);
+    assert_eq!(state.ui.visible_file_bytes, 0);
+}
+
+#[test]
+fn classify_link_input_uses_core_invite_and_key_parsing() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let owner_account = owner.ui.account.unwrap();
+
+    let invite = super::classify_link_input(owner_account.device_link_invite.clone());
+    assert_eq!(invite.kind, "invite");
+    assert!(invite.is_complete);
+    assert!(invite.is_valid);
+    assert_eq!(invite.owner_pubkey, owner_account.owner_pubkey);
+    assert!(!invite.admin_device_pubkey.is_empty());
+    assert!(invite.has_link_secret);
+
+    let npub = super::classify_link_input(owner_account.owner_pubkey.clone());
+    assert_eq!(npub.kind, "owner_pubkey");
+    assert!(npub.is_complete);
+    assert!(npub.is_valid);
+    assert_eq!(npub.owner_pubkey, owner_account.owner_pubkey);
+
+    let short_invite = super::classify_link_input("iris-drive://invite/abc".to_owned());
+    assert_eq!(short_invite.kind, "invite");
+    assert!(!short_invite.is_complete);
+    assert!(!short_invite.is_valid);
+
+    let short_npub = super::classify_link_input(owner_account.owner_pubkey[..20].to_owned());
+    assert_eq!(short_npub.kind, "owner_pubkey");
+    assert!(!short_npub.is_complete);
+    assert!(!short_npub.is_valid);
 }
 
 #[test]
@@ -180,6 +233,9 @@ fn link_action_tracks_pending_approval() {
         state.ui.devices.is_empty(),
         "pending devices should not appear in the authorized-device roster"
     );
+    assert_eq!(state.ui.setup_state, "awaiting_approval");
+    assert_eq!(state.ui.primary_status, "awaiting_approval");
+    assert_eq!(state.ui.authorized_device_count, 0);
 }
 
 #[test]
@@ -441,6 +497,8 @@ fn native_fips_status_drives_device_online_presence() {
     );
     let stale = app.refresh();
     assert!(stale.ui.devices.iter().all(|device| !device.is_online));
+    assert_eq!(stale.ui.fips.online_device_count, 0);
+    assert!(!stale.ui.fips.fresh);
 }
 
 #[test]
@@ -570,6 +628,8 @@ fn import_file_action_writes_shared_file_into_provider_root() {
     });
 
     assert!(state.error.is_empty(), "{}", state.error);
+    assert_eq!(state.ui.file_count, 1);
+    assert_eq!(state.ui.visible_file_bytes, 16);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let daemon = iris_drive_core::Daemon::open(dir.path()).unwrap();
@@ -584,6 +644,88 @@ fn import_file_action_writes_shared_file_into_provider_root() {
         let bytes = provider.read(&path, 0, item.size).await.unwrap();
         assert_eq!(bytes, b"from share sheet");
     });
+}
+
+#[test]
+fn provider_list_includes_summary_and_change_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "iPhone".to_owned(),
+    });
+    let source = dir.path().join("nested.txt");
+    std::fs::write(&source, b"nested bytes").unwrap();
+
+    assert!(
+        super::native_provider_mkdir_json(&dir.path().display().to_string(), "Reports")["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "Reports/nested.txt",
+            &source.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let provider = super::native_provider_list_json(&dir.path().display().to_string());
+
+    assert_eq!(provider["file_count"], 1);
+    assert_eq!(provider["visible_file_bytes"], 12);
+    assert_eq!(
+        provider["directory_paths"].as_array().unwrap(),
+        &vec![serde_json::json!("Reports")]
+    );
+    assert!(
+        provider["change_key"]
+            .as_str()
+            .is_some_and(|key| { key.contains("Reports/nested.txt") && key.contains("file") })
+    );
+}
+
+#[test]
+fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "iPhone".to_owned(),
+    });
+    let source = dir.path().join("shared.txt");
+    std::fs::write(&source, b"first").unwrap();
+
+    assert!(
+        super::native_provider_mkdir_json(&dir.path().display().to_string(), "Reports")["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "Reports/Shared_file.txt",
+            &source.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let resolved = super::native_provider_resolve_path_json(
+        &dir.path().display().to_string(),
+        "/Reports/",
+        "Shared/file.txt",
+        "",
+    );
+
+    assert_eq!(resolved["parent_path"], "Reports");
+    assert_eq!(resolved["display_name"], "Shared_file.txt");
+    assert_eq!(resolved["path"], "Reports/Shared_file (2).txt");
+    assert!(resolved["error"].as_str().unwrap_or_default().is_empty());
 }
 
 #[test]

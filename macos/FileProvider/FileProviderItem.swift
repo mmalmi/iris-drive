@@ -210,6 +210,11 @@ enum FileProviderStorage {
         let identifiers: [String]
     }
 
+    private struct ProviderResolvedPath: Decodable {
+        let path: String
+        let error: String?
+    }
+
     static var baseDirectory: URL {
         runtimeDirectory ?? runtimeDirectories[0]
     }
@@ -445,7 +450,7 @@ enum FileProviderStorage {
         contents: URL?
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination = joinedPath(parent: parent, name: template.filename)
+        let destination = try resolvedPath(parent: parent, name: template.filename)
         NSLog("Iris Drive FileProvider create path=\(destination)")
         invalidateProviderListCache()
         if (template.contentType ?? .data).conforms(to: .folder) {
@@ -490,7 +495,7 @@ enum FileProviderStorage {
             parent = parentPath(for: original)
         }
         let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
-        let destination = joinedPath(parent: parent, name: name)
+        let destination = try resolvedPath(parent: parent, name: name, excluding: original)
         invalidateProviderListCache()
         if destination != original {
             _ = try runIDrive(arguments: ["provider", "rename", original, destination])
@@ -876,14 +881,6 @@ enum FileProviderStorage {
         return directory
     }
 
-    private static func joinedPath(parent: String, name: String) -> String {
-        let cleanName = name.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if parent.isEmpty {
-            return cleanName
-        }
-        return "\(parent)/\(cleanName)"
-    }
-
     private static func parentPath(for path: String) -> String {
         let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let slash = value.lastIndex(of: "/") else {
@@ -904,6 +901,26 @@ enum FileProviderStorage {
         !path.isEmpty
             && !path.hasPrefix("/")
             && !path.split(separator: "/").contains("..")
+    }
+
+    private static func resolvedPath(
+        parent: String,
+        name: String,
+        excluding: String = ""
+    ) throws -> String {
+        var arguments = ["provider", "resolve-path", parent, name]
+        if !excluding.isEmpty {
+            arguments.append(excluding)
+        }
+        let data = try runIDrive(arguments: arguments)
+        let resolved = try JSONDecoder().decode(ProviderResolvedPath.self, from: data)
+        if let error = resolved.error, !error.isEmpty {
+            throw providerError(error)
+        }
+        guard !resolved.path.isEmpty else {
+            throw providerError("provider path resolver returned no path")
+        }
+        return resolved.path
     }
 
     private static func appGroupApplicationSupportDirectory() -> URL {

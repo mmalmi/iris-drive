@@ -258,6 +258,7 @@ pub async fn primary_merged_root<S: Store>(
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let merge_devices = merge_device_pubkeys(account, drive);
+    let source_roots = merge_source_roots(tree, drive, &merge_devices).await?;
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
@@ -274,7 +275,7 @@ pub async fn primary_merged_root<S: Store>(
 
     for entry in &merged.view.files {
         root = ensure_visible_parent_dirs(tree, root, &entry.path).await?;
-        let source = source_entry_for_merged_entry(tree, drive, entry).await?;
+        let source = source_entry_for_merged_entry(tree, &source_roots, entry).await?;
         let cid = Cid {
             hash: source.hash,
             key: source.key,
@@ -289,6 +290,24 @@ pub async fn primary_merged_root<S: Store>(
         file_count: merged.file_count(),
         top_level_entries: merged.top_level_entries(),
     })
+}
+
+async fn merge_source_roots<S: Store>(
+    tree: &HashTree<S>,
+    drive: &Drive,
+    merge_devices: &[String],
+) -> Result<BTreeMap<String, DeviceRootRef>, ProjectionError> {
+    let mut source_roots = BTreeMap::new();
+    for device_pubkey in merge_devices {
+        let Some(root) = drive.device_roots.get(device_pubkey) else {
+            continue;
+        };
+        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+            continue;
+        };
+        source_roots.insert(device_pubkey.clone(), root);
+    }
+    Ok(source_roots)
 }
 
 fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), ProjectionError> {
@@ -358,11 +377,10 @@ async fn ensure_visible_dir_segments<S: Store>(
 
 async fn source_entry_for_merged_entry<S: Store>(
     tree: &HashTree<S>,
-    drive: &crate::config::Drive,
+    source_roots: &BTreeMap<String, DeviceRootRef>,
     entry: &MergedEntry,
 ) -> Result<hashtree_core::TreeEntry, ProjectionError> {
-    let root = drive
-        .device_roots
+    let root = source_roots
         .get(&entry.source_device)
         .ok_or_else(|| HashTreeError::PathNotFound(entry.source_device.clone()))?;
     let root = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {

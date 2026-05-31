@@ -74,3 +74,128 @@ fn status_lists_default_blossom_server_as_backup_target() {
     assert_eq!(target["enabled"], true);
     assert_eq!(target["label"], "Blossom remote");
 }
+
+#[test]
+fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
+    let mut config = AppConfig::default();
+    config.relays = vec![
+        "wss://relay.example/".to_owned(),
+        "wss://relay.two".to_owned(),
+    ];
+    let daemon_status = json!({
+        "relay_statuses": [
+            {"url": "wss://relay.example", "status": "connected"},
+            {"url": "wss://unconfigured.example", "status": "connected"}
+        ]
+    });
+
+    let statuses = normalized_relay_statuses(&config, Some(&daemon_status));
+
+    assert_eq!(
+        statuses,
+        json!([
+            {"url": "wss://relay.example/", "status": "connected"},
+            {"url": "wss://relay.two", "status": "configured"}
+        ])
+    );
+}
+
+#[test]
+fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
+    let config = AppConfig::default();
+    let daemon_status = json!({
+        "running": true,
+        "fresh": true,
+        "fips_block_sync": {
+            "authorized_peers": ["npub1b", "npub1c"],
+            "connected_peers": ["npub1b"],
+            "mesh_peers": ["npub1c", "npub1x"],
+            "peer_statuses": [{"npub": "npub1b"}]
+        }
+    });
+
+    let fips = fips_network_diagnostics(&config, Some(&daemon_status));
+
+    assert_eq!(fips["direct_devices"], json!(["npub1b"]));
+    assert_eq!(fips["mesh_devices"], json!(["npub1c", "npub1x"]));
+    assert_eq!(
+        fips["online_devices"],
+        json!(["npub1b", "npub1c", "npub1x"])
+    );
+    assert_eq!(fips["roster_online_device_count"], 2);
+    assert_eq!(fips["other_peer_count"], 1);
+}
+
+#[test]
+fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = AppConfig::default();
+    config.relays = vec![
+        "wss://relay.example/".to_owned(),
+        "wss://relay.two".to_owned(),
+    ];
+    config.save(config_path_in(dir.path())).unwrap();
+
+    write_daemon_status(
+        dir.path(),
+        json!({
+            "relay_statuses": [
+                {"url": "wss://relay.example", "status": "connected"},
+                {"url": "wss://unconfigured.example", "status": "connected"}
+            ],
+            "fips_block_sync": {
+                "authorized_peers": ["npub1b", "npub1c"],
+                "connected_peers": ["npub1b"],
+                "mesh_peers": ["npub1c", "npub1x"]
+            }
+        }),
+    );
+
+    let status: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
+            .unwrap();
+
+    assert_eq!(
+        status["relay_statuses"],
+        json!([
+            {"url": "wss://relay.example/", "status": "connected"},
+            {"url": "wss://relay.two", "status": "configured"}
+        ])
+    );
+    assert_eq!(status["fips"]["direct_devices"], json!(["npub1b"]));
+    assert_eq!(
+        status["fips"]["online_devices"],
+        json!(["npub1b", "npub1c", "npub1x"])
+    );
+    assert_eq!(status["fips"]["roster_online_device_count"], 2);
+    assert_eq!(status["fips"]["other_peer_count"], 1);
+}
+
+#[test]
+fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
+    let dir = tempfile::tempdir().unwrap();
+    AppConfig::default()
+        .save(config_path_in(dir.path()))
+        .unwrap();
+
+    write_daemon_status(
+        dir.path(),
+        json!({
+            "relays": ["ws://127.0.0.1:7000"],
+            "relay_statuses": [
+                {"url": "ws://127.0.0.1:7000/", "status": "connected"}
+            ],
+        }),
+    );
+
+    let status: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
+            .unwrap();
+
+    assert_eq!(
+        status["relay_statuses"],
+        json!([
+            {"url": "ws://127.0.0.1:7000", "status": "connected"}
+        ])
+    );
+}

@@ -375,7 +375,14 @@ async fn backup_check_records_sample_latency_and_bandwidth_for_blossom_target() 
         .as_secs() as i64;
     let checked = run_json(
         cfg.path(),
-        &["backups", "check", "--target", &blossom.url, "--sample-size", "8"],
+        &[
+            "backups",
+            "check",
+            "--target",
+            &blossom.url,
+            "--sample-size",
+            "8",
+        ],
     );
     let reports = checked["reports"].as_array().unwrap();
     assert_eq!(reports.len(), 1);

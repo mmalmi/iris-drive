@@ -147,6 +147,14 @@ struct ProviderListEntry {
     modified_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderListSummary {
+    file_count: u64,
+    visible_file_bytes: u64,
+    directory_paths: Vec<String>,
+    change_key: String,
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -200,6 +208,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
                         .await?;
+                let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command listed entries"
@@ -209,9 +218,47 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     json!({
                         "anchor": provider.anchor().await.as_str(),
                         "root_cid": visible.root_cid.to_string(),
-                        "file_count": visible.file_count,
+                        "file_count": summary.file_count,
                         "top_level_entries": visible.top_level_entries,
+                        "visible_file_bytes": summary.visible_file_bytes,
+                        "directory_paths": summary.directory_paths,
+                        "change_key": summary.change_key,
                         "entries": entries,
+                    })
+                );
+            }
+            ProviderCmd::ResolvePath {
+                parent_path,
+                display_name,
+                excluding_path,
+            } => {
+                let parent_path = normalize_provider_parent_path(&parent_path)?;
+                let display_name = sanitized_provider_file_name(&display_name);
+                let excluding_path = excluding_path
+                    .as_deref()
+                    .map(normalize_provider_path)
+                    .transpose()?;
+                let visible_view =
+                    iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                        .await
+                        .context("building virtual provider timestamp index")?;
+                let modified_at_by_path = provider_modified_at_index(&visible_view);
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
+                let path = unique_provider_path(
+                    &entries,
+                    &parent_path,
+                    &display_name,
+                    excluding_path.as_deref(),
+                );
+                println!(
+                    "{}",
+                    json!({
+                        "parent_path": parent_path,
+                        "display_name": display_name,
+                        "path": path,
+                        "error": "",
                     })
                 );
             }
@@ -373,6 +420,37 @@ async fn provider_entries(
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> ProviderListSummary {
+    let mut file_count = 0_u64;
+    let mut visible_file_bytes = 0_u64;
+    let mut directory_paths = Vec::new();
+    let mut entry_keys = Vec::new();
+    for entry in entries {
+        if entry.kind == "directory" {
+            directory_paths.push(entry.path.clone());
+        } else {
+            file_count += 1;
+            visible_file_bytes = visible_file_bytes.saturating_add(entry.size);
+        }
+        entry_keys.push(format!(
+            "{}:{}:{}:{}:{}",
+            entry.kind,
+            entry.path,
+            entry.size,
+            entry.version,
+            entry.modified_at.unwrap_or_default()
+        ));
+    }
+    directory_paths.sort();
+    entry_keys.sort();
+    ProviderListSummary {
+        file_count,
+        visible_file_bytes,
+        directory_paths,
+        change_key: format!("{anchor}|{}", entry_keys.join("|")),
+    }
 }
 
 fn provider_modified_at_index(
@@ -742,6 +820,69 @@ pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
         anyhow::bail!("virtual path must not be empty");
     }
     Ok(parts.join("/"))
+}
+
+fn normalize_provider_parent_path(path: &str) -> Result<String> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        Ok(String::new())
+    } else {
+        normalize_provider_path(trimmed)
+    }
+}
+
+fn sanitized_provider_file_name(display_name: &str) -> String {
+    let mut name = display_name
+        .split(['/', ':', '\\'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>()
+        .join("_");
+    if name.is_empty() {
+        "Shared file".clone_into(&mut name);
+    }
+    name
+}
+
+fn unique_provider_path(
+    entries: &[ProviderListEntry],
+    parent: &str,
+    name: &str,
+    excluding: Option<&str>,
+) -> String {
+    let prefix = if parent.is_empty() {
+        String::new()
+    } else {
+        format!("{parent}/")
+    };
+    let existing = entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .filter(|path| Some(*path) != excluding)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut candidate = format!("{prefix}{name}");
+    if !existing.contains(candidate.as_str()) {
+        return candidate;
+    }
+
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Shared file");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let mut index = 2;
+    while existing.contains(candidate.as_str()) {
+        candidate = format!("{prefix}{stem} ({index}){extension}");
+        index += 1;
+    }
+    candidate
 }
 
 fn split_provider_path(path: &str) -> Result<(String, String)> {

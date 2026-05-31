@@ -43,6 +43,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
     @Published var authorizedDeviceCount = 0
+    @Published var onlineDeviceCount = 0
     @Published var fileCount = 0
     @Published var visibleFileBytes: UInt64 = 0
 
@@ -116,15 +117,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var isSetupComplete: Bool {
-        lastState?.ui.account?.authorizationState == "authorized"
+        lastState?.ui.setupState == "authorized"
     }
 
     var isAwaitingApproval: Bool {
-        lastState?.ui.account?.authorizationState == "awaiting_approval"
+        lastState?.ui.setupState == "awaiting_approval"
     }
 
     var isRevoked: Bool {
-        lastState?.ui.account?.authorizationState == "revoked"
+        lastState?.ui.setupState == "revoked"
     }
 
     var hasOwnerAuthority: Bool {
@@ -689,6 +690,7 @@ final class IrisDriveMobileModel: ObservableObject {
             currentProviderSignalKey = ""
             lastProviderSignalKey = ""
             currentProviderDirectoryPaths = []
+            onlineDeviceCount = 0
             return
         }
 
@@ -698,10 +700,8 @@ final class IrisDriveMobileModel: ObservableObject {
             ? state.ui.account?.deviceLabel ?? deviceLabel
             : deviceLabel
         syncRunning = state.ui.sync.running
-        authorizationState = authorizationTitle(state.ui.account?.authorizationState)
-        statusTitle = ownerPublicKey.isEmpty
-            ? "Ready"
-            : (isRevoked ? "Device removed" : (isAwaitingApproval ? "Waiting for approval" : "Ready"))
+        authorizationState = authorizationTitle(state.ui.setupState)
+        statusTitle = statusTitle(for: state.ui.primaryStatus)
         statusDetail = state.error.isEmpty ? syncStateTitle : state.error
         if !fileProviderError.isEmpty {
             statusTitle = "Open in Files failed"
@@ -731,12 +731,13 @@ final class IrisDriveMobileModel: ObservableObject {
                 requestLink: request.requestLink
             )
         } ?? []
-        authorizedDeviceCount = devices.count
-        let stats = loadProviderStats()
-        fileCount = stats.fileCount
-        visibleFileBytes = stats.visibleFileBytes
-        currentProviderSignalKey = stats.signalKey
-        currentProviderDirectoryPaths = stats.directoryPaths
+        authorizedDeviceCount = Int(state.ui.authorizedDeviceCount)
+        onlineDeviceCount = Int(state.ui.onlineDeviceCount)
+        fileCount = Int(state.ui.fileCount)
+        visibleFileBytes = state.ui.visibleFileBytes
+        let signal = loadProviderSignalSummary()
+        currentProviderSignalKey = signal.changeKey
+        currentProviderDirectoryPaths = signal.directoryPaths
         signalFileProviderIfNeeded()
         backups = state.ui.backups.map { backup in
             IrisDriveBackup(
@@ -844,6 +845,17 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
+    private func statusTitle(for value: String) -> String {
+        switch value {
+        case "revoked":
+            "Device removed"
+        case "awaiting_approval":
+            "Waiting for approval"
+        default:
+            "Ready"
+        }
+    }
+
     private func deviceStateTitle(_ value: String?) -> String {
         switch value {
         case "awaiting_approval", "Awaiting approval":
@@ -868,29 +880,18 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private struct ProviderState: Decodable {
         var anchor: String?
-        var entries: [ProviderEntry]
-    }
-
-    private struct ProviderEntry: Decodable {
-        var path: String
-        var kind: String
-        var size: UInt64
-        var version: String?
-        var modifiedAt: Int64?
+        var directoryPaths: [String]
+        var changeKey: String
 
         enum CodingKeys: String, CodingKey {
-            case path
-            case kind
-            case size
-            case version
-            case modifiedAt = "modified_at"
+            case anchor
+            case directoryPaths = "directory_paths"
+            case changeKey = "change_key"
         }
     }
 
-    private func loadProviderStats() -> (
-        fileCount: Int,
-        visibleFileBytes: UInt64,
-        signalKey: String,
+    private func loadProviderSignalSummary() -> (
+        changeKey: String,
         directoryPaths: [String]
     ) {
         guard let data = IrisDriveNativeProvider
@@ -898,23 +899,9 @@ final class IrisDriveMobileModel: ObservableObject {
             .data(using: .utf8),
               let state = try? JSONDecoder().decode(ProviderState.self, from: data)
         else {
-            return (0, 0, "", [])
+            return ("", [])
         }
-        let fileEntries = state.entries.filter { $0.kind != "directory" }
-        let visibleFileBytes = fileEntries.reduce(UInt64(0)) { $0 + $1.size }
-        let directoryPaths = state.entries
-            .filter { $0.kind == "directory" }
-            .map(\.path)
-        let entryKey = state.entries
-            .map { "\($0.kind):\($0.path):\($0.size):\($0.version ?? ""):\($0.modifiedAt ?? 0)" }
-            .sorted()
-            .joined(separator: "|")
-        return (
-            fileEntries.count,
-            visibleFileBytes,
-            "\(state.anchor ?? "unknown")|\(entryKey)",
-            directoryPaths
-        )
+        return (state.changeKey.isEmpty ? state.anchor ?? "" : state.changeKey, state.directoryPaths)
     }
 
     private func signalFileProviderIfNeeded() {

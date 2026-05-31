@@ -25,22 +25,36 @@ class IrisDriveSyncService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForegroundCompat()
+        if (!startForegroundCompat()) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun startForegroundCompat() {
+    private fun startForegroundCompat(): Boolean {
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (error: RuntimeException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                error.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException"
+            ) {
+                false
+            } else {
+                throw error
+            }
         }
     }
 

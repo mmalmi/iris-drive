@@ -221,7 +221,7 @@ pub(crate) fn cmd_daemon(
             })
         });
         let root_update_debounce = root_update_debounce_duration(watch_debounce_ms);
-        let subscribed_status = json!({
+        let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
                 "owner_npub": account_npub(&state.owner_pubkey),
@@ -237,6 +237,7 @@ pub(crate) fn cmd_daemon(
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
+        normalize_daemon_status_for_clients(config_dir, &mut subscribed_status);
         write_daemon_status(config_dir, subscribed_status.clone());
         println!("{subscribed_status}");
         spawn_daemon_heartbeat(config_dir.to_path_buf());

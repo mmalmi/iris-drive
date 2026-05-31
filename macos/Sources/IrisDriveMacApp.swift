@@ -1512,11 +1512,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.relays = network["relays"] as? [String] ?? []
                 if let relayStatuses = network["relay_statuses"] as? [[String: Any]] {
                     status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
-                } else {
-                    status.relayStatuses = Self.mergeRelayStatuses(
-                        relays: status.relays,
-                        statuses: status.relayStatuses
-                    )
                 }
                 status.blossomServers = network["blossom_servers"] as? [String] ?? []
                 status.backupTargets =
@@ -1591,27 +1586,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     status.relays = json["relays"] as? [String] ?? status.relays
                     if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
                         status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
-                    } else {
-                        status.relayStatuses = Self.mergeRelayStatuses(
-                            relays: status.relays,
-                            statuses: status.relayStatuses
-                        )
-                    }
-                case "relay_status":
-                    if let url = json["url"] as? String,
-                       let relayStatus = json["status"] as? String {
-                        status.relayStatuses = Self.upsertRelayStatus(
-                            IrisDriveRelayStatus(url: url, status: relayStatus),
-                            into: status.relayStatuses,
-                            relays: status.relays
-                        )
                     }
                 case "relay_statuses":
                     if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
-                        status.relayStatuses = Self.mergeRelayStatuses(
-                            relays: status.relays,
-                            statuses: relayStatuses.map(IrisDriveRelayStatus.init)
-                        )
+                        status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
                     }
                 case "initial_import":
                     self.updateStatus("Imported drive")
@@ -1682,10 +1660,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
             status.relays = relays
-            status.relayStatuses = Self.mergeRelayStatuses(
-                relays: relays,
-                statuses: status.relayStatuses
-            )
             NSLog("Iris Drive relays updated")
         }
     }
@@ -1761,53 +1735,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.relays = relays
             }
             if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
-                status.relayStatuses = Self.mergeRelayStatuses(
-                    relays: status.relays,
-                    statuses: relayStatuses.map(IrisDriveRelayStatus.init)
-                )
+                status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
             }
             if let gateway = json["browser_gateway"] as? [String: Any],
                let enabled = gateway["enabled"] as? Bool {
                 status.localNhashResolverEnabled = enabled
             }
 
-            let running = json["running"] as? Bool ?? false
-            let fresh = json["fresh"] as? Bool ?? false
-            let fips = json["fips_block_sync"] as? [String: Any]
-            let connectedPeers = fips?["connected_peers"] as? [String] ?? []
-            let directDevices =
-                fips?["direct_devices"] as? [String]
-                ?? fips?["direct_peers"] as? [String]
-                ?? connectedPeers
-            let meshDevices =
-                fips?["mesh_devices"] as? [String]
-                ?? fips?["mesh_peers"] as? [String]
-                ?? []
-            let onlineDevices =
-                fips?["online_devices"] as? [String]
-                ?? fips?["online_peers"] as? [String]
-                ?? Array(Set(directDevices).union(meshDevices)).sorted()
-            let authorizedPeers = fips?["authorized_peers"] as? [String] ?? []
-            let connectedSet = Set(directDevices)
-            let onlineSet = Set(onlineDevices)
-            let authorizedConnected = authorizedPeers.filter { connectedSet.contains($0) }.count
-            let authorizedOnline = authorizedPeers.filter { onlineSet.contains($0) }.count
-            status.fips = IrisDriveFipsStatus(
-                enabled: fips != nil,
-                running: running,
-                fresh: fresh,
-                endpointNpub: fips?["endpoint_npub"] as? String,
-                discoveryScope: fips?["discovery_scope"] as? String,
-                rosterPeerCount: authorizedPeers.count,
-                rosterOnlineDeviceCount: authorizedOnline,
-                rosterDirectDeviceCount: authorizedConnected,
-                onlineDeviceCount: onlineDevices.count,
-                directDeviceCount: directDevices.count,
-                meshDeviceCount: meshDevices.count,
-                otherPeerCount: max(0, onlineDevices.count - authorizedOnline),
-                peerStatuses: (fips?["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init),
-                error: json["fips_block_sync_error"] as? String
-            )
+            status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
             self.updateLinkMenuState()
             self.signalFileProviderDomainForExternalStatusIfNeeded(
                 key: Self.externalFileProviderSignalKey(json)
@@ -1929,18 +1864,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         from data: Data
     ) throws -> [(NSFileProviderItemIdentifier, String)] {
         let list = try JSONDecoder().decode(FileProviderProviderList.self, from: data)
-        var paths = Set<String>()
-        for entry in list.entries {
-            var parent = fileProviderParentPath(for: entry.path)
-            while !parent.isEmpty {
-                paths.insert(parent)
-                parent = fileProviderParentPath(for: parent)
-            }
-            if entry.kind == "directory" {
-                paths.insert(entry.path)
-            }
-        }
-        return paths
+        return list.directoryPaths
             .sorted()
             .map { (fileProviderIdentifier(for: $0), "directory \($0)") }
     }
@@ -1955,19 +1879,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    private static func fileProviderParentPath(for path: String) -> String {
-        let parts = path.split(separator: "/").map(String.init)
-        guard parts.count > 1 else { return "" }
-        return parts.dropLast().joined(separator: "/")
-    }
-
     private struct FileProviderProviderList: Decodable {
-        let entries: [FileProviderProviderEntry]
-    }
+        let directoryPaths: [String]
 
-    private struct FileProviderProviderEntry: Decodable {
-        let path: String
-        let kind: String
+        enum CodingKeys: String, CodingKey {
+            case directoryPaths = "directory_paths"
+        }
     }
 
     private func repairFileProviderDomainAfterSignalFailure(_ error: Error) {
@@ -2168,38 +2085,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         return hashtree["snapshot_url"] as? String
             ?? hashtree["permalink_url"] as? String
-    }
-
-    private static func mergeRelayStatuses(
-        relays: [String],
-        statuses: [IrisDriveRelayStatus]
-    ) -> [IrisDriveRelayStatus] {
-        let byURL = statuses.reduce(into: [String: String]()) { partial, relay in
-            partial[normalizedRelayURL(relay.url)] = relay.status
-        }
-        return relays.map { relay in
-            IrisDriveRelayStatus(
-                url: relay,
-                status: byURL[normalizedRelayURL(relay)] ?? "configured"
-            )
-        }
-    }
-
-    private static func upsertRelayStatus(
-        _ relayStatus: IrisDriveRelayStatus,
-        into statuses: [IrisDriveRelayStatus],
-        relays: [String]
-    ) -> [IrisDriveRelayStatus] {
-        let normalized = normalizedRelayURL(relayStatus.url)
-        var next = statuses.filter { normalizedRelayURL($0.url) != normalized }
-        next.append(relayStatus)
-        let knownRelays = relays.isEmpty ? next.map { normalizedRelayURL($0.url) } : relays
-        return mergeRelayStatuses(relays: knownRelays, statuses: next)
-    }
-
-    private static func normalizedRelayURL(_ url: String) -> String {
-        url.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private static func intValue(_ value: Any?) -> Int? {

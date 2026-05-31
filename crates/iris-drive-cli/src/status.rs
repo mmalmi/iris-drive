@@ -110,11 +110,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "backup_targets": backup_targets,
                 "authorized_device_count": authorized_device_count,
                 "published_device_roots": published_device_roots,
-                "relay_statuses": daemon_status
-                    .as_ref()
-                    .and_then(|status| status.get("relay_statuses"))
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
+                "relay_statuses": normalized_relay_statuses(&config, daemon_status.as_ref()),
                 "fips": fips_diagnostics,
             },
             "settings": settings_status(&config),
@@ -346,6 +342,7 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
         fips.insert("mesh_peers".to_string(), json!([]));
         fips.insert("peer_statuses".to_string(), json!([]));
     }
+    normalize_daemon_status_for_clients(config_dir, &mut value);
     Some(value)
 }
 
@@ -369,6 +366,7 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) {
             "browser_gateway",
             "fips_block_sync",
             "fips_block_sync_error",
+            "fips",
         ] {
             if !payload_object.contains_key(key)
                 && let Some(value) = existing_object.get(key)
@@ -384,12 +382,74 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) {
         object.insert("fresh".to_string(), json!(true));
         object.insert("updated_at".to_string(), json!(now));
     }
+    normalize_daemon_status_for_clients(config_dir, &mut payload);
     if let Some(parent) = daemon_status_path(config_dir).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(bytes) = serde_json::to_vec_pretty(&payload) {
         let _ = std::fs::write(daemon_status_path(config_dir), bytes);
     }
+}
+
+pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &mut Value) {
+    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        return;
+    };
+    let runtime_relays = string_vec_from_json_array(payload.get("relays"));
+    let relay_statuses = if runtime_relays.is_empty() {
+        normalized_relay_statuses(&config, Some(payload))
+    } else {
+        normalized_relay_statuses_for_relays(&runtime_relays, Some(payload))
+    };
+    let fips = fips_network_diagnostics(&config, Some(payload));
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("relay_statuses".to_string(), relay_statuses);
+        object.insert("fips".to_string(), fips);
+    }
+}
+
+pub(crate) fn normalized_relay_statuses(
+    config: &AppConfig,
+    daemon_status: Option<&Value>,
+) -> Value {
+    normalized_relay_statuses_for_relays(&config.relays, daemon_status)
+}
+
+fn normalized_relay_statuses_for_relays(relays: &[String], daemon_status: Option<&Value>) -> Value {
+    let mut by_url = BTreeMap::new();
+    if let Some(statuses) = daemon_status
+        .and_then(|status| status.get("relay_statuses"))
+        .and_then(Value::as_array)
+    {
+        for status in statuses {
+            let Some(url) = status.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            let value = status
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            by_url.insert(normalized_relay_url(url), value.to_owned());
+        }
+    }
+    Value::Array(
+        relays
+            .iter()
+            .map(|relay| {
+                json!({
+                    "url": relay,
+                    "status": by_url
+                        .get(&normalized_relay_url(relay))
+                        .map(String::as_str)
+                        .unwrap_or("configured"),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn normalized_relay_url(url: &str) -> String {
+    url.trim().trim_matches('/').to_owned()
 }
 
 pub(crate) fn merge_daemon_status(

@@ -58,7 +58,7 @@ internal class IrisDriveDocumentStore(
         displayName: String,
     ): IrisDriveDocumentEntry {
         val parentPath = directoryPathForDocument(parentDocumentId)
-        val targetPath = uniqueProviderPath(parentPath, displayName)
+        val targetPath = resolvedProviderPath(parentPath, displayName)
         if (mimeType == DIRECTORY_MIME_TYPE) {
             requireNativeOk(NativeCore.providerMkdirJson(dataDir.absolutePath, targetPath))
         } else {
@@ -82,7 +82,7 @@ internal class IrisDriveDocumentStore(
         input: InputStream,
     ): IrisDriveDocumentEntry {
         val parentPath = directoryPathForDocument(parentDocumentId)
-        val targetPath = uniqueProviderPath(parentPath, displayName)
+        val targetPath = resolvedProviderPath(parentPath, displayName)
         val source = tempFile("import")
         try {
             input.use { stream ->
@@ -111,7 +111,7 @@ internal class IrisDriveDocumentStore(
         }
         val oldPath = pathForDocumentId(documentId)
         val parentPath = parentOf(oldPath)
-        val targetPath = uniqueProviderPath(parentPath, displayName, excluding = oldPath)
+        val targetPath = resolvedProviderPath(parentPath, displayName, excluding = oldPath)
         if (targetPath == oldPath) return documentId
         requireNativeOk(NativeCore.providerRenameJson(dataDir.absolutePath, oldPath, targetPath))
         return documentIdForPath(targetPath)
@@ -201,29 +201,23 @@ internal class IrisDriveDocumentStore(
             isRoot = false,
         )
 
-    private fun uniqueProviderPath(
+    private fun resolvedProviderPath(
         parentPath: String,
         requestedName: String,
         excluding: String? = null,
     ): String {
-        val sanitized = sanitizeDisplayName(requestedName)
-        val prefix = parentPath.takeIf { it.isNotBlank() }?.let { "$it/" }.orEmpty()
-        val existing = providerEntries()
-            .map { it.path }
-            .filter { it != excluding }
-            .toSet()
-        var candidate = "$prefix$sanitized"
-        if (!existing.contains(candidate)) return candidate
-
-        val dotIndex = sanitized.lastIndexOf('.').takeIf { it > 0 }
-        val basename = dotIndex?.let { sanitized.substring(0, it) } ?: sanitized
-        val extension = dotIndex?.let { sanitized.substring(it) }.orEmpty()
-        var index = 2
-        while (existing.contains(candidate)) {
-            candidate = "$prefix$basename ($index)$extension"
-            index += 1
-        }
-        return candidate
+        val json = JSONObject(
+            NativeCore.providerResolvePathJson(
+                dataDir.absolutePath,
+                parentPath,
+                requestedName,
+                excluding.orEmpty(),
+            ),
+        )
+        val error = json.optString("error").takeIf { it.isNotBlank() }
+        if (error != null) throw FileNotFoundException(error)
+        return json.optString("path").takeIf { it.isNotBlank() }
+            ?: throw FileNotFoundException("provider path resolver returned no path")
     }
 
     private fun pathForDocumentId(documentId: String): String {
@@ -267,15 +261,6 @@ internal class IrisDriveDocumentStore(
         private const val ROOT_CHILD_PREFIX = "$ROOT_DOCUMENT_ID/"
         private const val DIRECTORY_MIME_TYPE = "vnd.android.document/directory"
         private const val DEFAULT_FILE_MIME_TYPE = "application/octet-stream"
-
-        fun sanitizeDisplayName(displayName: String): String {
-            val sanitized = displayName
-                .split('/', ':', '\\')
-                .map { it.trim() }
-                .filter { it.isNotBlank() && it != "." && it != ".." }
-                .joinToString("_")
-            return sanitized.ifBlank { "Untitled" }
-        }
 
         fun inferMimeType(displayName: String): String =
             URLConnection.guessContentTypeFromName(displayName) ?: DEFAULT_FILE_MIME_TYPE

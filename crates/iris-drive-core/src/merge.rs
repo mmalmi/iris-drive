@@ -219,13 +219,12 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
 
     let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
     let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
+    let mut local_only_writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
+    let mut local_only_tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
     let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
 
     for snap in snapshots {
-        if snap.root.local_only {
-            continue;
-        }
         if !allow.contains(snap.device_pubkey) {
             continue;
         }
@@ -248,18 +247,16 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 device_pubkey: snap.device_pubkey.to_string(),
                 root: snap.root.clone(),
             };
-            writes
-                .entry(f.path.clone())
-                .and_modify(|existing| {
-                    if should_mark_write_conflict(&candidate, existing) {
-                        conflicts.insert(candidate.entry.path.clone());
-                        record_write_conflict(&mut conflict_details, &candidate, existing);
-                    }
-                    if write_candidate_wins(&candidate, existing) {
-                        *existing = candidate.clone();
-                    }
-                })
-                .or_insert(candidate);
+            if snap.root.local_only {
+                insert_write_candidate(&mut local_only_writes, None, None, candidate);
+            } else {
+                insert_write_candidate(
+                    &mut writes,
+                    Some(&mut conflicts),
+                    Some(&mut conflict_details),
+                    candidate,
+                );
+            }
         }
         for t in &snap.tombstones {
             if path_has_ignored_component(&t.path) {
@@ -270,14 +267,22 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 device_pubkey: snap.device_pubkey.to_string(),
                 root: snap.root.clone(),
             };
-            tombstones
-                .entry(t.path.clone())
-                .and_modify(|cur| {
-                    if tombstone_candidate_wins(&candidate, cur) {
-                        *cur = candidate.clone();
-                    }
-                })
-                .or_insert(candidate);
+            if snap.root.local_only {
+                insert_tombstone_candidate(&mut local_only_tombstones, t.path.clone(), candidate);
+            } else {
+                insert_tombstone_candidate(&mut tombstones, t.path.clone(), candidate);
+            }
+        }
+    }
+
+    for (path, write) in local_only_writes {
+        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+            writes.insert(path, write);
+        }
+    }
+    for (path, tombstone) in local_only_tombstones {
+        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+            tombstones.insert(path, tombstone);
         }
     }
 
@@ -315,6 +320,44 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     view.conflicts = conflicts.into_iter().collect();
     view.conflict_details = conflict_details.into_values().collect();
     view
+}
+
+fn insert_write_candidate(
+    writes: &mut BTreeMap<String, WriteCandidate>,
+    mut conflicts: Option<&mut std::collections::BTreeSet<String>>,
+    mut conflict_details: Option<&mut BTreeMap<String, MergedConflict>>,
+    candidate: WriteCandidate,
+) {
+    let path = candidate.entry.path.clone();
+    if let Some(existing) = writes.get_mut(&path) {
+        if should_mark_write_conflict(&candidate, existing) {
+            if let (Some(conflicts), Some(conflict_details)) =
+                (conflicts.as_deref_mut(), conflict_details.as_deref_mut())
+            {
+                conflicts.insert(candidate.entry.path.clone());
+                record_write_conflict(conflict_details, &candidate, existing);
+            }
+        }
+        if write_candidate_wins(&candidate, existing) {
+            *existing = candidate;
+        }
+    } else {
+        writes.insert(path, candidate);
+    }
+}
+
+fn insert_tombstone_candidate(
+    tombstones: &mut BTreeMap<String, TombstoneCandidate>,
+    path: String,
+    candidate: TombstoneCandidate,
+) {
+    if let Some(current) = tombstones.get_mut(&path) {
+        if tombstone_candidate_wins(&candidate, current) {
+            *current = candidate;
+        }
+    } else {
+        tombstones.insert(path, candidate);
+    }
 }
 
 fn record_write_conflict(

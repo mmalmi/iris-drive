@@ -31,8 +31,8 @@ use crate::actions::NativeAppAction;
 use crate::native_fips;
 use crate::provider_metadata::provider_modified_at_index;
 use crate::state::{
-    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiPaths, UiState,
-    UiSyncRoot, UiSyncStatus,
+    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsStatus, UiPaths,
+    UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
 };
 
 #[cfg(target_os = "android")]
@@ -52,6 +52,30 @@ const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
 const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(not(test))]
 const DEVICE_LINK_EXCHANGE_TICK_SECS: u64 = 1;
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinkInputClassification {
+    pub kind: String,
+    pub is_complete: bool,
+    pub is_valid: bool,
+    pub normalized_input: String,
+    pub owner_pubkey: String,
+    pub admin_device_pubkey: String,
+    pub has_link_secret: bool,
+    pub error: String,
+}
+
+#[uniffi::export]
+#[must_use]
+pub fn classify_link_input(input: String) -> LinkInputClassification {
+    classify_link_input_value(&input)
+}
+
+#[uniffi::export]
+#[must_use]
+pub fn validate_link_input(input: String) -> LinkInputClassification {
+    classify_link_input_value(&input)
+}
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
@@ -112,6 +136,8 @@ struct NativeAppRuntime {
     app_version: String,
     #[cfg(not(test))]
     device_link_exchange_running: Arc<AtomicBool>,
+    #[cfg(not(test))]
+    device_link_exchange_stop: Arc<AtomicBool>,
 }
 
 impl NativeAppRuntime {
@@ -129,6 +155,8 @@ impl NativeAppRuntime {
             app_version,
             #[cfg(not(test))]
             device_link_exchange_running: Arc::new(AtomicBool::new(false)),
+            #[cfg(not(test))]
+            device_link_exchange_stop: Arc::new(AtomicBool::new(false)),
         };
         runtime.reload_from_disk();
         runtime.start_device_link_exchange_if_needed();
@@ -286,6 +314,7 @@ impl NativeAppRuntime {
     fn logout(&mut self) {
         match iris_drive_core::logout_local_account(Path::new(&self.data_dir)) {
             Ok(_) => {
+                self.stop_device_link_exchange();
                 self.state.ui.roots.clear();
                 self.state.ui.devices.clear();
                 self.set_sync_running(false);
@@ -560,14 +589,25 @@ impl NativeAppRuntime {
                 return;
             }
 
+            self.device_link_exchange_stop
+                .store(false, Ordering::Release);
             let data_dir = self.data_dir.clone();
             let running = self.device_link_exchange_running.clone();
+            let stop = self.device_link_exchange_stop.clone();
             std::thread::spawn(move || {
-                if let Err(error) = run_device_link_exchange(&data_dir) {
+                if let Err(error) = run_device_link_exchange(&data_dir, stop) {
                     tracing::warn!(error = %error, "native device-link FIPS exchange stopped");
                 }
                 running.store(false, Ordering::Release);
             });
+        }
+    }
+
+    fn stop_device_link_exchange(&mut self) {
+        #[cfg(not(test))]
+        {
+            self.device_link_exchange_stop
+                .store(true, Ordering::Release);
         }
     }
 
@@ -583,14 +623,18 @@ impl NativeAppRuntime {
         let previous_roots = self.state.ui.roots.clone();
         self.state.ui = UiState {
             relays: default_relays(),
+            relay_statuses: default_relay_statuses(&default_relays()),
             backups: default_backups(),
             paths,
             sync,
+            setup_state: "not_configured".to_owned(),
+            primary_status: "not_setup".to_owned(),
             snapshot_link: String::new(),
             ..UiState::default()
         };
 
         let Ok(config) = self.load_config() else {
+            self.refresh_ui_summary(None);
             return;
         };
         self.state.ui.relays = if config.relays.is_empty() {
@@ -598,6 +642,7 @@ impl NativeAppRuntime {
         } else {
             config.relays.clone()
         };
+        self.state.ui.relay_statuses = default_relay_statuses(&self.state.ui.relays);
         self.state.ui.backups = config
             .blossom_servers
             .iter()
@@ -622,6 +667,7 @@ impl NativeAppRuntime {
         };
 
         let Some(raw_account) = config.account.as_ref() else {
+            self.refresh_ui_summary(None);
             return;
         };
         let mut account = raw_account.clone();
@@ -641,12 +687,15 @@ impl NativeAppRuntime {
             self.state.ui.roots.clear();
             self.state.ui.devices.clear();
             self.state.ui.snapshot_link.clear();
+            self.refresh_ui_summary(None);
             return;
         }
         let fips_status = load_native_fips_status(Path::new(&self.data_dir));
         self.state.ui.devices = devices_from_account(&account, fips_status.as_ref());
         self.refresh_device_actions();
         update_snapshot_link(&mut self.state, &config);
+        self.refresh_provider_summary();
+        self.refresh_ui_summary(fips_status.as_ref());
     }
 
     fn can_manage_devices(&self) -> bool {
@@ -682,6 +731,41 @@ impl NativeAppRuntime {
             device.can_demote_admin = can_manage && !is_current && is_admin && admin_count > 1;
             device.is_current_device = is_current;
         }
+    }
+
+    fn refresh_provider_summary(&mut self) {
+        let Ok(value) = run_native_provider_list(&self.data_dir) else {
+            return;
+        };
+        self.state.ui.file_count = value
+            .get("file_count")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        self.state.ui.visible_file_bytes = value
+            .get("visible_file_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+    }
+
+    fn refresh_ui_summary(&mut self, fips_status: Option<&NativeFipsStatus>) {
+        let setup_state = self
+            .state
+            .ui
+            .account
+            .as_ref()
+            .map(|account| account.authorization_state.clone())
+            .unwrap_or_else(|| "not_configured".to_owned());
+        self.state.ui.primary_status = primary_status_for_setup_state(&setup_state).to_owned();
+        self.state.ui.setup_state = setup_state;
+        self.state.ui.authorized_device_count = self.state.ui.devices.len() as u64;
+        self.state.ui.online_device_count = self
+            .state
+            .ui
+            .devices
+            .iter()
+            .filter(|device| device.is_online)
+            .count() as u64;
+        self.state.ui.fips = ui_fips_status(fips_status);
     }
 
     fn set_sync_running(&mut self, running: bool) {
@@ -762,6 +846,14 @@ impl NativeAppRuntime {
     }
 }
 
+#[cfg(not(test))]
+impl Drop for NativeAppRuntime {
+    fn drop(&mut self) {
+        self.device_link_exchange_stop
+            .store(true, Ordering::Release);
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ProviderListEntry {
     path: String,
@@ -770,6 +862,14 @@ struct ProviderListEntry {
     version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     modified_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderListSummary {
+    file_count: u64,
+    visible_file_bytes: u64,
+    directory_paths: Vec<String>,
+    change_key: String,
 }
 
 pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
@@ -837,6 +937,18 @@ pub(crate) fn native_provider_import_shared_file_json(
     }
 }
 
+pub(crate) fn native_provider_resolve_path_json(
+    data_dir: &str,
+    parent_path: &str,
+    display_name: &str,
+    excluding_path: &str,
+) -> serde_json::Value {
+    match run_native_provider_resolve_path(data_dir, parent_path, display_name, excluding_path) {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
 fn native_provider_import_shared_file(
     data_dir: &str,
     display_name: &str,
@@ -848,11 +960,40 @@ fn native_provider_import_shared_file(
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         let modified_at_by_path = BTreeMap::new();
         let entries = provider_entries(&provider, &modified_at_by_path).await?;
-        let path = unique_provider_path(&entries, &display_name);
+        let path = unique_provider_path(&entries, "", &display_name, None);
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
         write_provider_file(&provider, &path, &bytes).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    })
+}
+
+fn run_native_provider_resolve_path(
+    data_dir: &str,
+    parent_path: &str,
+    display_name: &str,
+    excluding_path: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let parent_path = normalize_provider_parent_path(parent_path)?;
+        let display_name = sanitized_provider_file_name(display_name);
+        let excluding_path = optional_normalized_provider_path(excluding_path)?;
+        let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
+        let modified_at_by_path = BTreeMap::new();
+        let entries = provider_entries(&provider, &modified_at_by_path).await?;
+        let path = unique_provider_path(
+            &entries,
+            &parent_path,
+            &display_name,
+            excluding_path.as_deref(),
+        );
+        Ok(json!({
+            "parent_path": parent_path,
+            "display_name": display_name,
+            "path": path,
+            "error": "",
+        }))
     })
 }
 
@@ -873,9 +1014,14 @@ fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value>
                 .await
                 .context("opening provider root")?;
         let entries = provider_entries(&provider, &modified_at_by_path).await?;
+        let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
         Ok(json!({
             "anchor": provider.anchor().await.as_str(),
             "root_cid": visible_root.root_cid.to_string(),
+            "file_count": summary.file_count,
+            "visible_file_bytes": summary.visible_file_bytes,
+            "directory_paths": summary.directory_paths,
+            "change_key": summary.change_key,
             "entries": entries,
         }))
     })
@@ -1023,6 +1169,37 @@ where
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
+}
+
+fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> ProviderListSummary {
+    let mut file_count = 0_u64;
+    let mut visible_file_bytes = 0_u64;
+    let mut directory_paths = Vec::new();
+    let mut entry_keys = Vec::new();
+    for entry in entries {
+        if entry.kind == "directory" {
+            directory_paths.push(entry.path.clone());
+        } else {
+            file_count += 1;
+            visible_file_bytes = visible_file_bytes.saturating_add(entry.size);
+        }
+        entry_keys.push(format!(
+            "{}:{}:{}:{}:{}",
+            entry.kind,
+            entry.path,
+            entry.size,
+            entry.version,
+            entry.modified_at.unwrap_or_default()
+        ));
+    }
+    directory_paths.sort();
+    entry_keys.sort();
+    ProviderListSummary {
+        file_count,
+        visible_file_bytes,
+        directory_paths,
+        change_key: format!("{anchor}|{}", entry_keys.join("|")),
+    }
 }
 
 async fn import_provider_mutation<P>(
@@ -1322,6 +1499,23 @@ fn normalize_provider_path(path: &str) -> anyhow::Result<String> {
     Ok(segments.join("/"))
 }
 
+fn normalize_provider_parent_path(path: &str) -> anyhow::Result<String> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    normalize_provider_path(trimmed)
+}
+
+fn optional_normalized_provider_path(path: &str) -> anyhow::Result<Option<String>> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        normalize_provider_path(trimmed).map(Some)
+    }
+}
+
 fn sanitized_provider_file_name(display_name: &str) -> String {
     let mut name = display_name
         .split(['/', ':', '\\'])
@@ -1335,12 +1529,23 @@ fn sanitized_provider_file_name(display_name: &str) -> String {
     name
 }
 
-fn unique_provider_path(entries: &[ProviderListEntry], name: &str) -> String {
+fn unique_provider_path(
+    entries: &[ProviderListEntry],
+    parent: &str,
+    name: &str,
+    excluding: Option<&str>,
+) -> String {
+    let prefix = if parent.is_empty() {
+        String::new()
+    } else {
+        format!("{parent}/")
+    };
     let existing = entries
         .iter()
         .map(|entry| entry.path.as_str())
+        .filter(|path| Some(*path) != excluding)
         .collect::<std::collections::BTreeSet<_>>();
-    let mut candidate = name.to_owned();
+    let mut candidate = format!("{prefix}{name}");
     if !existing.contains(candidate.as_str()) {
         return candidate;
     }
@@ -1359,7 +1564,7 @@ fn unique_provider_path(entries: &[ProviderListEntry], name: &str) -> String {
         .unwrap_or_default();
     let mut index = 2;
     while existing.contains(candidate.as_str()) {
-        candidate = format!("{stem} ({index}){extension}");
+        candidate = format!("{prefix}{stem} ({index}){extension}");
         index += 1;
     }
     candidate
@@ -1372,13 +1577,13 @@ fn provider_import_error_message_is_retryable(message: &str) -> bool {
 }
 
 #[cfg(not(test))]
-fn run_device_link_exchange(data_dir: &str) -> Result<(), String> {
+fn run_device_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|error| format!("building device-link exchange runtime: {error}"))?;
-    let result = runtime.block_on(run_device_link_exchange_async(data_dir));
+    let result = runtime.block_on(run_device_link_exchange_async(data_dir, stop));
     if let Err(error) = &result {
         write_native_fips_error(Path::new(data_dir), error);
     }
@@ -1386,7 +1591,10 @@ fn run_device_link_exchange(data_dir: &str) -> Result<(), String> {
 }
 
 #[cfg(not(test))]
-async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
+async fn run_device_link_exchange_async(
+    data_dir: &str,
+    stop: Arc<AtomicBool>,
+) -> Result<(), String> {
     let config_dir = Path::new(data_dir);
     let startup_config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
@@ -1415,9 +1623,12 @@ async fn run_device_link_exchange_async(data_dir: &str) -> Result<(), String> {
     ));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    loop {
+    while !stop.load(Ordering::Acquire) {
         tokio::select! {
             _ = tick.tick() => {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
                 let _ = drive_device_link_exchange_tick(
                     config_dir,
                     &sync,
@@ -1934,6 +2145,8 @@ struct NativeFipsStatus {
     #[serde(default)]
     direct_devices: Vec<String>,
     #[serde(default)]
+    direct_peers: Vec<String>,
+    #[serde(default)]
     mesh_devices: Vec<String>,
     #[serde(default)]
     connected_peers: Vec<String>,
@@ -1953,12 +2166,69 @@ impl NativeFipsStatus {
     }
 
     fn peer_is_online(&self, npub: &str) -> bool {
-        self.online_devices.iter().any(|peer| peer == npub)
-            || self.online_peers.iter().any(|peer| peer == npub)
-            || self.direct_devices.iter().any(|peer| peer == npub)
-            || self.connected_peers.iter().any(|peer| peer == npub)
-            || self.mesh_devices.iter().any(|peer| peer == npub)
-            || self.mesh_peers.iter().any(|peer| peer == npub)
+        self.normalized_online_devices()
+            .iter()
+            .any(|peer| peer == npub)
+    }
+
+    fn normalized_direct_devices(&self) -> Vec<String> {
+        string_union([
+            &self.direct_devices,
+            &self.direct_peers,
+            &self.connected_peers,
+        ])
+    }
+
+    fn normalized_mesh_devices(&self) -> Vec<String> {
+        string_union([&self.mesh_devices, &self.mesh_peers])
+    }
+
+    fn normalized_online_devices(&self) -> Vec<String> {
+        if !self.is_fresh() {
+            return Vec::new();
+        }
+        let direct = self.normalized_direct_devices();
+        let mesh = self.normalized_mesh_devices();
+        string_union([&self.online_devices, &self.online_peers, &direct, &mesh])
+    }
+}
+
+fn string_union<'a>(values: impl IntoIterator<Item = &'a Vec<String>>) -> Vec<String> {
+    values
+        .into_iter()
+        .flat_map(|values| values.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn ui_fips_status(status: Option<&NativeFipsStatus>) -> UiFipsStatus {
+    let Some(status) = status else {
+        return UiFipsStatus::default();
+    };
+    let direct_devices = if status.is_fresh() {
+        status.normalized_direct_devices()
+    } else {
+        Vec::new()
+    };
+    let mesh_devices = if status.is_fresh() {
+        status.normalized_mesh_devices()
+    } else {
+        Vec::new()
+    };
+    let online_devices = status.normalized_online_devices();
+    UiFipsStatus {
+        enabled: true,
+        running: status.running,
+        fresh: status.is_fresh(),
+        endpoint_npub: status.endpoint_npub.clone().unwrap_or_default(),
+        online_device_count: online_devices.len() as u64,
+        direct_device_count: direct_devices.len() as u64,
+        mesh_device_count: mesh_devices.len() as u64,
+        online_devices,
+        direct_devices,
+        mesh_devices,
+        error: status.error.clone().unwrap_or_default(),
     }
 }
 
@@ -2053,6 +2323,16 @@ fn default_relays() -> Vec<String> {
         .collect()
 }
 
+fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
+    relays
+        .iter()
+        .map(|relay| UiRelayStatus {
+            url: relay.clone(),
+            status: "configured".to_owned(),
+        })
+        .collect()
+}
+
 fn default_backups() -> Vec<UiBackup> {
     DEFAULT_BLOSSOM_SERVERS
         .iter()
@@ -2067,6 +2347,15 @@ fn default_backups() -> Vec<UiBackup> {
 fn label_option(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+fn primary_status_for_setup_state(setup_state: &str) -> &'static str {
+    match setup_state {
+        "authorized" => "ready",
+        "awaiting_approval" => "awaiting_approval",
+        "revoked" => "revoked",
+        _ => "not_setup",
+    }
 }
 
 fn normalize_pubkey(input: &str) -> Result<String, String> {
@@ -2156,6 +2445,126 @@ struct DeviceLinkTarget {
     owner_hex: String,
     admin_device_hex: Option<String>,
     link_secret: String,
+}
+
+fn classify_link_input_value(input: &str) -> LinkInputClassification {
+    let trimmed = input.trim();
+    let mut classification = LinkInputClassification {
+        kind: "empty".to_owned(),
+        normalized_input: trimmed.to_owned(),
+        ..LinkInputClassification::default()
+    };
+    if trimmed.is_empty() {
+        return classification;
+    }
+    if trimmed.contains(char::is_whitespace) {
+        classification.kind = "unknown".to_owned();
+        classification.error = "link input must not contain whitespace".to_owned();
+        return classification;
+    }
+
+    if let Some(result) = classify_invite_link_input(trimmed) {
+        return result;
+    }
+    if looks_like_owner_pubkey_input(trimmed) {
+        classification.kind = "owner_pubkey".to_owned();
+        classification.is_complete = owner_pubkey_input_is_complete(trimmed);
+        if classification.is_complete {
+            match normalize_pubkey(trimmed) {
+                Ok(owner_hex) => {
+                    classification.is_valid = true;
+                    classification.owner_pubkey = account_npub(&owner_hex);
+                    classification.normalized_input = classification.owner_pubkey.clone();
+                }
+                Err(error) => {
+                    classification.error = error;
+                }
+            }
+        }
+        return classification;
+    }
+
+    classification.kind = "unknown".to_owned();
+    classification.error = "expected owner public key or device invite link".to_owned();
+    classification
+}
+
+fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
+    let lower = input.to_ascii_lowercase();
+    let is_canonical = [
+        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_PREFIX,
+        "iris-drive:/invite/",
+        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_WEB_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix));
+    let is_legacy = lower.starts_with("iris-drive://link-device?")
+        || lower.starts_with("iris-drive:/link-device?")
+        || lower.starts_with("https://drive.iris.to/link-device?");
+    let is_json = input.starts_with('{');
+    if !(is_canonical || is_legacy || is_json) {
+        return None;
+    }
+
+    let mut classification = LinkInputClassification {
+        kind: "invite".to_owned(),
+        normalized_input: input.to_owned(),
+        is_complete: invite_link_input_is_complete(input),
+        ..LinkInputClassification::default()
+    };
+    match iris_drive_core::device_link_invite::parse_device_link_invite(input) {
+        Ok(Some(invite)) => {
+            classification.is_complete = true;
+            classification.is_valid = true;
+            classification.owner_pubkey = account_npub(&invite.owner_hex);
+            classification.admin_device_pubkey = account_npub(&invite.admin_device_hex);
+            classification.has_link_secret = !invite.link_secret.trim().is_empty();
+        }
+        Ok(None) => {
+            classification.error = "device invite was not recognized".to_owned();
+        }
+        Err(error) if classification.is_complete => {
+            classification.error = error.to_string();
+        }
+        Err(_) => {}
+    }
+    Some(classification)
+}
+
+fn invite_link_input_is_complete(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    for prefix in [
+        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_PREFIX,
+        "iris-drive:/invite/",
+        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_WEB_PREFIX,
+    ] {
+        if lower.starts_with(prefix) {
+            return input[prefix.len()..].len() >= 32;
+        }
+    }
+    if lower.starts_with("iris-drive://link-device?")
+        || lower.starts_with("iris-drive:/link-device?")
+        || lower.starts_with("https://drive.iris.to/link-device?")
+    {
+        return lower.contains("owner=")
+            && (lower.contains("admin=") || lower.contains("admin_device="))
+            && (lower.contains("secret=") || lower.contains("link_secret="));
+    }
+    input.starts_with('{') && input.ends_with('}')
+}
+
+fn looks_like_owner_pubkey_input(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    lower.starts_with("npub1")
+        || (input.len() <= 64 && input.chars().all(|ch| ch.is_ascii_hexdigit()))
+}
+
+fn owner_pubkey_input_is_complete(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    if lower.starts_with("npub1") {
+        return input.len() >= 63;
+    }
+    input.len() == 64 && input.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {

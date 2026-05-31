@@ -13,23 +13,21 @@ internal data class AppState(
     val sync: SyncState = SyncState(),
     val snapshotLink: String = "",
     val error: String = "",
+    val setupState: String = "not_configured",
+    val primaryStatus: String = "not_setup",
+    val authorizedDeviceCount: Int = 0,
+    val onlineDeviceCount: Int = 0,
     val fileCount: Int = 0,
     val visibleFileBytes: Long = 0,
 ) {
-    val authorizedDeviceCount: Int
-        get() = devices.size
-
-    val onlineDeviceCount: Int
-        get() = devices.count { it.isOnline }
-
     val isSetupComplete: Boolean
-        get() = account?.authorizationState == "authorized"
+        get() = setupState == "authorized"
 
     val isAwaitingApproval: Boolean
-        get() = account?.authorizationState == "awaiting_approval"
+        get() = setupState == "awaiting_approval"
 
     val isRevoked: Boolean
-        get() = account?.authorizationState == "revoked"
+        get() = setupState == "revoked"
 
     companion object {
         fun fromJson(jsonText: String): AppState {
@@ -47,27 +45,14 @@ internal data class AppState(
                 sync = ui.optJSONObject("sync")?.toSync() ?: SyncState(),
                 snapshotLink = ui.optString("snapshot_link"),
                 error = json.optString("error"),
+                setupState = ui.optString("setup_state", "not_configured"),
+                primaryStatus = ui.optString("primary_status", "not_setup"),
+                authorizedDeviceCount = ui.optInt("authorized_device_count"),
+                onlineDeviceCount = ui.optInt("online_device_count"),
                 fileCount = ui.optInt("file_count"),
                 visibleFileBytes = ui.optLong("visible_file_bytes"),
             )
         }
-    }
-
-    fun withProviderStats(dataDir: String): AppState {
-        val json = runCatching { JSONObject(NativeCore.providerListJson(dataDir)) }.getOrNull()
-            ?: return this
-        if (json.optString("error").isNotBlank()) return this
-        val entries = json.optJSONArray("entries") ?: return this
-        var count = 0
-        var bytes = 0L
-        for (index in 0 until entries.length()) {
-            val entry = entries.optJSONObject(index) ?: continue
-            if (entry.optString("kind") == "file") {
-                count += 1
-                bytes += entry.optLong("size")
-            }
-        }
-        return copy(fileCount = count, visibleFileBytes = bytes)
     }
 }
 

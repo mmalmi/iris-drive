@@ -414,6 +414,16 @@ pub(crate) enum ProviderCmd {
         /// New virtual path inside the drive.
         new_path: String,
     },
+    /// Resolve a native provider parent/name into a normalized collision-free virtual path.
+    #[command(name = "resolve-path", hide = true)]
+    ResolvePath {
+        /// Parent virtual path, empty for the root.
+        parent_path: String,
+        /// Native display name to normalize.
+        display_name: String,
+        /// Existing virtual path to ignore when resolving rename collisions.
+        excluding_path: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -276,11 +276,12 @@ pub(crate) fn spawn_status_probe(
             Ok(status) => status,
             Err(_) => Some(json!({"status": "timeout"})),
         };
-        let status = json!({
+        let mut status = json!({
             "event": "relay_statuses",
             "relay_statuses": relay_statuses,
             "fips_block_sync": fips_status,
         });
+        normalize_daemon_status_for_clients(&config_dir, &mut status);
         write_daemon_status(&config_dir, status.clone());
         println!("{status}");
     });

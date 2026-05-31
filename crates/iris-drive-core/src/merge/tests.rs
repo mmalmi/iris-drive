@@ -505,6 +505,32 @@ fn local_only_roots_do_not_block_source_tombstones() {
 }
 
 #[test]
+fn local_only_roots_fill_in_when_source_root_is_absent() {
+    let mut local_mirror_v1 = causal_root("local-mirror-v1", 200, 1, &[("remote", 1, "remote-v1")]);
+    local_mirror_v1.local_only = true;
+
+    let view = merge_drives(
+        &["local", "remote"],
+        &[snap(
+            "local",
+            &local_mirror_v1,
+            vec![file("note.txt", 1, 5)],
+            vec![],
+        )],
+    );
+
+    assert_eq!(
+        view.files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["note.txt"]
+    );
+    assert_eq!(view.files[0].source_device, "local");
+    assert!(view.conflicts.is_empty());
+}
+
+#[test]
 fn output_is_sorted_lexicographic() {
     let r = dev_root(100);
     let view = merge_drives(

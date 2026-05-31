@@ -12,10 +12,11 @@ use qrcode::QrCode;
 use serde::Serialize;
 
 use crate::{
-    FfiApp, NativeAppAction, NativeAppState, ffi::native_provider_delete_json,
-    ffi::native_provider_import_shared_file_json, ffi::native_provider_list_json,
-    ffi::native_provider_mkdir_json, ffi::native_provider_read_json,
-    ffi::native_provider_rename_json, ffi::native_provider_write_json,
+    FfiApp, NativeAppAction, NativeAppState, ffi::classify_link_input,
+    ffi::native_provider_delete_json, ffi::native_provider_import_shared_file_json,
+    ffi::native_provider_list_json, ffi::native_provider_mkdir_json,
+    ffi::native_provider_read_json, ffi::native_provider_rename_json,
+    ffi::native_provider_resolve_path_json, ffi::native_provider_write_json,
 };
 
 pub struct IrisDriveAppHandle {
@@ -107,6 +108,11 @@ pub extern "C" fn iris_drive_qr_matrix_json(text: *const c_char) -> *mut c_char 
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_classify_link_input_json(text: *const c_char) -> *mut c_char {
+    json_string(&classify_link_input(c_string_lossy(text)))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_provider_list_json(data_dir: *const c_char) -> *mut c_char {
     json_string(&native_provider_list_json(&c_string_lossy(data_dir)))
 }
@@ -182,6 +188,21 @@ pub extern "C" fn iris_drive_provider_import_shared_file_json(
         &c_string_lossy(data_dir),
         &c_string_lossy(display_name),
         &c_string_lossy(source_path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_resolve_path_json(
+    data_dir: *const c_char,
+    parent_path: *const c_char,
+    display_name: *const c_char,
+    excluding_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_resolve_path_json(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(parent_path),
+        &c_string_lossy(display_name),
+        &c_string_lossy(excluding_path),
     ))
 }
 
@@ -301,6 +322,17 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_qrMatrixJson(
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_classifyLinkInputJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    jni_json_string(env, &classify_link_input(text))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerListJson(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -405,6 +437,26 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerImportShar
     jni_json_string(
         env,
         &native_provider_import_shared_file_json(&data_dir, &display_name, &source_path),
+    )
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerResolvePathJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    parent_path: JString<'_>,
+    display_name: JString<'_>,
+    excluding_path: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let parent_path = jni_string_lossy(&mut env, &parent_path);
+    let display_name = jni_string_lossy(&mut env, &display_name);
+    let excluding_path = jni_string_lossy(&mut env, &excluding_path);
+    jni_json_string(
+        env,
+        &native_provider_resolve_path_json(&data_dir, &parent_path, &display_name, &excluding_path),
     )
 }
 

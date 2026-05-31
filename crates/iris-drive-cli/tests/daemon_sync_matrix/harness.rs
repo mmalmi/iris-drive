@@ -185,13 +185,14 @@ impl SyncCluster {
     }
 
     async fn wait_until_direct_peers_connected(&self) {
+        let expected_peers = self.clients().len().saturating_sub(1) as u64;
         self.wait_until("direct fips peers connected", || {
             self.clients().into_iter().all(|client| {
                 let status = run_json(self.config_path(client), &["status"]);
                 status["network"]["fips"]["connected_peer_count"]
                     .as_u64()
                     .unwrap_or(0)
-                    > 0
+                    >= expected_peers
             })
         })
         .await;
@@ -235,7 +236,8 @@ impl SyncCluster {
             &format!("provider write {} {path}", client.label()),
         );
         let value = json_output(&output);
-        self.refresh_view(client).await;
+        self.refresh_view_until_available(client, &format!("{} provider write refresh", client.label()))
+            .await;
         value["root_cid"].as_str().unwrap().to_string()
     }
 
@@ -249,7 +251,11 @@ impl SyncCluster {
             &format!("provider rename {} {from} -> {to}", client.label()),
         );
         let value = json_output(&output);
-        self.refresh_view(client).await;
+        self.refresh_view_until_available(
+            client,
+            &format!("{} provider rename refresh", client.label()),
+        )
+        .await;
         value["root_cid"].as_str().unwrap().to_string()
     }
 
@@ -263,7 +269,11 @@ impl SyncCluster {
             &format!("provider delete {} {path}", client.label()),
         );
         let value = json_output(&output);
-        self.refresh_view(client).await;
+        self.refresh_view_until_available(
+            client,
+            &format!("{} provider delete refresh", client.label()),
+        )
+        .await;
         value["root_cid"].as_str().unwrap().to_string()
     }
 
@@ -277,7 +287,8 @@ impl SyncCluster {
             &format!("provider mkdir {} {path}", client.label()),
         );
         let value = json_output(&output);
-        self.refresh_view(client).await;
+        self.refresh_view_until_available(client, &format!("{} provider mkdir refresh", client.label()))
+            .await;
         value["root_cid"].as_str().unwrap().to_string()
     }
 
@@ -425,15 +436,19 @@ impl SyncCluster {
 
     async fn wait_for_provider_publish(&self, client: Client, root_cid: &str, label: &str) {
         self.wait_until(label, || {
-            let status = run_json(self.config_path(client), &["status"]);
-            let daemon = &status["daemon"];
-            daemon["event"] == "provider_root_publish_finished"
-                && daemon["context"]["root_key"]
-                    .as_str()
-                    .is_some_and(|key| key.ends_with(root_cid))
-                && daemon["publish"]["published_drive_root"]
-                    .as_bool()
-                    .unwrap_or(false)
+            self.daemon_log(client).lines().any(|line| {
+                let Ok(event) = serde_json::from_str::<Value>(line) else {
+                    return false;
+                };
+                event["event"] == "provider_root_publish_finished"
+                    && (event["context"]["root_key"]
+                        .as_str()
+                        .is_some_and(|key| key.ends_with(root_cid))
+                        || event["publish"]["root_cid"].as_str() == Some(root_cid))
+                    && event["publish"]["published_drive_root"]
+                        .as_bool()
+                        .unwrap_or(false)
+            })
         })
         .await;
     }
@@ -532,11 +547,26 @@ impl SyncCluster {
         self.clients.clone()
     }
 
-    async fn refresh_view(&self, client: Client) {
+    async fn refresh_view(&self, client: Client) -> bool {
         let Some(snapshot) = config_visible_snapshot(self.config_path(client)).await else {
-            return;
+            return false;
         };
         write_snapshot_to_dir(self.path(client), &snapshot);
+        true
+    }
+
+    async fn refresh_view_until_available(&self, client: Client, label: &str) {
+        let start = Instant::now();
+        while start.elapsed() < WAIT_TIMEOUT {
+            if self.refresh_view(client).await {
+                return;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        panic!(
+            "timed out waiting for {label}\n{}",
+            self.debug_state_with_rerun_hint()
+        );
     }
 
     fn stop_daemon(&mut self, client: Client) {
@@ -618,23 +648,27 @@ impl SyncCluster {
                 serde_json::to_string_pretty(&run_json(self.config_path(client), &["status"]))
                     .unwrap_or_default();
             let _ = writeln!(out, "{} status: {status}", client.label());
-            let log = match client {
-                Client::Windows => self
-                    .windows_daemon
-                    .as_ref()
-                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
-                Client::Ubuntu => self
-                    .ubuntu_daemon
-                    .as_ref()
-                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
-                Client::MacOS => self
-                    .macos_daemon
-                    .as_ref()
-                    .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
-            };
+            let log = self.daemon_log(client);
             let _ = writeln!(out, "{} log:\n{log}", client.label());
         }
         out
+    }
+
+    fn daemon_log(&self, client: Client) -> String {
+        match client {
+            Client::Windows => self
+                .windows_daemon
+                .as_ref()
+                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+            Client::Ubuntu => self
+                .ubuntu_daemon
+                .as_ref()
+                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+            Client::MacOS => self
+                .macos_daemon
+                .as_ref()
+                .map_or_else(|| "<stopped>".to_string(), DaemonChild::log),
+        }
     }
 
     fn debug_state_with_rerun_hint(&self) -> String {
@@ -663,6 +697,11 @@ impl DaemonChild {
         let gateway_port = gateway_port.to_string();
         let child = Command::new(idrive_bin())
             .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
+            .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
+            .env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC", "false")
+            .env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR", "127.0.0.1:0")
+            .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", "")
+            .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false")
             .args([
                 "daemon",
                 "--relay",

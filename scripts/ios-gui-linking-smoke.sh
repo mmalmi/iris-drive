@@ -11,6 +11,7 @@ case "$(uname -s)" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/ios-simulator-signing.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -100,11 +101,17 @@ reset_sim_app_state() {
     echo "FAIL: simulator app data container was not created." >&2
     exit 1
   fi
+  if [[ -z "$group_container" ]]; then
+    echo "FAIL: simulator app group container was not created." >&2
+    exit 1
+  fi
   xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  SIM_APP_BASE_DIR="$data_container/Library/Application Support/IrisDrive"
+  safe_remove_sim_container "$data_container/Library/Application Support/IrisDrive"
+  SIM_APP_BASE_DIR="$group_container/IrisDrive"
   safe_remove_sim_container "$SIM_APP_BASE_DIR"
-  safe_remove_sim_container "$group_container"
   mkdir -p "$SIM_APP_BASE_DIR"
+  xcrun simctl spawn "$DEVICE_UDID" launchctl setenv \
+    IRIS_DRIVE_UI_TEST_BASE_DIR "$SIM_APP_BASE_DIR" >/dev/null
 }
 
 wait_for_debug_state() {
@@ -270,7 +277,10 @@ xcodebuild \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
   -destination "$DESTINATION" \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
+  PROVISIONING_PROFILE_SPECIFIER= \
   LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
   OTHER_LDFLAGS="$RUST_STATIC_LIB" \
   build-for-testing >"$BUILD_LOG"
@@ -281,6 +291,7 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 assert_static_app_core_linkage "$APP_PATH"
+iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
 XCTESTRUN="$(resolve_xctestrun)"
 if [[ -z "$XCTESTRUN" || ! -f "$XCTESTRUN" ]]; then

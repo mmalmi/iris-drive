@@ -212,7 +212,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stateFromJson(json: String): AppState =
-        AppState.fromJson(json).withProviderStats(filesDir.absolutePath)
+        AppState.fromJson(json)
 
     private fun resolveDeviceLabel(label: String): String =
         label.trim().ifBlank { defaultDeviceLabel() }

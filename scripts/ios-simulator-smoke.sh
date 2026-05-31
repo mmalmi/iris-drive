@@ -11,6 +11,7 @@ case "$(uname -s)" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/ios-simulator-signing.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -124,7 +125,24 @@ assert_static_app_core_linkage() {
 }
 
 app_group_container() {
+  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null
+}
+
+app_data_container() {
   xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null
+}
+
+safe_remove_sim_container() {
+  local container="$1"
+
+  if [[ -z "$container" ]]; then
+    return 0
+  fi
+  if [[ "$container" != *"/CoreSimulator/Devices/$DEVICE_UDID/"* ]]; then
+    echo "FAIL: refusing to remove unexpected simulator container path: $container" >&2
+    exit 1
+  fi
+  rm -rf "$container"
 }
 
 wait_for_debug_state() {
@@ -166,7 +184,10 @@ xcodebuild \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
   -destination "$DESTINATION" \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
+  PROVISIONING_PROFILE_SPECIFIER= \
   LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
   OTHER_LDFLAGS="$RUST_STATIC_LIB" \
   build >"$BUILD_LOG"
@@ -177,6 +198,7 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 assert_static_app_core_linkage "$APP_PATH"
+iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
 if [[ "$BUILD_ONLY" == "1" ]]; then
   echo "IOS_BUILD_OK"
@@ -193,16 +215,27 @@ owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_
 
 xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 
-SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
-  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
-  xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
-
-CONTAINER="$(app_group_container)"
-if [[ -z "$CONTAINER" || ! -d "$CONTAINER" ]]; then
-  echo "FAIL: iOS app container unavailable after launch" >&2
+DATA_CONTAINER="$(app_data_container || true)"
+GROUP_CONTAINER="$(app_group_container || true)"
+if [[ -z "$DATA_CONTAINER" || ! -d "$DATA_CONTAINER" ]]; then
+  echo "FAIL: iOS app container unavailable after install" >&2
   exit 1
 fi
-STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+if [[ -z "$GROUP_CONTAINER" || ! -d "$GROUP_CONTAINER" ]]; then
+  echo "FAIL: iOS app group container unavailable after install" >&2
+  exit 1
+fi
+safe_remove_sim_container "$DATA_CONTAINER/Library/Application Support/IrisDrive"
+SIM_APP_BASE_DIR="$GROUP_CONTAINER/IrisDrive"
+safe_remove_sim_container "$SIM_APP_BASE_DIR"
+mkdir -p "$SIM_APP_BASE_DIR"
+
+SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
+  SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="$SIM_APP_BASE_DIR" \
+  xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
+
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \

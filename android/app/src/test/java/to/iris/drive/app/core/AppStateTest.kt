@@ -52,6 +52,9 @@ class AppStateTest {
                     canDemoteAdmin = false,
                 ),
             ),
+            setupState = "authorized",
+            authorizedDeviceCount = 2,
+            onlineDeviceCount = 1,
         )
 
         assertEquals(2, state.authorizedDeviceCount)
@@ -75,6 +78,7 @@ class AppStateTest {
                 deviceLinkInvite = "",
                 inboundDeviceLinkRequests = emptyList(),
             ),
+            setupState = "awaiting_approval",
         )
 
         assertTrue(state.isAwaitingApproval)
@@ -95,6 +99,7 @@ class AppStateTest {
                 deviceLinkInvite = "",
                 inboundDeviceLinkRequests = emptyList(),
             ),
+            setupState = "revoked",
         )
 
         assertTrue(state.isRevoked)

@@ -6,9 +6,17 @@ pub struct UiState {
     pub account: Option<UiAccount>,
     pub devices: Vec<UiDevice>,
     pub relays: Vec<String>,
+    pub relay_statuses: Vec<UiRelayStatus>,
     pub backups: Vec<UiBackup>,
     pub paths: UiPaths,
     pub sync: UiSyncStatus,
+    pub fips: UiFipsStatus,
+    pub setup_state: String,
+    pub primary_status: String,
+    pub authorized_device_count: u64,
+    pub online_device_count: u64,
+    pub file_count: u64,
+    pub visible_file_bytes: u64,
     pub snapshot_link: String,
 }
 
@@ -60,6 +68,12 @@ pub struct UiBackup {
     pub detail: String,
 }
 
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiRelayStatus {
+    pub url: String,
+    pub status: String,
+}
+
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiPaths {
     pub data_dir: String,
@@ -71,6 +85,21 @@ pub struct UiPaths {
 pub struct UiSyncStatus {
     pub running: bool,
     pub status: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiFipsStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub fresh: bool,
+    pub endpoint_npub: String,
+    pub online_device_count: u64,
+    pub direct_device_count: u64,
+    pub mesh_device_count: u64,
+    pub online_devices: Vec<String>,
+    pub direct_devices: Vec<String>,
+    pub mesh_devices: Vec<String>,
+    pub error: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

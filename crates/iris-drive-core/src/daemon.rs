@@ -317,7 +317,9 @@ impl Daemon {
             }
         }
 
-        self.import_visible_root(merged.root_cid).await.map(Some)
+        self.import_visible_root_local_only(merged.root_cid)
+            .await
+            .map(Some)
     }
 
     pub async fn import_visible_root_with_tombstone_base(
@@ -335,6 +337,30 @@ impl Daemon {
         tombstone_base_root: Option<Cid>,
         tombstone_paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base_paths_and_local_only(
+            root,
+            tombstone_base_root,
+            tombstone_paths,
+            false,
+        )
+        .await
+    }
+
+    async fn import_visible_root_local_only(
+        &mut self,
+        root: Cid,
+    ) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base_paths_and_local_only(root, None, None, true)
+            .await
+    }
+
+    async fn import_visible_root_with_tombstone_base_paths_and_local_only(
+        &mut self,
+        root: Cid,
+        tombstone_base_root: Option<Cid>,
+        tombstone_paths: Option<&std::collections::BTreeSet<String>>,
+        local_only: bool,
+    ) -> Result<ImportReport, DaemonError> {
         let previous_root_cid = self
             .config
             .account
@@ -351,7 +377,10 @@ impl Daemon {
         };
 
         let now = self.next_import_timestamp();
-        let root_meta = self.root_meta_for_import(now);
+        let mut root_meta = self.root_meta_for_import(now);
+        if let Some(meta) = root_meta.as_mut() {
+            meta.local_only = local_only;
+        }
         let mut scoped_tombstone_paths = None;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
@@ -605,11 +634,10 @@ impl Daemon {
                 .app_keys
                 .as_ref()
                 .map_or(0, |snap| snap.dck_generation);
-            let mut device_root = root_meta.map_or_else(
+            let device_root = root_meta.map_or_else(
                 || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
-            device_root.local_only = false;
             updated
                 .device_roots
                 .insert(account.device_pubkey.clone(), device_root);

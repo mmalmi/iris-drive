@@ -50,30 +50,17 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.NativeCore
 
 private val ProviderRoot: String
     get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
 
 private fun isCompleteDeviceLinkOwnerInput(value: String): Boolean {
-    val trimmed = value.trim()
-    if (trimmed.any(Char::isWhitespace)) return false
-    val lower = trimmed.lowercase()
-    if (lower.startsWith("npub1")) return lower.length >= 63
-    if (lower.length == 64 && lower.all { it in '0'..'9' || it in 'a'..'f' }) return true
-    listOf(
-        "iris-drive://invite/",
-        "iris-drive:/invite/",
-        "https://drive.iris.to/invite/",
-    ).forEach { prefix ->
-        if (lower.startsWith(prefix)) return lower.removePrefix(prefix).length >= 32
-    }
-    return (lower.startsWith("iris-drive://link-device?") ||
-        lower.startsWith("iris-drive:/link-device?") ||
-        lower.startsWith("https://drive.iris.to/link-device?")) &&
-        lower.contains("owner=") &&
-        lower.contains("admin=") &&
-        lower.contains("secret=")
+    return runCatching {
+        JSONObject(NativeCore.classifyLinkInputJson(value.trim())).optBoolean("is_complete")
+    }.getOrDefault(false)
 }
 
 private val IrisLightBackground = Color(0xFFF7FAF8)

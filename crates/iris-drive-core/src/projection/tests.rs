@@ -648,6 +648,90 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
     assert_eq!(original.source_device, peer_device);
 }
 
+#[tokio::test]
+async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let peer_device =
+        "5555555555555555555555555555555555555555555555555555555555555555".to_string();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let owner_source =
+        index_device_note_root(&tree, &account.state.device_pubkey, b"owner source", 1, 10).await;
+    let peer_source = index_device_note_root(&tree, &peer_device, b"peer source", 1, 11).await;
+    let owner_mirror_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        device_id: account.state.device_pubkey.clone(),
+        device_seq: 2,
+        dck_generation: 1,
+        local_only: true,
+        parents: vec![RootParent {
+            device_id: account.state.device_pubkey.clone(),
+            device_seq: 1,
+            root_cid: owner_source.0.to_string(),
+        }],
+        observed: BTreeMap::new(),
+        created_at: 20,
+    };
+    let owner_mirror =
+        index_device_note_root_with_meta(&tree, b"peer source", 20, owner_mirror_meta.clone())
+            .await;
+
+    let mut account_state = account.state.clone();
+    account_state
+        .app_keys
+        .as_mut()
+        .expect("created account has app keys")
+        .devices
+        .push(DeviceEntry::member(
+            peer_device.clone(),
+            1,
+            Some("peer".into()),
+        ));
+
+    let mut config = AppConfig {
+        account: Some(account_state),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    drive.device_roots.insert(
+        account.state.device_pubkey.clone(),
+        DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
+    );
+    drive.device_roots.insert(
+        peer_device,
+        DeviceRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
+    );
+    config.upsert_drive(drive);
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    let docs_cid = tree
+        .resolve(&merged.root_cid, "docs")
+        .await
+        .unwrap()
+        .expect("docs exists");
+    let names = tree
+        .list_directory(&docs_cid)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+
+    let mut contents = Vec::new();
+    for name in names {
+        let cid = tree
+            .resolve(&merged.root_cid, &format!("docs/{name}"))
+            .await
+            .unwrap()
+            .expect("visible file exists");
+        contents.push(String::from_utf8(tree.get(&cid, None).await.unwrap().unwrap()).unwrap());
+    }
+    contents.sort();
+    assert_eq!(contents, vec!["owner source", "peer source"]);
+}
+
 async fn index_device_note_root(
     tree: &HashTree<MemoryStore>,
     device_id: &str,

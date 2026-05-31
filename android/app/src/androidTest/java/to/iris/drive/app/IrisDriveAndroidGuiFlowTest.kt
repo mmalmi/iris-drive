@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,6 +95,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
         compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
         compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput(owner.invite)
+        dismissSoftKeyboard()
 
         val linked = appState(linkedHandle).account
         assertEquals("awaiting_approval", linked?.authorizationState)
@@ -122,6 +124,7 @@ class IrisDriveAndroidGuiFlowTest {
             .performTextInput(linked.devicePubkey)
         compose.onNodeWithTag("manualDeviceName").performScrollTo().assertIsDisplayed()
             .performTextInput("Android UI linked")
+        dismissSoftKeyboard()
         compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().activate()
 
         val updated = appState(owner.handle)
@@ -188,7 +191,7 @@ class IrisDriveAndroidGuiFlowTest {
         )
         assertTrue(applied.optString("error"), applied.optString("error").isBlank())
 
-        val linkedState = appStateWithProviderStats(linkedHandle, linkedDir)
+        val linkedState = refreshedAppState(linkedHandle)
         assertEquals("authorized", linkedState.account?.authorizationState)
         assertEquals(1, linkedState.fileCount)
 
@@ -236,7 +239,7 @@ class IrisDriveAndroidGuiFlowTest {
         nativeHandles.remove(linkedHandle)
 
         val restartedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
-        val restarted = appStateWithProviderStats(restartedHandle, linkedDir)
+        val restarted = refreshedAppState(restartedHandle)
         assertEquals("authorized", restarted.account?.authorizationState)
         assertEquals("Pixel", restarted.account?.deviceLabel)
         assertEquals(1, restarted.fileCount)
@@ -268,6 +271,7 @@ class IrisDriveAndroidGuiFlowTest {
     fun devicesViewUsesOnlineStatusDots() {
         val state = AppState(
             account = accountState(),
+            setupState = "authorized",
             devices = listOf(
                 deviceState(
                     pubkey = "device-a",
@@ -339,6 +343,7 @@ class IrisDriveAndroidGuiFlowTest {
         val deletedDevices = mutableListOf<String>()
         val state = AppState(
             account = accountState(),
+            setupState = "authorized",
             devices = listOf(
                 deviceState(
                     pubkey = "device-a",
@@ -445,12 +450,19 @@ class IrisDriveAndroidGuiFlowTest {
     private fun appState(handle: Long): AppState =
         AppState.fromJson(NativeCore.stateJson(handle))
 
-    private fun appStateWithProviderStats(handle: Long, dataDir: File): AppState =
+    private fun refreshedAppState(handle: Long): AppState =
         AppState.fromJson(NativeCore.refreshJson(handle))
-            .withProviderStats(dataDir.absolutePath)
 
     private fun SemanticsNodeInteraction.activate() {
         performSemanticsAction(SemanticsActions.OnClick)
+    }
+
+    private fun dismissSoftKeyboard() {
+        InstrumentationRegistry.getInstrumentation()
+            .uiAutomation
+            .executeShellCommand("input keyevent KEYCODE_BACK")
+            .close()
+        compose.waitForIdle()
     }
 
     private fun accountState() = to.iris.drive.app.core.AccountState(

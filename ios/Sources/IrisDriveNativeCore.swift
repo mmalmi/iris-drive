@@ -24,6 +24,9 @@ private func irisDriveAppDispatchJson(
 @_silgen_name("iris_drive_qr_matrix_json")
 private func irisDriveQrMatrixJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_classify_link_input_json")
+private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_list_json")
 private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -65,6 +68,14 @@ private func irisDriveProviderImportSharedFileJson(
     _ dataDir: UnsafePointer<CChar>,
     _ displayName: UnsafePointer<CChar>,
     _ sourcePath: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_provider_resolve_path_json")
+private func irisDriveProviderResolvePathJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ parentPath: UnsafePointer<CChar>,
+    _ displayName: UnsafePointer<CChar>,
+    _ excludingPath: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
 @_silgen_name("iris_drive_string_free")
@@ -119,6 +130,30 @@ final class IrisDriveNativeCore {
 }
 
 extension IrisDriveNativeCore: @unchecked Sendable {}
+
+enum IrisDriveNativeLinkInput {
+    static func classify(_ text: String) -> NativeLinkInputClassification {
+        let json = text.withCString { pointer in
+            takeString(irisDriveClassifyLinkInputJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeLinkInputClassification.self, from: data)
+        else {
+            return NativeLinkInputClassification(error: "native link classifier returned invalid JSON")
+        }
+        return value
+    }
+
+    static func isComplete(_ text: String) -> Bool {
+        classify(text).isComplete
+    }
+
+    private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+        guard let pointer else { return #"{"error":"native link classifier returned null"}"# }
+        defer { irisDriveStringFree(pointer) }
+        return String(cString: pointer)
+    }
+}
 
 enum IrisDriveNativeProvider {
     static func list(dataDir: String) -> String {
@@ -185,6 +220,36 @@ enum IrisDriveNativeProvider {
         }
     }
 
+    static func resolvePath(
+        dataDir: String,
+        parentPath: String,
+        displayName: String,
+        excludingPath: String = ""
+    ) -> NativeProviderResolvedPath {
+        let json = dataDir.withCString { dataDirPointer in
+            parentPath.withCString { parentPointer in
+                displayName.withCString { namePointer in
+                    excludingPath.withCString { excludingPointer in
+                        takeString(
+                            irisDriveProviderResolvePathJson(
+                                dataDirPointer,
+                                parentPointer,
+                                namePointer,
+                                excludingPointer
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeProviderResolvedPath.self, from: data)
+        else {
+            return NativeProviderResolvedPath(error: "native provider path resolver returned invalid JSON")
+        }
+        return value
+    }
+
     private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         guard let pointer else { return #"{"error":"native provider returned null"}"# }
         defer { irisDriveStringFree(pointer) }
@@ -202,9 +267,17 @@ struct NativeUiState: Codable {
     var account: NativeAccount?
     var devices: [NativeDevice]
     var relays: [String]
+    var relayStatuses: [NativeRelayStatus]
     var backups: [NativeBackup]
     var paths: NativePaths
     var sync: NativeSyncStatus
+    var fips: NativeFipsStatus
+    var setupState: String
+    var primaryStatus: String
+    var authorizedDeviceCount: UInt64
+    var onlineDeviceCount: UInt64
+    var fileCount: UInt64
+    var visibleFileBytes: UInt64
     var snapshotLink: String
 
     enum CodingKeys: String, CodingKey {
@@ -212,10 +285,62 @@ struct NativeUiState: Codable {
         case account
         case devices
         case relays
+        case relayStatuses = "relay_statuses"
         case backups
         case paths
         case sync
+        case fips
+        case setupState = "setup_state"
+        case primaryStatus = "primary_status"
+        case authorizedDeviceCount = "authorized_device_count"
+        case onlineDeviceCount = "online_device_count"
+        case fileCount = "file_count"
+        case visibleFileBytes = "visible_file_bytes"
         case snapshotLink = "snapshot_link"
+    }
+}
+
+struct NativeLinkInputClassification: Codable {
+    var kind: String = ""
+    var isComplete: Bool = false
+    var isValid: Bool = false
+    var normalizedInput: String = ""
+    var ownerPubkey: String = ""
+    var adminDevicePubkey: String = ""
+    var hasLinkSecret: Bool = false
+    var error: String = ""
+
+    init(error: String = "") {
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case isComplete = "is_complete"
+        case isValid = "is_valid"
+        case normalizedInput = "normalized_input"
+        case ownerPubkey = "owner_pubkey"
+        case adminDevicePubkey = "admin_device_pubkey"
+        case hasLinkSecret = "has_link_secret"
+        case error
+    }
+}
+
+struct NativeProviderResolvedPath: Codable {
+    var parentPath: String = ""
+    var displayName: String = ""
+    var path: String = ""
+    var error: String = ""
+
+    init(error: String = "") {
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case parentPath = "parent_path"
+        case displayName = "display_name"
+        case path
+        case error
     }
 }
 
@@ -305,6 +430,11 @@ struct NativeBackup: Codable {
     var detail: String
 }
 
+struct NativeRelayStatus: Codable {
+    var url: String
+    var status: String
+}
+
 struct NativePaths: Codable {
     var dataDir: String
     var configPath: String
@@ -320,4 +450,32 @@ struct NativePaths: Codable {
 struct NativeSyncStatus: Codable {
     var running: Bool
     var status: String
+}
+
+struct NativeFipsStatus: Codable {
+    var enabled: Bool
+    var running: Bool
+    var fresh: Bool
+    var endpointNpub: String
+    var onlineDeviceCount: UInt64
+    var directDeviceCount: UInt64
+    var meshDeviceCount: UInt64
+    var onlineDevices: [String]
+    var directDevices: [String]
+    var meshDevices: [String]
+    var error: String
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case running
+        case fresh
+        case endpointNpub = "endpoint_npub"
+        case onlineDeviceCount = "online_device_count"
+        case directDeviceCount = "direct_device_count"
+        case meshDeviceCount = "mesh_device_count"
+        case onlineDevices = "online_devices"
+        case directDevices = "direct_devices"
+        case meshDevices = "mesh_devices"
+        case error
+    }
 }

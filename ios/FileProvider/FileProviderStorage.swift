@@ -164,7 +164,7 @@ enum FileProviderStorage {
 
     static func createItem(template: NSFileProviderItem, contents: URL?) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination = joinedPath(parent: parent, name: template.filename)
+        let destination = try resolvedPath(parent: parent, name: template.filename)
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
                 IrisDriveNativeProvider.mkdir(dataDir: baseDirectory.path, path: destination)
@@ -199,7 +199,7 @@ enum FileProviderStorage {
         try runProviderMutation(
             IrisDriveNativeProvider.importSharedFile(
                 dataDir: baseDirectory.path,
-                displayName: sanitizedFileName(displayName, contentType: contentType),
+                displayName: displayName,
                 sourcePath: source.path
             )
         )
@@ -223,7 +223,7 @@ enum FileProviderStorage {
             ? (path(for: item.parentItemIdentifier) ?? "")
             : parentPath(for: original)
         let name = changedFields.contains(.filename) ? item.filename : fileName(for: original)
-        let destination = joinedPath(parent: parent, name: name)
+        let destination = try resolvedPath(parent: parent, name: name, excluding: original)
         if destination != original {
             try runProviderMutation(
                 IrisDriveNativeProvider.rename(
@@ -441,14 +441,6 @@ enum FileProviderStorage {
         NSFileProviderSyncAnchor(rawValue: Data(anchor.utf8))
     }
 
-    private static func joinedPath(parent: String, name: String) -> String {
-        let cleanName = name.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if parent.isEmpty {
-            return cleanName
-        }
-        return "\(parent)/\(cleanName)"
-    }
-
     private static func runProviderMutation(_ json: String) throws {
         guard let data = json.data(using: .utf8) else {
             throw providerError("provider returned invalid text")
@@ -473,21 +465,24 @@ enum FileProviderStorage {
         }
     }
 
-    private static func sanitizedFileName(_ displayName: String, contentType: UTType) -> String {
-        let separators = CharacterSet(charactersIn: "/:")
-        let components = displayName
-            .components(separatedBy: separators)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
-        var name = components.joined(separator: "_")
-        if name.isEmpty {
-            name = "Shared file"
+    private static func resolvedPath(
+        parent: String,
+        name: String,
+        excluding: String = ""
+    ) throws -> String {
+        let resolved = IrisDriveNativeProvider.resolvePath(
+            dataDir: baseDirectory.path,
+            parentPath: parent,
+            displayName: name,
+            excludingPath: excluding
+        )
+        if !resolved.error.isEmpty {
+            throw providerError(resolved.error)
         }
-        if (name as NSString).pathExtension.isEmpty,
-           let preferredExtension = contentType.preferredFilenameExtension {
-            name += ".\(preferredExtension)"
+        guard !resolved.path.isEmpty else {
+            throw providerError("provider path resolver returned no path")
         }
-        return name
+        return resolved.path
     }
 
     private static func parentPath(for path: String) -> String {
