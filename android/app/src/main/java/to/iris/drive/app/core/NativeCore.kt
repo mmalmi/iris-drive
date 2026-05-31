@@ -1,6 +1,7 @@
 package to.iris.drive.app.core
 
 import android.content.Context
+import org.json.JSONObject
 
 internal object NativeCore {
     init {
@@ -33,4 +34,14 @@ internal object NativeCore {
         excludingPath: String,
     ): String
     external fun applyOwnerSnapshotForTest(ownerDataDir: String, linkedDataDir: String): String
+
+    fun classifyLinkInputKind(text: String): String =
+        runCatching {
+            JSONObject(classifyLinkInputJson(text)).optString("kind")
+        }.getOrDefault("")
+
+    fun isCompleteLinkInput(text: String): Boolean =
+        runCatching {
+            JSONObject(classifyLinkInputJson(text.trim())).optBoolean("is_complete")
+        }.getOrDefault(false)
 }

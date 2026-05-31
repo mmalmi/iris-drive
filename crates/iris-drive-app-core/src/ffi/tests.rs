@@ -139,6 +139,26 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert_eq!(short_npub.kind, "owner_pubkey");
     assert!(!short_npub.is_complete);
     assert!(!short_npub.is_valid);
+
+    let approval = super::classify_link_input(format!(
+        "iris-drive://device-link?owner={}&device={}",
+        owner_account.owner_pubkey, owner_account.owner_pubkey
+    ));
+    assert_eq!(approval.kind, "device_approval");
+    assert!(approval.is_complete);
+    assert!(approval.is_valid);
+    assert_eq!(approval.owner_pubkey, owner_account.owner_pubkey);
+    assert_eq!(approval.device_pubkey, owner_account.owner_pubkey);
+
+    let web_invite_route =
+        super::classify_link_input("https://drive.iris.to/invite/demo".to_owned());
+    assert_eq!(web_invite_route.kind, "invite");
+    assert!(!web_invite_route.is_complete);
+
+    let unrelated = super::classify_link_input(
+        "https://drive.iris.to/device-linker?owner=npub1example".to_owned(),
+    );
+    assert_eq!(unrelated.kind, "unknown");
 }
 
 #[test]

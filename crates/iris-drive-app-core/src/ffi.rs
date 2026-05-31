@@ -70,6 +70,7 @@ pub struct LinkInputClassification {
     pub is_valid: bool,
     pub normalized_input: String,
     pub owner_pubkey: String,
+    pub device_pubkey: String,
     pub admin_device_pubkey: String,
     pub has_link_secret: bool,
     pub error: String,
@@ -1751,6 +1752,9 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
         return classification;
     }
 
+    if let Some(result) = classify_device_approval_link_input(trimmed) {
+        return result;
+    }
     if let Some(result) = classify_invite_link_input(trimmed) {
         return result;
     }
@@ -1777,6 +1781,43 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
     classification
 }
 
+fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassification> {
+    let lower = input.to_ascii_lowercase();
+    let is_device_approval = link_route_matches(&lower, "iris-drive://device-link", false)
+        || link_route_matches(&lower, "iris-drive:/device-link", false)
+        || link_route_matches(&lower, "https://drive.iris.to/device-link", false);
+    if !is_device_approval {
+        return None;
+    }
+
+    let query = input.split_once('?').map_or("", |(_, query)| query);
+    let owner = query_value(query, "owner");
+    let device = query_value(query, "device");
+    let is_complete = owner.as_deref().is_some_and(owner_pubkey_input_is_complete)
+        && device
+            .as_deref()
+            .is_some_and(owner_pubkey_input_is_complete);
+    let mut classification = LinkInputClassification {
+        kind: "device_approval".to_owned(),
+        normalized_input: input.to_owned(),
+        is_complete,
+        ..LinkInputClassification::default()
+    };
+    if is_complete {
+        match decode_device_approval_request(input) {
+            Ok((owner_hex, device_hex, _label)) => {
+                classification.is_valid = true;
+                classification.owner_pubkey = account_npub(&owner_hex);
+                classification.device_pubkey = account_npub(&device_hex);
+            }
+            Err(error) => classification.error = error,
+        }
+    }
+    classification.has_link_secret =
+        device_approval_link_secret_value(input).is_some_and(|secret| !secret.trim().is_empty());
+    Some(classification)
+}
+
 fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
     let lower = input.to_ascii_lowercase();
     let is_canonical = [
@@ -1785,10 +1826,13 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
         iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_WEB_PREFIX,
     ]
     .iter()
-    .any(|prefix| lower.starts_with(prefix));
-    let is_legacy = lower.starts_with("iris-drive://link-device?")
-        || lower.starts_with("iris-drive:/link-device?")
-        || lower.starts_with("https://drive.iris.to/link-device?");
+    .any(|prefix| lower.starts_with(prefix))
+        || link_route_matches(&lower, "iris-drive://invite", true)
+        || link_route_matches(&lower, "iris-drive:/invite", true)
+        || link_route_matches(&lower, "https://drive.iris.to/invite", true);
+    let is_legacy = link_route_matches(&lower, "iris-drive://link-device", false)
+        || link_route_matches(&lower, "iris-drive:/link-device", false)
+        || link_route_matches(&lower, "https://drive.iris.to/link-device", false);
     let is_json = input.starts_with('{');
     if !(is_canonical || is_legacy || is_json) {
         return None;
@@ -1817,6 +1861,13 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
         Err(_) => {}
     }
     Some(classification)
+}
+
+fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool {
+    let Some(rest) = input.strip_prefix(route) else {
+        return false;
+    };
+    rest.is_empty() || rest.starts_with('?') || (allow_path_suffix && rest.starts_with('/'))
 }
 
 fn invite_link_input_is_complete(input: &str) -> bool {
@@ -1956,9 +2007,10 @@ fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, 
 fn decode_device_approval_request(
     request: &str,
 ) -> Result<(String, String, Option<String>), String> {
-    if request.starts_with("iris-drive://device-link")
-        || request.starts_with("iris-drive:/device-link")
-        || request.starts_with("https://drive.iris.to/device-link")
+    let lower = request.to_ascii_lowercase();
+    if link_route_matches(&lower, "iris-drive://device-link", false)
+        || link_route_matches(&lower, "iris-drive:/device-link", false)
+        || link_route_matches(&lower, "https://drive.iris.to/device-link", false)
     {
         let query = request.split_once('?').map_or("", |(_, query)| query);
         let owner = query_value(query, "owner")
@@ -1974,18 +2026,22 @@ fn decode_device_approval_request(
 
 #[cfg(not(test))]
 fn device_approval_link_secret(request: &str) -> String {
-    if request.starts_with("iris-drive://device-link")
-        || request.starts_with("iris-drive:/device-link")
-        || request.starts_with("https://drive.iris.to/device-link")
+    device_approval_link_secret_value(request)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+fn device_approval_link_secret_value(request: &str) -> Option<String> {
+    let lower = request.to_ascii_lowercase();
+    if link_route_matches(&lower, "iris-drive://device-link", false)
+        || link_route_matches(&lower, "iris-drive:/device-link", false)
+        || link_route_matches(&lower, "https://drive.iris.to/device-link", false)
     {
         let query = request.split_once('?').map_or("", |(_, query)| query);
-        return query_value(query, "secret")
-            .or_else(|| query_value(query, "link_secret"))
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
+        return query_value(query, "secret").or_else(|| query_value(query, "link_secret"));
     }
-    String::new()
+    None
 }
 
 fn query_value(query: &str, name: &str) -> Option<String> {

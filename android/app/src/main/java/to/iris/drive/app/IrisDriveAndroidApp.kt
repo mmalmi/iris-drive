@@ -50,18 +50,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.StateFlow
-import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeCore
 
 private val ProviderRoot: String
     get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
-
-private fun isCompleteDeviceLinkOwnerInput(value: String): Boolean {
-    return runCatching {
-        JSONObject(NativeCore.classifyLinkInputJson(value.trim())).optBoolean("is_complete")
-    }.getOrDefault(false)
-}
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
 private val IrisLightSurface = Color.White
@@ -416,7 +409,7 @@ private fun SetupContent(
     fun submitLinkOwner(value: String, force: Boolean) {
         val trimmed = value.trim()
         if (trimmed.isBlank()) return
-        if (!force && !isCompleteDeviceLinkOwnerInput(trimmed)) return
+        if (!force && !NativeCore.isCompleteLinkInput(trimmed)) return
         if (submittedLinkOwner == trimmed) return
         submittedLinkOwner = trimmed
         onLinkDevice(trimmed)

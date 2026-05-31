@@ -239,10 +239,16 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDebugIntent(intent: Intent?) {
         val uri = intent?.data
-        if (uri != null && isDeviceApprovalUri(uri)) {
-            dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
-        } else if (uri != null && isLinkDeviceUri(uri)) {
-            dispatch(NativeActions.linkDevice(uri.toString(), defaultDeviceLabel()))
+        if (uri != null) {
+            when (NativeCore.classifyLinkInputKind(uri.toString())) {
+                "device_approval" -> {
+                    dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
+                }
+
+                "invite" -> {
+                    dispatch(NativeActions.linkDevice(uri.toString(), defaultDeviceLabel()))
+                }
+            }
         }
         when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
@@ -299,19 +305,6 @@ class MainActivity : ComponentActivity() {
             BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY,
             DOCUMENTS_ROOT_DOCUMENT_ID,
         ).toString()
-
-    private fun isDeviceApprovalUri(uri: Uri): Boolean =
-        (uri.scheme == "iris-drive" && uri.host == "device-link") ||
-            (uri.scheme == "iris-drive" && uri.host == null && uri.path == "/device-link") ||
-            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/device-link")
-
-    private fun isLinkDeviceUri(uri: Uri): Boolean =
-        (uri.scheme == "iris-drive" && uri.host == "link-device") ||
-            (uri.scheme == "iris-drive" && uri.host == "invite") ||
-            (uri.scheme == "iris-drive" && uri.host == null && uri.path == "/link-device") ||
-            (uri.scheme == "iris-drive" && uri.host == null && uri.path?.startsWith("/invite/") == true) ||
-            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path == "/link-device") ||
-            (uri.scheme == "https" && uri.host == "drive.iris.to" && uri.path?.startsWith("/invite/") == true)
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"

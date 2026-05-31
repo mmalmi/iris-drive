@@ -597,14 +597,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func handle(url: URL) {
-        if isLinkDevice(url) {
+        let linkInput = IrisDriveNativeLinkInput.classify(url.absoluteString)
+        if linkInput.kind == "invite" {
             ownerPublicKey = url.absoluteString
             linkDevice()
             ensureFileProviderDomainIfProfileExists()
             return
         }
 
-        guard isDeviceLink(url) else {
+        guard linkInput.kind == "device_approval" else {
             statusTitle = "Iris link opened"
             statusDetail = url.absoluteString
             persist()
@@ -612,15 +613,14 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        let device = queryValue("device", in: url)
-        if hasOwnerAuthority, device != nil {
+        if hasOwnerAuthority, linkInput.isComplete {
             approveDevice(request: url.absoluteString, label: "Linked device")
             return
         }
 
         statusTitle = hasOwnerAuthority ? "Invalid device invite" : "Open on an owner device"
         statusDetail = hasOwnerAuthority
-            ? (device ?? url.absoluteString)
+            ? (linkInput.error.isEmpty ? url.absoluteString : linkInput.error)
             : "Open this request on an owner device, or scan an invite link to join."
     }
 
@@ -928,35 +928,11 @@ final class IrisDriveMobileModel: ObservableObject {
         )
     }
 
-    private func isDeviceLink(_ url: URL) -> Bool {
-        (url.scheme == "iris-drive" && url.host == "device-link")
-            || (url.scheme == "iris-drive" && url.host == nil && url.path == "/device-link")
-            || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/device-link")
-    }
-
-    private func isLinkDevice(_ url: URL) -> Bool {
-        (url.scheme == "iris-drive" && url.host == "link-device")
-            || (url.scheme == "iris-drive" && url.host == "invite")
-            || (url.scheme == "iris-drive" && url.host == nil && url.path == "/link-device")
-            || (url.scheme == "iris-drive" && url.host == nil && url.path.starts(with: "/invite/"))
-            || (url.scheme == "https" && url.host == "drive.iris.to" && url.path == "/link-device")
-            || (url.scheme == "https" && url.host == "drive.iris.to" && url.path.starts(with: "/invite/"))
-    }
-
-    private func queryValue(_ name: String, in url: URL) -> String? {
-        URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first { $0.name == name }?
-            .value
-    }
-
     private func deviceKey(from request: String) -> String {
-        guard let url = URL(string: request),
-              isDeviceLink(url),
-              let device = queryValue("device", in: url)
-        else {
+        let linkInput = IrisDriveNativeLinkInput.classify(request)
+        guard linkInput.kind == "device_approval", !linkInput.devicePubkey.isEmpty else {
             return request
         }
-        return device
+        return linkInput.devicePubkey
     }
 }

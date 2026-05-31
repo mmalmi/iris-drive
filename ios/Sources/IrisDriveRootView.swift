@@ -383,7 +383,7 @@ private struct LinkDeviceSetupView: View {
     private func submitLinkDevice(_ value: String, force: Bool) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard force || isCompleteDeviceLinkOwnerInput(trimmed) else { return }
+        guard force || IrisDriveNativeLinkInput.isComplete(trimmed) else { return }
         guard submittedOwnerPublicKey != trimmed else { return }
         submittedOwnerPublicKey = trimmed
         model.ownerPublicKey = trimmed
@@ -702,10 +702,6 @@ private func iosUiTestValue(_ name: String) -> String {
     #else
     ""
     #endif
-}
-
-private func isCompleteDeviceLinkOwnerInput(_ value: String) -> Bool {
-    IrisDriveNativeLinkInput.isComplete(value)
 }
 
 private struct BackupsView: View {

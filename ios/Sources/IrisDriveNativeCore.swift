@@ -306,6 +306,7 @@ struct NativeLinkInputClassification: Codable {
     var isValid: Bool = false
     var normalizedInput: String = ""
     var ownerPubkey: String = ""
+    var devicePubkey: String = ""
     var adminDevicePubkey: String = ""
     var hasLinkSecret: Bool = false
     var error: String = ""
@@ -320,6 +321,7 @@ struct NativeLinkInputClassification: Codable {
         case isValid = "is_valid"
         case normalizedInput = "normalized_input"
         case ownerPubkey = "owner_pubkey"
+        case devicePubkey = "device_pubkey"
         case adminDevicePubkey = "admin_device_pubkey"
         case hasLinkSecret = "has_link_secret"
         case error
