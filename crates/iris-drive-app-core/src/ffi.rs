@@ -548,9 +548,9 @@ impl NativeAppRuntime {
             let Ok(config) = self.load_config() else {
                 return;
             };
-            let Some(state) = config.account.as_ref() else {
+            if config.account.is_none() {
                 return;
-            };
+            }
             if self
                 .device_link_exchange_running
                 .swap(true, Ordering::AcqRel)
