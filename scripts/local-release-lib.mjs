@@ -97,6 +97,51 @@ export function describeAsset(name) {
   return name
 }
 
+export function validateReleaseAssetSet(
+  assetNames,
+  { requireCompleteAppRelease = false } = {},
+) {
+  const names = [...assetNames]
+  const hasMacosDmg = names.some((name) => /^iris-drive-v.*-macos-arm64\.dmg$/.test(name))
+  const hasLinuxX64Desktop = names.some((name) =>
+    /^iris-drive-v.*-linux-x64\.(AppImage|deb)$/.test(name),
+  )
+  const hasWindowsX64Setup = names.some((name) =>
+    /^iris-drive-v.*-windows-x64-setup\.exe$/.test(name),
+  )
+  const hasSignedAndroidApk = names.some((name) =>
+    /^iris-drive-v.*-android-arm64\.apk$/.test(name),
+  )
+  const hasUnsignedAndroid = names.some((name) =>
+    /^iris-drive-v.*-android-arm64-unsigned\.(apk|aab)$/.test(name),
+  )
+
+  if (hasUnsignedAndroid) {
+    throw new Error(
+      'Release includes unsigned Android artifacts. Configure Android signing for public releases.',
+    )
+  }
+
+  if (requireCompleteAppRelease) {
+    const missing = []
+    if (!hasMacosDmg) {
+      missing.push('macOS DMG')
+    }
+    if (!hasLinuxX64Desktop) {
+      missing.push('Linux x64 desktop package')
+    }
+    if (!hasWindowsX64Setup) {
+      missing.push('Windows x64 installer')
+    }
+    if (!hasSignedAndroidApk) {
+      missing.push('signed Android APK')
+    }
+    if (missing.length > 0) {
+      throw new Error(`Release is missing required app artifact(s): ${missing.join(', ')}.`)
+    }
+  }
+}
+
 export function buildZapstorePublishPlan({
   tag,
   assetDir,

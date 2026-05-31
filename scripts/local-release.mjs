@@ -24,6 +24,7 @@ import {
   parseEnvFile,
   readWorkspaceVersionTag,
   renderReleaseNotes,
+  validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -170,8 +171,19 @@ function resolveReleaseCommit(tag, dryRun) {
   return run('git', ['rev-parse', 'HEAD'], { capture: true, dryRun }) || 'HEAD'
 }
 
-function stageRelease({ tag, commit, assetDir, stageDir, draft, dryRun }) {
+function stageRelease({
+  tag,
+  commit,
+  assetDir,
+  stageDir,
+  draft,
+  dryRun,
+  requireCompleteAppRelease = false,
+}) {
   const assetPaths = collectReleaseAssetPaths(assetDir, tag)
+  validateReleaseAssetSet(assetPaths.map((assetPath) => basename(assetPath)), {
+    requireCompleteAppRelease,
+  })
   if (assetPaths.length === 0) {
     throw new Error(`No dist assets found for ${tag} in ${assetDir}`)
   }
@@ -287,6 +299,7 @@ function main() {
     stageDir,
     draft: options.publish ? options.draft : true,
     dryRun: options.dryRun,
+    requireCompleteAppRelease: options.publish && !options.draft,
   })
 
   if (options.publish) {

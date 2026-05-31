@@ -10,6 +10,7 @@ import {
   buildZapstorePublishPlan,
   describeAsset,
   readWorkspaceVersionTag,
+  validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
 test('readWorkspaceVersionTag reads the workspace package version', () => {
@@ -102,4 +103,20 @@ test('buildZapstorePublishPlan resolves the Zapstore release source path', () =>
   assert.equal(plan.apkName, 'iris-drive-v0.2.27-android-arm64.apk')
   assert.equal(plan.apkPath, join(distRoot, 'iris-drive-v0.2.27-android-arm64.apk'))
   assert.equal(plan.releaseSourcePath, join(distRoot, 'zapstore-current-android-arm64.apk'))
+})
+
+test('validateReleaseAssetSet requires complete public app artifacts for final releases', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['idrive-v0.2.27-aarch64-apple-darwin.tar.gz'], {
+      requireCompleteAppRelease: true,
+    }),
+    /macOS DMG.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+  )
+})
+
+test('validateReleaseAssetSet rejects unsigned Android public artifacts', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['iris-drive-v0.2.27-android-arm64-unsigned.apk']),
+    /unsigned Android/,
+  )
 })
