@@ -13,6 +13,7 @@ use iris_drive_core::{
 use predicates::str::contains;
 use std::process::Output;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::tempdir;
 
 mod support;
@@ -368,7 +369,14 @@ async fn backup_check_records_sample_latency_and_bandwidth_for_blossom_target() 
     run_json(cfg.path(), &["backups", "add", &blossom.url]);
     run_json(cfg.path(), &["backups", "sync"]);
 
-    let checked = run_json(cfg.path(), &["backups", "check", "--sample-size", "8"]);
+    let check_started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let checked = run_json(
+        cfg.path(),
+        &["backups", "check", "--target", &blossom.url, "--sample-size", "8"],
+    );
     let reports = checked["reports"].as_array().unwrap();
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0]["kind"], "blossom");
@@ -393,6 +401,8 @@ async fn backup_check_records_sample_latency_and_bandwidth_for_blossom_target() 
         .find(|target| target["kind"] == "blossom" && target["target"] == blossom.url)
         .expect("checked Blossom backup target");
     assert_eq!(target["last_check"]["state"], "verified");
+    let checked_at = target["last_check"]["checked_at"].as_i64().unwrap();
+    assert!(checked_at >= check_started_at);
     assert!(target["last_check"]["latency_ms"].as_u64().is_some());
     assert!(
         target["last_check"]["download_bytes_per_second"]

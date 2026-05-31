@@ -235,11 +235,13 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
     let uploaded: Int?
     let totalHashes: Int?
     let checkState: String?
+    let checkedAt: Int?
     let latencyMs: Int?
     let downloadBytesPerSecond: Int?
     let sampledHashes: Int?
     let missing: Int?
     let unknown: Int?
+    let error: String?
 
     init(json: [String: Any]) {
         id = json["id"] as? String ?? json["target"] as? String ?? UUID().uuidString
@@ -257,19 +259,23 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         }
         if let lastCheck = json["last_check"] as? [String: Any] {
             checkState = lastCheck["state"] as? String
+            checkedAt = (lastCheck["checked_at"] as? NSNumber)?.intValue
             latencyMs = (lastCheck["latency_ms"] as? NSNumber)?.intValue
             downloadBytesPerSecond =
                 (lastCheck["download_bytes_per_second"] as? NSNumber)?.intValue
             sampledHashes = (lastCheck["sampled_hashes"] as? NSNumber)?.intValue
             missing = (lastCheck["missing"] as? NSNumber)?.intValue
             unknown = (lastCheck["unknown"] as? NSNumber)?.intValue
+            error = lastCheck["error"] as? String
         } else {
             checkState = nil
+            checkedAt = nil
             latencyMs = nil
             downloadBytesPerSecond = nil
             sampledHashes = nil
             missing = nil
             unknown = nil
+            error = nil
         }
     }
 

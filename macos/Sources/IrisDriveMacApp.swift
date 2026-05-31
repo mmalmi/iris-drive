@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var openLinkMenuItem: NSMenuItem?
     private var startSyncMenuItem: NSMenuItem?
     private var stopSyncMenuItem: NSMenuItem?
-    private var runtimePathsForMenu: IrisDriveRuntimePaths?
+    private(set) var runtimePathsForMenu: IrisDriveRuntimePaths?
     private var fileProviderRegistrationInFlight = false
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
@@ -496,25 +496,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func addBackupTarget(_ value: String, label: String) {
-        let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return }
-        var arguments = ["backups", "add", target]
-        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !label.isEmpty {
-            arguments += ["--label", label]
-        }
-        mutateBackupConfig(arguments: arguments, success: "Backup added")
-    }
-
-    func syncBackups() {
-        mutateBackupConfig(arguments: ["backups", "sync"], success: "Backups synced")
-    }
-
-    func checkBackups() {
-        mutateBackupConfig(arguments: ["backups", "check"], success: "Backups checked")
-    }
-
     func setLocalNhashResolver(_ enabled: Bool) {
         guard let paths = runtimePathsForMenu else {
             NSSound.beep()
@@ -841,30 +822,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 NSLog("Iris Drive relay update failed: \(error)")
                 DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
-        }
-    }
-
-    private func mutateBackupConfig(arguments: [String], success: String) {
-        guard let paths = runtimePathsForMenu else {
-            NSSound.beep()
-            return
-        }
-        let idrive = idriveExecutableURL()
-        updateStatus("Syncing backups")
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                DispatchQueue.main.async {
-                    self.updateStatus(success)
-                    self.refreshStatus()
-                }
-            } catch {
-                NSLog("Iris Drive backup update failed: \(error)")
-                DispatchQueue.main.async {
-                    self.updateStatus("Backup failed")
                     NSSound.beep()
                 }
             }
@@ -1274,7 +1231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
     }
 
-    private func runIDrive(
+    func runIDrive(
         _ idrive: URL?,
         arguments: [String],
         paths: IrisDriveRuntimePaths
@@ -1390,7 +1347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func idriveExecutableURL() -> URL? {
+    func idriveExecutableURL() -> URL? {
         let bundled = Bundle.main.executableURL?
             .deletingLastPathComponent()
             .appendingPathComponent("idrive")
@@ -1733,14 +1690,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func updateStatus(_ message: String) {
+    func updateStatus(_ message: String) {
         DispatchQueue.main.async {
             IrisDriveStatus.shared.message = message
             self.statusMenuItem?.title = message
         }
     }
 
-    private func refreshStatus() {
+    func refreshStatus() {
         guard let paths = runtimePathsForMenu else { return }
         if externalDaemonMode {
             refreshExternalDaemonStatus(paths: paths)
@@ -2260,7 +2217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 }
 
-private struct IrisDriveRuntimePaths {
+struct IrisDriveRuntimePaths {
     let configDirectory: URL
 }
 

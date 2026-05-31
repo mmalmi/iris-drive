@@ -90,6 +90,7 @@ struct IrisDriveControlPanel: View {
     @State private var approveDeviceLabel = ""
     @State private var showAddDevice = false
     @State private var showAddBackup = false
+    @State private var checkingAllBackups = false
     @State private var showLogoutConfirmation = false
 
     var body: some View {
@@ -599,11 +600,15 @@ struct IrisDriveControlPanel: View {
                 SectionTitle("Backups")
                 Spacer()
                 Button {
-                    controller.checkBackups()
+                    guard !checkingAllBackups else { return }
+                    checkingAllBackups = true
+                    controller.checkBackups {
+                        checkingAllBackups = false
+                    }
                 } label: {
-                    Label("Check", systemImage: "checkmark.shield")
+                    Label(checkingAllBackups ? "Checking..." : "Check All", systemImage: "checkmark.shield")
                 }
-                .disabled(status.backupTargets.isEmpty)
+                .disabled(status.backupTargets.isEmpty || checkingAllBackups)
                 Button {
                     controller.syncBackups()
                 } label: {
@@ -620,7 +625,9 @@ struct IrisDriveControlPanel: View {
                 emptyState("No backups yet")
             } else {
                 ForEach(status.backupTargets) { target in
-                    BackupTargetRow(target: target)
+                    BackupTargetRow(target: target) { completion in
+                        controller.checkBackupTarget(target, completion: completion)
+                    }
                 }
             }
         }
@@ -1025,7 +1032,7 @@ private struct SectionTitle: View {
     }
 }
 
-private struct DetailRow: View {
+struct DetailRow: View {
     let label: String
     let value: String
     var copyable = false
@@ -1247,91 +1254,6 @@ private struct DeviceLinkRequestRow: View {
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct BackupTargetRow: View {
-    let target: IrisDriveBackupTarget
-    @State private var expanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    expanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: target.iconName)
-                        .frame(width: 24)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(target.title)
-                            .font(.callout.weight(.medium))
-                            .lineLimit(1)
-                        Text(statusLine)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    DetailRow(label: "Destination", value: target.target, copyable: true)
-                    if let uploaded = target.uploaded, let total = target.totalHashes {
-                        DetailRow(label: "Progress", value: "\(uploaded)/\(total)")
-                    }
-                    if let checkState = target.checkState {
-                        DetailRow(label: "Check", value: checkState)
-                    }
-                    if let latencyMs = target.latencyMs {
-                        DetailRow(label: "Latency", value: "\(latencyMs) ms")
-                    }
-                    if let bandwidth = target.downloadBytesPerSecond {
-                        DetailRow(
-                            label: "Bandwidth",
-                            value: "\(ByteCountFormatter.string(fromByteCount: Int64(bandwidth), countStyle: .file))/s"
-                        )
-                    }
-                    if let sampled = target.sampledHashes {
-                        DetailRow(
-                            label: "Sample",
-                            value: "\(sampled) checked, \(target.missing ?? 0) missing, \(target.unknown ?? 0) unknown"
-                        )
-                    }
-                }
-                .padding(.top, 12)
-            }
-        }
-        .padding(12)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var statusLine: String {
-        if let uploaded = target.uploaded,
-           let total = target.totalHashes,
-           total > 0,
-           uploaded < total {
-            return "Syncing \(Int(Double(uploaded) / Double(total) * 100))%"
-        }
-        switch target.state.lowercased() {
-        case "synced":
-            if target.checkState?.lowercased() == "verified" {
-                return "Up to date | verified"
-            }
-            return "Up to date"
-        default:
-            return target.state
-        }
     }
 }
 
