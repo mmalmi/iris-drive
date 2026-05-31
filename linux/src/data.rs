@@ -51,6 +51,10 @@ pub(crate) fn is_awaiting_link_approval(json: &Value) -> bool {
         && find_bool(account, &["has_owner_signing_authority"]) == Some(false)
 }
 
+pub(crate) fn is_revoked(json: &Value) -> bool {
+    find_string(account_json(json), &["authorization_state"]) == Some("revoked")
+}
+
 pub(crate) fn file_count_value(json: &Value) -> String {
     let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
     find_number(hashtree, &["file_count", "top_level_entries"])

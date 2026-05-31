@@ -99,8 +99,8 @@ Weeks are rough.
 - **Root-diff API**: `diff(old_root, new_root) -> [ItemChange]` + monotonic
   sync anchor. Required by every non-FUSE backend.
 - **Per-entry metadata extension**: optional `mtime`, `content_version`.
-- **Block-level streaming reads**: confirm `read_file_range` doesn't force
-  whole-file materialization anywhere.
+- **Block-level streaming reads**: confirm `read_file_range` can serve only the
+  requested bytes.
 
 All four are hashtree's concern, not iris-drive's. No iris-drive feature code yet.
 
@@ -230,8 +230,8 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - **Storage growth**: content-addressed + retained revisions = unbounded
   growth. Need a gc policy and a "what's using space" UI by Phase 5 at the
   latest.
-- **Cold-start materialization**: first open of a 10 GB file on a new device
-  blocks `open(2)` until fetched. Progress UI is required, not optional.
+- **Cold-start reads**: first open of a 10 GB file on a new device blocks
+  `open(2)` until the needed bytes are fetched. Progress UI is required, not optional.
 
 ## Why "Iris Drive"
 

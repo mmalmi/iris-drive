@@ -150,7 +150,9 @@ struct IrisDriveControlPanel: View {
 
     @ViewBuilder
     private var setupContent: some View {
-        if status.awaitingApproval {
+        if status.revoked {
+            RevokedDeviceSetupView(status: status, controller: controller)
+        } else if status.awaitingApproval {
             AwaitingApprovalSetupView(status: status, controller: controller)
         } else {
             switch setupMode {
@@ -340,13 +342,22 @@ struct IrisDriveControlPanel: View {
             }
             Divider()
                 .padding(.vertical, 4)
-            SidebarRow(
-                symbol: "folder.fill",
-                title: "Open"
-            ) {
+            Button {
                 controller.showDriveFolder()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "folder.fill")
+                        .frame(width: 16)
+                    Text("Open")
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
             .accessibilityIdentifier("sidebarOpenDrive")
+            .accessibilityLabel("Open")
+            .padding(.bottom, 4)
             Spacer()
         }
         .padding(.vertical, 18)
@@ -390,6 +401,14 @@ struct IrisDriveControlPanel: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            Button(action: controller.openDriveLink) {
+                Label("View on drive.iris.to", systemImage: "safari")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(status.snapshotLinkURL == nil)
         }
     }
 
@@ -402,9 +421,8 @@ struct IrisDriveControlPanel: View {
             return .attention
         }
         if let upload = status.lastUpload,
-           upload.totalHashes > 0,
-           upload.uploaded < upload.totalHashes {
-            return .syncing(upload.uploaded, upload.totalHashes)
+           upload.isInProgress {
+            return .syncing(upload.completedHashes, upload.totalHashes)
         }
         return .upToDate
     }
@@ -666,15 +684,14 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Sync & advanced") {
-                HStack(spacing: 10) {
-                    Button("Resume") { controller.startSync() }
-                        .disabled(status.daemonRunning)
-                    Button("Pause") { controller.stopSync() }
-                        .disabled(!status.daemonRunning)
+                if status.daemonRunning {
+                    Button("Pause sync") { controller.stopSync() }
+                } else {
+                    Button("Resume sync") { controller.startSync() }
                 }
-                Button("Copy snapshot link") { controller.copyDriveLink() }
+                Button("Copy drive.iris.to link") { controller.copyDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
-                Button("Open snapshot link") { controller.openDriveLink() }
+                Button("View on drive.iris.to") { controller.openDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
                 LabeledContent(
                     "Storage",
@@ -1028,6 +1045,7 @@ private struct PeerRow: View {
     let adminCount: Int
     let controller: AppDelegate
     @State private var expanded = false
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1094,6 +1112,11 @@ private struct PeerRow: View {
                                     Label("Make Admin", systemImage: "person.badge.key")
                                 }
                             }
+                            Button(role: .destructive) {
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -1104,6 +1127,18 @@ private struct PeerRow: View {
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .confirmationDialog(
+            "Delete \(title)?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                controller.deleteDevice(peer.npub)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the device from Iris Drive and rotates access keys.")
+        }
     }
 
     private var title: String {

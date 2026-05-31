@@ -53,13 +53,14 @@ internal fun DevicesPanel(
     onCopyLinkInvite: () -> Unit,
     onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
-    onRevokeDevice: (String) -> Unit,
+    onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
+    var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
 
     CardSection(title = "Devices", trailing = "${devices.size}") {
         if (canApprove) {
@@ -81,7 +82,7 @@ internal fun DevicesPanel(
                 Column(Modifier.weight(1f)) {
                     Text(device.label, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${device.role.ifBlank { "member" }} | ${device.state}",
+                        "${device.role.ifBlank { "member" }} | ${device.state} | ${device.onlineLabel}",
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -105,10 +106,10 @@ internal fun DevicesPanel(
                     }
                 }
                 if (device.canRevoke) {
-                    IconButton(onClick = { onRevokeDevice(device.pubkey) }) {
+                    IconButton(onClick = { devicePendingDelete = device }) {
                         Icon(
                             painterResource(R.drawable.ic_delete),
-                            contentDescription = "Revoke ${device.label}",
+                            contentDescription = "Delete ${device.label}",
                             tint = Danger,
                         )
                     }
@@ -137,6 +138,48 @@ internal fun DevicesPanel(
             },
         )
     }
+
+    devicePendingDelete?.let { device ->
+        DeleteDeviceDialog(
+            device = device,
+            onDismiss = { devicePendingDelete = null },
+            onConfirm = {
+                onDeleteDevice(device.pubkey)
+                devicePendingDelete = null
+            },
+        )
+    }
+}
+
+private val DeviceState.onlineLabel: String
+    get() = if (isOnline) "Online" else "Offline"
+
+@Composable
+private fun DeleteDeviceDialog(
+    device: DeviceState,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete device?") },
+        text = {
+            Text("Delete ${device.label} from Iris Drive? This removes its access to future syncs.")
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("confirmDeleteDevice"),
+            ) {
+                Text("Delete", color = Danger)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

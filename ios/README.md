@@ -5,7 +5,7 @@ Native SwiftUI shell for Iris Drive on iOS.
 The app is a mobile control surface with the same four destinations as the
 desktop shells: My Drive, Devices, Backups, and Settings. The bundled File
 Provider extension exposes a virtual Iris Drive domain to the Files app; it
-does not create a user-visible materialized folder.
+does not create a user-visible normal folder.
 
 ## Development build
 
@@ -34,4 +34,4 @@ just e2e-4devices
 The four-device wrapper runs the iOS simulator smoke on the configured iOS host
 and then adds an `ios` peer to the existing Ubuntu, macOS, and Windows sync
 matrix. The iOS peer uses the real `idrive` daemon and provider commands in the
-test harness; no normal folder fallback is mounted for the mobile device.
+test harness; no normal-folder fallback is mounted for the mobile device.

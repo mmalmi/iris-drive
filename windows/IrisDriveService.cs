@@ -60,6 +60,16 @@ public sealed class IrisDriveService
         return FinishSetupAsync(new[] { "link", owner.Trim() });
     }
 
+    public Task RelinkDeviceAsync(string owner)
+    {
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            throw new InvalidOperationException("Owner public key is required.");
+        }
+
+        return FinishSetupAsync(new[] { "link", owner.Trim(), "--force" });
+    }
+
     public async Task ApproveDeviceAsync(string device, string label)
     {
         if (string.IsNullOrWhiteSpace(device))
@@ -76,6 +86,11 @@ public sealed class IrisDriveService
     }
 
     public Task RevokeDeviceAsync(string device)
+    {
+        return DeleteDeviceAsync(device);
+    }
+
+    public Task DeleteDeviceAsync(string device)
     {
         if (string.IsNullOrWhiteSpace(device))
         {

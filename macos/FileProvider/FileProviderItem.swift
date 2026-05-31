@@ -508,16 +508,16 @@ enum FileProviderStorage {
         }
         let list = providerList()
         if let entry = list.entries.first(where: { $0.path == path && $0.kind != "directory" }) {
-            if let cached = try cachedContentsURL(for: entry, anchor: list.anchor) {
+            if let cached = try existingCachedContentsURL(for: entry, anchor: list.anchor) {
                 debugLog("fetch contents cache hit path=\(path)")
                 return cached
             }
             do {
-                let materialized = try materializedContentsURL(for: entry, anchor: list.anchor)
-                debugLog("fetch contents materialized cache path=\(path)")
-                return materialized
+                let cached = try cachedContentsURL(for: entry, anchor: list.anchor)
+                debugLog("fetch contents private cache path=\(path)")
+                return cached
             } catch {
-                debugLog("fetch contents materialized cache failed path=\(path) error=\(error)")
+                debugLog("fetch contents private cache failed path=\(path) error=\(error)")
             }
         }
 
@@ -619,7 +619,7 @@ enum FileProviderStorage {
         providerListCacheLock.unlock()
     }
 
-    private static func cachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL? {
+    private static func existingCachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL? {
         let url = contentCacheURL(for: entry, anchor: anchor)
         guard contentCacheFileMatches(url, entry: entry) else {
             return nil
@@ -627,11 +627,11 @@ enum FileProviderStorage {
         return url
     }
 
-    private static func materializedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL {
+    private static func cachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL {
         contentCacheLock.lock()
         defer { contentCacheLock.unlock() }
 
-        if let cached = try cachedContentsURL(for: entry, anchor: anchor) {
+        if let cached = try existingCachedContentsURL(for: entry, anchor: anchor) {
             return cached
         }
 
@@ -640,12 +640,12 @@ enum FileProviderStorage {
             at: root,
             withIntermediateDirectories: true
         )
-        _ = try runIDrive(arguments: ["provider", "materialize-cache", root.path], timeout: 60)
+        _ = try runIDrive(arguments: ["provider", "hydrate-cache", root.path], timeout: 60)
         pruneContentCacheDirectories(keeping: root)
 
         let url = contentCacheURL(for: entry, anchor: anchor)
         guard contentCacheFileMatches(url, entry: entry) else {
-            throw providerError("materialized cache missing \(entry.path)")
+            throw providerError("private cache missing \(entry.path)")
         }
         return url
     }

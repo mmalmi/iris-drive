@@ -203,6 +203,67 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
     }
 }
 
+pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Delete device")
+        .modal(true)
+        .default_width(360)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Delete device?"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let message = gtk::Label::new(Some(&format!(
+        "Delete {label} from Iris Drive? This removes its access to future syncs."
+    )));
+    message.add_css_class("iris-muted");
+    message.set_xalign(0.0);
+    message.set_wrap(true);
+    body.append(&message);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let delete = pill_button("Delete");
+    delete.add_css_class("destructive-action");
+    buttons.append(&cancel);
+    buttons.append(&delete);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        delete.connect_clicked(move |_| match delete_device(&device_npub) {
+            Ok(()) => {
+                restart_daemon(&model);
+                model.ui.notice.set_text("Device deleted");
+                refresh(&model);
+                dialog.close();
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        });
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
 pub(crate) fn open_drive_folder(model: &AppRef) {
     let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
     if !ensure_daemon_running(model, &status) {
@@ -249,7 +310,7 @@ pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
 
 pub(crate) fn copy_snapshot_link(model: &AppRef) {
     match current_snapshot_link() {
-        Ok(link) => copy_text(model, &link, "Snapshot copied"),
+        Ok(link) => copy_text(model, &link, "drive.iris.to link copied"),
         Err(error) => model.ui.notice.set_text(&error),
     }
 }

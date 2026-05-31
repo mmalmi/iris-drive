@@ -3,6 +3,7 @@ package to.iris.drive.app.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class AppStateTest {
     @Test
@@ -78,5 +79,33 @@ class AppStateTest {
         assertTrue(state.isAwaitingApproval)
         assertEquals(false, state.isSetupComplete)
         assertEquals(0, state.authorizedDeviceCount)
+    }
+
+    @Test
+    fun revokedDeviceDoesNotCompleteSetup() {
+        val state = AppState(
+            account = AccountState(
+                ownerPubkey = "owner",
+                devicePubkey = "device-a",
+                deviceLabel = "Pixel",
+                authorizationState = "revoked",
+                hasOwnerSigningAuthority = false,
+                deviceLinkRequest = "",
+                deviceLinkInvite = "",
+                inboundDeviceLinkRequests = emptyList(),
+            ),
+        )
+
+        assertTrue(state.isRevoked)
+        assertEquals(false, state.isAwaitingApproval)
+        assertEquals(false, state.isSetupComplete)
+    }
+
+    @Test
+    fun deleteDeviceActionUsesDeleteDeviceType() {
+        val action = JSONObject(NativeActions.deleteDevice("device-b"))
+
+        assertEquals("delete_device", action.getString("type"))
+        assertEquals("device-b", action.getString("device_pubkey"))
     }
 }

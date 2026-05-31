@@ -524,6 +524,197 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
+request_sidebar_open_button() {
+  /usr/bin/swift - "$APP_BUNDLE_ID" "$APP_PROCESS_NAME" >/dev/null <<'SWIFT'
+import AppKit
+import ApplicationServices
+import Foundation
+
+let bundleIdentifier = CommandLine.arguments[1]
+let processName = CommandLine.arguments[2]
+let targetIdentifier = "sidebarOpenDrive"
+let deadline = Date().addingTimeInterval(8)
+
+func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+          let value
+    else {
+        return nil
+    }
+    return value as? String
+}
+
+func children(of element: AXUIElement) -> [AXUIElement] {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+          let children = value as? [AXUIElement]
+    else {
+        return []
+    }
+    return children
+}
+
+func findElement(_ element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    if stringAttribute(element, "AXIdentifier") == targetIdentifier {
+        return element
+    }
+    guard depth < 20 else {
+        return nil
+    }
+    for child in children(of: element) {
+        if let match = findElement(child, depth: depth + 1) {
+            return match
+        }
+    }
+    return nil
+}
+
+func runningApp() -> NSRunningApplication? {
+    if let app = NSRunningApplication
+        .runningApplications(withBundleIdentifier: bundleIdentifier)
+        .first(where: { !$0.isTerminated }) {
+        return app
+    }
+    return NSWorkspace.shared.runningApplications.first {
+        !$0.isTerminated && $0.localizedName == processName
+    }
+}
+
+var lastError = "sidebar Open button not found"
+while Date() < deadline {
+    guard let app = runningApp() else {
+        lastError = "Iris Drive process not found"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        continue
+    }
+    app.activate(options: [.activateAllWindows])
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    if let button = findElement(axApp) {
+        let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
+        if result == .success {
+            exit(0)
+        }
+        lastError = "sidebar Open button AXPress failed: \(result.rawValue)"
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+}
+
+fputs("\(lastError)\n", stderr)
+exit(1)
+SWIFT
+}
+
+assert_single_sync_action_button() {
+  /usr/bin/swift - "$APP_BUNDLE_ID" "$APP_PROCESS_NAME" >/dev/null <<'SWIFT'
+import AppKit
+import ApplicationServices
+import Foundation
+
+let bundleIdentifier = CommandLine.arguments[1]
+let processName = CommandLine.arguments[2]
+let deadline = Date().addingTimeInterval(8)
+
+func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+          let value
+    else {
+        return nil
+    }
+    return value as? String
+}
+
+func children(of element: AXUIElement) -> [AXUIElement] {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+          let children = value as? [AXUIElement]
+    else {
+        return []
+    }
+    return children
+}
+
+func findButtonDescription(_ element: AXUIElement, description: String, depth: Int = 0) -> AXUIElement? {
+    if stringAttribute(element, kAXRoleAttribute) == kAXButtonRole as String,
+       stringAttribute(element, kAXDescriptionAttribute) == description {
+        return element
+    }
+    guard depth < 20 else {
+        return nil
+    }
+    for child in children(of: element) {
+        if let match = findButtonDescription(child, description: description, depth: depth + 1) {
+            return match
+        }
+    }
+    return nil
+}
+
+func countButtonDescriptions(_ element: AXUIElement, descriptions: Set<String>, depth: Int = 0) -> [String: Int] {
+    var counts: [String: Int] = [:]
+    if stringAttribute(element, kAXRoleAttribute) == kAXButtonRole as String,
+       let description = stringAttribute(element, kAXDescriptionAttribute),
+       descriptions.contains(description) {
+        counts[description, default: 0] += 1
+    }
+    guard depth < 20 else {
+        return counts
+    }
+    for child in children(of: element) {
+        let childCounts = countButtonDescriptions(child, descriptions: descriptions, depth: depth + 1)
+        for (key, value) in childCounts {
+            counts[key, default: 0] += value
+        }
+    }
+    return counts
+}
+
+func runningApp() -> NSRunningApplication? {
+    if let app = NSRunningApplication
+        .runningApplications(withBundleIdentifier: bundleIdentifier)
+        .first(where: { !$0.isTerminated }) {
+        return app
+    }
+    return NSWorkspace.shared.runningApplications.first {
+        !$0.isTerminated && $0.localizedName == processName
+    }
+}
+
+var lastError = "sync action buttons were not visible"
+while Date() < deadline {
+    guard let app = runningApp() else {
+        lastError = "Iris Drive process not found"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        continue
+    }
+    app.activate(options: [.activateAllWindows])
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    if let settingsButton = findButtonDescription(axApp, description: "Settings") {
+        _ = AXUIElementPerformAction(settingsButton, kAXPressAction as CFString)
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    let counts = countButtonDescriptions(
+        axApp,
+        descriptions: ["Pause sync", "Resume sync"]
+    )
+    let pauseCount = counts["Pause sync", default: 0]
+    let resumeCount = counts["Resume sync", default: 0]
+    if pauseCount + resumeCount == 1 {
+        exit(0)
+    }
+    if pauseCount > 0 && resumeCount > 0 {
+        lastError = "Pause sync and Resume sync are both visible"
+        break
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+}
+
+fputs("\(lastError)\n", stderr)
+exit(1)
+SWIFT
+}
+
 app_group_identifier() {
   local app_path="$1"
 
@@ -679,8 +870,8 @@ run_user_journey() {
     return 1
   fi
 
-  if ! request_show_drive_folder; then
-    echo "FAIL: could not request Show Drive Folder during user journey." >&2
+  if ! request_sidebar_open_button; then
+    echo "FAIL: could not click sidebar Open button during user journey." >&2
     return 1
   fi
   if wait_for_log "Iris Drive mounted drive folder opened" 10 ||
@@ -785,7 +976,7 @@ open_args=(
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
 )
-if ! run_create_profile_gui_smoke && ! run_user_journey_smoke; then
+if ! run_create_profile_gui_smoke && ! run_user_journey_smoke && ! run_ui_smoke; then
   open_args=(-j "${open_args[@]}")
 fi
 if run_create_profile_smoke || run_user_journey_smoke; then
@@ -885,8 +1076,9 @@ else
 fi
 
 if run_ui_smoke && ! run_user_journey_smoke; then
-  if ! request_show_drive_folder; then
-    echo "FAIL: could not request Show Drive Folder." >&2
+  open "$APP_PATH"
+  if ! request_show_control_panel || ! assert_single_sync_action_button || ! request_sidebar_open_button; then
+    echo "FAIL: could not verify desktop sync controls or click sidebar Open button." >&2
     show_recent_logs >&2
     exit 1
   fi

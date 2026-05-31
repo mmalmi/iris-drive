@@ -63,13 +63,19 @@ class MainActivity : ComponentActivity() {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 onCreateProfile = { deviceLabel ->
-                    dispatch(NativeActions.createProfile(deviceLabel), ::autoStartSyncIfNeeded)
+                    dispatch(NativeActions.createProfile(resolveDeviceLabel(deviceLabel)), ::autoStartSyncIfNeeded)
                 },
                 onRestoreProfile = { secret, deviceLabel ->
-                    dispatch(NativeActions.restoreProfile(secret, deviceLabel), ::autoStartSyncIfNeeded)
+                    dispatch(
+                        NativeActions.restoreProfile(secret, resolveDeviceLabel(deviceLabel)),
+                        ::autoStartSyncIfNeeded,
+                    )
                 },
                 onLinkDevice = { ownerPubkey, deviceLabel ->
-                    dispatch(NativeActions.linkDevice(ownerPubkey, deviceLabel), ::autoStartSyncIfNeeded)
+                    dispatch(
+                        NativeActions.linkDevice(ownerPubkey, resolveDeviceLabel(deviceLabel)),
+                        ::autoStartSyncIfNeeded,
+                    )
                 },
                 onCopyText = ::copyToClipboard,
                 onOpenUrl = ::openUrl,
@@ -78,8 +84,8 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
                 },
                 onResetInvite = { dispatch(NativeActions.resetInvite()) },
-                onRevokeDevice = { devicePubkey ->
-                    dispatch(NativeActions.revokeDevice(devicePubkey))
+                onDeleteDevice = { devicePubkey ->
+                    dispatch(NativeActions.deleteDevice(devicePubkey))
                 },
                 onAppointAdmin = { devicePubkey ->
                     dispatch(NativeActions.appointAdmin(devicePubkey))
@@ -133,7 +139,7 @@ class MainActivity : ComponentActivity() {
         val handle = nativeHandle
         if (handle == 0L) return
         lifecycleScope.launch(Dispatchers.IO) {
-            val state = AppState.fromJson(NativeCore.refreshJson(handle))
+            val state = stateFromJson(NativeCore.refreshJson(handle))
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
@@ -146,7 +152,7 @@ class MainActivity : ComponentActivity() {
         val handle = nativeHandle
         if (handle == 0L) return
         lifecycleScope.launch(Dispatchers.IO) {
-            val state = AppState.fromJson(NativeCore.dispatchJson(handle, actionJson))
+            val state = stateFromJson(NativeCore.dispatchJson(handle, actionJson))
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
@@ -156,6 +162,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun autoStartSyncIfNeeded(state: AppState) {
+        if (state.isRevoked) {
+            stopSyncService()
+            return
+        }
         if (state.sync.running && (state.isSetupComplete || state.isAwaitingApproval)) {
             startSyncService()
         }
@@ -201,6 +211,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun stateFromJson(json: String): AppState =
+        AppState.fromJson(json).withProviderStats(filesDir.absolutePath)
+
+    private fun resolveDeviceLabel(label: String): String =
+        label.trim().ifBlank { defaultDeviceLabel() }
+
+    private fun defaultDeviceLabel(): String {
+        val model = Build.MODEL.orEmpty().trim()
+        val manufacturer = Build.MANUFACTURER.orEmpty().trim()
+        val label = when {
+            model.isBlank() -> "Android"
+            manufacturer.isBlank() -> model
+            model.startsWith(manufacturer, ignoreCase = true) -> model
+            model.contains("Pixel", ignoreCase = true) -> model
+            else -> "$manufacturer $model"
+        }
+        return label.replace(Regex("\\s+"), " ").takeIf { it.isNotBlank() } ?: "Android"
+    }
+
     private fun needsNotificationPermission(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
@@ -211,9 +240,9 @@ class MainActivity : ComponentActivity() {
     private fun handleDebugIntent(intent: Intent?) {
         val uri = intent?.data
         if (uri != null && isDeviceApprovalUri(uri)) {
-            dispatch(NativeActions.approveDevice(uri.toString(), "Android"))
+            dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
         } else if (uri != null && isLinkDeviceUri(uri)) {
-            dispatch(NativeActions.linkDevice(uri.toString(), "Android"))
+            dispatch(NativeActions.linkDevice(uri.toString(), defaultDeviceLabel()))
         }
         when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))

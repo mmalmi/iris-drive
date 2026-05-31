@@ -1073,7 +1073,7 @@ public static partial class WindowsCloudFiles
         var pendingDeletes = PendingProviderDeletePaths();
         var pendingPreserves = PendingProviderPreservePaths();
         var refreshedPaths = new HashSet<string>(StringComparer.Ordinal);
-        var locallyMissingMaterialized = MissingMaterializedLocalPaths(
+        var locallyMissingProjected = MissingProjectedLocalPaths(
             syncRootPath,
             placeholderEntries,
             previousState);
@@ -1084,7 +1084,7 @@ public static partial class WindowsCloudFiles
             placeholderEntries.Select(entry => entry.Path)
                 .Concat(pendingDeletes)
                 .Concat(pendingPreserves)
-                .Where(path => !locallyMissingMaterialized.Contains(path)),
+                .Where(path => !locallyMissingProjected.Contains(path)),
             StringComparer.Ordinal);
 
         RemoveIgnoredLocalItems(syncRootPath);
@@ -1098,10 +1098,10 @@ public static partial class WindowsCloudFiles
                 continue;
             }
 
-            if (locallyMissingMaterialized.Contains(entry.Path))
+            if (locallyMissingProjected.Contains(entry.Path))
             {
                 skippedLocalItems++;
-                DebugLogPath(entry.Path, "skip previously materialized local file missing from disk");
+                DebugLogPath(entry.Path, "skip previously projected local file missing from disk");
                 continue;
             }
 
@@ -1220,7 +1220,7 @@ public static partial class WindowsCloudFiles
             protectedLocalItemPaths.ToArray());
     }
 
-    private static HashSet<string> MissingMaterializedLocalPaths(
+    private static HashSet<string> MissingProjectedLocalPaths(
         string syncRootPath,
         IReadOnlyCollection<WindowsCloudFileEntry> entries,
         IReadOnlyCollection<WindowsCloudLocalStateEntry> previousState)
@@ -1339,7 +1339,7 @@ public static partial class WindowsCloudFiles
             }
             catch
             {
-                // Preserve files we cannot prove are unchanged synced materializations.
+                // Preserve files we cannot prove are unchanged synced Cloud Files placeholders.
             }
         }
 

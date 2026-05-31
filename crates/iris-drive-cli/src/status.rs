@@ -182,19 +182,21 @@ pub(crate) fn local_nhash_resolver_status(
 
 pub(crate) fn status_account_block(config: &AppConfig) -> Option<Value> {
     config.account.as_ref().map(|state| {
+        let mut state = state.clone();
+        state.recompute_authorization();
         json!({
             "owner_npub": account_npub(&state.owner_pubkey),
             "device_npub": account_npub(&state.device_pubkey),
             "has_owner_signing_authority": state.has_owner_signing_authority,
-            "authorization_state": authorization_state_label(state),
+            "authorization_state": authorization_state_label(&state),
             "roster_size": state.app_keys.as_ref().map_or(0, |s| s.devices.len()),
             "profile": config.user_profile.as_ref().map(|profile| json!({
                 "username": profile.username,
                 "photo_path": profile.photo_path,
             })),
-            "device_link_request": device_link_request_json(state),
-            "device_link_invite": device_link_invite_json(state),
-            "inbound_device_link_requests": inbound_device_link_requests_json(state),
+            "device_link_request": device_link_request_json(&state),
+            "device_link_invite": device_link_invite_json(&state),
+            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
         })
     })
 }

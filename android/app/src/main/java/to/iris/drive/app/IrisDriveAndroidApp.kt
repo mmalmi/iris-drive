@@ -137,7 +137,7 @@ internal fun IrisDriveAndroidApp(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onResetInvite: () -> Unit,
-    onRevokeDevice: (String) -> Unit,
+    onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
     onLogout: () -> Unit,
@@ -161,7 +161,18 @@ internal fun IrisDriveAndroidApp(
             },
         ) { padding ->
             if (!state.isSetupComplete) {
-                if (state.isAwaitingApproval && account != null) {
+                if (state.isRevoked && account != null) {
+                    RevokedDeviceContent(
+                        padding = padding,
+                        state = state,
+                        onCopyText = onCopyText,
+                        onRelink = {
+                            val label = account.deviceLabel.ifBlank { "Android" }
+                            onLinkDevice(account.ownerPubkey, label)
+                        },
+                        onLogout = onLogout,
+                    )
+                } else if (state.isAwaitingApproval && account != null) {
                     AwaitingApprovalContent(
                         padding = padding,
                         state = state,
@@ -200,7 +211,7 @@ internal fun IrisDriveAndroidApp(
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
                     onResetInvite = onResetInvite,
-                    onRevokeDevice = onRevokeDevice,
+                    onDeleteDevice = onDeleteDevice,
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
                     onLogout = onLogout,
@@ -208,6 +219,49 @@ internal fun IrisDriveAndroidApp(
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RevokedDeviceContent(
+    padding: PaddingValues,
+    state: AppState,
+    onCopyText: (String, String) -> Unit,
+    onRelink: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val account = state.account ?: return
+    Box(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().widthIn(max = 360.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            SetupBrand()
+            Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            Text("This device no longer has access to Iris Drive.", color = Muted)
+            Text(account.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(account.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            SetupPrimaryButton(
+                text = "Link this device again",
+                onClick = onRelink,
+                testTag = "relinkRevokedDevice",
+            )
+            SetupSecondaryButton(
+                text = "Copy device ID",
+                onClick = { onCopyText("Device key", account.devicePubkey) },
+            )
+            OutlinedButton(
+                onClick = onLogout,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text("Log out")
             }
         }
     }
@@ -577,7 +631,7 @@ private fun DriveContent(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onResetInvite: () -> Unit,
-    onRevokeDevice: (String) -> Unit,
+    onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
     onLogout: () -> Unit,
@@ -627,7 +681,7 @@ private fun DriveContent(
                 onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
                 onResetInvite = onResetInvite,
-                onRevokeDevice = onRevokeDevice,
+                onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
             )

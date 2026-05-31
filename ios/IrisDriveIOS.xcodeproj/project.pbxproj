@@ -87,6 +87,7 @@
 		D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC171DD1C2DE89B561ADE85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFAA63EB47F10A248B2C85CE /* FileProviderDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProviderDebug.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -94,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				59222C8CE8FD8C001461A472 /* FileProvider.entitlements */,
+				FFAA63EB47F10A248B2C85CE /* FileProviderDebug.entitlements */,
 				B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */,
 				C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */,
 				C789203391687925DEAB3576 /* FileProviderItem.swift */,
@@ -614,7 +616,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = IrisDriveIOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = IrisDriveIOSDebug.entitlements;
 				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
 				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Info.plist;
@@ -635,7 +637,7 @@
 		EF5787082B6BA9E5AE40C596 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProviderDebug.entitlements;
 				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
 				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = FileProvider/Info.plist;

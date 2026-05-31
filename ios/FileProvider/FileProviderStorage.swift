@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
+    private static let storageDirectoryName = "IrisDrive"
     private static let providerSnapshotFileName = "ios-provider-snapshot.json"
     private static let debugLogFileName = "ios-fileprovider-extension.log"
     private static let pathPrefix = "path:"
@@ -33,16 +34,12 @@ enum FileProviderStorage {
     }
 
     static var baseDirectory: URL {
-        if let shared = FileManager.default.containerURL(
+        guard let shared = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) {
-            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
+        ) else {
+            fatalError("Iris Drive app group is unavailable")
         }
-        let support = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.temporaryDirectory
-        return support.appendingPathComponent("Iris Drive", isDirectory: true)
+        return shared.appendingPathComponent(storageDirectoryName, isDirectory: true)
     }
 
     static func debugLog(_ message: String) {

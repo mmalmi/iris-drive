@@ -48,11 +48,31 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 15))
     }
 
+    func testOpenDriveFolderInFilesApp() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let openInFiles = app.buttons["openInFilesButton"]
+        makeHittable(openInFiles, in: app)
+        openInFiles.tap()
+
+        let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        XCTAssertTrue(waitForFilesOpenOrError(in: app, files: files, timeout: 15))
+    }
+
     func testApprovedLinkedDeviceLeavesWaiting() throws {
         let app = launchApp()
 
         XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 45))
         XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Devices"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Devices"].tap()
+        XCTAssertTrue(app.staticTexts["This device"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.staticTexts["Member | Linked | Online"].waitForExistence(timeout: 10)
+                || app.staticTexts["Admin | Linked | Online"].waitForExistence(timeout: 10)
+        )
+        XCTAssertFalse(app.staticTexts["Authorized"].exists)
     }
 
     func testAddLinkedDeviceFromDevices() throws {
@@ -84,6 +104,36 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
         app.launch()
         return app
+    }
+
+    private func ensureMyDriveReady(in app: XCUIApplication) {
+        if app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 3) {
+            app.buttons["welcomeCreateProfile"].tap()
+            app.buttons["createProfileSubmit"].tap()
+        }
+        XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["My Drive"].tap()
+    }
+
+    private func waitForFilesOpenOrError(
+        in app: XCUIApplication,
+        files: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if files.state == .runningForeground,
+               files.descendants(matching: .any)["My Drive"].exists {
+                return true
+            }
+            if app.state == .runningForeground,
+               app.staticTexts["Open in Files failed"].exists,
+               app.staticTexts["openInFilesError"].exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 
     private func requiredEnvironment(_ name: String) throws -> String {

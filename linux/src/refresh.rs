@@ -8,11 +8,17 @@ pub(crate) fn refresh(model: &AppRef) {
                 .get("initialized")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let awaiting_link_approval = initialized && is_awaiting_link_approval(&json);
-            let sync_running = initialized && ensure_daemon_running(model, &json);
-            set_view_mode(model, initialized && !awaiting_link_approval, sync_running);
+            let revoked = initialized && is_revoked(&json);
+            let awaiting_link_approval = initialized && !revoked && is_awaiting_link_approval(&json);
+            let sync_running = initialized && !revoked && ensure_daemon_running(model, &json);
+            set_view_mode(model, initialized && !awaiting_link_approval && !revoked, sync_running);
             if !initialized {
                 render_setup(model);
+                return;
+            }
+            if revoked {
+                stop_daemon(model);
+                render_revoked_device(model, &json);
                 return;
             }
             if awaiting_link_approval {
@@ -110,12 +116,12 @@ pub(crate) fn set_view_mode(model: &AppRef, initialized: bool, sync_running: boo
     model.ui.folder_button.set_visible(initialized);
     model.ui.copy_snapshot_button.set_visible(initialized);
     model.ui.open_snapshot_button.set_visible(initialized);
-    model.ui.start_button.set_visible(initialized);
+    model.ui.start_button.set_visible(initialized && !sync_running);
     model
         .ui
         .start_button
         .set_sensitive(initialized && !sync_running);
-    model.ui.stop_button.set_visible(initialized);
+    model.ui.stop_button.set_visible(initialized && sync_running);
     model
         .ui
         .stop_button

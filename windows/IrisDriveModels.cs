@@ -103,6 +103,9 @@ public sealed class IrisDriveStatusData
     public bool IsSetupComplete =>
         Initialized && string.Equals(AuthorizationState, "authorized", StringComparison.Ordinal);
 
+    public bool IsRevoked =>
+        Initialized && string.Equals(AuthorizationState, "revoked", StringComparison.Ordinal);
+
     private static string ExtractDriveName(JsonElement root)
     {
         if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)

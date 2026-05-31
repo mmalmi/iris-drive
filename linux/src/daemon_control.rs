@@ -3,6 +3,11 @@ use super::*;
 
 pub(crate) fn start_daemon(model: &AppRef) {
     let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
+    if is_revoked(&status) {
+        stop_daemon(model);
+        model.ui.notice.set_text("Device removed");
+        return;
+    }
     if ensure_daemon_running(model, &status) {
         model.ui.notice.set_text("Sync is already on");
         return;

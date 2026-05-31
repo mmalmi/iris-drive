@@ -441,6 +441,16 @@ terminate_running_app() {
     done
     pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
   fi
+  if pgrep -x "IrisDriveFileProvider" >/dev/null 2>&1; then
+    pkill -TERM -x "IrisDriveFileProvider" >/dev/null 2>&1 || true
+    for _ in {1..40}; do
+      if ! pgrep -x "IrisDriveFileProvider" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 0.1
+    done
+    pkill -x "IrisDriveFileProvider" >/dev/null 2>&1 || true
+  fi
 }
 
 build_app() {
@@ -467,6 +477,7 @@ build_app() {
     echo "Built macOS app not found. Build log: $BUILD_LOG" >&2
     exit 1
   fi
+  terminate_running_app
   app_path="$(install_app_bundle "$built_app_path")"
 
   if [[ "$mode" == "development" ]]; then

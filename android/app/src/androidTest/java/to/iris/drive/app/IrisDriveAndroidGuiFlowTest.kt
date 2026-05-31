@@ -1,17 +1,17 @@
 package to.iris.drive.app
 
 import android.content.Context
-import android.provider.DocumentsContract
-import android.provider.DocumentsContract.Document
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
@@ -25,6 +25,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -35,6 +36,7 @@ import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.SyncState
+import to.iris.drive.app.provider.IrisDriveDocumentStore
 
 @RunWith(AndroidJUnit4::class)
 class IrisDriveAndroidGuiFlowTest {
@@ -127,40 +129,138 @@ class IrisDriveAndroidGuiFlowTest {
 
     @Test
     fun documentsProviderListsNativeProviderRoot() {
-        cleanTargetFilesDir()
-        val handle = NativeCore.appNew(context.filesDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val dataDir = tempDataDir("iris-drive-provider")
+        val handle = NativeCore.appNew(dataDir.absolutePath, "ui-test").also(nativeHandles::add)
         dispatch(handle, NativeActions.createProfile("Android UI provider"))
-        val source = File(context.cacheDir, "native-provider-source.txt")
+        val source = File(context.cacheDir, "native-provider-source-${UUID.randomUUID()}.txt")
         source.writeText("from native provider")
 
         val write = JSONObject(
             NativeCore.providerWriteJson(
-                context.filesDir.absolutePath,
+                dataDir.absolutePath,
                 "provider-note.txt",
                 source.absolutePath,
             ),
         )
         assertTrue(write.optString("error"), write.optString("error").isBlank())
 
-        val uri = DocumentsContract.buildChildDocumentsUri(
-            context.getString(R.string.documents_provider_authority),
-            "root",
+        val names = IrisDriveDocumentStore(dataDir)
+            .childDocuments(IrisDriveDocumentStore.ROOT_DOCUMENT_ID)
+            .map { it.displayName }
+        assertTrue(names.toString(), names.contains("provider-note.txt"))
+    }
+
+    @Test
+    fun acceptedLinkedDeviceShowsSyncedFileCountInGui() {
+        val ownerDir = tempDataDir("iris-drive-owner")
+        val ownerHandle = NativeCore.appNew(ownerDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val owner = dispatch(ownerHandle, NativeActions.createProfile("Mac"))
+        val source = File(context.cacheDir, "owner-note-${UUID.randomUUID()}.txt")
+        source.writeText("from owner")
+        val write = JSONObject(
+            NativeCore.providerWriteJson(
+                ownerDir.absolutePath,
+                "owner-note.txt",
+                source.absolutePath,
+            ),
         )
-        context.contentResolver.query(
-            uri,
-            arrayOf(Document.COLUMN_DISPLAY_NAME),
-            null,
-            null,
-            null,
-        ).use { cursor ->
-            assertTrue(cursor != null)
-            val names = buildList {
-                while (cursor!!.moveToNext()) {
-                    add(cursor.getString(0))
-                }
-            }
-            assertTrue(names.toString(), names.contains("provider-note.txt"))
-        }
+        assertTrue(write.optString("error"), write.optString("error").isBlank())
+
+        val linkedDir = tempDataDir("iris-drive-linked")
+        val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val linked = dispatch(
+            linkedHandle,
+            NativeActions.linkDevice(owner.account!!.deviceLinkInvite, "Pixel"),
+        )
+        val approved = dispatch(
+            ownerHandle,
+            NativeActions.approveDevice(linked.account!!.deviceLinkRequest, "Pixel"),
+        )
+        assertTrue(approved.error, approved.error.isBlank())
+
+        val applied = JSONObject(
+            NativeCore.applyOwnerSnapshotForTest(
+                ownerDir.absolutePath,
+                linkedDir.absolutePath,
+            ),
+        )
+        assertTrue(applied.optString("error"), applied.optString("error").isBlank())
+
+        val linkedState = appStateWithProviderStats(linkedHandle, linkedDir)
+        assertEquals("authorized", linkedState.account?.authorizationState)
+        assertEquals(1, linkedState.fileCount)
+
+        render(state = linkedState)
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("1 files"))
+        compose.onNodeWithText("1 files").assertIsDisplayed()
+    }
+
+    @Test
+    fun acceptedLinkedDevicePersistsLoginAndFileCountAfterRestartInGui() {
+        val ownerDir = tempDataDir("iris-drive-owner")
+        val ownerHandle = NativeCore.appNew(ownerDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val owner = dispatch(ownerHandle, NativeActions.createProfile("Mac"))
+        val source = File(context.cacheDir, "owner-note-${UUID.randomUUID()}.txt")
+        source.writeText("from owner")
+        val write = JSONObject(
+            NativeCore.providerWriteJson(
+                ownerDir.absolutePath,
+                "owner-note.txt",
+                source.absolutePath,
+            ),
+        )
+        assertTrue(write.optString("error"), write.optString("error").isBlank())
+
+        val linkedDir = tempDataDir("iris-drive-linked")
+        val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val linked = dispatch(
+            linkedHandle,
+            NativeActions.linkDevice(owner.account!!.deviceLinkInvite, "Pixel"),
+        )
+        val approved = dispatch(
+            ownerHandle,
+            NativeActions.approveDevice(linked.account!!.deviceLinkRequest, "Pixel"),
+        )
+        assertTrue(approved.error, approved.error.isBlank())
+
+        val applied = JSONObject(
+            NativeCore.applyOwnerSnapshotForTest(
+                ownerDir.absolutePath,
+                linkedDir.absolutePath,
+            ),
+        )
+        assertTrue(applied.optString("error"), applied.optString("error").isBlank())
+        NativeCore.appFree(linkedHandle)
+        nativeHandles.remove(linkedHandle)
+
+        val restartedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val restarted = appStateWithProviderStats(restartedHandle, linkedDir)
+        assertEquals("authorized", restarted.account?.authorizationState)
+        assertEquals("Pixel", restarted.account?.deviceLabel)
+        assertEquals(1, restarted.fileCount)
+
+        render(state = restarted)
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("1 files"))
+        compose.onNodeWithText("1 files").assertIsDisplayed()
+    }
+
+    @Test
+    fun acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui() {
+        val owner = createOwnerProfile("Mac")
+        val linked = createLinkedProfile(owner.invite)
+        val approved = dispatch(
+            owner.handle,
+            NativeActions.approveDevice(linked.devicePubkey, "Pixel"),
+        )
+        assertTrue(approved.error, approved.error.isBlank())
+        val pixel = approved.devices.single { it.label == "Pixel" }
+        assertFalse(pixel.isOnline)
+
+        render(state = approved)
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Pixel"))
+        compose.onNodeWithText("Pixel").assertIsDisplayed()
+        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("Online", substring = true).assertCountEquals(0)
     }
 
     @Test
@@ -182,11 +282,48 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onAllNodesWithText("Pause").assertCountEquals(0)
     }
 
+    @Test
+    fun deleteDeviceRequiresConfirmation() {
+        val deletedDevices = mutableListOf<String>()
+        val state = AppState(
+            account = accountState(),
+            devices = listOf(
+                deviceState(
+                    pubkey = "device-a",
+                    label = "Pixel",
+                    isCurrentDevice = true,
+                    canRevoke = false,
+                ),
+                deviceState(
+                    pubkey = "device-b",
+                    label = "Tablet",
+                    isCurrentDevice = false,
+                    canRevoke = true,
+                ),
+            ),
+        )
+
+        render(
+            state = state,
+            onDeleteDevice = { deletedDevices += it },
+        )
+
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasContentDescription("Delete Tablet"))
+        compose.onNodeWithContentDescription("Delete Tablet").assertIsDisplayed().activate()
+        assertTrue(deletedDevices.isEmpty())
+        compose.onNodeWithText("Delete device?").assertIsDisplayed()
+
+        compose.onNodeWithTag("confirmDeleteDevice").assertIsDisplayed().activate()
+
+        assertEquals(listOf("device-b"), deletedDevices)
+    }
+
     private fun render(
         state: AppState,
         onCreateProfile: (String) -> Unit = {},
         onLinkDevice: (String, String) -> Unit = { _, _ -> },
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
+        onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
@@ -201,7 +338,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onOpenDriveFolder = {},
                 onApproveDevice = onApproveDevice,
                 onResetInvite = {},
-                onRevokeDevice = { _ -> },
+                onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = { _ -> },
                 onDemoteAdmin = { _ -> },
                 onLogout = {},
@@ -240,14 +377,12 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     private fun newNativeHandle(): Long {
-        val dir = File(context.cacheDir, "iris-drive-ui-${UUID.randomUUID()}")
-        dir.mkdirs()
+        val dir = tempDataDir("iris-drive-ui")
         return NativeCore.appNew(dir.absolutePath, "ui-test").also(nativeHandles::add)
     }
 
-    private fun cleanTargetFilesDir() {
-        context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
-    }
+    private fun tempDataDir(prefix: String): File =
+        File(context.cacheDir, "$prefix-${UUID.randomUUID()}").also { it.mkdirs() }
 
     private fun dispatch(handle: Long, action: String): AppState {
         NativeCore.dispatchJson(handle, action)
@@ -257,9 +392,42 @@ class IrisDriveAndroidGuiFlowTest {
     private fun appState(handle: Long): AppState =
         AppState.fromJson(NativeCore.stateJson(handle))
 
+    private fun appStateWithProviderStats(handle: Long, dataDir: File): AppState =
+        AppState.fromJson(NativeCore.refreshJson(handle))
+            .withProviderStats(dataDir.absolutePath)
+
     private fun SemanticsNodeInteraction.activate() {
         performSemanticsAction(SemanticsActions.OnClick)
     }
+
+    private fun accountState() = to.iris.drive.app.core.AccountState(
+        ownerPubkey = "owner",
+        devicePubkey = "device-a",
+        deviceLabel = "Pixel",
+        authorizationState = "authorized",
+        hasOwnerSigningAuthority = true,
+        deviceLinkRequest = "",
+        deviceLinkInvite = "iris-drive://invite/test",
+        inboundDeviceLinkRequests = emptyList(),
+    )
+
+    private fun deviceState(
+        pubkey: String,
+        label: String,
+        isCurrentDevice: Boolean,
+        canRevoke: Boolean,
+    ) = to.iris.drive.app.core.DeviceState(
+        pubkey = pubkey,
+        label = label,
+        role = if (isCurrentDevice) "admin" else "member",
+        state = "Authorized",
+        detail = pubkey,
+        isCurrentDevice = isCurrentDevice,
+        isOnline = isCurrentDevice,
+        canRevoke = canRevoke,
+        canAppointAdmin = canRevoke,
+        canDemoteAdmin = false,
+    )
 
     private data class TestProfile(
         val handle: Long,

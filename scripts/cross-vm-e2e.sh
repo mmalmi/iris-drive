@@ -1129,7 +1129,7 @@ if (\$actual.Length -eq \$stale.Length) {
   remote_exec "$windows_label" "$script"
 }
 
-step_windows_projection_replaces_materialized_remote_edit() {
+step_windows_projection_replaces_stale_remote_edit() {
   if [[ -z "$windows_label" || -z "$ubuntu_label" ]]; then
     echo "skip: windows+ubuntu projection stale-edit check needs both labels"
     return 0
@@ -1139,11 +1139,11 @@ step_windows_projection_replaces_materialized_remote_edit() {
     return 0
   fi
 
-  write_file "$windows_label" "projection/materialized-edit.txt" "old bytes"
-  wait_for_source_snapshot "$windows_label" "windows materialized edit baseline"
-  write_file "$ubuntu_label" "projection/materialized-edit.txt" "new bytes"
-  wait_for_source_snapshot "$ubuntu_label" "ubuntu remote edit over windows materialized file"
-  windows_projection_not_stale "projection/materialized-edit.txt" "old bytes"
+  write_file "$windows_label" "projection/projected-edit.txt" "old bytes"
+  wait_for_source_snapshot "$windows_label" "windows projected edit baseline"
+  write_file "$ubuntu_label" "projection/projected-edit.txt" "new bytes"
+  wait_for_source_snapshot "$ubuntu_label" "ubuntu remote edit over windows projected file"
+  windows_projection_not_stale "projection/projected-edit.txt" "old bytes"
 }
 
 step_file_type_replacements() {
@@ -1355,7 +1355,7 @@ run_step "direct FIPS peer discovery" wait_until "every device has a direct peer
 
 run_step "create edit rename delete from $source_label" step_create_edit_rename_delete
 run_step "nested create/delete from $target_label" step_nested_create_delete
-run_step "windows projection materialized remote edit" step_windows_projection_replaces_materialized_remote_edit
+run_step "windows projection stale remote edit" step_windows_projection_replaces_stale_remote_edit
 run_step "file type replacements" step_file_type_replacements
 run_step "seafile-style rename chain" step_rename_chain
 run_step "ignored desktop/editor noise" step_ignored_noise

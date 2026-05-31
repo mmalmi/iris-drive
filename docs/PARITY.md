@@ -18,7 +18,7 @@ equivalent to desktop.
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
-| Copy/open snapshot link | Yes | Yes | Yes | Yes | App-core UI flow |
+| Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
 | Devices list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | Device online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
 | Owner device revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |

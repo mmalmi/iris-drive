@@ -33,10 +33,20 @@ pub(crate) fn cmd_daemon(
         .context("building tokio runtime")?;
 
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
+    let mut state = config
         .account
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    state.recompute_authorization();
+    if state.authorization_state == iris_drive_core::DeviceAuthorizationState::Revoked {
+        write_daemon_status(config_dir, json!({
+            "event": "revoked",
+            "error": "device removed",
+        }));
+        return Err(anyhow::anyhow!(
+            "this device has been removed from Iris Drive; link it again or log out"
+        ));
+    }
     let relays = pick_relays(&config, relay_override);
     let filters =
         relay_sync::subscription_filters(&state.owner_pubkey, iris_drive_core::PRIMARY_DRIVE_ID);

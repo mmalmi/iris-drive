@@ -102,7 +102,7 @@ active devices have republished.
 ## File entry model
 
 Do not make sync depend on delta reconstruction. A file entry should remain
-complete enough to compare, fetch, and materialize the current file directly.
+complete enough to compare and fetch the current file directly.
 
 Required logical fields per file:
 
@@ -324,7 +324,7 @@ Required cases:
 - Add or consume hashtree item diff.
 - Replace production full-enumeration sync with root-anchor diff sync.
 - Keep full enumeration only as fallback/debug.
-- Add provider tests that apply diffs without whole-file materialization unless
+- Add provider tests that apply diffs without fetching whole-file bytes unless
   bytes are actually needed.
 
 ### Phase F: FIPS-backed retrieval

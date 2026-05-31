@@ -342,9 +342,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        copyText(link, statusMessage: "Snapshot copied")
+        copyText(link, statusMessage: "drive.iris.to link copied")
         IrisDriveStatus.shared.copyStatus = "Copied"
-        NSLog("Iris Drive private link copied")
+        NSLog("Iris Drive drive.iris.to link copied")
     }
 
     @objc func copyOwnerKey() {
@@ -383,6 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func startSync() {
+        guard !IrisDriveStatus.shared.revoked else {
+            updateStatus("Device removed")
+            setDaemonRunning(false)
+            return
+        }
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
         userRequestedSyncStop = false
@@ -629,6 +634,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setDeviceAdminRole(device, makeAdmin: false)
     }
 
+    func deleteDevice(_ device: String) {
+        let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !device.isEmpty else {
+            updateStatus("Device key required")
+            return
+        }
+
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus("Deleting device")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                _ = try self.runIDrive(idrive, arguments: ["revoke", device], paths: paths)
+                DispatchQueue.main.async {
+                    self.updateStatus("Device deleted")
+                    self.refreshStatus()
+                    if IrisDriveStatus.shared.daemonRunning {
+                        self.restartSync()
+                    } else {
+                        self.startSync()
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive device delete failed: \(error)")
+                self.updateStatus("Delete failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
@@ -698,7 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(showDriveItem)
 
         let copyItem = NSMenuItem(
-            title: "Copy Snapshot Link",
+            title: "Copy drive.iris.to Link",
             action: #selector(copyDriveLink),
             keyEquivalent: ""
         )
@@ -707,7 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(copyItem)
 
         let openLinkItem = NSMenuItem(
-            title: "Open Snapshot Link",
+            title: "View on drive.iris.to",
             action: #selector(openDriveLink),
             keyEquivalent: ""
         )
@@ -952,7 +990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paths = runtimePathsForMenu ?? runtimePaths()
         let status = IrisDriveStatus.shared
         guard localProfileExists(paths: paths), status.setupComplete else {
-            updateStatus(status.awaitingApproval ? "Waiting for approval" : "Setup needed")
+            updateStatus(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
             return
         }
         guard fileProviderIntegrationEnabled else {
@@ -1043,6 +1081,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
         guard daemon == nil else { return }
+        guard !IrisDriveStatus.shared.revoked else {
+            updateStatus("Device removed")
+            setDaemonRunning(false)
+            return
+        }
         guard localProfileExists(paths: paths) else {
             updateStatus("Setup needed")
             setDaemonRunning(false)
@@ -1191,6 +1234,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
         guard !userRequestedSyncStop, !externalDaemonMode else { return }
+        guard !IrisDriveStatus.shared.revoked else {
+            updateStatus("Device removed")
+            setDaemonRunning(false)
+            return
+        }
         guard localProfileExists(paths: paths) else {
             updateStatus("Setup needed")
             setDaemonRunning(false)
@@ -1523,9 +1571,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let peers = json["peers"] as? [[String: Any]] {
                 status.peers = peers.map(IrisDrivePeerStatus.init)
             }
+            status.lastUpload = nil
 
             if status.setupComplete, let paths = self.runtimePathsForMenu {
                 self.prepareFileProviderRuntime(paths: paths, idrive: self.idriveExecutableURL())
+            }
+            if status.revoked {
+                self.userRequestedSyncStop = true
+                self.daemonRestartWorkItem?.cancel()
+                self.daemonRestartWorkItem = nil
+                if self.daemon != nil {
+                    self.stopSync()
+                } else {
+                    self.setDaemonRunning(false)
+                }
+                self.updateStatus("Device removed")
             }
 
             self.updateLinkMenuState()
@@ -1631,7 +1691,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.topLevelEntries = entries
             }
             if let upload = json["blossom_upload"] as? [String: Any] {
-                status.lastUpload = IrisDriveUploadStatus(json: upload)
+                let uploadStatus = IrisDriveUploadStatus(json: upload)
+                status.lastUpload = uploadStatus.isInProgress ? uploadStatus : nil
             }
             if let gateway = json["browser_gateway"] as? [String: Any],
                let enabled = gateway["enabled"] as? Bool {

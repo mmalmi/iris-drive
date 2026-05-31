@@ -9,6 +9,7 @@ struct IrisDriveDevice: Identifiable, Equatable {
     var role: String
     var state: String
     var detail: String
+    var isCurrentDevice: Bool
     var isOnline: Bool
     var canRevoke: Bool
     var canAppointAdmin: Bool
@@ -39,18 +40,20 @@ struct IrisDriveRoot: Identifiable, Equatable {
 
 enum IrisDriveSharedContainer {
     static let appGroupIdentifier = "group.to.iris.drive"
+    static let storageDirectoryName = "IrisDrive"
 
     static var baseDirectory: URL {
+        let uiTestBaseDir = ProcessInfo.processInfo.environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let uiTestBaseDir, !uiTestBaseDir.isEmpty {
+            return URL(fileURLWithPath: uiTestBaseDir, isDirectory: true)
+        }
         if let shared = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         ) {
-            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
+            return shared.appendingPathComponent(storageDirectoryName, isDirectory: true)
         }
-        let support = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.temporaryDirectory
-        return support.appendingPathComponent("Iris Drive", isDirectory: true)
+        fatalError("Iris Drive app group is unavailable")
     }
 }
 
@@ -60,6 +63,10 @@ private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
+#if DEBUG
+private let fileProviderDebugRegistrationVersion = 1
+private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
+#endif
 
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {
@@ -84,43 +91,16 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
     @Published var roots: [IrisDriveRoot] = []
-    @Published var isDriveBrowserPresented = false
-    @Published var driveBrowserInitialURL: URL?
+    @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
     @Published var authorizedDeviceCount = 0
     @Published var fileCount = 0
     @Published var visibleFileBytes: UInt64 = 0
 
     private let defaults = UserDefaults.standard
-    private let approvedDevicesKey = "approvedDevices"
-    private let relaysKey = "relays"
     private let nativeCore: IrisDriveNativeCore
     private var lastState: NativeAppState?
-
-    private struct StoredDevice: Codable, Equatable {
-        var label: String
-        var key: String
-        var isAdmin: Bool
-
-        enum CodingKeys: String, CodingKey {
-            case label
-            case key
-            case isAdmin
-        }
-
-        init(label: String, key: String, isAdmin: Bool = false) {
-            self.label = label
-            self.key = key
-            self.isAdmin = isAdmin
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            label = try container.decode(String.self, forKey: .label)
-            key = try container.decode(String.self, forKey: .key)
-            isAdmin = try container.decodeIfPresent(Bool.self, forKey: .isAdmin) ?? false
-        }
-    }
+    private var fileProviderOpenAttempt = 0
 
     init() {
         nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
@@ -146,11 +126,20 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var statusSymbol: String {
-        isSetupComplete ? "checkmark.circle.fill" : "link.circle"
+        if isSetupComplete {
+            return "checkmark.circle.fill"
+        }
+        return isRevoked ? "exclamationmark.circle.fill" : "link.circle"
     }
 
     var statusTint: Color {
-        isSetupComplete ? .green : .orange
+        if !fileProviderError.isEmpty {
+            return .red
+        }
+        if isRevoked {
+            return .red
+        }
+        return isSetupComplete ? .green : .orange
     }
 
     var syncStateTitle: String {
@@ -158,8 +147,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var snapshotLink: String {
-        lastState?.ui.snapshotLink
-            ?? "https://drive.iris.to/snapshot/\(ownerPublicKey.isEmpty ? "local" : ownerPublicKey)"
+        lastState?.ui.snapshotLink ?? ""
     }
 
     var deviceLinkRequest: String {
@@ -180,6 +168,10 @@ final class IrisDriveMobileModel: ObservableObject {
 
     var isAwaitingApproval: Bool {
         lastState?.ui.account?.authorizationState == "awaiting_approval"
+    }
+
+    var isRevoked: Bool {
+        lastState?.ui.account?.authorizationState == "revoked"
     }
 
     var hasOwnerAuthority: Bool {
@@ -204,14 +196,12 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         fileProviderStatus = "Registering Files provider"
         rebuildDerivedState()
-        let domain = NSFileProviderDomain(
-            identifier: irisDriveDomainIdentifier,
-            displayName: irisDriveFileProviderDisplayName
-        )
+        let domain = irisDriveFileProviderDomain()
         NSFileProviderManager.add(domain) { [weak self] error in
             if error == nil {
                 Task { @MainActor in
                     guard let self else { return }
+                    self.markFileProviderRegistrationCurrent()
                     self.fileProviderStatus = "Files provider registered"
                     self.rebuildDerivedState()
                     completion?(true)
@@ -220,9 +210,23 @@ final class IrisDriveMobileModel: ObservableObject {
             }
 
             NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
-                let exists = domains.contains { $0.identifier == irisDriveDomainIdentifier }
+                let existingDomain = domains.first { $0.identifier == irisDriveDomainIdentifier }
+                let exists = existingDomain != nil
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    #if DEBUG
+                    if let existingDomain,
+                       self.shouldRepairFileProviderDebugRegistration(existingDomain) {
+                        self.repairFileProviderDebugRegistration(
+                            existingDomain: existingDomain,
+                            completion: completion
+                        )
+                        return
+                    }
+                    if exists {
+                        self.markFileProviderRegistrationCurrent()
+                    }
+                    #endif
                     self.fileProviderStatus = exists
                         ? "Files provider registered"
                         : "Files provider unavailable"
@@ -235,53 +239,150 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func openDriveFolder() {
         guard isSetupComplete else {
-            fileProviderStatus = "Files provider not registered"
-            rebuildDerivedState()
+            showFileProviderError("Link this device before opening Iris Drive in Files.")
             return
         }
+        fileProviderError = ""
         fileProviderStatus = "Opening Files provider"
         rebuildDerivedState()
+        fileProviderOpenAttempt += 1
+        let attempt = fileProviderOpenAttempt
+        scheduleOpenInFilesTimeout(for: attempt)
         ensureFileProviderDomain { [weak self] ready in
             guard let self else { return }
             guard ready else {
-                self.fileProviderStatus = "Files provider unavailable"
-                self.rebuildDerivedState()
+                self.showFileProviderError("Files could not register Iris Drive.")
                 return
             }
-            self.openRegisteredDriveFolder()
+            self.openRegisteredDriveFolder(attempt: attempt)
         }
     }
 
-    private func openRegisteredDriveFolder() {
-        let domain = NSFileProviderDomain(
-            identifier: irisDriveDomainIdentifier,
-            displayName: irisDriveFileProviderDisplayName
-        )
-        guard let manager = NSFileProviderManager(for: domain) else {
-            fileProviderStatus = "Files provider unavailable"
-            rebuildDerivedState()
-            return
-        }
-        manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.driveBrowserInitialURL = url
-                self.isDriveBrowserPresented = true
-                self.fileProviderStatus = url == nil
-                    ? "Files provider registered"
-                    : "Files provider open"
-                self.rebuildDerivedState()
+    private func scheduleOpenInFilesTimeout(for attempt: Int) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.isSetupComplete,
+                      self.fileProviderOpenAttempt == attempt,
+                      self.fileProviderError.isEmpty,
+                      UIApplication.shared.applicationState == .active
+                else {
+                    return
+                }
+                self.showFileProviderError("Files did not open Iris Drive.")
             }
         }
+    }
+
+    private func openRegisteredDriveFolder(attempt: Int) {
+        let domain = irisDriveFileProviderDomain()
+        guard let manager = NSFileProviderManager(for: domain) else {
+            showFileProviderError("Files provider manager is unavailable.")
+            return
+        }
+        manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.fileProviderOpenAttempt == attempt else { return }
+                guard let url else {
+                    if let error {
+                        NSLog("Iris Drive Files provider URL unavailable: \(error)")
+                    }
+                    self.showFileProviderError("Files could not locate Iris Drive.")
+                    return
+                }
+                UIApplication.shared.open(url, options: [:]) { [weak self] opened in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        guard self.fileProviderOpenAttempt == attempt else { return }
+                        if opened {
+                            self.fileProviderOpenAttempt += 1
+                            self.fileProviderError = ""
+                            self.fileProviderStatus = "Files provider open"
+                            self.rebuildDerivedState()
+                        } else {
+                            NSLog("Iris Drive Files provider open failed: \(url.absoluteString)")
+                            self.showFileProviderError("Files refused to open Iris Drive.")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func showFileProviderError(_ message: String) {
+        fileProviderOpenAttempt += 1
+        fileProviderError = message
+        fileProviderStatus = message
+        rebuildDerivedState()
     }
 
     private func removeFileProviderDomain() {
+        let domain = irisDriveFileProviderDomain()
+        NSFileProviderManager.remove(domain) { _ in }
+        #if DEBUG
+        defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
+        #endif
+    }
+
+    private func irisDriveFileProviderDomain() -> NSFileProviderDomain {
         let domain = NSFileProviderDomain(
             identifier: irisDriveDomainIdentifier,
             displayName: irisDriveFileProviderDisplayName
         )
-        NSFileProviderManager.remove(domain) { _ in }
+        #if DEBUG
+        domain.testingModes = [.alwaysEnabled]
+        #endif
+        return domain
     }
+
+    private func markFileProviderRegistrationCurrent() {
+        #if DEBUG
+        defaults.set(fileProviderDebugRegistrationVersion, forKey: fileProviderDebugRegistrationVersionKey)
+        #endif
+    }
+
+    #if DEBUG
+    private func shouldRepairFileProviderDebugRegistration(_ domain: NSFileProviderDomain) -> Bool {
+        if defaults.integer(forKey: fileProviderDebugRegistrationVersionKey)
+            < fileProviderDebugRegistrationVersion {
+            return true
+        }
+        return !domain.testingModes.contains(.alwaysEnabled)
+    }
+
+    private func repairFileProviderDebugRegistration(
+        existingDomain: NSFileProviderDomain,
+        completion: ((Bool) -> Void)?
+    ) {
+        let freshDomain = irisDriveFileProviderDomain()
+        fileProviderStatus = "Repairing Files provider"
+        rebuildDerivedState()
+        NSLog("Iris Drive repairing stale FileProvider domain registration")
+        NSFileProviderManager.remove(existingDomain) { [weak self] removeError in
+            if let removeError {
+                NSLog("Iris Drive FileProvider domain removal before repair failed: \(removeError)")
+            }
+            NSFileProviderManager.add(freshDomain) { [weak self] addError in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let addError {
+                        NSLog("Iris Drive FileProvider domain repair failed: \(addError)")
+                        self.fileProviderStatus = "Files provider unavailable"
+                        self.rebuildDerivedState()
+                        completion?(false)
+                        return
+                    }
+                    self.markFileProviderRegistrationCurrent()
+                    self.fileProviderStatus = "Files provider registered"
+                    self.rebuildDerivedState()
+                    completion?(true)
+                }
+            }
+        }
+    }
+    #endif
 
     func refresh() {
         applyStateJson(nativeCore.refreshJson())
@@ -330,6 +431,10 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomainIfProfileExists()
     }
 
+    func relinkDevice() {
+        linkDevice()
+    }
+
     func approveDevice() {
         approveDevice(request: approveDeviceKey, label: approveDeviceLabel)
     }
@@ -349,8 +454,12 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func revokeDevice(id: String) {
+        deleteDevice(id: id)
+    }
+
+    func deleteDevice(id: String) {
         dispatch([
-            "type": "revoke_device",
+            "type": "delete_device",
             "device_pubkey": id,
         ])
     }
@@ -377,6 +486,7 @@ final class IrisDriveMobileModel: ObservableObject {
         approveDeviceLabel = ""
         profileUsername = ""
         profilePhotoName = ""
+        fileProviderError = ""
         fileProviderStatus = "Files provider not registered"
         removeFileProviderDomain()
         persistLocalSettings()
@@ -384,7 +494,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func revokeDevice(label: String) {
         if let device = devices.first(where: { $0.label == label }) {
-            revokeDevice(id: device.id)
+            deleteDevice(id: device.id)
         }
     }
 
@@ -423,6 +533,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func copySnapshotLink() {
+        guard !snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         UIPasteboard.general.string = snapshotLink
     }
 
@@ -470,6 +581,9 @@ final class IrisDriveMobileModel: ObservableObject {
         statusDetail = "Waiting for this device to be linked."
         profileUsername = ""
         profilePhotoName = ""
+        #if DEBUG
+        defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
+        #endif
         persistLocalSettings()
         applyStateJson(nativeCore.refreshJson())
     }
@@ -517,6 +631,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func load() {
+        removeObsoletePrototypeDefaults()
         applyStateJson(nativeCore.refreshJson())
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
         profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
@@ -534,6 +649,20 @@ final class IrisDriveMobileModel: ObservableObject {
         defaults.set(profileUsername, forKey: "profileUsername")
         defaults.set(profilePhotoName, forKey: "profilePhotoName")
         defaults.set(syncOverCellular, forKey: "syncOverCellular")
+    }
+
+    private func removeObsoletePrototypeDefaults() {
+        [
+            "approvedDevices",
+            "devicePublicKey",
+            "hasOwnerAuthority",
+            "ownerPublicKey",
+            "relay",
+            "relays",
+            "statusDetail",
+            "statusTitle",
+            "syncRunning",
+        ].forEach(defaults.removeObject)
     }
 
     private func rebuildDerivedState() {
@@ -562,16 +691,22 @@ final class IrisDriveMobileModel: ObservableObject {
         authorizationState = authorizationTitle(state.ui.account?.authorizationState)
         statusTitle = ownerPublicKey.isEmpty
             ? "Ready"
-            : (isAwaitingApproval ? "Waiting for approval" : "Ready")
+            : (isRevoked ? "Device removed" : (isAwaitingApproval ? "Waiting for approval" : "Ready"))
         statusDetail = state.error.isEmpty ? syncStateTitle : state.error
+        if !fileProviderError.isEmpty {
+            statusTitle = "Open in Files failed"
+            statusDetail = fileProviderError
+        }
         relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
         relay = relays.first ?? defaultRelay
         devices = state.ui.devices.map { device in
-            IrisDriveDevice(
-                label: device.label.isEmpty ? "This device" : device.label,
+            let fallbackLabel = device.label.isEmpty ? "Device" : device.label
+            return IrisDriveDevice(
+                label: device.isCurrentDevice ? "This device" : fallbackLabel,
                 role: roleTitle(device.role),
                 state: deviceStateTitle(device.state),
                 detail: device.detail,
+                isCurrentDevice: device.isCurrentDevice,
                 isOnline: device.isOnline,
                 canRevoke: device.canRevoke,
                 canAppointAdmin: device.canAppointAdmin,
@@ -674,35 +809,6 @@ final class IrisDriveMobileModel: ObservableObject {
         default:
             value
         }
-    }
-
-    private func loadApprovedDevices() -> [StoredDevice] {
-        guard let data = defaults.data(forKey: approvedDevicesKey),
-              let devices = try? JSONDecoder().decode([StoredDevice].self, from: data)
-        else {
-            return []
-        }
-        return devices
-    }
-
-    private func saveApprovedDevices(_ devices: [StoredDevice]) {
-        guard let data = try? JSONEncoder().encode(devices) else { return }
-        defaults.set(data, forKey: approvedDevicesKey)
-    }
-
-    private func loadRelays() -> [String] {
-        guard let data = defaults.data(forKey: relaysKey),
-              let relays = try? JSONDecoder().decode([String].self, from: data),
-              !relays.isEmpty
-        else {
-            return [relay].filter { !$0.isEmpty }
-        }
-        return relays
-    }
-
-    private func saveRelays(_ relays: [String]) {
-        guard let data = try? JSONEncoder().encode(relays) else { return }
-        defaults.set(data, forKey: relaysKey)
     }
 
     private struct ProviderState: Decodable {

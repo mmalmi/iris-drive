@@ -25,4 +25,5 @@ internal object NativeCore {
         displayName: String,
         sourcePath: String,
     ): String
+    external fun applyOwnerSnapshotForTest(ownerDataDir: String, linkedDataDir: String): String
 }

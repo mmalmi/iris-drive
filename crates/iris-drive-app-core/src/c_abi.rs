@@ -408,6 +408,22 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerImportShar
     )
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_applyOwnerSnapshotForTest(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    owner_data_dir: JString<'_>,
+    linked_data_dir: JString<'_>,
+) -> jstring {
+    let owner_data_dir = jni_string_lossy(&mut env, &owner_data_dir);
+    let linked_data_dir = jni_string_lossy(&mut env, &linked_data_dir);
+    jni_json_string(
+        env,
+        &crate::ffi::native_apply_owner_snapshot_for_test_json(&owner_data_dir, &linked_data_dir),
+    )
+}
+
 fn app_from_handle(
     handle: *const IrisDriveAppHandle,
 ) -> Result<&'static IrisDriveAppHandle, &'static str> {

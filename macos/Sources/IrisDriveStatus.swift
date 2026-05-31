@@ -57,6 +57,10 @@ final class IrisDriveStatus: ObservableObject {
     var awaitingApproval: Bool {
         initialized && authorizationState == "awaiting_approval"
     }
+
+    var revoked: Bool {
+        initialized && authorizationState == "revoked"
+    }
 }
 
 struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
@@ -337,5 +341,13 @@ struct IrisDriveUploadStatus: Equatable {
         totalHashes = (json["total_hashes"] as? NSNumber)?.intValue ?? 0
         uploaded = (json["uploaded"] as? NSNumber)?.intValue ?? 0
         alreadyPresent = (json["already_present"] as? NSNumber)?.intValue ?? 0
+    }
+
+    var completedHashes: Int {
+        min(totalHashes, uploaded + alreadyPresent)
+    }
+
+    var isInProgress: Bool {
+        totalHashes > 0 && completedHashes < totalHashes
     }
 }

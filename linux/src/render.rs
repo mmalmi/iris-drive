@@ -404,18 +404,14 @@ pub(crate) fn peer_row(
     }
 
     if can_revoke {
-        let revoke = icon_button("user-trash-symbolic", "Revoke device");
+        let delete = icon_button("user-trash-symbolic", "Delete device");
         let model = Rc::clone(model);
         let device_npub = device_npub.to_string();
-        revoke.connect_clicked(move |_| match revoke_device(&device_npub) {
-            Ok(()) => {
-                restart_daemon(&model);
-                model.ui.notice.set_text("Device revoked");
-                refresh(&model);
-            }
-            Err(error) => model.ui.notice.set_text(&error),
+        let title = title.to_string();
+        delete.connect_clicked(move |_| {
+            show_delete_device_dialog(&model, device_npub.clone(), title.clone());
         });
-        body.append(&revoke);
+        body.append(&delete);
     }
 
     row.set_child(Some(&body));

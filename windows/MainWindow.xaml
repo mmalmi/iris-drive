@@ -137,6 +137,36 @@
           </Button>
         </StackPanel>
 
+        <StackPanel x:Name="RevokedPanel" Visibility="Collapsed">
+          <TextBlock Text="Device removed" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8" />
+          <TextBlock Text="This device no longer has access to Iris Drive."
+                     Foreground="{StaticResource IrisMutedBrush}"
+                     TextWrapping="Wrap"
+                     Margin="0,0,0,12" />
+          <TextBlock Text="Owner" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RevokedOwnerBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RevokedDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <Button x:Name="RevokedRelinkButton" Style="{StaticResource SetupPrimaryButton}" Click="RelinkRevokedDevice_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE977;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Link this device again" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="CopyRevokedDevice_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy device ID" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8AC;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Log out" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
         <TextBlock x:Name="SetupNotice"
                    Foreground="{StaticResource IrisMutedBrush}"
                    TextWrapping="Wrap"
@@ -159,7 +189,7 @@
               <TextBlock Text="My Drive" />
             </StackPanel>
           </Button>
-          <Button x:Name="SidebarOpenButton" Style="{StaticResource NavButton}" Click="OpenDrive_Click">
+          <Button x:Name="SidebarOpenButton" Style="{StaticResource SidebarActionButton}" Click="OpenDrive_Click">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Open" />
@@ -210,13 +240,13 @@
           <Button x:Name="CopySnapshotButton" Click="CopySnapshot_Click" Margin="0,0,8,8">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Copy Snapshot" />
+              <TextBlock Text="Copy Link" />
             </StackPanel>
           </Button>
           <Button x:Name="OpenSnapshotButton" Click="OpenSnapshot_Click" Margin="0,0,16,8">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE774;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Open Snapshot" />
+              <TextBlock Text="View on drive.iris.to" />
             </StackPanel>
           </Button>
           <Button x:Name="StopButton" Click="Stop_Click" Margin="0,0,8,8">

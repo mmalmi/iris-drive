@@ -13,13 +13,9 @@ internal data class AppState(
     val sync: SyncState = SyncState(),
     val snapshotLink: String = "",
     val error: String = "",
+    val fileCount: Int = 0,
+    val visibleFileBytes: Long = 0,
 ) {
-    val fileCount: Int
-        get() = 0
-
-    val visibleFileBytes: Long
-        get() = 0
-
     val authorizedDeviceCount: Int
         get() = devices.count { it.state.equals("authorized", ignoreCase = true) || it.role == "admin" }
 
@@ -28,6 +24,9 @@ internal data class AppState(
 
     val isAwaitingApproval: Boolean
         get() = account?.authorizationState == "awaiting_approval"
+
+    val isRevoked: Boolean
+        get() = account?.authorizationState == "revoked"
 
     companion object {
         fun fromJson(jsonText: String): AppState {
@@ -45,8 +44,27 @@ internal data class AppState(
                 sync = ui.optJSONObject("sync")?.toSync() ?: SyncState(),
                 snapshotLink = ui.optString("snapshot_link"),
                 error = json.optString("error"),
+                fileCount = ui.optInt("file_count"),
+                visibleFileBytes = ui.optLong("visible_file_bytes"),
             )
         }
+    }
+
+    fun withProviderStats(dataDir: String): AppState {
+        val json = runCatching { JSONObject(NativeCore.providerListJson(dataDir)) }.getOrNull()
+            ?: return this
+        if (json.optString("error").isNotBlank()) return this
+        val entries = json.optJSONArray("entries") ?: return this
+        var count = 0
+        var bytes = 0L
+        for (index in 0 until entries.length()) {
+            val entry = entries.optJSONObject(index) ?: continue
+            if (entry.optString("kind") == "file") {
+                count += 1
+                bytes += entry.optLong("size")
+            }
+        }
+        return copy(fileCount = count, visibleFileBytes = bytes)
     }
 }
 
@@ -141,6 +159,12 @@ internal object NativeActions {
     fun revokeDevice(devicePubkey: String): String =
         JSONObject()
             .put("type", "revoke_device")
+            .put("device_pubkey", devicePubkey)
+            .toString()
+
+    fun deleteDevice(devicePubkey: String): String =
+        JSONObject()
+            .put("type", "delete_device")
             .put("device_pubkey", devicePubkey)
             .toString()
 

@@ -21,11 +21,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
     );
     let copy_snapshot_button = action_button(
         "insert-link-symbolic",
-        "Copy Snapshot",
-        "Copy snapshot link",
+        "Copy Link",
+        "Copy drive.iris.to link",
     );
-    let open_snapshot_button =
-        action_button("document-open-symbolic", "Open Snapshot", "Open snapshot");
+    let open_snapshot_button = action_button(
+        "document-open-symbolic",
+        "View on drive.iris.to",
+        "View on drive.iris.to",
+    );
     let init_button = text_button("Initialize");
     let stop_button = action_button("media-playback-pause-symbolic", "Pause", "Pause sync");
     let start_button = action_button("media-playback-start-symbolic", "Resume", "Resume sync");
@@ -274,7 +277,9 @@ pub(crate) fn build_ui(app: &adw::Application) {
     }
 
     sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    let sidebar_open = sidebar_button("folder-open-symbolic", "Open");
+    let sidebar_open = action_button("folder-open-symbolic", "Open", "Open drive folder");
+    sidebar_open.add_css_class("iris-sidebar-action-button");
+    sidebar_open.set_halign(gtk::Align::Fill);
     sidebar.append(&sidebar_open);
 
     sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));

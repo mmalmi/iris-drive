@@ -29,6 +29,7 @@ XCTESTRUN=""
 OWNER_DAEMON_PID=""
 OWNER_DAEMON_LOG="$(mktemp -t iris-drive-ios-ui-owner-daemon.XXXXXX.log)"
 OWNER_FIPS_PORT=""
+SIM_APP_BASE_DIR=""
 
 cleanup() {
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
@@ -75,8 +76,35 @@ PY
   rm -f "$devices_json"
 }
 
-app_container() {
-  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null
+safe_remove_sim_container() {
+  local container="$1"
+
+  if [[ -z "$container" ]]; then
+    return 0
+  fi
+  if [[ "$container" != *"/CoreSimulator/Devices/$DEVICE_UDID/"* ]]; then
+    echo "FAIL: refusing to remove unexpected simulator container path: $container" >&2
+    exit 1
+  fi
+  rm -rf "$container"
+}
+
+reset_sim_app_state() {
+  local data_container group_container
+
+  xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
+  data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  if [[ -z "$data_container" ]]; then
+    echo "FAIL: simulator app data container was not created." >&2
+    exit 1
+  fi
+  xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  SIM_APP_BASE_DIR="$data_container/Library/Application Support/IrisDrive"
+  safe_remove_sim_container "$SIM_APP_BASE_DIR"
+  safe_remove_sim_container "$group_container"
+  mkdir -p "$SIM_APP_BASE_DIR"
 }
 
 wait_for_debug_state() {
@@ -179,7 +207,7 @@ run_ui_test() {
   mv "$run_stem" "$run_file"
   cp "$XCTESTRUN" "$run_file"
 
-  python3 - "$run_file" "$@" <<'PY'
+  python3 - "$run_file" "IRIS_DRIVE_UI_TEST_BASE_DIR=$SIM_APP_BASE_DIR" "$@" <<'PY'
 import plistlib
 import sys
 
@@ -263,7 +291,7 @@ fi
 xcrun simctl boot "$DEVICE_UDID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
 
-xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
@@ -285,7 +313,7 @@ if ! wait_for_owner_fips 20; then
   exit 1
 fi
 
-xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+reset_sim_app_state
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome" \
   "IRIS_DRIVE_UI_TEST_OWNER_INVITE=$owner_invite" \
@@ -295,8 +323,7 @@ run_ui_test \
   "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
   "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 
-CONTAINER="$(app_container)"
-STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
@@ -328,24 +355,23 @@ run_ui_test \
   "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
   "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 
-CONTAINER="$(app_container)"
-STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); a=ui.get("account") or {}; current=a.get("device_pubkey"); devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == current and d.get("is_current_device") and d.get("is_online") and d.get("state") == "Linked" for d in devices); raise SystemExit(0 if ok else 1)' \
   45; then
-  echo "FAIL: iOS GUI device stayed waiting after the owner approved its FIPS request." >&2
+  echo "FAIL: iOS GUI device did not show linked/online after the owner approved its FIPS request." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
 fi
 
-xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testCreateProfileFromWelcome"
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenDriveFolderInFilesApp"
 
-CONTAINER="$(app_container)"
-STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("device_link_invite") else 1)' \
@@ -363,8 +389,7 @@ run_ui_test \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$linked_device" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
 
-CONTAINER="$(app_container)"
-STATE_FILE="$CONTAINER/Library/Application Support/Iris Drive/debug-state.json"
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
   'import json,sys; s=json.load(sys.stdin); devices=s.get("ui",{}).get("devices") or []; raise SystemExit(0 if any(d.get("label") == "iOS UI linked" for d in devices) and len(devices) >= 2 else 1)' \

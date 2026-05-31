@@ -31,6 +31,12 @@ use crate::state::{
     UiSyncRoot, UiSyncStatus,
 };
 
+#[cfg(target_os = "android")]
+#[path = "ffi_android_test_support.rs"]
+mod android_test_support;
+#[cfg(target_os = "android")]
+pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
+
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
@@ -235,7 +241,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if self.initialized() {
+        if self.initialized() && !self.current_device_is_revoked() {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
@@ -503,6 +509,21 @@ impl NativeAppRuntime {
                 .is_some()
     }
 
+    fn current_authorization_state(&self) -> Option<DeviceAuthorizationState> {
+        let mut account = self.load_config().ok()?.account?;
+        account.recompute_authorization();
+        Some(account.authorization_state)
+    }
+
+    fn current_device_is_revoked(&self) -> bool {
+        self.state
+            .ui
+            .account
+            .as_ref()
+            .is_some_and(|account| account.authorization_state == "revoked")
+            || self.current_authorization_state() == Some(DeviceAuthorizationState::Revoked)
+    }
+
     fn load_config(&self) -> Result<AppConfig, String> {
         AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))
             .map_err(|error| format!("loading config: {error}"))
@@ -599,21 +620,30 @@ impl NativeAppRuntime {
                 .collect()
         };
 
-        let Some(account) = config.account.as_ref() else {
+        let Some(raw_account) = config.account.as_ref() else {
             return;
         };
+        let mut account = raw_account.clone();
+        account.recompute_authorization();
         self.state.ui.account = Some(UiAccount {
             owner_pubkey: account_npub(&account.owner_pubkey),
             device_pubkey: account_npub(&account.device_pubkey),
             device_label: account.device_label.clone().unwrap_or_default(),
-            authorization_state: authorization_state_label(account).to_owned(),
+            authorization_state: authorization_state_label(&account).to_owned(),
             has_owner_signing_authority: account.has_owner_signing_authority,
-            device_link_request: device_link_request_url(account),
-            device_link_invite: device_link_invite_url(account),
-            inbound_device_link_requests: inbound_device_link_requests(account),
+            device_link_request: device_link_request_url(&account),
+            device_link_invite: device_link_invite_url(&account),
+            inbound_device_link_requests: inbound_device_link_requests(&account),
         });
+        if account.authorization_state == DeviceAuthorizationState::Revoked {
+            self.set_sync_running(false);
+            self.state.ui.roots.clear();
+            self.state.ui.devices.clear();
+            self.state.ui.snapshot_link.clear();
+            return;
+        }
         let fips_status = load_native_fips_status(Path::new(&self.data_dir));
-        self.state.ui.devices = devices_from_account(account, fips_status.as_ref());
+        self.state.ui.devices = devices_from_account(&account, fips_status.as_ref());
         self.refresh_device_actions();
         update_snapshot_link(&mut self.state, &config);
     }

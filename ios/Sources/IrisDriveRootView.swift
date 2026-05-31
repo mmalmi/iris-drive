@@ -1,14 +1,14 @@
 import PhotosUI
 import SwiftUI
-import UniformTypeIdentifiers
-import UIKit
 
 struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
     var body: some View {
         if !model.isSetupComplete {
-            if model.isAwaitingApproval {
+            if model.isRevoked {
+                RevokedDeviceSetupView(model: model)
+            } else if model.isAwaitingApproval {
                 AwaitingApprovalSetupView(model: model)
             } else {
                 SetupWelcomeView(model: model)
@@ -43,8 +43,67 @@ struct IrisDriveRootView: View {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
             }
-            .sheet(isPresented: $model.isDriveBrowserPresented) {
-                DriveFolderBrowser(initialDirectoryURL: model.driveBrowserInitialURL)
+            .task {
+                while model.isSetupComplete {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    model.refresh()
+                }
+            }
+        }
+    }
+}
+
+private struct RevokedDeviceSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(spacing: 14) {
+                        Image("BrandIcon")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 96, height: 96)
+                        Text("Iris Drive")
+                            .font(.title.bold())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                }
+
+                Section("Device removed") {
+                    Text("This device no longer has access to Iris Drive.")
+                    LabeledContent("Owner", value: model.ownerPublicKey)
+                    LabeledContent("This device", value: model.devicePublicKey)
+                    Button {
+                        model.relinkDevice()
+                    } label: {
+                        Label("Link this device again", systemImage: "link")
+                    }
+                    Button {
+                        model.copyDeviceKey()
+                    } label: {
+                        Label("Copy device ID", systemImage: "doc.on.doc")
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        model.logout()
+                    } label: {
+                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+            }
+            .accessibilityIdentifier("revokedDeviceView")
+            .task {
+                while model.isRevoked {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    model.refresh()
+                }
             }
         }
     }
@@ -362,56 +421,52 @@ private struct DriveHomeView: View {
                 } label: {
                     Label("Open in Files", systemImage: "folder")
                 }
+                .accessibilityIdentifier("openInFilesButton")
+                if !model.fileProviderError.isEmpty {
+                    Text(model.fileProviderError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("openInFilesError")
+                }
                 Button {
                     model.copySnapshotLink()
                 } label: {
-                    Label("Copy snapshot link", systemImage: "doc.on.doc")
+                    Label("Copy drive.iris.to link", systemImage: "doc.on.doc")
                 }
+                .disabled(model.snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     model.openSnapshotLink()
                 } label: {
-                    Label("Open snapshot link", systemImage: "safari")
+                    Label("View on drive.iris.to", systemImage: "safari")
                 }
+                .disabled(model.snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             Section("Sync") {
                 LabeledContent("State", value: model.syncStateTitle)
-                Button {
-                    model.startSync()
-                } label: {
-                    Label("Resume sync", systemImage: "play.fill")
+                if model.syncRunning {
+                    Button {
+                        model.stopSync()
+                    } label: {
+                        Label("Pause sync", systemImage: "pause.fill")
+                    }
+                } else {
+                    Button {
+                        model.startSync()
+                    } label: {
+                        Label("Resume sync", systemImage: "play.fill")
+                    }
                 }
-                .disabled(model.syncRunning)
-                Button {
-                    model.stopSync()
-                } label: {
-                    Label("Pause sync", systemImage: "pause.fill")
-                }
-                .disabled(!model.syncRunning)
             }
         }
         .navigationTitle("My Drive")
     }
 }
 
-private struct DriveFolderBrowser: UIViewControllerRepresentable {
-    let initialDirectoryURL: URL?
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let controller = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
-        controller.allowsMultipleSelection = false
-        controller.directoryURL = initialDirectoryURL
-        return controller
-    }
-
-    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {
-        controller.directoryURL = initialDirectoryURL
-    }
-}
-
 private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var showingAddDevice = false
+    @State private var devicePendingDelete: IrisDriveDevice?
 
     var body: some View {
         List {
@@ -431,7 +486,7 @@ private struct DevicesView: View {
                                 .foregroundStyle(device.isOnline ? .green : .secondary)
                             VStack(alignment: .leading) {
                                 Text(device.label)
-                                Text("\(device.role) | \(device.state)")
+                                Text("\(device.role) | \(device.state) | \(device.isOnline ? "Online" : "Offline")")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -454,9 +509,9 @@ private struct DevicesView: View {
                         }
                         if device.canRevoke {
                             Button(role: .destructive) {
-                                model.revokeDevice(id: device.id)
+                                devicePendingDelete = device
                             } label: {
-                                Label("Revoke", systemImage: "trash")
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                     }
@@ -476,6 +531,28 @@ private struct DevicesView: View {
         }
         .sheet(isPresented: $showingAddDevice) {
             AddDeviceSheet(model: model, isPresented: $showingAddDevice)
+        }
+        .alert(
+            "Delete device?",
+            isPresented: Binding(
+                get: { devicePendingDelete != nil },
+                set: { presented in
+                    if !presented {
+                        devicePendingDelete = nil
+                    }
+                }
+            ),
+            presenting: devicePendingDelete
+        ) { device in
+            Button("Delete", role: .destructive) {
+                model.deleteDevice(id: device.id)
+                devicePendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                devicePendingDelete = nil
+            }
+        } message: { device in
+            Text("Delete \(device.label) from Iris Drive? This removes its access to future syncs.")
         }
     }
 }

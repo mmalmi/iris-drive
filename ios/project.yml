@@ -34,6 +34,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
+          CODE_SIGN_ENTITLEMENTS: IrisDriveIOSDebug.entitlements
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID)
@@ -57,6 +58,7 @@ targets:
         SKIP_INSTALL: YES
       configs:
         Debug:
+          CODE_SIGN_ENTITLEMENTS: FileProvider/FileProviderDebug.entitlements
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID)

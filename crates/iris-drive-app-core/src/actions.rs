@@ -21,6 +21,7 @@ pub enum NativeAppAction {
         label: String,
     },
     ResetInvite,
+    #[serde(alias = "delete_device")]
     RevokeDevice {
         device_pubkey: String,
     },

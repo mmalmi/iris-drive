@@ -38,7 +38,7 @@ Mobile (spec): same 4 destinations as a bottom tab bar.
   from the user-facing view (it moves to Settings → Advanced). Keep at most 2–3 clean stats; no raw
   block-byte jargon.
 - **Primary action:** "Open in Finder / Open folder".
-- **Remove the global action bar.** Start/Stop/Restart and Copy/Open Snapshot move to Settings.
+- **Remove the global action bar.** Start/Stop/Restart and copy/view drive.iris.to link move to Settings.
 
 ### Devices — clean roster
 - Row = online dot · device icon (this device / laptop / phone) · **name** · subtle secondary line
@@ -60,7 +60,7 @@ Grouped sections (native grouped `Form`/list per platform):
 1. **General** — Menu bar on close (macOS) and any existing app toggles.
 2. **Account** — Owner key, this device key (copy buttons), authorization state. *(moved from Devices)*
 3. **Network** — the entire former Network tab: Relays editor, Blossom servers, FIPS diagnostics.
-4. **Sync & Advanced** — Start / Stop / Restart daemon; Copy/Open Snapshot link; Blocks & raw storage.
+4. **Sync & Advanced** — Start / Stop / Restart daemon; copy/view drive.iris.to link; Blocks & raw storage.
 5. **About** — version / drive name.
 
 ## Platform implementation

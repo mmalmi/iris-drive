@@ -72,6 +72,88 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     append_centered_setup(model, &container);
 }
 
+pub(crate) fn render_revoked_device(model: &AppRef, json: &Value) {
+    clear_box(&model.ui.setup);
+
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    container.set_halign(gtk::Align::Center);
+    container.set_valign(gtk::Align::Center);
+    container.set_width_request(420);
+
+    let header = gtk::Label::new(Some("Device removed"));
+    header.add_css_class("title-2");
+    header.set_halign(gtk::Align::Start);
+    container.append(&header);
+
+    let detail = gtk::Label::new(Some("This device no longer has access to Iris Drive."));
+    detail.add_css_class("iris-muted");
+    detail.set_wrap(true);
+    detail.set_xalign(0.0);
+    container.append(&detail);
+
+    let account = account_json(json);
+    let owner_npub = find_string(account, &["owner_npub"]).unwrap_or("-");
+    container.append(&field_title("Owner"));
+    container.append(&readonly_entry(owner_npub));
+
+    let device_npub = find_string(account, &["device_npub"]).unwrap_or("-");
+    container.append(&field_title("This device"));
+    container.append(&readonly_entry(device_npub));
+
+    let notice = setup_notice();
+    notice.set_text("Device removed");
+
+    let relink = primary_button("Link this device again");
+    {
+        let model = Rc::clone(model);
+        let owner = owner_npub.to_string();
+        let notice = notice.clone();
+        relink.connect_clicked(move |button| {
+            if owner.trim().is_empty() || owner == "-" {
+                notice.set_text("Owner key unavailable");
+                return;
+            }
+            button.set_sensitive(false);
+            match relink_device(&owner) {
+                Ok(()) => refresh(&model),
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        });
+    }
+    container.append(&relink);
+
+    let copy = pill_button("Copy device ID");
+    {
+        let device = device_npub.to_string();
+        let notice = notice.clone();
+        copy.connect_clicked(move |_| {
+            if device.trim().is_empty() || device == "-" {
+                notice.set_text("Nothing to copy");
+            } else if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&device);
+                notice.set_text("Device ID copied");
+            } else {
+                notice.set_text("Clipboard unavailable");
+            }
+        });
+    }
+    container.append(&copy);
+
+    let logout_button = pill_button("Log out");
+    logout_button.add_css_class("destructive-action");
+    {
+        let model = Rc::clone(model);
+        logout_button.connect_clicked(move |_| logout(&model));
+    }
+    container.append(&logout_button);
+    container.append(&notice);
+
+    append_centered_setup(model, &container);
+}
+
 pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
     container.set_halign(gtk::Align::Center);
@@ -474,8 +556,20 @@ pub(crate) fn link_device(owner: &str) -> Result<(), String> {
     run_idrive_owned(&["link".to_string(), owner.to_string()])
 }
 
+pub(crate) fn relink_device(owner: &str) -> Result<(), String> {
+    run_idrive_owned(&[
+        "link".to_string(),
+        owner.to_string(),
+        "--force".to_string(),
+    ])
+}
+
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {
     run_idrive(["revoke", device])
+}
+
+pub(crate) fn delete_device(device: &str) -> Result<(), String> {
+    revoke_device(device)
 }
 
 pub(crate) fn appoint_admin(device: &str) -> Result<(), String> {

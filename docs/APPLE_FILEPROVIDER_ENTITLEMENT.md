@@ -28,7 +28,7 @@ standard file-provider storage model.
 The File Provider extension will:
 
 - expose a user-authorized Iris Drive domain in Finder
-- lazily materialize encrypted files on demand
+- lazily hydrate encrypted file contents on demand
 - propagate local creates, edits, moves, and deletes back to the user's private
   Iris Drive root
 - keep sync metadata in an app group shared with the containing app

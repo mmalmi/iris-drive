@@ -96,6 +96,13 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (status.IsRevoked)
+            {
+                StopDaemon();
+                RenderRevokedDevice(status, null);
+                return;
+            }
+
             var syncRunning = EnsureDaemonRunning(status);
             if (status.IsAwaitingLinkedApproval)
             {
@@ -156,6 +163,18 @@ public partial class MainWindow : Window
         SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync paused");
     }
 
+    private void RenderRevokedDevice(IrisDriveStatusData status, string? notice)
+    {
+        SetupRoot.Visibility = Visibility.Visible;
+        MainRoot.Visibility = Visibility.Collapsed;
+        ShowSetupPanel(RevokedPanel);
+        RevokedOwnerBox.Text = status.OwnerNpub ?? "";
+        RevokedDeviceBox.Text = status.DeviceNpub ?? "";
+        RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.OwnerNpub);
+        SetupNotice.Text = notice ?? "Device removed";
+        UpdateTrayText(false);
+    }
+
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
     {
         DriveTitle.Text = status.DriveName;
@@ -171,6 +190,8 @@ public partial class MainWindow : Window
         OpenSnapshotButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SnapshotUrl);
         StartButton.IsEnabled = !syncRunning;
         StopButton.IsEnabled = syncRunning;
+        StartButton.Visibility = syncRunning ? Visibility.Collapsed : Visibility.Visible;
+        StopButton.Visibility = syncRunning ? Visibility.Visible : Visibility.Collapsed;
 
         OwnerValue.Text = status.OwnerNpub ?? "-";
         DeviceValue.Text = status.DeviceNpub ?? "-";
@@ -210,6 +231,8 @@ public partial class MainWindow : Window
         OpenSnapshotButton.IsEnabled = false;
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
+        StartButton.Visibility = Visibility.Visible;
+        StopButton.Visibility = Visibility.Collapsed;
         DrivesList.Items.Clear();
         PeersList.Items.Clear();
         BackupsList.Items.Clear();
@@ -328,9 +351,9 @@ public partial class MainWindow : Window
 
         if (peer.CanRevoke)
         {
-            var revoke = PeerActionButton("\uE74D", "Revoke device", peer.DeviceNpub);
-            revoke.Click += RevokeDevice_Click;
-            actions.Children.Add(revoke);
+            var delete = PeerActionButton("\uE74D", "Delete device", peer.DeviceNpub);
+            delete.Click += DeleteDevice_Click;
+            actions.Children.Add(delete);
         }
 
         if (actions.Children.Count > 0)
@@ -468,6 +491,13 @@ public partial class MainWindow : Window
 
     private bool EnsureDaemonRunning(IrisDriveStatusData status)
     {
+        if (status.IsRevoked)
+        {
+            StopDaemon();
+            NoticeText.Text = "Device removed";
+            return false;
+        }
+
         if (ExternalDaemonMode)
         {
             return true;
@@ -666,7 +696,7 @@ public partial class MainWindow : Window
 
     private void CopySnapshot_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.SnapshotUrl, "Snapshot copied");
+        CopyText(currentStatus?.SnapshotUrl, "drive.iris.to link copied");
     }
 
     private void OpenSnapshot_Click(object sender, RoutedEventArgs e)
@@ -690,6 +720,34 @@ public partial class MainWindow : Window
     private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
         CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
+    }
+
+    private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)
+    {
+        CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
+    }
+
+    private async void RelinkRevokedDevice_Click(object sender, RoutedEventArgs e)
+    {
+        var owner = currentStatus?.OwnerNpub;
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            SetupNotice.Text = "Owner key unavailable";
+            return;
+        }
+
+        try
+        {
+            RevokedRelinkButton.IsEnabled = false;
+            SetupNotice.Text = "Linking device";
+            await service.RelinkDeviceAsync(owner);
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            SetupNotice.Text = error.Message;
+            RevokedRelinkButton.IsEnabled = true;
+        }
     }
 
     private void ShowAddDevice_Click(object sender, RoutedEventArgs e)
@@ -819,22 +877,32 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void RevokeDevice_Click(object sender, RoutedEventArgs e)
+    private async void DeleteDevice_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: string deviceNpub })
         {
             return;
         }
 
+        if (System.Windows.MessageBox.Show(
+                this,
+                $"Delete this device from Iris Drive?\n\n{deviceNpub}",
+                "Delete device",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
         try
         {
-            await service.RevokeDeviceAsync(deviceNpub);
+            await service.DeleteDeviceAsync(deviceNpub);
             StopDaemon();
             if (currentStatus is not null)
             {
                 EnsureDaemonRunning(currentStatus);
             }
-            NoticeText.Text = "Device revoked";
+            NoticeText.Text = "Device deleted";
             await RefreshAsync();
         }
         catch (Exception error)
@@ -1155,6 +1223,7 @@ public partial class MainWindow : Window
         RestorePanel.Visibility = Visibility.Collapsed;
         LinkPanel.Visibility = Visibility.Collapsed;
         AwaitingPanel.Visibility = Visibility.Collapsed;
+        RevokedPanel.Visibility = Visibility.Collapsed;
         visible.Visibility = Visibility.Visible;
         SetupNotice.Text = "";
     }
