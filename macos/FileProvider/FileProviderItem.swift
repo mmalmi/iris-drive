@@ -1,5 +1,6 @@
 import Foundation
 import FileProvider
+import ImageIO
 import Security
 import UniformTypeIdentifiers
 
@@ -530,6 +531,60 @@ enum FileProviderStorage {
         return output
     }
 
+    static func thumbnailData(
+        for identifier: NSFileProviderItemIdentifier,
+        requestedSize size: CGSize
+    ) throws -> Data? {
+        guard let item = item(for: identifier) else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
+        }
+        guard item.contentType.conforms(to: .image) else {
+            debugLog("thumbnail unsupported type identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let url = try contentsURL(for: identifier)
+        let maxPixelSize = thumbnailMaxPixelSize(for: size)
+        guard let source = CGImageSourceCreateWithURL(
+            url as CFURL,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ) else {
+            debugLog("thumbnail source unavailable identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            debugLog("thumbnail image unavailable identifier=\(identifier.rawValue)")
+            return nil
+        }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw providerError("thumbnail destination unavailable")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw providerError("thumbnail encode failed")
+        }
+        debugLog("thumbnail generated identifier=\(identifier.rawValue) bytes=\(data.length)")
+        return data as Data
+    }
+
     private static func item(for entry: ProviderEntry, anchor: String?) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
@@ -707,6 +762,14 @@ enum FileProviderStorage {
             return 0
         }
         return size
+    }
+
+    private static func thumbnailMaxPixelSize(for size: CGSize) -> Int {
+        let requested = max(size.width, size.height)
+        guard requested.isFinite, requested > 0 else {
+            return 512
+        }
+        return min(2_048, max(64, Int(ceil(requested))))
     }
 
     private static func syncAnchor(for anchor: String?) -> NSFileProviderSyncAnchor {

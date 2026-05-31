@@ -1,4 +1,6 @@
+import CoreGraphics
 import FileProvider
+import Foundation
 
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let domain: NSFileProviderDomain
@@ -66,6 +68,46 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(nil, nil, error)
         }
         progress.completedUnitCount = 1
+        return progress
+    }
+
+    func fetchThumbnails(
+        for itemIdentifiers: [NSFileProviderItemIdentifier],
+        requestedSize size: CGSize,
+        perThumbnailCompletionHandler: @escaping (
+            NSFileProviderItemIdentifier,
+            Data?,
+            Error?
+        ) -> Void,
+        completionHandler: @escaping (Error?) -> Void
+    ) -> Progress {
+        let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
+        progress.cancellationHandler = {
+            FileProviderStorage.debugLog("fetch thumbnails cancelled")
+        }
+
+        DispatchQueue.global(qos: .utility).async {
+            FileProviderStorage.debugLog(
+                "fetch thumbnails count=\(itemIdentifiers.count) size=\(Int(size.width))x\(Int(size.height))"
+            )
+            for identifier in itemIdentifiers {
+                guard !progress.isCancelled else { break }
+                do {
+                    let thumbnail = try FileProviderStorage.thumbnailData(
+                        for: identifier,
+                        requestedSize: size
+                    )
+                    perThumbnailCompletionHandler(identifier, thumbnail, nil)
+                } catch {
+                    FileProviderStorage.debugLog(
+                        "fetch thumbnail failed identifier=\(identifier.rawValue) error=\(error)"
+                    )
+                    perThumbnailCompletionHandler(identifier, nil, error)
+                }
+                progress.completedUnitCount += 1
+            }
+            completionHandler(progress.isCancelled ? CocoaError(.userCancelled) : nil)
+        }
         return progress
     }
 
