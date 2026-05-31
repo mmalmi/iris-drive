@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
+  buildZapstorePublishPlan,
   normalizeTag,
   parseEnvFile,
   readWorkspaceVersionTag,
@@ -28,7 +29,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
-const defaultEnvFiles = [join(repoRoot, '.env.release.local')]
+const distDir = join(repoRoot, 'dist')
+const defaultEnvFiles = [join(repoRoot, '.env.release.local'), join(repoRoot, '.env.zapstore.local')]
 
 function usage() {
   console.log(`Usage: node scripts/local-release.mjs [options]
@@ -45,6 +47,7 @@ Options:
   --asset-dir <path>     Artifact directory (default: dist)
   --stage-dir <path>     Staging directory
   --env-file <path>      Extra dotenv file to load
+  --skip-zapstore        With --final, skip publishing the Android APK to Zapstore
   --dry-run              Print actions without copying or publishing
   --help                 Show this help`)
 }
@@ -58,6 +61,7 @@ function parseArgs(argv) {
     assetDir: null,
     stageDir: null,
     envFiles: [],
+    skipZapstore: false,
     dryRun: false,
   }
   for (let index = 0; index < argv.length; index += 1) {
@@ -93,6 +97,9 @@ function parseArgs(argv) {
       case '--env-file':
         options.envFiles.push(resolve(repoRoot, argv[++index] ?? ''))
         break
+      case '--skip-zapstore':
+        options.skipZapstore = true
+        break
       case '--dry-run':
         options.dryRun = true
         break
@@ -118,7 +125,7 @@ function quote(arg) {
   return /[^\w./:-]/.test(value) ? JSON.stringify(value) : value
 }
 
-function run(command, args, { capture = false, dryRun = false } = {}) {
+function run(command, args, { capture = false, dryRun = false, env = process.env } = {}) {
   const rendered = [command, ...args].map(quote).join(' ')
   console.log(`$ ${rendered}`)
   if (dryRun) {
@@ -126,6 +133,7 @@ function run(command, args, { capture = false, dryRun = false } = {}) {
   }
   const result = spawnSync(command, args, {
     cwd: repoRoot,
+    env,
     encoding: 'utf8',
     stdio: capture ? 'pipe' : 'inherit',
   })
@@ -216,6 +224,47 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun }) {
   return cid
 }
 
+function resolveZapstoreSignWith(env) {
+  const direct = String(env.SIGN_WITH ?? '').trim()
+  if (direct) {
+    return direct
+  }
+  const keyPath = String(env.NOSTR_KEY_PATH ?? '').trim()
+  if (!keyPath || !existsSync(keyPath)) {
+    return ''
+  }
+  return readFileSync(keyPath, 'utf8').trim()
+}
+
+function publishZapstore({ env, tag, assetDir, dryRun }) {
+  const signWith = resolveZapstoreSignWith(env)
+  const zapstoreYaml = join(repoRoot, 'zapstore.yaml')
+  const normalizedTag = normalizeTag(tag)
+  const plan = buildZapstorePublishPlan({
+    tag: normalizedTag,
+    assetDir,
+    distDir,
+    apkExists: existsSync(join(assetDir, `iris-drive-${normalizedTag}-android-arm64.apk`)),
+    zspAvailable: commandExists('zsp'),
+    signWith,
+    zapstoreYamlExists: existsSync(zapstoreYaml),
+  })
+  if (dryRun) {
+    console.log(`Would publish ${plan.apkName} to Zapstore`)
+    return
+  }
+  mkdirSync(distDir, { recursive: true })
+  copyFileSync(plan.apkPath, plan.releaseSourcePath)
+  run(
+    'zsp',
+    ['publish', '--quiet', '--skip-preview', '--overwrite-release', zapstoreYaml],
+    {
+      dryRun,
+      env: { ...env, SIGN_WITH: plan.signWith },
+    },
+  )
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2))
   const env = { ...readOptionalEnvFiles([...defaultEnvFiles, ...options.envFiles]), ...process.env }
@@ -252,6 +301,9 @@ function main() {
       dryRun: options.dryRun,
     })
     console.log(`Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${cid}`)
+    if (!options.draft && !options.skipZapstore) {
+      publishZapstore({ env, tag, assetDir, dryRun: options.dryRun })
+    }
   } else if (!options.dryRun) {
     console.log(`Staged ${tag} at ${stageDir}`)
   }

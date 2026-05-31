@@ -13,6 +13,7 @@ artifacts/
 test-results/
 .env.local
 .env.release.local
+.env.zapstore.local
 
 macos/.build/
 macos/Frameworks/

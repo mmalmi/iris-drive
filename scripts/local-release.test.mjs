@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
+  buildZapstorePublishPlan,
   describeAsset,
   readWorkspaceVersionTag,
 } from './local-release-lib.mjs'
@@ -58,4 +59,47 @@ test('describeAsset labels idrive release assets', () => {
     describeAsset('idrive-v0.2.27-x86_64-pc-windows-msvc.zip'),
     'Windows x64 idrive CLI',
   )
+})
+
+test('buildZapstorePublishPlan fails on missing required publish inputs', () => {
+  const distRoot = join(tmpdir(), 'iris-drive-dist')
+  const base = {
+    tag: '0.2.27',
+    assetDir: distRoot,
+    distDir: distRoot,
+    apkExists: true,
+    zspAvailable: true,
+    signWith: 'nsec1example',
+    zapstoreYamlExists: true,
+  }
+
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, apkExists: false }),
+    /Missing Android APK/,
+  )
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, zspAvailable: false }),
+    /Missing zsp/,
+  )
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, signWith: '' }),
+    /Missing Zapstore signing key/,
+  )
+})
+
+test('buildZapstorePublishPlan resolves the Zapstore release source path', () => {
+  const distRoot = join(tmpdir(), 'iris-drive-dist')
+  const plan = buildZapstorePublishPlan({
+    tag: '0.2.27',
+    assetDir: distRoot,
+    distDir: distRoot,
+    apkExists: true,
+    zspAvailable: true,
+    signWith: 'nsec1example',
+    zapstoreYamlExists: true,
+  })
+
+  assert.equal(plan.apkName, 'iris-drive-v0.2.27-android-arm64.apk')
+  assert.equal(plan.apkPath, join(distRoot, 'iris-drive-v0.2.27-android-arm64.apk'))
+  assert.equal(plan.releaseSourcePath, join(distRoot, 'zapstore-current-android-arm64.apk'))
 })

@@ -1,0 +1,28 @@
+repository: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive
+pubkey: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
+release_source: dist/zapstore-current-android-arm64.apk
+
+name: Iris Drive
+summary: Private peer-aware file sync over local htree storage.
+description: |
+  Iris Drive is Drive-style sync built on local htree storage, Nostr identity,
+  and direct peer replication.
+
+  Current app capabilities:
+  - local-first file sync with content-addressed htree storage
+  - device invite and approval flows
+  - native provider surfaces on supported platforms
+  - direct hashtree-over-FIPS block transfer between authorized devices
+  - drive.iris.to links for browser viewing
+
+website: https://irisdrive.iris.to/
+icon: windows/IrisDrive.png
+license: MIT
+tags:
+  - nostr
+  - file-sync
+  - drive
+  - privacy
+  - htree
+metadata_sources:
+  - github

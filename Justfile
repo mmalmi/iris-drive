@@ -19,6 +19,9 @@ info:
     @echo "  just build"
     @echo "  just linux-build"
     @echo "  just release"
+    @echo "  just release-gate"
+    @echo "  just release-publish"
+    @echo "  just release-final"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
     @echo "  just android-build"
@@ -162,6 +165,15 @@ e2e-5devices *args:
 release:
     cargo build --workspace --release
 
+release-gate *args:
+    ./scripts/release-gate.sh {{args}}
+
+release-publish:
+    node scripts/local-release.mjs --publish
+
+release-final:
+    node scripts/local-release.mjs --final
+
 test:
     cargo test --workspace
 
@@ -173,6 +185,7 @@ structure:
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh
     ./scripts/check-provider-entry-normalization.sh
+    ./scripts/check-release-readiness.sh
     ./scripts/check-dev-vm-update-run.sh
     ./scripts/check-source-file-size.sh
 

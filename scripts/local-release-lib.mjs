@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 
 export function parseEnvFile(text) {
   const values = {}
@@ -95,6 +95,41 @@ export function describeAsset(name) {
     return 'Iris Drive for Android'
   }
   return name
+}
+
+export function buildZapstorePublishPlan({
+  tag,
+  assetDir,
+  distDir,
+  apkExists,
+  zspAvailable,
+  signWith,
+  zapstoreYamlExists,
+}) {
+  const normalizedTag = normalizeTag(tag)
+  const apkName = `iris-drive-${normalizedTag}-android-arm64.apk`
+  const apkPath = join(assetDir, apkName)
+  if (!apkExists) {
+    throw new Error(`Missing Android APK for Zapstore publish: ${apkPath}`)
+  }
+  if (!zspAvailable) {
+    throw new Error('Missing zsp; cannot publish Zapstore release')
+  }
+  const trimmedSignWith = String(signWith ?? '').trim()
+  if (!trimmedSignWith) {
+    throw new Error(
+      'Missing Zapstore signing key; set SIGN_WITH or NOSTR_KEY_PATH in .env.zapstore.local',
+    )
+  }
+  if (!zapstoreYamlExists) {
+    throw new Error('Missing zapstore.yaml; cannot publish Zapstore release')
+  }
+  return {
+    apkName,
+    apkPath,
+    releaseSourcePath: join(distDir, 'zapstore-current-android-arm64.apk'),
+    signWith: trimmedSignWith,
+  }
 }
 
 function idriveTarget(name) {

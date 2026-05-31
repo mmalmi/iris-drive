@@ -219,8 +219,19 @@ just e2e-5devices
 ### Release
 
 1. Bump `[workspace.package].version` in `Cargo.toml`.
-2. Build platform artifacts into `dist/`.
-3. Stage the release tree:
+2. Run the release gate:
+
+```bash
+just release-gate
+IRIS_DRIVE_RELEASE_GATE_FULL=1 just release-gate --full
+```
+
+The full gate runs the five-platform lab (`just e2e-5devices`) and requires
+the Linux, Windows, macOS, iOS, and Android hosts/devices configured in the
+local environment.
+
+3. Build platform artifacts into `dist/`.
+4. Stage the release tree:
 
 ```bash
 node scripts/local-release.mjs --tag v0.1.0
@@ -233,7 +244,9 @@ node scripts/local-release.mjs --tag v0.1.0 --publish --draft
 node scripts/local-release.mjs --tag v0.1.0 --final
 ```
 
-The default release tree is `releases/iris-drive`.
+The default release tree is `releases/iris-drive`. Copy
+`.env.release.example` and `.env.zapstore.example` to local `.env.*.local`
+files for machine-specific signing, htree release, and Zapstore settings.
 
 ### Workspace Layout
 
