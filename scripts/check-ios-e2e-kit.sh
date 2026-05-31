@@ -34,6 +34,7 @@ require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
+require_file ios/Sources/IrisDriveTypes.swift
 require_file ios/FileProvider/FileProviderExtension.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
 require_file scripts/ios-simulator-smoke.sh
@@ -48,10 +49,10 @@ require_contains ios/Sources/IrisDriveIOSApp.swift "ensureFileProviderDomain"
 require_contains ios/Sources/IrisDriveMobileModel.swift "NSFileProviderManager.add"
 require_contains ios/Sources/IrisDriveMobileModel.swift "copyLinkInvite"
 require_contains ios/Sources/IrisDriveMobileModel.swift "openDriveFolder"
-require_contains ios/Sources/IrisDriveMobileModel.swift "UIApplication.shared.open(url, options: [:])"
+require_contains ios/Sources/IrisDriveMobileModel.swift "UIApplication.shared.open(filesURL, options: [:])"
 require_contains ios/Sources/IrisDriveMobileModel.swift "addRelay"
 require_contains ios/Sources/IrisDriveMobileModel.swift "device-link"
-require_contains ios/Sources/IrisDriveMobileModel.swift "storageDirectoryName = \"IrisDrive\""
+require_contains ios/Sources/IrisDriveTypes.swift "storageDirectoryName = \"IrisDrive\""
 require_absent ios/Sources/IrisDriveMobileModel.swift "applicationSupportDirectory"
 require_absent ios/Sources/IrisDriveMobileModel.swift "UIDocumentPickerViewController"
 require_contains ios/FileProvider/FileProviderStorage.swift "storageDirectoryName = \"IrisDrive\""

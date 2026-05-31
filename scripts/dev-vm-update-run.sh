@@ -25,6 +25,7 @@ SKIP_PUSH=0
 NO_RUN=0
 LIST_TARGETS=0
 ONLY_LABELS=()
+SSH_PROBE_OPTS=(-o BatchMode=yes -o ConnectTimeout="${IRIS_DRIVE_DEV_VM_SSH_PROBE_TIMEOUT:-10}")
 
 usage() {
   cat <<'USAGE'
@@ -473,7 +474,7 @@ detect_remote_overlay_ip() {
     fi
   fi
   if [[ "$kind" == "windows" ]]; then
-    ip="$(ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
+    ip="$(ssh "${SSH_PROBE_OPTS[@]}" "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 $ErrorActionPreference = "SilentlyContinue"
 $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
@@ -499,7 +500,7 @@ if ($TunnelIp) {
 REMOTE_PS
 )"
   else
-    ip="$(ssh "$host" 'bash -se' <<'REMOTE_SH' 2>/dev/null || true
+    ip="$(ssh "${SSH_PROBE_OPTS[@]}" "$host" 'bash -se' <<'REMOTE_SH' 2>/dev/null || true
 set -Eeuo pipefail
 nvpn=""
 for candidate in \
@@ -535,7 +536,7 @@ can_target_reach_overlay_ip() {
   local ip="$3"
 
   if [[ "$kind" == "windows" ]]; then
-    ssh "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<REMOTE_PS >/dev/null 2>&1
+    ssh "${SSH_PROBE_OPTS[@]}" "$host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<REMOTE_PS >/dev/null 2>&1
 \$ErrorActionPreference = "SilentlyContinue"
 \$Ip = "$ip"
 if (Test-Connection -ComputerName \$Ip -Count 1 -Quiet) {
@@ -550,7 +551,7 @@ REMOTE_PS
   if [[ "$kind" == "macos" ]]; then
     wait_arg="1000"
   fi
-  ssh "$host" 'bash -se' <<REMOTE_SH >/dev/null 2>&1
+  ssh "${SSH_PROBE_OPTS[@]}" "$host" 'bash -se' <<REMOTE_SH >/dev/null 2>&1
 ping -c 1 -W "$wait_arg" "$ip" >/dev/null 2>&1
 REMOTE_SH
 }
@@ -563,6 +564,7 @@ build_static_peer_hints() {
   local key=""
   local i
   local j
+  local -a peer_labels=() peer_kinds=() peer_hosts=() peer_ssh_hosts=() peer_overlay_ips=()
 
   mode="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
   case "$mode" in
@@ -584,26 +586,38 @@ build_static_peer_hints() {
       ;;
   esac
 
-  for i in "${!ALL_LABELS[@]}"; do
-    ip="$(detect_remote_overlay_ip "${ALL_KINDS[$i]}" "${ALL_SSH_HOSTS[$i]}" "${ALL_LABELS[$i]}" || true)"
+  if [[ ${#ONLY_LABELS[@]} -gt 0 ]]; then
+    peer_labels=("${LABELS[@]}")
+    peer_kinds=("${KINDS[@]}")
+    peer_hosts=("${HOSTS[@]}")
+    peer_ssh_hosts=("${SSH_HOSTS[@]}")
+  else
+    peer_labels=("${ALL_LABELS[@]}")
+    peer_kinds=("${ALL_KINDS[@]}")
+    peer_hosts=("${ALL_HOSTS[@]}")
+    peer_ssh_hosts=("${ALL_SSH_HOSTS[@]}")
+  fi
+
+  for i in "${!peer_labels[@]}"; do
+    ip="$(detect_remote_overlay_ip "${peer_kinds[$i]}" "${peer_ssh_hosts[$i]}" "${peer_labels[$i]}" || true)"
     if [[ -z "$ip" ]]; then
-      log "warning: could not detect nvpn IP for ${ALL_LABELS[$i]} on ${ALL_SSH_HOSTS[$i]}; native FIPS may need WebRTC or relay transport"
+      log "warning: could not detect nvpn IP for ${peer_labels[$i]} on ${peer_ssh_hosts[$i]}; native FIPS may need WebRTC or relay transport"
       continue
     fi
-    ALL_OVERLAY_IPS[$i]="$ip"
+    peer_overlay_ips[$i]="$ip"
   done
 
   for i in "${!LABELS[@]}"; do
     pieces=()
-    for j in "${!ALL_LABELS[@]}"; do
-      [[ "${LABELS[$i]}" == "${ALL_LABELS[$j]}" ]] && continue
-      ip="${ALL_OVERLAY_IPS[$j]:-}"
+    for j in "${!peer_labels[@]}"; do
+      [[ "${LABELS[$i]}" == "${peer_labels[$j]}" ]] && continue
+      ip="${peer_overlay_ips[$j]:-}"
       [[ -n "$ip" ]] || continue
       if [[ "$mode" == "auto" ]] && ! can_target_reach_overlay_ip "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "$ip"; then
-        log "not using nvpn static FIPS hint ${LABELS[$i]} -> ${ALL_LABELS[$j]} ($ip); overlay address is not reachable from ${LABELS[$i]}"
+        log "not using nvpn static FIPS hint ${LABELS[$i]} -> ${peer_labels[$j]} ($ip); overlay address is not reachable from ${LABELS[$i]}"
         continue
       fi
-      key="$(target_peer_hint_key "${ALL_HOSTS[$j]}")"
+      key="$(target_peer_hint_key "${peer_hosts[$j]}")"
       pieces+=("$key=$ip:$fips_port")
     done
 
