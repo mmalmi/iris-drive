@@ -1,55 +1,58 @@
 # Iris Drive
 
-End-user file sync built on [hashtree](htree://self/hashtree). Think Google Drive,
-but content-addressed, multi-transport, and free of DNS/SSL/CDN dependencies.
+<p align="center">
+  <img src="linux/resources/iris-drive.svg" alt="Iris Drive logo" width="112">
+</p>
 
 > Canonical repository: `htree://self/iris-drive` · package name: `iris-drive`
 
-## Overview
+Iris Drive is end-user file sync built on local `htree` storage and Nostr
+identity. It includes the `idrive` CLI/daemon, a shared Rust core, a UniFFI app
+core, and native shells for desktop and mobile platforms. Think Drive-style
+sync, but content-addressed, peer-aware, and free of DNS/SSL/CDN dependencies.
 
-Iris Drive is a Rust workspace plus per-platform native shells. The Rust core
-wraps the local `htree` daemon and exposes a sync/share model the native UIs
-render. Native shells follow the same Rust-core / native-front pattern used in
-[nostr-vpn](https://github.com/mmalmi/nostr-vpn).
+OS-visible drives are virtual provider surfaces only: FileProvider, FUSE,
+Windows Cloud Files/WinFsp, SAF, or the platform equivalent over htree/provider
+roots. Iris Drive should not silently fall back to a normal user folder.
 
-| Component | Purpose |
-| --- | --- |
-| `idrive` | CLI/daemon: sync engine, share controls, htree-daemon supervisor |
-| `iris-drive-core` | Shared library: config, sync state, htree client, share model |
-| `iris-drive-app-core` | Native app state/action contract + UniFFI bridge for the native shells |
-| `iris-drive-mac` | Rust macOS menu-bar dev wrapper around `idrive daemon` |
-| `macos` | SwiftUI/AppKit native shell over `iris-drive-app-core` |
-| `linux` | GTK/libadwaita native shell over the shared app core |
-| `windows` | WPF native shell over the shared sync engine |
-| `android` / `ios` | Native mobile shells over the same shared core |
+## Downloads
 
-## Status
+Public binary downloads are not a stable channel yet. Build from source for
+now:
 
-Early working sync engine with macOS, Linux, Windows desktop control panels,
-and an Android shell scaffold with a SAF DocumentsProvider. The CLI can initialize an account, import a source directory once,
-publish private drive roots, replicate blocks directly over FIPS between
-authorized devices, fall back to Blossom, mirror encrypted backup blobs to
-Blossom, filesystem, or LMDB targets, and run a long-lived daemon with virtual
-drive surfaces.
+```bash
+just build
+just run
+```
 
-## Getting started
+The `idrive update` path is already wired for signed hashtree releases at:
+
+```text
+htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest
+```
+
+Release staging consumes already-built files from `dist/`; see "Release" under
+Maintainer Notes.
+
+## Quick Start
+
+Launch the native app for the current desktop platform:
 
 ```bash
 just run
 ```
 
-That launches the Rust macOS menu-bar wrapper. On first launch it creates
-`~/Iris Drive`, initializes the local account/device, starts `idrive daemon`,
-publishes the private drive root, and uploads encrypted blocks to the default
-Blossom server as a fallback/cache.
+On macOS this builds and opens the SwiftUI/AppKit app, registers the File
+Provider domain when signing allows it, and starts the bundled iris-drive
+daemon. On Linux it starts the GTK/libadwaita shell. Use the platform READMEs
+for platform-specific signing, packaging, and smoke-test details.
 
-For a terminal-only daemon, initialize/import once first:
+For a terminal-only flow:
 
 ```bash
-just run-cli init
-mkdir -p "$HOME/Iris Drive"
-just run-cli import "$HOME/Iris Drive"
-just run-daemon
+just run-cli init --label "Laptop"
+just run-cli import /path/to/seed-folder
+just run-cli daemon
 ```
 
 Useful CLI probes:
@@ -62,58 +65,193 @@ just run-cli list
 just run-cli update --check
 ```
 
-Most desktop GUI actions have matching CLI flows:
+Common device and backup flows:
 
 ```bash
 just run-cli devices invite
 just run-cli devices request <owner-npub-or-invite-url> --label "Laptop"
 just run-cli devices approve <device-request-url-or-npub>
+just run-cli devices list
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
 
-When `idrive daemon` is running it also starts a loopback browser gateway on
-port `17321` by default. Stock browsers treat `*.localhost` as a trustworthy
-local origin, so the current primary drive can be opened at:
+When `idrive daemon` is running it starts a loopback browser gateway on port
+`17321` by default. The current primary drive can be opened at:
 
 ```text
 http://main.drive.iris.localhost:17321/
 ```
 
 Immutable hashtree roots are served from per-root hosts under
-`*.sites.iris.localhost`; `idrive status` and `idrive import` print those local
-gateway URLs when a root is available. Nhash links can also be opened through
-`http://nhash.iris.localhost:17321/<nhash>/...`. The resolver/gateway setting
-is on by default and can be changed with `idrive nhash-resolver enable` or
-`idrive nhash-resolver disable`.
+`*.sites.iris.localhost`, and nhash links can be opened through:
 
-## Releases
+```text
+http://nhash.iris.localhost:17321/<nhash>/...
+```
 
-`idrive update` consumes signed hashtree releases from
-`releases/iris-drive/latest` under the project publisher npub. The updater uses
-the user's configured relays and Blossom servers, and reuses the running
-iris-drive daemon's embedded hashtree endpoint as the first read source when it
-is fresh.
+Toggle the resolver/gateway setting with:
 
-To stage already-built artifacts from `dist/` into the updater release layout:
+```bash
+just run-cli nhash-resolver enable
+just run-cli nhash-resolver disable
+```
+
+## Native Apps
+
+The native apps share the Rust app-core state/action contract and use platform
+shells for macOS, Linux, Windows, Android, and iOS.
+
+```bash
+just run
+just run-linux
+just android-build
+just ios-build
+```
+
+See the platform READMEs for focused instructions:
+
+- [macOS](macos/README.md)
+- [Linux](linux/README.md)
+- [Windows](windows/README.md)
+- [Android](android/README.md)
+- [iOS](ios/README.md)
+
+## What Works Today
+
+- Creates, restores, links, approves, revokes, and lists Nostr-backed Iris Drive
+  devices through the CLI and desktop control panels.
+- Maintains open Nostr subscriptions for account roster and mutable drive-root
+  events while the iris-drive daemon is running.
+- Imports local source trees into the persistent htree block store and exposes a
+  merged virtual primary drive view through native provider bridges.
+- Replicates blocks directly over hashtree-over-[FIPS] between authorized
+  devices when peers are reachable; Blossom remains a fallback/cache path.
+- Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
+- Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
+- Provides release-update plumbing through signed hashtree manifests.
+
+## Platform Status
+
+| Platform | Status |
+| --- | --- |
+| macOS | SwiftUI/AppKit app, menu-bar control, File Provider domain, app-group/runtime wiring, local smoke fixture |
+| Linux x64 | GTK/libadwaita app, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
+| Windows x64 | WPF app, tray control, Cloud Files placeholder/hydration path, self-contained publish script |
+| Android arm64 | Compose shell plus SAF DocumentsProvider with create/read/write/rename/delete/list support and adb smoke |
+| iOS | SwiftUI shell plus File Provider extension, simulator smoke, multidevice harness peer |
+| CLI | `idrive` create/restore/link, daemon, provider bridge, FIPS sync, Blossom/cache, backups, updater |
+
+See [Platform GUI parity](docs/PARITY.md) for the detailed cross-platform
+matrix and current e2e target.
+
+## Further Reading
+
+- [Design](docs/DESIGN.md): architecture, phases, provider boundaries, and risks
+- [Platform GUI parity](docs/PARITY.md): native shell capability matrix and e2e
+  targets
+- [Snapshot sync implementation plan](docs/SNAPSHOT_SYNC_IMPLEMENTATION_PLAN.md):
+  root reconciliation, miss/timeout semantics, and FIPS retrieval plan
+- [Apple FileProvider entitlement notes](docs/APPLE_FILEPROVIDER_ENTITLEMENT.md):
+  macOS/iOS distribution requirements
+- [Experiments](docs/EXPERIMENTS.md): benchmark and integration notes
+
+## Maintainer Notes
+
+This section is intentionally compact and command-oriented. Keep user-facing
+product detail above; keep agent/operator reference material here.
+
+### Config Model
+
+`idrive init` creates a fresh owner key and device key. `idrive restore` imports
+an owner key onto a new device, and `idrive link` creates a secondary device
+that waits for owner/admin approval.
+
+By default, CLI config lives under the OS config directory with the
+`iris-drive` suffix. Set `IRIS_DRIVE_CONFIG_DIR` or pass `--config-dir` for
+isolated development and tests. Important files live under that directory:
+
+- `config.toml`: app config, relays, drives, roster, backup targets
+- `key`: this device's signing key
+- `owner_key`: owner signing key, only on create/restore/admin-capable installs
+- `blocks/`: Iris Drive htree block store
+- `Hashtree/`: embedded hashtree daemon runtime state
+
+Native apps may use app-group or app-owned runtime directories, but they still
+pass an explicit config directory to `idrive`/`iris-drive-app-core`.
+
+### Validation
+
+Normal Rust gate:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Repository structure and parity checks:
+
+```bash
+just structure
+```
+
+Useful focused checks:
+
+```bash
+just smoke-macos
+just docker-cli-e2e
+just android-smoke
+just android-gui-smoke
+just ios-smoke
+just ios-gui-smoke
+```
+
+Full configured lab checks:
+
+```bash
+just e2e-3vms
+just e2e-4devices
+just e2e-5devices
+```
+
+### Release
+
+1. Bump `[workspace.package].version` in `Cargo.toml`.
+2. Build platform artifacts into `dist/`.
+3. Stage the release tree:
 
 ```bash
 node scripts/local-release.mjs --tag v0.1.0
 ```
 
-## Layout
+Publish a draft or final signed hashtree release:
 
+```bash
+node scripts/local-release.mjs --tag v0.1.0 --publish --draft
+node scripts/local-release.mjs --tag v0.1.0 --final
 ```
-crates/
-  iris-drive-core/        shared library
-  iris-drive-cli/         `idrive` CLI + daemon
-  iris-drive-app-core/    UniFFI bridge + native app state/actions
-  iris-drive-mac/         Rust macOS menu-bar dev wrapper
-macos/ linux/ windows/   desktop native shells
-android/ ios/            mobile native shells
-docs/                   protocol notes, experiments
-```
+
+The default release tree is `releases/iris-drive`.
+
+### Workspace Layout
+
+- [`crates/iris-drive-cli`](crates/iris-drive-cli): `idrive` CLI and daemon
+- [`crates/iris-drive-core`](crates/iris-drive-core): config, identity, htree,
+  sync, gateway, device-link, and backup logic
+- [`crates/iris-drive-app-core`](crates/iris-drive-app-core): native app
+  state/action contract and UniFFI bridge
+- [`crates/hashtree-provider`](crates/hashtree-provider): provider-facing tree
+  trait used by virtual file surfaces
+- [`crates/iris-drive-mac`](crates/iris-drive-mac): Rust macOS menu-bar dev
+  wrapper
+- [`macos`](macos), [`linux`](linux), [`windows`](windows), [`android`](android),
+  [`ios`](ios): native platform shells
+- [`scripts`](scripts): build, smoke, e2e, release, and lab helpers
+- [`docs`](docs): design notes, parity matrix, experiments, and platform plans
 
 ## License
 
 MIT.
+
+[FIPS]: https://github.com/jmcorgan/fips
