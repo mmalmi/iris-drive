@@ -100,6 +100,7 @@ require_contains scripts/cross-vm-four-platform-e2e.sh "scripts/ios-gui-linking-
 require_contains scripts/cross-vm-four-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
 require_contains scripts/cross-vm-five-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
 require_contains scripts/cross-vm-e2e.sh '"local"'
+require_contains scripts/cross-vm-e2e.sh 'CARGO_TARGET_DIR'
 require_contains Justfile "ios-build"
 require_contains Justfile "ios-smoke"
 require_contains Justfile "ios-gui-smoke"

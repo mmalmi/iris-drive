@@ -301,7 +301,7 @@ run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
-idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\$HOME/src/iris-drive/target/debug/idrive}\"
+idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}}\"; idrive=\"\${idrive:-\$HOME/src/iris-drive/target/debug/idrive}\"
 if [[ ! -x \"\$idrive\" ]]; then
   idrive=\"\$HOME/.cargo/bin/idrive\"
 fi
