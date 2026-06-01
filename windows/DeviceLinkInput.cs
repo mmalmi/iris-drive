@@ -19,7 +19,7 @@ public partial class MainWindow
         await TrySubmitLinkOwnerAsync(force: true);
     }
 
-    private async void LinkOwnerBox_KeyDown(object sender, KeyEventArgs e)
+    private async void LinkOwnerBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
         {

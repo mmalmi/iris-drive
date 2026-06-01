@@ -20,6 +20,7 @@ using WpfClipboard = System.Windows.Clipboard;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
 using IOPath = System.IO.Path;
 using WpfOrientation = System.Windows.Controls.Orientation;
+using WpfTextBox = System.Windows.Controls.TextBox;
 
 namespace IrisDrive.WindowsShell;
 
@@ -752,14 +753,14 @@ public partial class MainWindow : Window
 
     private void ShowAddDevice_Click(object sender, RoutedEventArgs e)
     {
-        var deviceBox = new TextBox
+        var deviceBox = new WpfTextBox
         {
             Tag = "Device ID",
             MinHeight = 34,
             MinWidth = 360,
             Margin = new Thickness(0, 4, 0, 10),
         };
-        var labelBox = new TextBox
+        var labelBox = new WpfTextBox
         {
             Tag = "Name (optional)",
             MinHeight = 34,
@@ -1096,7 +1097,7 @@ public partial class MainWindow : Window
         CreatePhotoPathBox.Focus();
     }
 
-    private void CreateUsernameBox_KeyDown(object sender, KeyEventArgs e)
+    private void CreateUsernameBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
         {
@@ -1139,7 +1140,7 @@ public partial class MainWindow : Window
         await RunSetupAsync(() => service.RestoreProfileAsync(RestoreSecretBox.Password));
     }
 
-    private void RestoreSecretBox_KeyDown(object sender, KeyEventArgs e)
+    private void RestoreSecretBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
         {
