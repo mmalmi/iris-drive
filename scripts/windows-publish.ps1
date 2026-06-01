@@ -10,13 +10,20 @@ param(
 
   [switch]$AllowLockfileUpdate,
 
-  [switch]$StopRunningApp
+  [switch]$StopRunningApp,
+
+  [switch]$Installer,
+
+  [string]$Tag,
+
+  [string]$OutputDir
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "windows\IrisDrive.Windows.csproj"
+$WorkspaceCargoToml = Join-Path $Root "Cargo.toml"
 
 function Invoke-Checked {
   param(
@@ -28,6 +35,43 @@ function Invoke-Checked {
   if ($LASTEXITCODE -ne 0) {
     throw "$FilePath failed with exit code $LASTEXITCODE"
   }
+}
+
+function Get-WorkspaceVersion {
+  $Text = Get-Content -Raw -Path $WorkspaceCargoToml
+  $Match = [regex]::Match($Text, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
+  if (!$Match.Success) {
+    throw "Could not read workspace version from $WorkspaceCargoToml"
+  }
+  return $Match.Groups[1].Value
+}
+
+function Resolve-InnoSetupCompiler {
+  $Command = Get-Command iscc -ErrorAction SilentlyContinue
+  if ($Command) {
+    return $Command.Source
+  }
+
+  $Candidates = @(
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+  )
+  foreach ($Candidate in $Candidates) {
+    if ($Candidate -and (Test-Path $Candidate)) {
+      return $Candidate
+    }
+  }
+
+  throw "Inno Setup compiler not found. Install JRSoftware.InnoSetup or put ISCC.exe on PATH."
+}
+
+function Resolve-OutputPath {
+  param([string]$Path)
+  if ([System.IO.Path]::IsPathRooted($Path)) {
+    return $Path
+  }
+  return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
 }
 
 if ($StopRunningApp) {
@@ -95,3 +139,36 @@ if ($DesktopShortcut) {
 
 Write-Output "Published Iris Drive to $PublishDir"
 Write-Output "Self-contained publish: no .NET Desktop Runtime install required."
+
+if ($Installer) {
+  if ($Runtime -ne "win-x64") {
+    throw "The installer script currently supports win-x64 only, got $Runtime"
+  }
+
+  $VersionTag = if ($Tag) { $Tag } else { "v$(Get-WorkspaceVersion)" }
+  if (!$VersionTag.StartsWith("v")) {
+    $VersionTag = "v$VersionTag"
+  }
+  $Version = $VersionTag.TrimStart("v")
+  $InstallerOutputDir = if ($OutputDir) { Resolve-OutputPath $OutputDir } else { Join-Path $Root "dist" }
+  New-Item -ItemType Directory -Force -Path $InstallerOutputDir | Out-Null
+
+  $AppExe = Join-Path $PublishDir "IrisDrive.exe"
+  if (!(Test-Path $AppExe)) {
+    throw "Published Windows app not found: $AppExe"
+  }
+
+  $env:IRIS_DRIVE_RELEASE_VERSION = $Version
+  $env:IRIS_DRIVE_PROJECT_ROOT = $Root
+  $env:IRIS_DRIVE_WINDOWS_PUBLISH_DIR = $PublishDir
+  $env:IRIS_DRIVE_WINDOWS_INSTALLER_OUTPUT_DIR = $InstallerOutputDir
+  $env:IRIS_DRIVE_WINDOWS_INSTALLER_BASENAME = "iris-drive-$VersionTag-windows-x64-setup"
+  $InnoSetupCompiler = Resolve-InnoSetupCompiler
+  Invoke-Checked $InnoSetupCompiler @((Join-Path $Root "scripts\windows-installer.iss"))
+
+  $InstallerPath = Join-Path $InstallerOutputDir "$($env:IRIS_DRIVE_WINDOWS_INSTALLER_BASENAME).exe"
+  if (!(Test-Path $InstallerPath)) {
+    throw "Expected Windows installer was not produced: $InstallerPath"
+  }
+  Write-Output "Built Iris Drive installer: $InstallerPath"
+}

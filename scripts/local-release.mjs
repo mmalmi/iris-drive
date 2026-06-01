@@ -451,9 +451,6 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
       'Android signing inputs: ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD',
     )
   }
-  if (steps.includes('windows') && !String(env.IRIS_DRIVE_WINDOWS_INSTALLER_PATH ?? '').trim()) {
-    missing.push('IRIS_DRIVE_WINDOWS_INSTALLER_PATH for the signed Windows x64 installer')
-  }
   if (missing.length > 0) {
     throw new Error(`Missing final release input(s): ${missing.join('; ')}`)
   }
@@ -506,6 +503,11 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
       join(repoRoot, 'scripts', 'windows-publish.ps1'),
       '-Configuration',
       'Release',
+      '-Installer',
+      '-Tag',
+      tag,
+      '-OutputDir',
+      distDir,
     ],
     { dryRun, env },
   )
@@ -526,24 +528,11 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
     ],
     { dryRun, env },
   )
-  const installerPath = String(env.IRIS_DRIVE_WINDOWS_INSTALLER_PATH ?? '').trim()
-  if (dryRun) {
-    console.log(
-      'Would copy the signed Windows installer from IRIS_DRIVE_WINDOWS_INSTALLER_PATH into dist',
-    )
-    return
-  }
-  if (!installerPath) {
-    throw new Error(
-      'Set IRIS_DRIVE_WINDOWS_INSTALLER_PATH to the signed Iris Drive Windows x64 installer.',
-    )
-  }
+  const expectedInstallerPath = join(distDir, `iris-drive-${tag}-windows-x64-setup.exe`)
   if (!dryRun) {
-    if (!existsSync(installerPath)) {
-      throw new Error(`Missing Windows installer: ${installerPath}`)
+    if (!existsSync(expectedInstallerPath)) {
+      throw new Error(`Missing Windows installer: ${expectedInstallerPath}`)
     }
-    mkdirSync(distDir, { recursive: true })
-    copyFileSync(installerPath, join(distDir, `iris-drive-${tag}-windows-x64-setup.exe`))
   }
 }
 

@@ -179,7 +179,6 @@ test('local-release dry-run validates planned build assets over partial existing
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
-        IRIS_DRIVE_WINDOWS_INSTALLER_PATH: '/tmp/IrisDriveSetup.exe',
       },
     },
   )
@@ -188,15 +187,13 @@ test('local-release dry-run validates planned build assets over partial existing
   assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
 })
 
-test('local-release final dry-run requires the signed Windows installer input', () => {
+test('local-release dry-run builds the Windows installer in dist', () => {
   const result = spawnSync(
     process.execPath,
     [
       fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
       '--build',
-      '--final',
       '--dry-run',
-      '--skip-zapstore',
       '--tag',
       'v9.9.9',
       '--only',
@@ -205,8 +202,11 @@ test('local-release final dry-run requires the signed Windows installer input', 
     { encoding: 'utf8' },
   )
 
-  assert.equal(result.status, 1)
-  assert.match(result.stderr, /IRIS_DRIVE_WINDOWS_INSTALLER_PATH/)
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/windows-publish\.ps1/)
+  assert.match(result.stdout, /-Installer/)
+  assert.match(result.stdout, /-Tag/)
+  assert.match(result.stdout, /v9\.9\.9/)
 })
 
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {
