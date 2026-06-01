@@ -171,6 +171,17 @@ pub fn optional_normalized_provider_path(path: &str) -> anyhow::Result<Option<St
     }
 }
 
+pub fn provider_path_is_child_document(
+    parent_path: &str,
+    document_path: &str,
+) -> anyhow::Result<bool> {
+    let parent_path = normalize_provider_parent_path(parent_path)?;
+    let document_path = normalize_provider_parent_path(document_path)?;
+    Ok(parent_path.is_empty()
+        || document_path == parent_path
+        || document_path.starts_with(&format!("{parent_path}/")))
+}
+
 #[must_use]
 pub fn sanitized_provider_file_name(display_name: &str) -> String {
     let mut name = display_name
@@ -265,6 +276,17 @@ mod tests {
         assert!(normalize_provider_document_path("Reports/note.txt/").is_err());
         assert!(normalize_provider_document_path("Reports/../note.txt").is_err());
         assert!(normalize_provider_document_path("Reports\\note.txt").is_err());
+    }
+
+    #[test]
+    fn provider_child_relation_uses_canonical_path_boundaries() {
+        assert!(provider_path_is_child_document("", "").unwrap());
+        assert!(provider_path_is_child_document("", "Projects/plan.md").unwrap());
+        assert!(provider_path_is_child_document("Projects", "Projects").unwrap());
+        assert!(provider_path_is_child_document("/Projects/", "/Projects/plan.md").unwrap());
+        assert!(!provider_path_is_child_document("Projects", "Projects-old/plan.md").unwrap());
+        assert!(!provider_path_is_child_document("Projects", "Notes/plan.md").unwrap());
+        assert!(provider_path_is_child_document("Projects", "Projects\\plan.md").is_err());
     }
 
     #[test]

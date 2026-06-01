@@ -14,10 +14,10 @@ use serde::Serialize;
 use crate::{
     FfiApp, NativeAppAction, NativeAppState, ffi::classify_link_input,
     ffi::native_provider_delete_json, ffi::native_provider_import_shared_file_json,
-    ffi::native_provider_list_json, ffi::native_provider_mkdir_json,
-    ffi::native_provider_normalize_path_json, ffi::native_provider_read_json,
-    ffi::native_provider_rename_json, ffi::native_provider_resolve_path_json,
-    ffi::native_provider_write_json,
+    ffi::native_provider_is_child_document_json, ffi::native_provider_list_json,
+    ffi::native_provider_mkdir_json, ffi::native_provider_normalize_path_json,
+    ffi::native_provider_read_json, ffi::native_provider_rename_json,
+    ffi::native_provider_resolve_path_json, ffi::native_provider_write_json,
 };
 
 pub struct IrisDriveAppHandle {
@@ -210,6 +210,17 @@ pub extern "C" fn iris_drive_provider_resolve_path_json(
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_provider_normalize_path_json(path: *const c_char) -> *mut c_char {
     json_string(&native_provider_normalize_path_json(&c_string_lossy(path)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_is_child_document_json(
+    parent_path: *const c_char,
+    document_path: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_is_child_document_json(
+        &c_string_lossy(parent_path),
+        &c_string_lossy(document_path),
+    ))
 }
 
 /// # Safety
@@ -475,6 +486,22 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerNormalizeP
 ) -> jstring {
     let path = jni_string_lossy(&mut env, &path);
     jni_json_string(env, &native_provider_normalize_path_json(&path))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerIsChildDocumentJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    parent_path: JString<'_>,
+    document_path: JString<'_>,
+) -> jstring {
+    let parent_path = jni_string_lossy(&mut env, &parent_path);
+    let document_path = jni_string_lossy(&mut env, &document_path);
+    jni_json_string(
+        env,
+        &native_provider_is_child_document_json(&parent_path, &document_path),
+    )
 }
 
 #[cfg(target_os = "android")]

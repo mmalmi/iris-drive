@@ -160,6 +160,27 @@ fn provider_normalize_path_validates_native_document_paths() {
 }
 
 #[test]
+fn provider_child_document_json_uses_core_path_relation() {
+    let child = super::native_provider_is_child_document_json("/Reports/", "/Reports/monthly.pdf");
+    assert_eq!(child["is_child"], true);
+    assert_eq!(child["error"], "");
+
+    let sibling =
+        super::native_provider_is_child_document_json("Reports", "Reports-old/monthly.pdf");
+    assert_eq!(sibling["is_child"], false);
+    assert_eq!(sibling["error"], "");
+
+    let invalid = super::native_provider_is_child_document_json("Reports", "Reports\\monthly.pdf");
+    assert_eq!(invalid["is_child"], false);
+    assert!(
+        invalid["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsafe provider path")
+    );
+}
+
+#[test]
 fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

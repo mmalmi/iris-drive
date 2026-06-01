@@ -8,7 +8,8 @@ use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
     ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
     normalize_provider_path, optional_normalized_provider_path, provider_list_summary,
-    sanitized_provider_file_name, split_provider_path, unique_provider_path,
+    provider_path_is_child_document, sanitized_provider_file_name, split_provider_path,
+    unique_provider_path,
 };
 use iris_drive_core::{Account, AppConfig};
 use serde_json::json;
@@ -102,6 +103,22 @@ pub(crate) fn native_provider_normalize_path_json(path: &str) -> serde_json::Val
             "path": "",
             "parent_path": "",
             "display_name": "",
+            "error": format!("{error:#}"),
+        }),
+    }
+}
+
+pub(crate) fn native_provider_is_child_document_json(
+    parent_path: &str,
+    document_path: &str,
+) -> serde_json::Value {
+    match provider_path_is_child_document(parent_path, document_path) {
+        Ok(is_child) => json!({
+            "is_child": is_child,
+            "error": "",
+        }),
+        Err(error) => json!({
+            "is_child": false,
             "error": format!("{error:#}"),
         }),
     }

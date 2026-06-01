@@ -132,9 +132,7 @@ internal class IrisDriveDocumentStore(
             } else {
                 pathForDocumentId(documentId)
             }
-            childPath == parentPath ||
-                (parentPath.isEmpty() && childPath.isNotEmpty()) ||
-                childPath.startsWith("$parentPath/")
+            NativeCore.providerPathIsChildDocument(parentPath, childPath)
         }.getOrDefault(false)
 
     fun readDocumentToTemp(documentId: String): File {

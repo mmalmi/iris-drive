@@ -34,6 +34,7 @@ internal object NativeCore {
         excludingPath: String,
     ): String
     external fun providerNormalizePathJson(path: String): String
+    external fun providerIsChildDocumentJson(parentPath: String, documentPath: String): String
     external fun applyOwnerSnapshotForTest(ownerDataDir: String, linkedDataDir: String): String
 
     fun classifyLinkInputKind(text: String): String =
@@ -55,4 +56,11 @@ internal object NativeCore {
             json.optString("path").takeIf { it.isNotBlank() }
         }
     }
+
+    fun providerPathIsChildDocument(parentPath: String, documentPath: String): Boolean =
+        runCatching {
+            val json = JSONObject(providerIsChildDocumentJson(parentPath, documentPath))
+            val error = json.optString("error").takeIf { it.isNotBlank() }
+            error == null && json.optBoolean("is_child")
+        }.getOrDefault(false)
 }
