@@ -51,6 +51,8 @@ APP_PATH=""
 IDRIVE_CLI=""
 APP_STDOUT="$SMOKE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_DIR/app.stderr.log"
+APP_DEBUG_LOG_DIR="$SMOKE_DIR/logs"
+APP_DEBUG_LOG="$APP_DEBUG_LOG_DIR/macos-app-debug.log"
 USER_JOURNEY_OPENED_DRIVE_FOLDER=0
 OWNER_DAEMON_PID=""
 
@@ -233,6 +235,10 @@ show_recent_logs() {
     echo "Captured app stderr:" >&2
     cat "$APP_STDERR" >&2 2>/dev/null || true
   fi
+  if [[ -s "$APP_DEBUG_LOG" ]]; then
+    echo "Captured app debug log:" >&2
+    cat "$APP_DEBUG_LOG" >&2 2>/dev/null || true
+  fi
   if [[ -s "$SMOKE_DIR/owner-daemon.stdout.log" || -s "$SMOKE_DIR/owner-daemon.stderr.log" ]]; then
     echo "Captured owner daemon stdout:" >&2
     cat "$SMOKE_DIR/owner-daemon.stdout.log" >&2 2>/dev/null || true
@@ -277,7 +283,7 @@ wait_for_log() {
   local seconds="$2"
 
   for _ in $(seq 1 "$((seconds * 10))"); do
-    if grep -F "$pattern" "$APP_STDOUT" "$APP_STDERR" >/dev/null 2>&1; then
+    if grep -F "$pattern" "$APP_STDOUT" "$APP_STDERR" "$APP_DEBUG_LOG" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
@@ -996,6 +1002,7 @@ fi
 open_args=(
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
+  --env "IRIS_DRIVE_DEBUG_LOG_DIR=$APP_DEBUG_LOG_DIR"
 )
 if ! run_create_profile_gui_smoke && ! run_user_journey_smoke && ! run_ui_smoke; then
   open_args=(-j "${open_args[@]}")

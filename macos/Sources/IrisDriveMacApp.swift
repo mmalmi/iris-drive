@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
     private var openControlPanelWindow: (() -> Void)?
+    private var controlPanelWindow: NSWindow?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
@@ -255,9 +256,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         openControlPanelWindow?()
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.observeWindows()
-            self?.mainWindow()?.makeKeyAndOrderFront(nil)
+            if let window = self?.mainWindow() {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                self?.fallbackControlPanelWindow().makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -844,7 +849,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openLinkMenuItem = openLinkItem
         startSyncMenuItem = startItem
         stopSyncMenuItem = stopItem
-        NSLog("Iris Drive menu bar item installed")
+        irisDriveDebugLog("Iris Drive menu bar item installed")
     }
 
     private func mutateRelayConfig(arguments: [String]) {
@@ -893,6 +898,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.windows.first(where: { $0.title == irisDriveDisplayName }) ?? NSApp.windows.first
     }
 
+    private func fallbackControlPanelWindow() -> NSWindow {
+        if let controlPanelWindow {
+            return controlPanelWindow
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = irisDriveDisplayName
+        window.identifier = NSUserInterfaceItemIdentifier(irisDriveControlPanelWindowID)
+        window.delegate = self
+        window.contentView = NSHostingView(
+            rootView: IrisDriveControlPanel(status: IrisDriveStatus.shared, controller: self)
+                .frame(minWidth: 780, minHeight: 520)
+        )
+        window.center()
+        controlPanelWindow = window
+        return window
+    }
+
     private func statusIcon() -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
             NSColor.black.set()
@@ -929,7 +956,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try ensureDirectory(paths.configDirectory)
             if !localProfileExists(paths: paths) {
-                NSLog("Iris Drive local profile not found at \(paths.configDirectory.path)")
+                irisDriveDebugLog("Iris Drive local profile not found at \(paths.configDirectory.path)")
                 updateStatus("Setup needed")
                 return
             }
@@ -1067,16 +1094,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func openMountedDriveFolder(_ url: URL) {
         if NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path) {
-            NSLog("Iris Drive mounted drive folder opened: \(url.path)")
+            irisDriveDebugLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
             NSWorkspace.shared.activateFileViewerSelecting([url])
-            NSLog("Iris Drive mounted drive folder revealed: \(url.path)")
+            irisDriveDebugLog("Iris Drive mounted drive folder revealed: \(url.path)")
         }
     }
 
     private func handleFileProviderOpenFailure(_ reason: String) {
         updateStatus("FileProvider unavailable")
-        NSLog("Iris Drive FileProvider open failed: \(reason)")
+        irisDriveDebugLog("Iris Drive FileProvider open failed: \(reason)")
         NSSound.beep()
     }
 
@@ -1133,7 +1160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try process.run()
             daemon = process
-            NSLog("Iris Drive sync daemon started")
+            irisDriveDebugLog("Iris Drive sync daemon started")
             setDaemonRunning(true)
             updateStatus("Sync on")
             if IrisDriveStatus.shared.setupComplete {
@@ -1593,7 +1620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "status changed")
-            NSLog("Iris Drive control panel updated")
+            irisDriveDebugLog("Iris Drive control panel updated")
         }
     }
 
@@ -1811,7 +1838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
             self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "external status changed")
-            NSLog("Iris Drive control panel updated from external daemon status")
+            irisDriveDebugLog("Iris Drive control panel updated from external daemon status")
         }
     }
 
@@ -2203,6 +2230,10 @@ private func irisDriveDebugLog(_ message: String) {
 
 private func irisDriveDebugLogDirectories() -> [URL] {
     var directories = [URL]()
+    if let override = ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_LOG_DIR"],
+       !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        directories.append(URL(fileURLWithPath: override, isDirectory: true))
+    }
     if let shared = IrisDriveAppGroup.containerURL(
         teamIdentifier: currentProcessTeamIdentifier()
     ) {
