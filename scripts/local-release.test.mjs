@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -150,8 +150,10 @@ test('local-release dry-run validates planned build assets over partial existing
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-cli-test-'))
   const assetDir = join(root, 'dist')
   const stageDir = join(root, 'stage')
+  const keystorePath = join(root, 'upload-keystore.jks')
   mkdirSync(assetDir)
   writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
+  writeFileSync(keystorePath, 'test keystore placeholder')
 
   const result = spawnSync(
     process.execPath,
@@ -175,7 +177,7 @@ test('local-release dry-run validates planned build assets over partial existing
       encoding: 'utf8',
       env: {
         ...process.env,
-        ANDROID_KEYSTORE_PATH: '/tmp/iris-drive-test.jks',
+        ANDROID_KEYSTORE_PATH: keystorePath,
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
@@ -185,6 +187,112 @@ test('local-release dry-run validates planned build assets over partial existing
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
+})
+
+test('local-release final dry-run rejects a missing Android keystore file', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: '/tmp/iris-drive-missing-upload-keystore.jks',
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Android keystore file not found/)
+})
+
+test('local-release final dry-run preflights Zapstore signing before publishing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-preflight-test-'))
+  const keystorePath = join(root, 'upload-keystore.jks')
+  writeFileSync(keystorePath, 'test keystore placeholder')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: keystorePath,
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        NOSTR_KEY_PATH: '',
+        SIGN_WITH: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Missing Zapstore signing key/)
+  assert.doesNotMatch(result.stdout, /htree release publish/)
+})
+
+test('local-release final dry-run can plan Zapstore publish from signed Android build output', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-plan-test-'))
+  const binDir = join(root, 'bin')
+  const keystorePath = join(root, 'upload-keystore.jks')
+  mkdirSync(binDir)
+  writeFileSync(keystorePath, 'test keystore placeholder')
+  const zspPath = join(binDir, 'zsp')
+  writeFileSync(zspPath, '#!/bin/sh\nexit 0\n')
+  chmodSync(zspPath, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,linux,windows,android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: keystorePath,
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        PATH: `${binDir}:${process.env.PATH}`,
+        SIGN_WITH: 'nsec1test',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Would publish iris-drive-v9\.9\.9-android-arm64\.apk to Zapstore/)
 })
 
 test('local-release dry-run builds the Windows installer in dist', () => {

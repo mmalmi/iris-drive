@@ -465,6 +465,11 @@ function androidSigningIsComplete(env) {
   )
 }
 
+function androidKeystorePath(env) {
+  const value = String(env.ANDROID_KEYSTORE_PATH ?? '').trim()
+  return value ? resolve(repoRoot, value) : ''
+}
+
 function validateFinalReleaseBuildInputs({ env, steps }) {
   const missing = []
   if (steps.includes('android') && !androidSigningIsComplete(env)) {
@@ -472,8 +477,33 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
       'Android signing inputs: ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD',
     )
   }
+  if (steps.includes('android') && androidSigningIsComplete(env)) {
+    const keystorePath = androidKeystorePath(env)
+    if (!existsSync(keystorePath)) {
+      missing.push(`Android keystore file not found: ${keystorePath}`)
+    }
+  }
   if (missing.length > 0) {
     throw new Error(`Missing final release input(s): ${missing.join('; ')}`)
+  }
+}
+
+function validateFinalPublishInputs({ env, skipZapstore }) {
+  if (skipZapstore) {
+    return
+  }
+  const missing = []
+  if (!resolveZapstoreSignWith(env)) {
+    missing.push('Missing Zapstore signing key; set SIGN_WITH or NOSTR_KEY_PATH in .env.zapstore.local')
+  }
+  if (!existsSync(join(repoRoot, 'zapstore.yaml'))) {
+    missing.push('Missing zapstore.yaml; cannot publish Zapstore release')
+  }
+  if (!commandExists('zsp')) {
+    missing.push('Missing zsp; cannot publish Zapstore release')
+  }
+  if (missing.length > 0) {
+    throw new Error(`Missing final publish input(s): ${missing.join('; ')}`)
   }
 }
 
@@ -744,15 +774,16 @@ function resolveZapstoreSignWith(env) {
   return readFileSync(keyPath, 'utf8').trim()
 }
 
-function publishZapstore({ env, tag, assetDir, dryRun }) {
+function publishZapstore({ env, tag, assetDir, dryRun, plannedAssetNames = [] }) {
   const signWith = resolveZapstoreSignWith(env)
   const zapstoreYaml = join(repoRoot, 'zapstore.yaml')
   const normalizedTag = normalizeTag(tag)
+  const apkName = `iris-drive-${normalizedTag}-android-arm64.apk`
   const plan = buildZapstorePublishPlan({
     tag: normalizedTag,
     assetDir,
     distDir,
-    apkExists: existsSync(join(assetDir, `iris-drive-${normalizedTag}-android-arm64.apk`)),
+    apkExists: existsSync(join(assetDir, apkName)) || (dryRun && plannedAssetNames.includes(apkName)),
     zspAvailable: commandExists('zsp'),
     signWith,
     zapstoreYamlExists: existsSync(zapstoreYaml),
@@ -796,6 +827,9 @@ function main() {
   if (options.build && options.publish && !options.draft) {
     validateFinalReleaseBuildInputs({ env, steps: buildSteps })
   }
+  if (options.publish && !options.draft) {
+    validateFinalPublishInputs({ env, skipZapstore: options.skipZapstore })
+  }
 
   if (options.build) {
     buildReleaseArtifacts({ env, tag, options })
@@ -828,7 +862,7 @@ function main() {
     })
     console.log(`Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${cid}`)
     if (!options.draft && !options.skipZapstore) {
-      publishZapstore({ env, tag, assetDir, dryRun: options.dryRun })
+      publishZapstore({ env, tag, assetDir, dryRun: options.dryRun, plannedAssetNames })
     }
   } else if (!options.dryRun) {
     console.log(`Staged ${tag} at ${stageDir}`)
