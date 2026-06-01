@@ -97,6 +97,9 @@ require_absent ios/UITests/IrisDriveIOSUITests.swift "UIPasteboard"
 require_absent ios/UITests/IrisDriveIOSUITests.swift "app.buttons[\"linkDeviceSubmit\"].tap()"
 require_contains scripts/cross-vm-four-platform-e2e.sh "IRIS_DRIVE_E2E_IOS_HOST"
 require_contains scripts/cross-vm-four-platform-e2e.sh "scripts/ios-gui-linking-smoke.sh"
+require_contains scripts/cross-vm-four-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
+require_contains scripts/cross-vm-five-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
+require_contains scripts/cross-vm-e2e.sh '"local"'
 require_contains Justfile "ios-build"
 require_contains Justfile "ios-smoke"
 require_contains Justfile "ios-gui-smoke"

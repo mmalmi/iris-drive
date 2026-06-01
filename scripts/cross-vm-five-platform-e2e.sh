@@ -19,10 +19,12 @@ Runs the multidevice sync harness across five labeled peers:
   ios      posix daemon peer plus iOS simulator app smoke
   android  posix daemon peer plus Android adb app smoke
 
-The Android host should be reachable by SSH, have the iris-drive checkout at
-~/src/iris-drive, and have an online adb device or emulator selected by
-IRIS_DRIVE_ANDROID_SERIAL or ANDROID_SERIAL on that host. The Android peer uses
-provider commands in the sync harness; no mobile folder mount is created.
+The iOS and Android hosts may be SSH targets with the iris-drive checkout at
+~/src/iris-drive, or the literal host "local" when the simulator/device is on
+the current machine. The Android host must have an online adb device or
+emulator selected by IRIS_DRIVE_ANDROID_SERIAL or ANDROID_SERIAL. The Android
+peer uses provider commands in the sync harness; no mobile folder mount is
+created.
 USAGE
 }
 
@@ -42,6 +44,21 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+run_host_repo_command() {
+  local host="$1"
+  shift
+  if [[ "$host" == "local" ]]; then
+    (cd "$ROOT" && "$@")
+    return
+  fi
+  local quoted=()
+  local arg
+  for arg in "$@"; do
+    quoted+=("$(printf "%q" "$arg")")
+  done
+  ssh "$host" "cd \"\$HOME/src/iris-drive\" && ${quoted[*]}"
+}
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UBUNTU_HOST="$(required_env IRIS_DRIVE_E2E_UBUNTU_HOST)"
 WINDOWS_HOST="$(required_env IRIS_DRIVE_E2E_WINDOWS_HOST)"
@@ -50,16 +67,16 @@ IOS_HOST="$(required_env IRIS_DRIVE_E2E_IOS_HOST)"
 ANDROID_HOST="$(required_env IRIS_DRIVE_E2E_ANDROID_HOST)"
 
 echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
-ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-simulator-smoke.sh'
+run_host_repo_command "$IOS_HOST" scripts/ios-simulator-smoke.sh
 
 echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
-ssh "$IOS_HOST" 'cd "$HOME/src/iris-drive" && scripts/ios-gui-linking-smoke.sh'
+run_host_repo_command "$IOS_HOST" scripts/ios-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
-ssh "$ANDROID_HOST" 'cd "$HOME/src/iris-drive" && scripts/android-gui-linking-smoke.sh'
+run_host_repo_command "$ANDROID_HOST" scripts/android-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
-ssh "$ANDROID_HOST" 'cd "$HOME/src/iris-drive" && scripts/mobile-android-smoke.sh --no-build'
+run_host_repo_command "$ANDROID_HOST" scripts/mobile-android-smoke.sh --no-build
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu macos"

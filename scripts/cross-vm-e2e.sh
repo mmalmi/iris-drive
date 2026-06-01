@@ -9,9 +9,8 @@ Usage:
   scripts/cross-vm-three-platform-e2e.sh
 
 KIND is one of:
-  posix     Linux or macOS host reachable by SSH with bash
+  posix     Linux or macOS host reachable by SSH with bash, or host "local"
   windows   Windows host reachable by SSH with PowerShell
-
 For the standard macOS + Ubuntu + Windows matrix, prefer
 scripts/cross-vm-three-platform-e2e.sh with hostnames supplied through
 environment variables. That keeps private SSH hostnames out of the repo while
@@ -217,6 +216,7 @@ run_remote_exec() {
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
     printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  elif [[ "$ssh_host" == "local" ]]; then printf "%s" "$script" | bash -se
   else
     printf "%s" "$script" | ssh "$ssh_host" 'bash -se'
   fi
