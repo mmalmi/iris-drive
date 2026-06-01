@@ -624,6 +624,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
             "packets_recv": 7,
             "bytes_sent": 512,
             "bytes_recv": 1024,
+            "connection_label": "UDP, 23 ms",
         }])
     );
     assert_eq!(
