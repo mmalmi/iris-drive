@@ -442,9 +442,59 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         .get("running")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let account_block = status_account_block(&config);
+    let peers = peer_statuses(config_dir, &config, Some(payload));
+    let authorized_device_count = peers
+        .iter()
+        .filter(|peer| {
+            peer.get("authorized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
+    let online_device_count = peers
+        .iter()
+        .filter(|peer| {
+            peer.get("fips_online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
+    let file_count = payload
+        .get("summary")
+        .and_then(|summary| summary.get("file_count"))
+        .or_else(|| {
+            payload
+                .get("hashtree")
+                .and_then(|hashtree| hashtree.get("file_count"))
+        })
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok());
+    let visible_file_bytes = payload
+        .get("summary")
+        .and_then(|summary| summary.get("visible_file_bytes"))
+        .or_else(|| {
+            payload
+                .get("hashtree")
+                .and_then(|hashtree| hashtree.get("visible_file_bytes"))
+        })
+        .and_then(Value::as_u64);
+    let current_root_cid = current_primary_root_cid(&config);
+    let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &peers);
+    let summary = status_summary(
+        already_initialized(config_dir),
+        account_block.as_ref(),
+        authorized_device_count,
+        online_device_count,
+        file_count,
+        visible_file_bytes,
+        &sync_status,
+        &provider_refresh_key,
+    );
     if let Some(object) = payload.as_object_mut() {
         object.insert("relay_statuses".to_string(), relay_statuses);
         object.insert("fips".to_string(), fips);
+        object.insert("summary".to_string(), summary);
         object.insert(
             "sync".to_string(),
             json!({

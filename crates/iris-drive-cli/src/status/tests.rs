@@ -380,6 +380,46 @@ fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
 }
 
 #[test]
+fn daemon_status_writer_persists_normalized_summary_for_clients() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    owner
+        .approve_device(&linked_device, Some("Phone".into()))
+        .unwrap();
+    let config = AppConfig {
+        account: Some(owner.state.clone()),
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let linked_npub = account_npub(&linked_device);
+    write_daemon_status(
+        dir.path(),
+        json!({
+            "event": "relay_statuses",
+            "fips_block_sync": {
+                "connected_peers": [linked_npub],
+            }
+        }),
+    );
+
+    let status: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
+            .unwrap();
+
+    assert_eq!(status["summary"]["setup_state"], "authorized");
+    assert_eq!(status["summary"]["setup_complete"], true);
+    assert_eq!(status["summary"]["setup_label"], "Linked");
+    assert_eq!(status["summary"]["primary_status"], "ready");
+    assert_eq!(status["summary"]["primary_status_label"], "Ready");
+    assert_eq!(status["summary"]["authorized_device_count"], 2);
+    assert_eq!(status["summary"]["online_device_count"], 2);
+    assert_eq!(status["summary"]["sync_status"], "up to date");
+    assert_eq!(status["summary"]["sync_status_label"], "Up to date");
+}
+
+#[test]
 fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     let dir = tempfile::tempdir().unwrap();
     AppConfig::default()

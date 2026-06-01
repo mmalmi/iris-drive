@@ -1804,6 +1804,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)
             }
+            if let summary = json["summary"] as? [String: Any] {
+                Self.applyStatusSummary(summary, to: status)
+            }
 
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
             self.updateLinkMenuState()
