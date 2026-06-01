@@ -201,47 +201,8 @@ public sealed class IrisDriveStatusData
             var deviceNpub = String(peer, "device_npub") ?? "";
             var isCurrentDevice = Bool(peer, "is_current_device");
             var role = String(peer, "role") ?? "member";
-            var roleLabel = String(peer, "role_label") ?? "";
             var title = String(peer, "display_label") ?? "";
-            var details = new List<string>();
-            if (isCurrentDevice)
-            {
-                details.Add("this device");
-            }
-
-            if (!string.IsNullOrWhiteSpace(roleLabel))
-            {
-                details.Add(roleLabel);
-            }
-            var syncState = String(peer, "sync_state");
-            if (!string.IsNullOrWhiteSpace(syncState))
-            {
-                details.Add(syncState);
-            }
-
-            if (Object(peer, "last_block_sync") is { } blockSync)
-            {
-                var transport = String(blockSync, "transport");
-                var fetched = Int(blockSync, "fetched");
-                var total = Int(blockSync, "total_hashes");
-                if (!string.IsNullOrWhiteSpace(transport) && total > 0)
-                {
-                    details.Add($"{transport} {fetched}/{total}");
-                }
-            }
-
-            var rootCid = String(peer, "root_cid");
-            if (!string.IsNullOrWhiteSpace(rootCid))
-            {
-                details.Add(ShortText(rootCid));
-            }
-
-            var dck = Int(peer, "dck_generation");
-            if (dck > 0)
-            {
-                details.Add($"DCK {dck}");
-            }
-
+            var detail = String(peer, "detail") ?? "";
             var isOnline = Bool(peer, "fips_online");
             var state = String(peer, "connection_label") ?? "";
             var canManagePeer = !string.IsNullOrWhiteSpace(deviceNpub);
@@ -249,7 +210,7 @@ public sealed class IrisDriveStatusData
                 deviceNpub,
                 title,
                 role,
-                string.Join(" | ", details),
+                detail,
                 state,
                 isOnline,
                 isCurrentDevice,

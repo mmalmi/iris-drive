@@ -3,7 +3,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 use iris_drive_core::device_summary::{
-    DeviceConnectionDetails, DeviceConnectivity, device_roster_rows,
+    DeviceConnectionDetails, DeviceConnectivity, DeviceRosterRow, device_roster_rows,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -86,6 +86,13 @@ pub(crate) fn peer_statuses(
         let last_block_sync = root_cid
             .as_ref()
             .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
+        let detail = peer_detail(
+            device,
+            sync_state,
+            last_block_sync.as_ref(),
+            root_cid.as_deref(),
+            root.map(|root| root.dck_generation),
+        );
         json!({
             "device_pubkey": device.pubkey_hex,
             "device_npub": device.npub,
@@ -129,6 +136,7 @@ pub(crate) fn peer_statuses(
             "root_private": root_private,
             "root_available": root_available,
             "sync_state": sync_state,
+            "detail": detail,
             "last_block_sync": last_block_sync,
             "published_at": root.map(|root| root.published_at),
             "dck_generation": root.map(|root| root.dck_generation),
@@ -153,4 +161,65 @@ fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> 
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn peer_detail(
+    device: &DeviceRosterRow,
+    sync_state: &str,
+    last_block_sync: Option<&Value>,
+    root_cid: Option<&str>,
+    dck_generation: Option<u64>,
+) -> String {
+    let mut parts = Vec::new();
+    if device.is_current_device {
+        parts.push("this device".to_owned());
+    }
+    if !device.role_label.trim().is_empty() {
+        parts.push(device.role_label.clone());
+    }
+    if !sync_state.trim().is_empty() {
+        parts.push(sync_state.to_owned());
+    }
+    if let Some(block_sync) = last_block_sync {
+        let transport = block_sync
+            .get("transport")
+            .and_then(Value::as_str)
+            .filter(|transport| !transport.trim().is_empty());
+        let fetched = block_sync
+            .get("fetched")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let total = block_sync
+            .get("total_hashes")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        if let Some(transport) = transport
+            && total > 0
+        {
+            parts.push(format!("{transport} {fetched}/{total}"));
+        }
+    }
+    if let Some(root) = root_cid.filter(|root| !root.trim().is_empty()) {
+        parts.push(short_status_value(root));
+    }
+    if let Some(dck) = dck_generation.filter(|dck| *dck > 0) {
+        parts.push(format!("DCK {dck}"));
+    }
+    parts.join(" | ")
+}
+
+fn short_status_value(value: &str) -> String {
+    if value.chars().count() <= 32 {
+        return value.to_owned();
+    }
+    let start = value.chars().take(14).collect::<String>();
+    let end = value
+        .chars()
+        .rev()
+        .take(10)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("{start}...{end}")
 }

@@ -40,6 +40,7 @@ require_contains crates/iris-drive-cli/src/status/peers.rs "device_roster_rows("
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": device.can_revoke'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": device.can_appoint_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": device.can_demote_admin'
+require_contains crates/iris-drive-cli/src/status/peers.rs '"detail": detail'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["display_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var setupComplete = false'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var awaitingApproval = false'
@@ -56,6 +57,7 @@ require_contains windows/IrisDriveModels.cs 'AwaitingApproval = summary.HasValue
 require_contains windows/IrisDriveModels.cs 'Revoked = summary.HasValue && Bool(summary.Value, "revoked")'
 require_contains windows/IrisDriveModels.cs 'summary.HasValue && Bool(summary.Value, "setup_complete")'
 require_contains windows/IrisDriveModels.cs 'var title = String(peer, "display_label") ?? "";'
+require_contains windows/IrisDriveModels.cs 'var detail = String(peer, "detail") ?? "";'
 require_contains ios/Sources/IrisDriveNativeCore.swift "var setupComplete: Bool"
 require_contains ios/Sources/IrisDriveNativeCore.swift 'case setupComplete = "setup_complete"'
 require_contains ios/Sources/IrisDriveMobileModel.swift "lastState?.ui.setupComplete"
@@ -92,6 +94,11 @@ require_absent windows/IrisDriveModels.cs 'string.Equals(SetupState, "revoked"'
 require_absent windows/IrisDriveModels.cs '"authorized",'
 require_absent windows/IrisDriveModels.cs 'hashtree.HasValue ? Int(hashtree.Value, "file_count") : 0'
 require_absent windows/IrisDriveModels.cs 'hashtree.HasValue ? Long(hashtree.Value, "visible_file_bytes") : 0'
+require_absent windows/IrisDriveModels.cs 'var details = new List<string>()'
+require_absent windows/IrisDriveModels.cs 'details.Add('
+require_absent windows/IrisDriveModels.cs 'Object(peer, "last_block_sync")'
+require_absent windows/IrisDriveModels.cs 'String(peer, "sync_state")'
+require_absent windows/IrisDriveModels.cs 'Int(peer, "dck_generation")'
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt "connectionLabelFor"
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt "optNonBlankString"
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'get() = setupState == "authorized"'
