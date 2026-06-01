@@ -45,7 +45,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         app.buttons["welcomeCreateProfile"].tap()
         app.buttons["createProfileSubmit"].tap()
 
-        XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 15))
+        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
     }
 
     func testOpenDriveFolderInFilesApp() throws {
@@ -72,7 +72,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         devicesSummary.tap()
         XCTAssertTrue(app.navigationBars["Devices"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.tabBars.buttons["Devices"].isSelected)
+        XCTAssertTrue(tabButton("Devices", in: app).isSelected)
     }
 
     func testMyDriveFileCountMatchesExpected() throws {
@@ -94,10 +94,10 @@ final class IrisDriveIOSUITests: XCTestCase {
     func testApprovedLinkedDeviceLeavesWaiting() throws {
         let app = launchApp()
 
-        XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 45))
+        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 45))
         XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Devices"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Devices"].tap()
+        XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
+        tabButton("Devices", in: app).tap()
         XCTAssertTrue(app.staticTexts["This device"].waitForExistence(timeout: 10))
         XCTAssertTrue(
             app.staticTexts["Member | Linked | Online"].waitForExistence(timeout: 10)
@@ -110,8 +110,8 @@ final class IrisDriveIOSUITests: XCTestCase {
         let linkedDevice = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
         let app = launchApp()
 
-        XCTAssertTrue(app.tabBars.buttons["Devices"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Devices"].tap()
+        XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
+        tabButton("Devices", in: app).tap()
         XCTAssertTrue(app.buttons["addDeviceButton"].waitForExistence(timeout: 10))
         app.buttons["addDeviceButton"].tap()
 
@@ -142,8 +142,12 @@ final class IrisDriveIOSUITests: XCTestCase {
             app.buttons["welcomeCreateProfile"].tap()
             app.buttons["createProfileSubmit"].tap()
         }
-        XCTAssertTrue(app.tabBars.buttons["My Drive"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["My Drive"].tap()
+        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
+        tabButton("My Drive", in: app).tap()
+    }
+
+    private func tabButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        app.tabBars.buttons.matching(identifier: title).firstMatch
     }
 
     private func assertFilesOpen(

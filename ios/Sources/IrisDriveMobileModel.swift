@@ -56,6 +56,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var lastProviderSignalKey = ""
     private var currentProviderDirectoryPaths: [String] = []
     private var foregroundSyncTask: Task<Void, Never>?
+    private var stateGeneration: UInt64 = 0
 
     init() {
         nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
@@ -362,6 +363,7 @@ final class IrisDriveMobileModel: ObservableObject {
     #endif
 
     func refresh() {
+        stateGeneration &+= 1
         applyStateJson(nativeCore.refreshJson())
         ensureFileProviderDomainIfProfileExists()
     }
@@ -387,10 +389,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func syncOnceIfRunning() async {
-        guard isSetupComplete else {
-            await refreshInBackground()
-            return
-        }
+        guard isSetupComplete else { return }
         if syncRunning {
             await dispatchInBackground(["type": "restart_sync"])
         } else {
@@ -432,12 +431,18 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         ownerPublicKey = owner
-        dispatch([
-            "type": "link_device",
-            "owner_pubkey": owner,
-            "device_label": deviceLabel,
-        ])
-        ensureFileProviderDomainIfProfileExists()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.dispatchInBackground(
+                [
+                    "type": "link_device",
+                    "owner_pubkey": owner,
+                    "device_label": self.deviceLabel,
+                ],
+                invalidatePendingState: true
+            )
+            self.ensureFileProviderDomainIfProfileExists()
+        }
     }
 
     func relinkDevice() {
@@ -759,27 +764,36 @@ final class IrisDriveMobileModel: ObservableObject {
             statusDetail = "Unable to encode action."
             return
         }
+        stateGeneration &+= 1
         applyStateJson(nativeCore.dispatchJson(actionJson))
     }
 
-    private func dispatchInBackground(_ action: [String: Any]) async {
+    private func dispatchInBackground(
+        _ action: [String: Any],
+        invalidatePendingState: Bool = false
+    ) async {
         guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
             statusDetail = "Unable to encode action."
             return
         }
+        if invalidatePendingState {
+            stateGeneration &+= 1
+        }
+        let generation = stateGeneration
         let json = await runNativeInBackground { nativeCore in
             nativeCore.dispatchJson(actionJson)
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, generation == stateGeneration else { return }
         applyStateJson(json)
     }
 
     private func refreshInBackground() async {
+        let generation = stateGeneration
         let json = await runNativeInBackground { nativeCore in
             nativeCore.refreshJson()
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, generation == stateGeneration else { return }
         applyStateJson(json)
         ensureFileProviderDomainIfProfileExists()
     }

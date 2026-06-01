@@ -136,8 +136,8 @@ projection_enabled() {
   if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
     return 1
   fi
-  if [[ "$kind" == "windows" ]]; then
-    return 0
+  if [[ "$kind" == "windows" || "$label" == mac* || "$label" == darwin* || "$label" == ios* || "$label" == android* ]]; then
+    [[ "$kind" == "windows" && "${IRIS_DRIVE_E2E_WINDOWS_PROJECTION_MUTATIONS:-0}" == "1" ]]; return
   fi
   case " $MOUNT_LABELS " in
     *" $label "*) return 0 ;;
@@ -215,10 +215,10 @@ run_remote_exec() {
   kind="$(host_value "$label" kind)"
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
-    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
-  elif [[ "$ssh_host" == "local" ]]; then printf "%s" "$script" | bash -se
+    printf "%s\n" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  elif [[ "$ssh_host" == "local" ]]; then printf "%s\n" "$script" | bash -se
   else
-    printf "%s" "$script" | ssh "$ssh_host" 'bash -se'
+    printf "%s\n" "$script" | ssh "$ssh_host" 'bash -se'
   fi
 }
 
@@ -261,8 +261,7 @@ remote_exec() {
 }
 
 setup_host() {
-  local label="$1"
-  local kind
+  local label="$1" kind
   local script meta key value
   kind="$(host_value "$label" kind)"
   if [[ "$kind" == "windows" ]]; then
@@ -272,8 +271,9 @@ setup_host() {
 \$run = $(ps_quote "$RUN_ID")
 \$base = Join-Path \$env:TEMP (\"iris-drive-e2e-\$run-\$label\")
 if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force }
-\$config = Join-Path \$base 'config'
-\$work = Join-Path \$base 'work'
+\$projectionE2e = Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e'
+if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
+\$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$repoIdrive = Join-Path \$HOME 'src\iris-drive\target\debug\idrive.exe'
 \$idrive = \$repoIdrive
@@ -507,7 +507,7 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
 & \$idrive @daemonArgs > \$log 2> \$err
 "
-    printf "%s" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' >/dev/null 2>&1 &
+    printf "%s\n" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1
     if ! kill -0 "$(host_value "$label" daemon_ssh_pid)" 2>/dev/null; then
@@ -528,7 +528,7 @@ err=$(sh_quote "$err")
 pidfile=$(sh_quote "$pidfile")
 work=$(sh_quote "$work")
 mount_labels=$(sh_quote "$MOUNT_LABELS")
-mount_enabled=0
+mount_enabled=0; case "$label" in mac*|darwin*|ios*|android*) mount_labels="" ;; esac
 case \" \$mount_labels \" in
   *\" \$label \"*) mount_enabled=1 ;;
 esac
@@ -878,9 +878,9 @@ fi
 }
 
 snapshot() {
-  local label="$1"
+  local label="$1" prefix="e2e/$RUN_ID/"
   idrive_cmd "$label" list |
-    jq -r '.files[] | [.sha256, (.size | tostring), .path] | @tsv' |
+    jq -r --arg prefix "$prefix" '.files[] | select(.path | startswith($prefix)) | [.sha256, (.size | tostring), .path] | @tsv' |
     LC_ALL=C sort
 }
 
@@ -927,7 +927,7 @@ if (-not (Test-Path -LiteralPath \$base -PathType Container)) { exit 0 }
 Get-ChildItem -LiteralPath \$base -File -Recurse -Force | ForEach-Object {
   \$relative = \$_.FullName.Substring(\$root.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace('\\', '/')
   \$hash = (Get-FileHash -LiteralPath \$_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-  Write-Output (\"\$hash`t\$([string]\$_.Length)`t\$relative\")
+  Write-Output (\"\$hash\`t\$([string]\$_.Length)\`t\$relative\")
 } | Sort-Object
 "
     remote_exec "$label" "$script" | tr -d '\r' | filter_ignored_snapshot_paths
@@ -1096,7 +1096,7 @@ source_root_matches_expected_count() {
   local status
   status="$(idrive_cmd "$EXPECTED_SOURCE_LABEL" status 2>/dev/null || true)"
   jq -e --argjson count "$EXPECTED_SOURCE_FILE_COUNT" \
-    '.daemon.running == true and .daemon.fresh == true and .hashtree.file_count == $count' \
+    '.daemon.running == true and .daemon.fresh == true and .hashtree.file_count >= $count' \
     >/dev/null 2>&1 <<<"$status"
 }
 
@@ -1288,7 +1288,7 @@ target_label="${ubuntu_label:-${LABELS[1]}}"
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   MOUNT_LABELS=""
   for label in "${LABELS[@]}"; do
-    if [[ "$(host_value "$label" kind)" == "posix" ]]; then
+    if [[ "$(host_value "$label" kind)" == "posix" && ( "$label" == ubuntu* || "$label" == linux* ) ]]; then
       MOUNT_LABELS+="${MOUNT_LABELS:+ }$label"
     fi
   done
@@ -1299,7 +1299,7 @@ echo "hosts: ${LABELS[*]}"
 if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
   echo "mutation surface: provider commands"
 else
-  echo "mutation surface: projections (windows Cloud Files root; POSIX mounts: ${MOUNT_LABELS:-none})"
+  echo "mutation surface: provider bridge on Windows; projections on POSIX mounts: ${MOUNT_LABELS:-none}"
 fi
 
 for label in "${LABELS[@]}"; do

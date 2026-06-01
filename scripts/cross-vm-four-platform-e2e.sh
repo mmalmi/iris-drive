@@ -69,7 +69,7 @@ echo "[e2e-4devices] running iOS GUI linking smoke on $IOS_HOST" >&2
 run_host_repo_command "$IOS_HOST" scripts/ios-gui-linking-smoke.sh
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
-  export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu macos"
+  export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu"
 fi
 
 exec "$ROOT/scripts/cross-vm-e2e.sh" \

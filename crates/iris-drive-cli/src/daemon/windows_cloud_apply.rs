@@ -344,10 +344,12 @@ fn windows_cloud_missing_previous_local_state_paths(
 }
 
 fn windows_cloud_previous_local_state_reparse_counts_as_missing(
-    previous: &WindowsCloudLocalStateEntry,
-    is_reparse_point: bool,
+    _previous: &WindowsCloudLocalStateEntry,
+    _is_reparse_point: bool,
 ) -> bool {
-    is_reparse_point && !previous.is_directory() && previous.sha256.is_some()
+    // Reparse points can be normal Cloud Files placeholders; explicit NotFound
+    // events handle real local deletes without pruning projected remote files.
+    false
 }
 
 fn load_windows_cloud_provider_path_cache(config_dir: &Path) -> BTreeSet<String> {

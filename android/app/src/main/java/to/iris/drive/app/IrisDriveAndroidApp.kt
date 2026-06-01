@@ -139,6 +139,7 @@ internal fun IrisDriveAndroidApp(
 
     IrisDriveTheme {
         Scaffold(
+            modifier = Modifier.testTag("irisDriveApp"),
             containerColor = Background,
             topBar = {
                 if (state.isSetupComplete) {

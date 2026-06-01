@@ -1,6 +1,7 @@
 package to.iris.drive.app
 
 import android.content.Context
+import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
@@ -10,7 +11,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -21,8 +22,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +46,7 @@ import to.iris.drive.app.provider.IrisDriveDocumentStore
 @RunWith(AndroidJUnit4::class)
 class IrisDriveAndroidGuiFlowTest {
     @get:Rule
-    val compose = createComposeRule()
+    val compose = createAndroidComposeRule<MainActivity>()
 
     private lateinit var context: Context
     private val nativeHandles = mutableListOf<Long>()
@@ -116,6 +117,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput("npub1short")
 
         compose.onNodeWithTag("linkDeviceSubmit").assertIsNotEnabled()
+        dismissSoftKeyboard()
     }
 
     @Test
@@ -161,6 +163,7 @@ class IrisDriveAndroidGuiFlowTest {
             .performTextInput("npub1short")
 
         compose.onNodeWithTag("manualDeviceAdd").assertIsNotEnabled()
+        dismissSoftKeyboard()
     }
 
     @Test
@@ -439,30 +442,44 @@ class IrisDriveAndroidGuiFlowTest {
         onAddRoot: (String, String) -> Unit = { _, _ -> },
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
-        compose.setContent {
-            IrisDriveAndroidApp(
-                stateFlow = stateFlow,
-                onCreateProfile = onCreateProfile,
-                onRestoreProfile = { _, _ -> },
-                onLinkDevice = onLinkDevice,
-                onCopyText = { _, _ -> },
-                onOpenUrl = { _ -> },
-                onOpenDriveFolder = {},
-                onApproveDevice = onApproveDevice,
-                onResetInvite = {},
-                onDeleteDevice = onDeleteDevice,
-                onAppointAdmin = { _ -> },
-                onDemoteAdmin = { _ -> },
-                onLogout = {},
-                onAddRelay = { _ -> },
-                onRemoveRelay = { _ -> },
-                onResetRelays = {},
-                onAddRoot = onAddRoot,
-                onStartSync = {},
-                onStopSync = {},
-            )
+        compose.runOnUiThread {
+            compose.activity.setContent {
+                IrisDriveAndroidApp(
+                    stateFlow = stateFlow,
+                    onCreateProfile = onCreateProfile,
+                    onRestoreProfile = { _, _ -> },
+                    onLinkDevice = onLinkDevice,
+                    onCopyText = { _, _ -> },
+                    onOpenUrl = { _ -> },
+                    onOpenDriveFolder = {},
+                    onApproveDevice = onApproveDevice,
+                    onResetInvite = {},
+                    onDeleteDevice = onDeleteDevice,
+                    onAppointAdmin = { _ -> },
+                    onDemoteAdmin = { _ -> },
+                    onLogout = {},
+                    onAddRelay = { _ -> },
+                    onRemoveRelay = { _ -> },
+                    onResetRelays = {},
+                    onAddRoot = onAddRoot,
+                    onStartSync = {},
+                    onStopSync = {},
+                )
+            }
         }
+        waitForRenderedApp()
         return stateFlow
+    }
+
+    private fun waitForRenderedApp() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            runCatching {
+                compose.onAllNodesWithTag("irisDriveApp", useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }.getOrDefault(false)
+        }
+        compose.waitForIdle()
     }
 
     private fun createOwnerProfile(label: String): TestProfile {
@@ -512,10 +529,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     private fun dismissSoftKeyboard() {
-        InstrumentationRegistry.getInstrumentation()
-            .uiAutomation
-            .executeShellCommand("input keyevent KEYCODE_BACK")
-            .close()
+        closeSoftKeyboard()
         compose.waitForIdle()
     }
 

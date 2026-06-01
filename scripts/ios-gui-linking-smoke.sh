@@ -110,8 +110,36 @@ reset_sim_app_state() {
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   safe_remove_sim_container "$SIM_APP_BASE_DIR"
   mkdir -p "$SIM_APP_BASE_DIR"
+  clear_sim_env \
+    IRIS_DRIVE_FIPS_STATIC_PEERS \
+    IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP \
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC \
+    IRIS_DRIVE_FIPS_UDP_BIND_ADDR \
+    IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR
   xcrun simctl spawn "$DEVICE_UDID" launchctl setenv \
     IRIS_DRIVE_UI_TEST_BASE_DIR "$SIM_APP_BASE_DIR" >/dev/null
+}
+
+clear_sim_env() {
+  local key
+  for key in "$@"; do
+    xcrun simctl spawn "$DEVICE_UDID" launchctl unsetenv "$key" >/dev/null 2>&1 || true
+  done
+}
+
+set_sim_env() {
+  local assignment key value
+  for assignment in "$@"; do
+    key="${assignment%%=*}"
+    value="${assignment#*=}"
+    xcrun simctl spawn "$DEVICE_UDID" launchctl setenv "$key" "$value" >/dev/null
+  done
+}
+
+launch_sim_app() {
+  xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  set_sim_env "$@"
+  xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
 }
 
 wait_for_debug_state() {
@@ -334,6 +362,13 @@ run_ui_test \
   "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
   "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 
+launch_sim_app \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
@@ -358,6 +393,26 @@ if [[ "$roster_size" != "2" ]]; then
   echo "$approved_json" >&2
   exit 1
 fi
+
+launch_sim_app \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
+if ! wait_for_debug_state \
+  "$STATE_FILE" \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
+  45; then
+  echo "FAIL: iOS GUI device did not ingest owner approval before the approved-device UI check." >&2
+  [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testApprovedLinkedDeviceLeavesWaiting" \
   "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \

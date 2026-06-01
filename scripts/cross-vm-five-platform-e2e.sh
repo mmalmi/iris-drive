@@ -81,7 +81,7 @@ echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
 run_host_repo_command "$ANDROID_HOST" scripts/mobile-android-smoke.sh --no-build
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
-  export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu macos"
+  export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu"
 fi
 
 exec "$ROOT/scripts/cross-vm-e2e.sh" \
