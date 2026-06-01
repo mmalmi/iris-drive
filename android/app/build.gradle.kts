@@ -12,6 +12,8 @@ val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.is
 val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
 val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val irisDriveVersionName = providers.gradleProperty("irisDriveVersionName").orElse("0.1.0")
+val irisDriveVersionCode = providers.gradleProperty("irisDriveVersionCode").orElse("1")
 val hasReleaseSigning =
     releaseKeystorePath != null &&
         releaseKeystorePassword != null &&
@@ -27,8 +29,8 @@ android {
         applicationId = "to.iris.drive"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = irisDriveVersionCode.get().toInt()
+        versionName = irisDriveVersionName.get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["documentsProviderAuthority"] = "to.iris.drive.documents"
         buildConfigField("String", "DOCUMENTS_PROVIDER_AUTHORITY", "\"to.iris.drive.documents\"")

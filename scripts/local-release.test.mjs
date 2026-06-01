@@ -209,6 +209,28 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.match(result.stdout, /v9\.9\.9/)
 })
 
+test('local-release dry-run passes release versions to macOS and Android builders', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,android',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
+  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
+  assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
+  assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
+})
+
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-build-only-test-'))
   const assetDir = join(root, 'dist')

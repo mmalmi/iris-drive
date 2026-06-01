@@ -26,6 +26,7 @@ import {
   plannedReleaseAssetNames,
   readWorkspaceVersionTag,
   renderReleaseNotes,
+  semverFromTag,
   splitCsv,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
@@ -205,6 +206,23 @@ function findFirstFile(root, matcher) {
   return entry ? join(root, entry) : null
 }
 
+function buildNumberFromVersion(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) {
+    throw new Error(`Version is not semver-shaped: ${version}`)
+  }
+  const [, major, minor, patch] = match
+  return String(Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch))
+}
+
+function releaseVersionInfo(tag) {
+  const version = semverFromTag(tag)
+  return {
+    version,
+    build: buildNumberFromVersion(version),
+  }
+}
+
 function selectedBuildSteps(options) {
   const steps = options.only ? [...options.only] : defaultBuildSteps
   return steps.filter((step) => !options.skip.has(step))
@@ -329,6 +347,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     run('xcodegen', ['generate'], { cwd: join(repoRoot, 'macos'), dryRun, env })
   }
   const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
+  const releaseVersion = releaseVersionInfo(tag)
   run(
     'xcodebuild',
     [
@@ -341,6 +360,8 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       '-derivedDataPath',
       derivedData,
       'CODE_SIGNING_ALLOWED=NO',
+      `MARKETING_VERSION=${releaseVersion.version}`,
+      `CURRENT_PROJECT_VERSION=${releaseVersion.build}`,
       'build',
     ],
     { dryRun, env },
@@ -466,10 +487,21 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
       'Android release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD.',
     )
   }
-  run('bash', [join(repoRoot, 'tools', 'run-android'), ':app:assembleRelease', ':app:bundleRelease'], {
-    env,
-    dryRun,
-  })
+  const releaseVersion = releaseVersionInfo(tag)
+  run(
+    'bash',
+    [
+      join(repoRoot, 'tools', 'run-android'),
+      `-PirisDriveVersionName=${releaseVersion.version}`,
+      `-PirisDriveVersionCode=${releaseVersion.build}`,
+      ':app:assembleRelease',
+      ':app:bundleRelease',
+    ],
+    {
+      env,
+      dryRun,
+    },
+  )
   const apkPath = findFirstFile(
     join(repoRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release'),
     (entry) => entry.endsWith('.apk'),
