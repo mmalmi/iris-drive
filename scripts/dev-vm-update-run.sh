@@ -2113,7 +2113,7 @@ cd /d "$PublishDir"
   } catch {}
   $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$DaemonScript`"" -WorkingDirectory $PublishDir
   $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
-  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
 
@@ -2217,7 +2217,7 @@ $TaskName = "IrisDriveDevLaunch"
 try {
   $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
   $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
-  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
 } catch {

@@ -63,4 +63,9 @@ if ! grep -E '(^| )check-ubuntu( |$)' "$IRIS_DRIVE_FAKE_SSH_LOG" >/dev/null; the
   exit 1
 fi
 
+if ! grep -F -- "-LogonType S4U" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "Windows dev VM scheduled daemon launch must use S4U so it survives SSH sessions" >&2
+  exit 1
+fi
+
 echo "DEV_VM_UPDATE_RUN_CHECK_OK"
