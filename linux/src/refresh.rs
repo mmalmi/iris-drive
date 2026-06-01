@@ -34,12 +34,11 @@ pub(crate) fn refresh(model: &AppRef) {
             let account = account_json(&json);
             let owner_npub = find_string(account, &["owner_npub"]);
             let device_npub = find_string(account, &["device_npub"]);
-            let authorization = find_string(account, &["authorization_state"]).unwrap_or("-");
             model.ui.owner.set_text(&short_value(owner_npub));
             model.ui.device.set_text(&short_value(device_npub));
             model.ui.account_owner.set_text(owner_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
-            model.ui.account_authorization.set_text(authorization);
+            model.ui.account_authorization.set_text(setup_label_value(&json));
             model
                 .ui
                 .approve_box
