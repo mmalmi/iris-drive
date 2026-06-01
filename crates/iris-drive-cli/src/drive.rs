@@ -1,9 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::provider::{
-    ProviderListEntry, normalize_provider_parent_path, normalize_provider_path,
-    provider_cache_destination, provider_list_summary, sanitized_provider_file_name,
-    split_provider_path, unique_provider_path,
+    ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
+    normalize_provider_path, provider_cache_destination, provider_list_summary,
+    sanitized_provider_file_name, split_provider_path, unique_provider_path,
 };
 
 mod commands;
@@ -144,6 +144,21 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -> Result<()> {
+    if let ProviderCmd::NormalizePath { path } = command {
+        let path = normalize_provider_document_path(&path)?;
+        let (parent_path, display_name) = split_provider_path(&path)?;
+        println!(
+            "{}",
+            json!({
+                "parent_path": parent_path,
+                "display_name": display_name,
+                "path": path,
+                "error": "",
+            })
+        );
+        return Ok(());
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -249,6 +264,9 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                         "error": "",
                     })
                 );
+            }
+            ProviderCmd::NormalizePath { .. } => {
+                unreachable!("handled before opening provider state")
             }
             ProviderCmd::Read { path, output } => {
                 let path = normalize_provider_path(&path)?;

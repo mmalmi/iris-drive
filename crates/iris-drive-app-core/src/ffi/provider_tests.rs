@@ -136,6 +136,24 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
 }
 
 #[test]
+fn provider_normalize_path_validates_native_document_paths() {
+    let valid = super::native_provider_normalize_path_json("Reports/note.txt");
+    assert_eq!(valid["path"], "Reports/note.txt");
+    assert_eq!(valid["parent_path"], "Reports");
+    assert_eq!(valid["display_name"], "note.txt");
+    assert_eq!(valid["error"], "");
+
+    let invalid = super::native_provider_normalize_path_json("/Reports/note.txt");
+    assert_eq!(invalid["path"], "");
+    assert!(
+        invalid["error"]
+            .as_str()
+            .unwrap()
+            .contains("canonical provider path")
+    );
+}
+
+#[test]
 fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

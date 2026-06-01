@@ -33,6 +33,7 @@ internal object NativeCore {
         displayName: String,
         excludingPath: String,
     ): String
+    external fun providerNormalizePathJson(path: String): String
     external fun applyOwnerSnapshotForTest(ownerDataDir: String, linkedDataDir: String): String
 
     fun classifyLinkInputKind(text: String): String =
@@ -44,4 +45,14 @@ internal object NativeCore {
         runCatching {
             JSONObject(classifyLinkInputJson(text.trim())).optBoolean("is_complete")
         }.getOrDefault(false)
+
+    fun normalizedProviderPath(path: String): String? {
+        val json = JSONObject(providerNormalizePathJson(path))
+        val error = json.optString("error").takeIf { it.isNotBlank() }
+        return if (error != null) {
+            null
+        } else {
+            json.optString("path").takeIf { it.isNotBlank() }
+        }
+    }
 }

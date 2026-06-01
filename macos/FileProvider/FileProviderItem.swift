@@ -106,8 +106,10 @@ enum FileProviderStorage {
     private static let providerListCacheTTL: TimeInterval = 1.0
     private static let minDisplayUnixSeconds: Int64 = 946_684_800
     private static let providerListCacheLock = NSLock()
+    private static let providerPathCacheLock = NSLock()
     private static let contentCacheLock = NSLock()
     private static var providerListCache: (loadedAt: Date, list: ProviderList)?
+    private static var providerPathCache: [String: String] = [:]
     private static var configuredRuntime: Runtime?
 
     struct Runtime: Decodable {
@@ -336,12 +338,11 @@ enum FileProviderStorage {
         guard raw.hasPrefix(pathPrefix) else { return nil }
         let encoded = String(raw.dropFirst(pathPrefix.count))
         guard let data = Data(base64Encoded: encoded),
-              let relative = String(data: data, encoding: .utf8),
-              isSafeRelativePath(relative)
+              let relative = String(data: data, encoding: .utf8)
         else {
             return nil
         }
-        return relative
+        return normalizedProviderPath(relative)
     }
 
     static func identifier(for path: String) -> NSFileProviderItemIdentifier {
@@ -898,12 +899,6 @@ enum FileProviderStorage {
         return directory
     }
 
-    private static func isSafeRelativePath(_ path: String) -> Bool {
-        !path.isEmpty
-            && !path.hasPrefix("/")
-            && !path.split(separator: "/").contains("..")
-    }
-
     private static func resolvedPath(
         parent: String,
         name: String,
@@ -922,6 +917,28 @@ enum FileProviderStorage {
             throw providerError("provider path resolver returned no path")
         }
         return resolved
+    }
+
+    private static func normalizedProviderPath(_ path: String) -> String? {
+        providerPathCacheLock.lock()
+        if let cached = providerPathCache[path] {
+            providerPathCacheLock.unlock()
+            return cached
+        }
+        providerPathCacheLock.unlock()
+
+        guard let data = try? runIDrive(arguments: ["provider", "normalize-path", path]),
+              let resolved = try? JSONDecoder().decode(ProviderResolvedPath.self, from: data),
+              resolved.error?.isEmpty != false,
+              !resolved.path.isEmpty
+        else {
+            return nil
+        }
+
+        providerPathCacheLock.lock()
+        providerPathCache[path] = resolved.path
+        providerPathCacheLock.unlock()
+        return resolved.path
     }
 
     private static func appGroupApplicationSupportDirectory() -> URL {

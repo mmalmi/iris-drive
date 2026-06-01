@@ -6,9 +6,9 @@ use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
-    ProviderListEntry, normalize_provider_parent_path, normalize_provider_path,
-    optional_normalized_provider_path, provider_list_summary, sanitized_provider_file_name,
-    split_provider_path, unique_provider_path,
+    ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
+    normalize_provider_path, optional_normalized_provider_path, provider_list_summary,
+    sanitized_provider_file_name, split_provider_path, unique_provider_path,
 };
 use iris_drive_core::{Account, AppConfig};
 use serde_json::json;
@@ -95,6 +95,18 @@ pub(crate) fn native_provider_resolve_path_json(
     }
 }
 
+pub(crate) fn native_provider_normalize_path_json(path: &str) -> serde_json::Value {
+    match run_native_provider_normalize_path(path) {
+        Ok(value) => value,
+        Err(error) => json!({
+            "path": "",
+            "parent_path": "",
+            "display_name": "",
+            "error": format!("{error:#}"),
+        }),
+    }
+}
+
 pub(crate) fn native_provider_import_shared_file(
     data_dir: &str,
     display_name: &str,
@@ -112,6 +124,17 @@ pub(crate) fn native_provider_import_shared_file(
         write_provider_file(&provider, &path, &bytes).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
     })
+}
+
+fn run_native_provider_normalize_path(path: &str) -> anyhow::Result<serde_json::Value> {
+    let path = normalize_provider_document_path(path)?;
+    let (parent_path, display_name) = split_provider_path(&path)?;
+    Ok(json!({
+        "parent_path": parent_path,
+        "display_name": display_name,
+        "path": path,
+        "error": "",
+    }))
 }
 
 fn run_native_provider_resolve_path(

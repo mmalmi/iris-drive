@@ -182,7 +182,7 @@ internal class IrisDriveDocumentStore(
         val error = json.optString("error").takeIf { it.isNotBlank() }
         if (error != null) return emptyList()
         return json.optJSONArray("entries").orEmptyObjects().mapNotNull { entry ->
-            val path = entry.optString("path").trim('/')
+            val path = entry.optString("path")
             if (path.isBlank()) {
                 null
             } else {
@@ -231,14 +231,15 @@ internal class IrisDriveDocumentStore(
         if (!documentId.startsWith(ROOT_CHILD_PREFIX)) {
             throw FileNotFoundException(documentId)
         }
-        val path = documentId.removePrefix(ROOT_CHILD_PREFIX).trim('/')
-        if (path.isBlank() || path.split('/').any { it.isBlank() || it == "." || it == ".." }) {
-            throw FileNotFoundException(documentId)
-        }
-        return path
+        val path = documentId.removePrefix(ROOT_CHILD_PREFIX)
+        return NativeCore.normalizedProviderPath(path) ?: throw FileNotFoundException(documentId)
     }
 
-    private fun documentIdForPath(path: String): String = "$ROOT_DOCUMENT_ID/${path.trim('/')}"
+    private fun documentIdForPath(path: String): String {
+        val normalized = NativeCore.normalizedProviderPath(path)
+            ?: throw FileNotFoundException(path)
+        return "$ROOT_DOCUMENT_ID/$normalized"
+    }
 
     private fun tempFile(prefix: String): File {
         val dir = File(dataDir, "provider-tmp")

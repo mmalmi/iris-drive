@@ -439,6 +439,12 @@ pub(crate) enum ProviderCmd {
         /// Existing virtual path to ignore when resolving rename collisions.
         excluding_path: Option<String>,
     },
+    /// Validate a native provider document id path and return its canonical metadata.
+    #[command(name = "normalize-path", hide = true)]
+    NormalizePath {
+        /// Virtual path carried inside a native provider document id.
+        path: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

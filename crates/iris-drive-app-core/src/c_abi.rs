@@ -15,8 +15,9 @@ use crate::{
     FfiApp, NativeAppAction, NativeAppState, ffi::classify_link_input,
     ffi::native_provider_delete_json, ffi::native_provider_import_shared_file_json,
     ffi::native_provider_list_json, ffi::native_provider_mkdir_json,
-    ffi::native_provider_read_json, ffi::native_provider_rename_json,
-    ffi::native_provider_resolve_path_json, ffi::native_provider_write_json,
+    ffi::native_provider_normalize_path_json, ffi::native_provider_read_json,
+    ffi::native_provider_rename_json, ffi::native_provider_resolve_path_json,
+    ffi::native_provider_write_json,
 };
 
 pub struct IrisDriveAppHandle {
@@ -204,6 +205,11 @@ pub extern "C" fn iris_drive_provider_resolve_path_json(
         &c_string_lossy(display_name),
         &c_string_lossy(excluding_path),
     ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_normalize_path_json(path: *const c_char) -> *mut c_char {
+    json_string(&native_provider_normalize_path_json(&c_string_lossy(path)))
 }
 
 /// # Safety
@@ -458,6 +464,17 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerResolvePat
         env,
         &native_provider_resolve_path_json(&data_dir, &parent_path, &display_name, &excluding_path),
     )
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_providerNormalizePathJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    path: JString<'_>,
+) -> jstring {
+    let path = jni_string_lossy(&mut env, &path);
+    jni_json_string(env, &native_provider_normalize_path_json(&path))
 }
 
 #[cfg(target_os = "android")]

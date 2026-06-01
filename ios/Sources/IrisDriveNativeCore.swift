@@ -78,6 +78,11 @@ private func irisDriveProviderResolvePathJson(
     _ excludingPath: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_provider_normalize_path_json")
+private func irisDriveProviderNormalizePathJson(
+    _ path: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_string_free")
 private func irisDriveStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
@@ -246,6 +251,18 @@ enum IrisDriveNativeProvider {
               let value = try? JSONDecoder().decode(NativeProviderResolvedPath.self, from: data)
         else {
             return NativeProviderResolvedPath(error: "native provider path resolver returned invalid JSON")
+        }
+        return value
+    }
+
+    static func normalizePath(path: String) -> NativeProviderResolvedPath {
+        let json = path.withCString { pathPointer in
+            takeString(irisDriveProviderNormalizePathJson(pathPointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeProviderResolvedPath.self, from: data)
+        else {
+            return NativeProviderResolvedPath(error: "native provider path normalizer returned invalid JSON")
         }
         return value
     }

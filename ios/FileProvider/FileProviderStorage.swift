@@ -102,12 +102,12 @@ enum FileProviderStorage {
         guard raw.hasPrefix(pathPrefix) else { return nil }
         let encoded = String(raw.dropFirst(pathPrefix.count))
         guard let data = Data(base64Encoded: encoded),
-              let relative = String(data: data, encoding: .utf8),
-              isSafeRelativePath(relative)
+              let relative = String(data: data, encoding: .utf8)
         else {
             return nil
         }
-        return relative
+        let normalized = IrisDriveNativeProvider.normalizePath(path: relative)
+        return normalized.error.isEmpty && !normalized.path.isEmpty ? normalized.path : nil
     }
 
     static func identifier(for path: String) -> NSFileProviderItemIdentifier {
@@ -490,12 +490,6 @@ enum FileProviderStorage {
             throw providerError("provider path resolver returned no path")
         }
         return resolved
-    }
-
-    private static func isSafeRelativePath(_ path: String) -> Bool {
-        !path.isEmpty
-            && !path.hasPrefix("/")
-            && !path.split(separator: "/").contains("..")
     }
 
     private static func providerError(_ message: String) -> NSError {

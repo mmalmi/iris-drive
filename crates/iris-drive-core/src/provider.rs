@@ -74,6 +74,14 @@ pub fn normalize_provider_path(path: &str) -> anyhow::Result<String> {
     Ok(segments.join("/"))
 }
 
+pub fn normalize_provider_document_path(path: &str) -> anyhow::Result<String> {
+    let normalized = normalize_provider_path(path)?;
+    if normalized != path {
+        anyhow::bail!("provider document id is not a canonical provider path: {path}");
+    }
+    Ok(normalized)
+}
+
 pub fn normalize_provider_parent_path(path: &str) -> anyhow::Result<String> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
@@ -170,6 +178,18 @@ mod tests {
     fn provider_path_normalization_rejects_native_separator_aliases() {
         assert!(normalize_provider_path("Reports\\note.txt").is_err());
         assert!(normalize_provider_path("Reports:note.txt").is_err());
+    }
+
+    #[test]
+    fn provider_document_path_requires_canonical_relative_path() {
+        assert_eq!(
+            normalize_provider_document_path("Reports/note.txt").unwrap(),
+            "Reports/note.txt"
+        );
+        assert!(normalize_provider_document_path("/Reports/note.txt").is_err());
+        assert!(normalize_provider_document_path("Reports/note.txt/").is_err());
+        assert!(normalize_provider_document_path("Reports/../note.txt").is_err());
+        assert!(normalize_provider_document_path("Reports\\note.txt").is_err());
     }
 
     #[test]

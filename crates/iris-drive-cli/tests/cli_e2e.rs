@@ -95,6 +95,26 @@ fn link_input_classify_uses_app_core_completion() {
 }
 
 #[test]
+fn provider_normalize_path_uses_core_document_path_validation() {
+    let dir = tempdir().unwrap();
+
+    let normalized = run_json(
+        dir.path(),
+        &["provider", "normalize-path", "Reports/note.txt"],
+    );
+    assert_eq!(normalized["path"], "Reports/note.txt");
+    assert_eq!(normalized["parent_path"], "Reports");
+    assert_eq!(normalized["display_name"], "note.txt");
+    assert_eq!(normalized["error"], "");
+
+    idrive(dir.path())
+        .args(["provider", "normalize-path", "/Reports/note.txt"])
+        .assert()
+        .failure()
+        .stderr(contains("canonical provider path"));
+}
+
+#[test]
 fn install_cli_and_uninstall_cli_roundtrip_for_custom_path() {
     let dir = tempdir().unwrap();
     let target = dir.path().join(if cfg!(windows) {
