@@ -47,6 +47,23 @@ test('buildReleaseManifest marks idrive archives as binary archives', () => {
   assert.equal(manifest.assets[0].target, 'x86_64-unknown-linux-musl')
 })
 
+test('buildReleaseManifest records the Windows idrive executable name', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
+  const cli = join(root, 'idrive-v0.2.27-x86_64-pc-windows-msvc.zip')
+  writeFileSync(cli, 'archive')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    createdAt: 1774523304,
+    assetPaths: [cli],
+  })
+
+  assert.equal(manifest.assets[0].kind, 'binary-archive')
+  assert.equal(manifest.assets[0].executable, 'idrive.exe')
+  assert.equal(manifest.assets[0].target, 'x86_64-pc-windows-msvc')
+})
+
 test('buildReleaseManifestFiles writes both updater manifest names', () => {
   const files = buildReleaseManifestFiles({
     app: 'iris-drive',

@@ -225,7 +225,7 @@ function inferAssetMetadata(name) {
     return {
       target,
       kind: 'binary-archive',
-      executable: 'idrive',
+      executable: target.includes('windows') ? 'idrive.exe' : 'idrive',
     }
   }
   if (/\.dmg$/.test(name)) {
