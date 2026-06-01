@@ -186,6 +186,7 @@ structure:
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
     ./scripts/check-desktop-gui-e2e-kit.sh
+    ./scripts/check-client-primary-status-ownership.sh
     ./scripts/check-device-summary-ownership.sh
     ./scripts/check-fips-status-normalization.sh
     ./scripts/check-linux-core-owned-status.sh

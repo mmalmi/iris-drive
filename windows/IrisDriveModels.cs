@@ -17,19 +17,14 @@ public sealed class IrisDriveStatusData
     public string PrimaryStatus { get; init; } = "not_setup";
     public string PrimaryStatusLabel { get; init; } = "Ready";
     public string? DeviceLinkRequestUrl { get; init; }
-    public int RosterSize { get; init; }
     public int AuthorizedDeviceCount { get; init; }
     public int OnlineDeviceCount { get; init; }
-    public int PublishedDeviceRoots { get; init; }
     public string? ConfigDirectory { get; init; }
     public string? CurrentRootCid { get; init; }
     public string ProviderRefreshKey { get; init; } = "";
     public string? SnapshotUrl { get; init; }
     public int FileCount { get; init; }
-    public int TopLevelEntries { get; init; }
     public long VisibleFileBytes { get; init; }
-    public int LocalBlockCount { get; init; }
-    public long LocalBlockBytes { get; init; }
     public bool LocalNhashResolverEnabled { get; init; } = true;
     public IReadOnlyList<DriveRow> Drives { get; init; } = Array.Empty<DriveRow>();
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
@@ -70,13 +65,10 @@ public sealed class IrisDriveStatusData
             DeviceLinkRequestUrl = deviceLinkRequest.HasValue
                 ? String(deviceLinkRequest.Value, "url")
                 : null,
-            RosterSize = account.HasValue ? Int(account.Value, "roster_size") : 0,
             AuthorizedDeviceCount = summary.HasValue
                 ? Int(summary.Value, "authorized_device_count")
                 : 0,
             OnlineDeviceCount = summary.HasValue ? Int(summary.Value, "online_device_count") : 0,
-            PublishedDeviceRoots =
-                network.HasValue ? Int(network.Value, "published_device_roots") : 0,
             ConfigDirectory = String(root, "config_dir"),
             CurrentRootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
             ProviderRefreshKey = BuildProviderRefreshKey(root),
@@ -84,12 +76,9 @@ public sealed class IrisDriveStatusData
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,
             FileCount = summary.HasValue ? Int(summary.Value, "file_count") : 0,
-            TopLevelEntries = hashtree.HasValue ? Int(hashtree.Value, "top_level_entries") : 0,
             VisibleFileBytes = summary.HasValue
                 ? Long(summary.Value, "visible_file_bytes")
                 : 0,
-            LocalBlockCount = hashtree.HasValue ? Int(hashtree.Value, "local_block_count") : 0,
-            LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
             LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
             Drives = drives,
             Peers = PeerRows(root),
@@ -141,20 +130,14 @@ public sealed class IrisDriveStatusData
 
     private static string? ExtractDrivePath(JsonElement root)
     {
-        return JsonSetupComplete(root) ? WindowsCloudFiles.SyncRootPath : null;
-    }
-
-    private static bool JsonSetupComplete(JsonElement root)
-    {
-        if (!Bool(root, "initialized") || Object(root, "account") is not { } account)
-        {
-            return false;
-        }
-
-        return string.Equals(
-            String(account, "authorization_state"),
-            "authorized",
-            StringComparison.Ordinal);
+        var summary = Object(root, "summary");
+        return summary.HasValue &&
+            string.Equals(
+                String(summary.Value, "setup_state"),
+                "authorized",
+                StringComparison.Ordinal)
+            ? WindowsCloudFiles.SyncRootPath
+            : null;
     }
 
     private static bool ExtractLocalNhashResolverEnabled(JsonElement root)

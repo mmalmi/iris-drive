@@ -107,7 +107,7 @@ public partial class MainWindow : Window
             var syncRunning = EnsureDaemonRunning(status);
             if (status.IsAwaitingLinkedApproval)
             {
-                RenderAwaitingApproval(status, syncRunning, null);
+                RenderAwaitingApproval(status, null);
                 return;
             }
             if (!status.IsSetupComplete)
@@ -153,7 +153,6 @@ public partial class MainWindow : Window
 
     private void RenderAwaitingApproval(
         IrisDriveStatusData status,
-        bool syncRunning,
         string? notice)
     {
         SetupRoot.Visibility = Visibility.Visible;
@@ -161,7 +160,7 @@ public partial class MainWindow : Window
         ShowSetupPanel(AwaitingPanel);
         AwaitingOwnerBox.Text = status.OwnerNpub ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? "";
-        SetupNotice.Text = notice ?? (syncRunning ? "Waiting for approval" : "Sync paused");
+        SetupNotice.Text = notice ?? status.PrimaryStatusLabel;
     }
 
     private void RenderRevokedDevice(IrisDriveStatusData status, string? notice)
@@ -179,10 +178,9 @@ public partial class MainWindow : Window
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
     {
         DriveTitle.Text = status.DriveName;
-        DriveMessage.Text = syncRunning ? "Sync on" : "Paused";
-        StatusPill.Text = syncRunning ? "On" : "Paused";
-        FilesValue.Text = (status.FileCount > 0 ? status.FileCount : status.TopLevelEntries)
-            .ToString(CultureInfo.InvariantCulture);
+        DriveMessage.Text = status.PrimaryStatusLabel;
+        StatusPill.Text = status.PrimaryStatusLabel;
+        FilesValue.Text = status.FileCount.ToString(CultureInfo.InvariantCulture);
         StorageValue.Text = FormatBytes(status.VisibleFileBytes);
         DevicesValue.Text = $"{status.OnlineDeviceCount}/{status.AuthorizedDeviceCount}";
         NoticeText.Text = notice ?? "";

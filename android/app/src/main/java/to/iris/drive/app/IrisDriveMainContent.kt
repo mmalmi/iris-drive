@@ -249,7 +249,7 @@ private fun SettingsContent(
 
 @Composable
 private fun StatusPanel(state: AppState) {
-    val statusText = if (state.sync.running) "Up to date" else "Paused"
+    val statusText = state.primaryStatusLabel
     CardSection(title = "My Drive", trailing = statusText.lowercase()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(
@@ -260,7 +260,7 @@ private fun StatusPanel(state: AppState) {
             Spacer(Modifier.size(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Iris Drive", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
-                Text(statusText, color = if (state.sync.running) Teal else Muted, fontWeight = FontWeight.SemiBold)
+                Text(statusText, color = statusColor(state.primaryStatus), fontWeight = FontWeight.SemiBold)
             }
         }
         Text(
@@ -302,8 +302,8 @@ private fun SyncPanel(
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
 ) {
-    CardSection(title = "Sync", trailing = if (state.sync.running) "on" else "paused") {
-        StatRow("State", state.sync.status.ifBlank { if (state.sync.running) "on" else "paused" })
+    CardSection(title = "Sync", trailing = state.sync.status.ifBlank { state.primaryStatus }) {
+        StatRow("State", state.sync.status.ifBlank { state.primaryStatusLabel })
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (state.sync.running) {
                 OutlinedButton(onClick = onStopSync) {
@@ -542,6 +542,15 @@ private fun relayHealthColor(health: String): Color =
         "online" -> Color(0xFF16A34A)
         "connecting" -> Color(0xFFF5A524)
         "error" -> Danger
+        else -> Muted
+    }
+
+@Composable
+private fun statusColor(status: String): Color =
+    when (status) {
+        "ready" -> Teal
+        "revoked" -> Danger
+        "awaiting_approval" -> Color(0xFFF5A524)
         else -> Muted
     }
 
