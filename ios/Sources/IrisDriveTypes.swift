@@ -30,6 +30,28 @@ struct IrisDriveBackup: Identifiable, Equatable {
     var detail: String
 }
 
+struct IrisDriveRelayStatus: Identifiable, Equatable {
+    var id: String { url }
+    var url: String
+    var status: String
+    var statusLabel: String
+    var health: String
+
+    init(url: String, status: String, statusLabel: String, health: String) {
+        self.url = url
+        self.status = status
+        self.statusLabel = statusLabel
+        self.health = health
+    }
+
+    init(_ native: NativeRelayStatus) {
+        url = native.url
+        status = native.status
+        statusLabel = native.statusLabel
+        health = native.health
+    }
+}
+
 struct IrisDriveRoot: Identifiable, Equatable {
     var id: String { name }
     var name: String

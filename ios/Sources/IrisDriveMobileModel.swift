@@ -7,6 +7,9 @@ private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveFileProviderDisplayName = "Iris Drive"
 private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
+private let defaultRelayStatuses = defaultRelays.map {
+    IrisDriveRelayStatus(url: $0, status: "configured", statusLabel: "saved", health: "configured")
+}
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
@@ -31,6 +34,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var relay = defaultRelay
     @Published var relayInput = ""
     @Published var relays = defaultRelays
+    @Published var relayStatuses = defaultRelayStatuses
     @Published var syncOverCellular = false
     @Published var syncRunning = false
     @Published var fileProviderStatus = "Files provider not registered"
@@ -683,6 +687,7 @@ final class IrisDriveMobileModel: ObservableObject {
             roots = []
             backups = []
             relays = defaultRelays
+            relayStatuses = defaultRelayStatuses
             relay = defaultRelay
             syncRunning = false
             statusTitle = "Ready"
@@ -708,6 +713,16 @@ final class IrisDriveMobileModel: ObservableObject {
             statusDetail = fileProviderError
         }
         relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
+        relayStatuses = state.ui.relayStatuses.isEmpty
+            ? relays.map {
+                IrisDriveRelayStatus(
+                    url: $0,
+                    status: "configured",
+                    statusLabel: "saved",
+                    health: "configured"
+                )
+            }
+            : state.ui.relayStatuses.map(IrisDriveRelayStatus.init)
         relay = relays.first ?? defaultRelay
         devices = state.ui.devices.map { device in
             return IrisDriveDevice(

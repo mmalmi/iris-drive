@@ -766,12 +766,20 @@ private struct SettingsView: View {
             }
 
             Section("Network") {
-                ForEach(model.relays, id: \.self) { relay in
+                ForEach(model.relayStatuses) { relay in
                     HStack {
-                        Text(relay)
+                        Circle()
+                            .fill(relayHealthColor(relay.health))
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(relay.url)
+                            Text(relay.statusLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Button(role: .destructive) {
-                            model.removeRelay(relay)
+                            model.removeRelay(relay.url)
                         } label: {
                             Image(systemName: "trash")
                         }
@@ -819,6 +827,19 @@ private struct SettingsView: View {
                 model.logout()
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func relayHealthColor(_ health: String) -> Color {
+        switch health {
+        case "online":
+            return .green
+        case "connecting":
+            return .orange
+        case "error":
+            return .red
+        default:
+            return .secondary
         }
     }
 }
