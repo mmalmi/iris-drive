@@ -31,6 +31,9 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         .filter(|value| !value.is_null())
         .cloned()
         .unwrap_or(Value::Null);
+    let state = fips_state(fips_status.is_some(), running, fresh, &error);
+    let state_label = fips_state_label(state);
+    let roster_label = fips_roster_label(roster_online_device_count, authorized_peers.len());
     let nostr_discovery_app = fips_status
         .and_then(|status| status.get("nostr_discovery_app"))
         .and_then(Value::as_str)
@@ -44,6 +47,9 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "enabled": fips_status.is_some(),
         "running": running,
         "fresh": fresh,
+        "state": state,
+        "state_label": state_label,
+        "roster_label": roster_label,
         "endpoint_npub": fips_status
             .and_then(|status| status.get("endpoint_npub"))
             .and_then(Value::as_str),
@@ -100,16 +106,85 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
         "connected_peers": direct_devices,
         "mesh_devices": mesh_devices,
         "mesh_peers": mesh_devices,
-        "peer_statuses": fips_status
-            .and_then(|status| status.get("peer_statuses"))
-            .cloned()
-            .unwrap_or_else(|| json!([])),
+        "peer_statuses": normalized_fips_peer_statuses(
+            fips_status.and_then(|status| status.get("peer_statuses"))
+        ),
         "relay_statuses": fips_status
             .and_then(|status| status.get("relay_statuses"))
             .cloned()
             .unwrap_or_else(|| json!([])),
         "error": error,
     })
+}
+
+fn fips_state(enabled: bool, running: bool, fresh: bool, error: &Value) -> &'static str {
+    if fips_error_is_present(error) {
+        return "error";
+    }
+    if enabled && fresh {
+        return "running";
+    }
+    if enabled || running {
+        return "stale";
+    }
+    "paused"
+}
+
+fn fips_error_is_present(error: &Value) -> bool {
+    match error {
+        Value::Null => false,
+        Value::String(value) => !value.is_empty(),
+        _ => true,
+    }
+}
+
+fn fips_state_label(state: &str) -> &'static str {
+    match state {
+        "error" => "Error",
+        "running" => "Running",
+        "stale" => "Stale",
+        _ => "Paused",
+    }
+}
+
+fn fips_roster_label(online_count: usize, roster_count: usize) -> String {
+    format!("{online_count}/{roster_count} online")
+}
+
+fn normalized_fips_peer_statuses(value: Option<&Value>) -> Value {
+    Value::Array(
+        value
+            .and_then(Value::as_array)
+            .map(|statuses| {
+                statuses
+                    .iter()
+                    .filter_map(|status| {
+                        let object = status.as_object()?;
+                        let mut normalized = object.clone();
+                        normalized.insert(
+                            "connection_label".to_owned(),
+                            Value::String(fips_peer_connection_label(status)),
+                        );
+                        Some(Value::Object(normalized))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+fn fips_peer_connection_label(status: &Value) -> String {
+    let transport = status
+        .get("transport_type")
+        .and_then(Value::as_str)
+        .map(str::to_uppercase);
+    let srtt_ms = status.get("srtt_ms").and_then(Value::as_u64);
+    match (transport, srtt_ms) {
+        (Some(transport), Some(srtt_ms)) => format!("{transport}, {srtt_ms} ms"),
+        (Some(transport), None) => transport,
+        (None, Some(srtt_ms)) => format!("{srtt_ms} ms"),
+        _ => "Online".to_owned(),
+    }
 }
 
 fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {

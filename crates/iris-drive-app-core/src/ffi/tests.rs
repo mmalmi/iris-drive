@@ -492,6 +492,8 @@ fn native_fips_status_drives_device_online_presence() {
     assert_eq!(current.state, "Linked");
     assert_eq!(current.connection_state, "local");
     assert_eq!(current.connection_label, "This device");
+    assert_eq!(refreshed.ui.fips.state, "running");
+    assert_eq!(refreshed.ui.fips.state_label, "Running");
     let linked = refreshed
         .ui
         .devices
@@ -531,6 +533,8 @@ fn native_fips_status_drives_device_online_presence() {
     );
     let stale = app.refresh();
     assert!(stale.ui.devices.iter().all(|device| !device.is_online));
+    assert_eq!(stale.ui.fips.state, "stale");
+    assert_eq!(stale.ui.fips.state_label, "Stale");
     let linked = stale
         .ui
         .devices

@@ -99,6 +99,8 @@ pub struct UiFipsStatus {
     pub enabled: bool,
     pub running: bool,
     pub fresh: bool,
+    pub state: String,
+    pub state_label: String,
     pub endpoint_npub: String,
     pub online_device_count: u64,
     pub direct_device_count: u64,

@@ -110,12 +110,19 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
             "authorized_peers": ["npub1b", "npub1c"],
             "connected_peers": ["npub1b"],
             "mesh_peers": ["npub1c", "npub1x"],
-            "peer_statuses": [{"npub": "npub1b"}]
+            "peer_statuses": [{
+                "npub": "npub1b",
+                "transport_type": "tcp",
+                "srtt_ms": 12
+            }]
         }
     });
 
     let fips = fips_network_diagnostics(&config, Some(&daemon_status));
 
+    assert_eq!(fips["state"], "running");
+    assert_eq!(fips["state_label"], "Running");
+    assert_eq!(fips["roster_label"], "2/2 online");
     assert_eq!(fips["direct_devices"], json!(["npub1b"]));
     assert_eq!(fips["mesh_devices"], json!(["npub1c", "npub1x"]));
     assert_eq!(
@@ -124,6 +131,7 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
     );
     assert_eq!(fips["roster_online_device_count"], 2);
     assert_eq!(fips["other_peer_count"], 1);
+    assert_eq!(fips["peer_statuses"][0]["connection_label"], "TCP, 12 ms");
 }
 
 #[test]

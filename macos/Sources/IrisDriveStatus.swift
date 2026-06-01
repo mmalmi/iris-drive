@@ -83,8 +83,11 @@ struct IrisDriveFipsStatus: Equatable {
     let enabled: Bool
     let running: Bool
     let fresh: Bool
+    let state: String
+    let stateLabel: String
     let endpointNpub: String?
     let discoveryScope: String?
+    let rosterLabel: String
     let rosterPeerCount: Int
     let rosterOnlineDeviceCount: Int
     let rosterDirectDeviceCount: Int
@@ -99,8 +102,11 @@ struct IrisDriveFipsStatus: Equatable {
         enabled: Bool = false,
         running: Bool = false,
         fresh: Bool = false,
+        state: String = "paused",
+        stateLabel: String = "Paused",
         endpointNpub: String? = nil,
         discoveryScope: String? = nil,
+        rosterLabel: String = "0/0 online",
         rosterPeerCount: Int = 0,
         rosterOnlineDeviceCount: Int = 0,
         rosterDirectDeviceCount: Int = 0,
@@ -114,8 +120,11 @@ struct IrisDriveFipsStatus: Equatable {
         self.enabled = enabled
         self.running = running
         self.fresh = fresh
+        self.state = state
+        self.stateLabel = stateLabel
         self.endpointNpub = endpointNpub
         self.discoveryScope = discoveryScope
+        self.rosterLabel = rosterLabel
         self.rosterPeerCount = rosterPeerCount
         self.rosterOnlineDeviceCount = rosterOnlineDeviceCount
         self.rosterDirectDeviceCount = rosterDirectDeviceCount
@@ -131,8 +140,11 @@ struct IrisDriveFipsStatus: Equatable {
         enabled = json["enabled"] as? Bool ?? false
         running = json["running"] as? Bool ?? false
         fresh = json["fresh"] as? Bool ?? false
+        state = json["state"] as? String ?? ""
+        stateLabel = json["state_label"] as? String ?? ""
         endpointNpub = json["endpoint_npub"] as? String
         discoveryScope = json["discovery_scope"] as? String
+        rosterLabel = json["roster_label"] as? String ?? ""
         rosterPeerCount = (json["roster_peer_count"] as? NSNumber)?.intValue ?? 0
         rosterOnlineDeviceCount =
             (json["roster_online_device_count"] as? NSNumber)?.intValue
@@ -153,23 +165,6 @@ struct IrisDriveFipsStatus: Equatable {
         peerStatuses = (json["peer_statuses"] as? [[String: Any]] ?? []).map(IrisDriveFipsPeerStatus.init)
         error = json["error"] as? String
     }
-
-    var stateText: String {
-        if error != nil {
-            return "Error"
-        }
-        if enabled && fresh {
-            return "Running"
-        }
-        if enabled || running {
-            return "Stale"
-        }
-        return "Paused"
-    }
-
-    var rosterText: String {
-        "\(rosterOnlineDeviceCount)/\(rosterPeerCount) online"
-    }
 }
 
 struct IrisDriveFipsPeerStatus: Identifiable, Equatable {
@@ -177,25 +172,14 @@ struct IrisDriveFipsPeerStatus: Identifiable, Equatable {
     let npub: String
     let transportType: String?
     let srttMS: Int?
+    let connectionLabel: String
 
     init(json: [String: Any]) {
         npub = json["npub"] as? String ?? UUID().uuidString
         id = npub
         transportType = json["transport_type"] as? String
         srttMS = (json["srtt_ms"] as? NSNumber)?.intValue
-    }
-
-    var connectionText: String {
-        switch (transportType?.uppercased(), srttMS) {
-        case let (transport?, latency?):
-            return "\(transport), \(latency) ms"
-        case let (transport?, nil):
-            return transport
-        case let (nil, latency?):
-            return "\(latency) ms"
-        default:
-            return "Online"
-        }
+        connectionLabel = json["connection_label"] as? String ?? ""
     }
 }
 

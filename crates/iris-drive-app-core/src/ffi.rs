@@ -1511,23 +1511,31 @@ fn string_union<'a>(values: impl IntoIterator<Item = &'a Vec<String>>) -> Vec<St
 
 fn ui_fips_status(status: Option<&NativeFipsStatus>) -> UiFipsStatus {
     let Some(status) = status else {
-        return UiFipsStatus::default();
+        return UiFipsStatus {
+            state: "paused".to_owned(),
+            state_label: "Paused".to_owned(),
+            ..UiFipsStatus::default()
+        };
     };
-    let direct_devices = if status.is_fresh() {
+    let fresh = status.is_fresh();
+    let direct_devices = if fresh {
         status.normalized_direct_devices()
     } else {
         Vec::new()
     };
-    let mesh_devices = if status.is_fresh() {
+    let mesh_devices = if fresh {
         status.normalized_mesh_devices()
     } else {
         Vec::new()
     };
     let online_devices = status.normalized_online_devices();
+    let state = native_fips_state(status, fresh);
     UiFipsStatus {
         enabled: true,
         running: status.running,
-        fresh: status.is_fresh(),
+        fresh,
+        state: state.to_owned(),
+        state_label: native_fips_state_label(state).to_owned(),
         endpoint_npub: status.endpoint_npub.clone().unwrap_or_default(),
         online_device_count: online_devices.len() as u64,
         direct_device_count: direct_devices.len() as u64,
@@ -1536,6 +1544,32 @@ fn ui_fips_status(status: Option<&NativeFipsStatus>) -> UiFipsStatus {
         direct_devices,
         mesh_devices,
         error: status.error.clone().unwrap_or_default(),
+    }
+}
+
+fn native_fips_state(status: &NativeFipsStatus, fresh: bool) -> &'static str {
+    if status
+        .error
+        .as_deref()
+        .is_some_and(|error| !error.is_empty())
+    {
+        return "error";
+    }
+    if fresh {
+        return "running";
+    }
+    if status.running {
+        return "stale";
+    }
+    "paused"
+}
+
+fn native_fips_state_label(state: &str) -> &'static str {
+    match state {
+        "error" => "Error",
+        "running" => "Running",
+        "stale" => "Stale",
+        _ => "Paused",
     }
 }
 

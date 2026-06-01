@@ -1312,8 +1312,8 @@ private struct FipsDiagnostics: View {
                 alignment: .leading,
                 spacing: 8
             ) {
-                NetworkMetric(title: "State", value: status.stateText)
-                NetworkMetric(title: "Roster", value: status.rosterText)
+                NetworkMetric(title: "State", value: status.stateLabel)
+                NetworkMetric(title: "Roster", value: status.rosterLabel)
                 NetworkMetric(title: "Other", value: "\(status.otherPeerCount)")
                 NetworkMetric(title: "Direct", value: "\(status.directDeviceCount)")
                 NetworkMetric(title: "Mesh", value: "\(status.meshDeviceCount)")
@@ -1339,7 +1339,7 @@ private struct FipsDiagnostics: View {
                         .font(.system(.caption, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(peer.connectionText)
+                    Text(peer.connectionLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
