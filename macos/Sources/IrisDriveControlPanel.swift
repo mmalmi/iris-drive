@@ -480,11 +480,10 @@ struct IrisDriveControlPanel: View {
     }
 
     private var syncState: IrisDriveSyncState {
-        if !status.daemonRunning {
+        if !status.daemonRunning || status.syncStatus == "paused" {
             return .paused
         }
-        let message = status.message.lowercased()
-        if message.contains("attention") || message.contains("failed") {
+        if status.syncStatus == "sync error" {
             return .attention
         }
         if let upload = status.lastUpload,
@@ -522,14 +521,10 @@ struct IrisDriveControlPanel: View {
 
     private var heroText: String {
         switch syncState {
-        case .upToDate:
-            return "Up to date"
         case let .syncing(done, total):
             return "Syncing \(done) of \(total)…"
-        case .paused:
-            return "Paused"
-        case .attention:
-            return "Sync failed"
+        case .upToDate, .paused, .attention:
+            return status.syncStatusLabel
         }
     }
 

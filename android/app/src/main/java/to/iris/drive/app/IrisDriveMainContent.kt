@@ -302,8 +302,8 @@ private fun SyncPanel(
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
 ) {
-    CardSection(title = "Sync", trailing = state.sync.status.ifBlank { state.primaryStatus }) {
-        StatRow("State", state.sync.status.ifBlank { state.primaryStatusLabel })
+    CardSection(title = "Sync", trailing = state.sync.statusLabel) {
+        StatRow("State", state.sync.statusLabel)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (state.sync.running) {
                 OutlinedButton(onClick = onStopSync) {

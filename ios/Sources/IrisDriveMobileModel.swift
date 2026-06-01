@@ -99,7 +99,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var syncStateTitle: String {
-        syncRunning ? "Sync on" : "Sync paused"
+        lastState?.ui.sync.statusLabel ?? "Sync paused"
     }
 
     var snapshotLink: String {
@@ -707,7 +707,7 @@ final class IrisDriveMobileModel: ObservableObject {
         syncRunning = state.ui.sync.running
         authorizationState = state.ui.setupLabel
         statusTitle = state.ui.primaryStatusLabel
-        statusDetail = state.error.isEmpty ? syncStateTitle : state.error
+        statusDetail = state.error.isEmpty ? state.ui.sync.statusLabel : state.error
         if !fileProviderError.isEmpty {
             statusTitle = "Open in Files failed"
             statusDetail = fileProviderError

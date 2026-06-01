@@ -21,6 +21,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var setupLabel = "Not linked"
     @Published var primaryStatus = "not_setup"
     @Published var primaryStatusLabel = "Ready"
+    @Published var syncStatus = "paused"
+    @Published var syncStatusLabel = "Sync paused"
     @Published var authorizationState: String?
     @Published var rosterSize = 0
     @Published var authorizedDeviceCount = 0

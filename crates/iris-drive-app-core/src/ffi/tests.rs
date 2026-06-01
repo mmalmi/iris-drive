@@ -78,6 +78,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(state.ui.snapshot_link.is_empty());
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
+    assert_eq!(state.ui.sync.status_label, "Sync on");
     assert!(!state.ui.relays.is_empty());
     assert_eq!(state.ui.relay_statuses.len(), state.ui.relays.len());
     assert_eq!(state.ui.relay_statuses[0].status_label, "saved");
@@ -95,10 +96,12 @@ fn profile_actions_populate_mobile_parity_state() {
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "up to date");
+    assert_eq!(state.ui.sync.status_label, "Up to date");
 
     let state = app.dispatch(NativeAppAction::StopSync);
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
+    assert_eq!(state.ui.sync.status_label, "Sync paused");
 }
 
 #[test]
@@ -277,6 +280,7 @@ fn logout_clears_local_profile_state_and_key_material() {
     assert!(state.ui.roots.is_empty());
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
+    assert_eq!(state.ui.sync.status_label, "Sync paused");
     assert!(!dir.path().join("key").exists());
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     assert!(config.account.is_none());
@@ -486,6 +490,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     assert!(refreshed.ui.snapshot_link.is_empty());
     assert!(!refreshed.ui.sync.running);
     assert_eq!(refreshed.ui.sync.status, "paused");
+    assert_eq!(refreshed.ui.sync.status_label, "Sync paused");
 
     let relinked = linked_app.dispatch(NativeAppAction::LinkDevice {
         owner_pubkey: owner_npub,

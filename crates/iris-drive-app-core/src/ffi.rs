@@ -20,6 +20,7 @@ use iris_drive_core::device_summary::{
     authorization_state_key, device_connection_label, device_connection_state,
     device_display_label, device_management_actions, device_role_key, device_role_label,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
+    sync_status_label,
 };
 #[cfg(not(test))]
 use iris_drive_core::fips_status::online_device_ids;
@@ -172,6 +173,7 @@ impl NativeAppRuntime {
         state.ui.sync = UiSyncStatus {
             running: true,
             status: "running".to_owned(),
+            status_label: sync_status_label("running"),
         };
 
         let mut runtime = Self {
@@ -825,10 +827,19 @@ impl NativeAppRuntime {
     }
 
     fn set_sync_running(&mut self, running: bool) {
+        self.set_sync_status(running, if running { "running" } else { "paused" });
+    }
+
+    fn set_sync_status(&mut self, running: bool, status: &str) {
         self.state.ui.sync = UiSyncStatus {
             running,
-            status: if running { "running" } else { "paused" }.to_owned(),
+            status: status.to_owned(),
+            status_label: sync_status_label(status),
         };
+    }
+
+    fn refresh_sync_status_label(&mut self) {
+        self.state.ui.sync.status_label = sync_status_label(&self.state.ui.sync.status);
     }
 
     fn start_sync(&mut self) {
@@ -836,9 +847,11 @@ impl NativeAppRuntime {
         match run_native_sync_once(&self.data_dir) {
             Ok(report) => {
                 native_sync_status_label(&report).clone_into(&mut self.state.ui.sync.status);
+                self.refresh_sync_status_label();
             }
             Err(error) => {
                 "sync error".clone_into(&mut self.state.ui.sync.status);
+                self.refresh_sync_status_label();
                 self.state.error = format!("syncing drive: {error:#}");
             }
         }

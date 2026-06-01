@@ -120,6 +120,7 @@ internal data class PathState(
 internal data class SyncState(
     val running: Boolean = false,
     val status: String = "",
+    val statusLabel: String = "Sync paused",
 )
 
 internal data class SyncRoot(
@@ -260,6 +261,7 @@ private fun JSONObject.toSync(): SyncState =
     SyncState(
         running = optBoolean("running"),
         status = optString("status"),
+        statusLabel = optString("status_label", "Sync paused"),
     )
 
 private fun JSONArray?.toRoots(): List<SyncRoot> {

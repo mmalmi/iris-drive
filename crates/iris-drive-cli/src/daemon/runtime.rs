@@ -1,5 +1,7 @@
 #[allow(clippy::needless_pass_by_value)]
 fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
+    let mut payload = payload;
+    normalize_daemon_status_for_clients(config_dir, &mut payload);
     write_daemon_status(config_dir, payload.clone());
     println!("{payload}");
 }

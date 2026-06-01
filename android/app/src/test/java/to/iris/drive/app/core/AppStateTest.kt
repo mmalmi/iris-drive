@@ -16,6 +16,11 @@ class AppStateTest {
                 "setup_label": "Linked",
                 "primary_status": "ready",
                 "primary_status_label": "Ready",
+                "sync": {
+                  "running": true,
+                  "status": "up to date",
+                  "status_label": "Up to date"
+                },
                 "devices": [{
                   "pubkey": "device-a",
                   "label": "Pixel",
@@ -38,6 +43,7 @@ class AppStateTest {
 
         assertEquals("Linked", state.setupLabel)
         assertEquals("Ready", state.primaryStatusLabel)
+        assertEquals("Up to date", state.sync.statusLabel)
         assertEquals("This device", state.devices.single().displayLabel)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)

@@ -95,6 +95,7 @@ pub struct UiPaths {
 pub struct UiSyncStatus {
     pub running: bool,
     pub status: String,
+    pub status_label: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

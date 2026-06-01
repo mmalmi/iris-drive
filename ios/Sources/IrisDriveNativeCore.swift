@@ -492,6 +492,13 @@ struct NativePaths: Codable {
 struct NativeSyncStatus: Codable {
     var running: Bool
     var status: String
+    var statusLabel: String
+
+    enum CodingKeys: String, CodingKey {
+        case running
+        case status
+        case statusLabel = "status_label"
+    }
 }
 
 struct NativeFipsStatus: Codable {

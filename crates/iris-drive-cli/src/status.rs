@@ -6,6 +6,7 @@ mod peers;
 
 use iris_drive_core::device_summary::{
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
+    sync_status_label,
 };
 pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
@@ -91,6 +92,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
     let account_block = status_account_block(&config);
+    let sync_status = daemon_sync_status(daemon_status.as_ref());
     println!(
         "{}",
         json!({
@@ -105,6 +107,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 online_device_count,
                 file_count,
                 visible_file_bytes,
+                &sync_status,
             ),
             "drives": config.drives.iter().map(|d| json!({
                 "drive_id": d.drive_id,
@@ -156,6 +159,7 @@ pub(crate) fn status_summary(
     online_device_count: usize,
     file_count: Option<usize>,
     visible_file_bytes: Option<u64>,
+    sync_status: &str,
 ) -> Value {
     let setup_state = if initialized {
         account
@@ -171,11 +175,59 @@ pub(crate) fn status_summary(
         "setup_label": setup_label_for_setup_state(setup_state),
         "primary_status": primary_status,
         "primary_status_label": primary_status_label(primary_status),
+        "sync_status": sync_status,
+        "sync_status_label": sync_status_label(sync_status),
         "authorized_device_count": authorized_device_count,
         "online_device_count": online_device_count,
         "file_count": file_count.unwrap_or_default(),
         "visible_file_bytes": visible_file_bytes.unwrap_or_default(),
     })
+}
+
+pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
+    let Some(status) = daemon_status else {
+        return "paused".to_owned();
+    };
+    if !status
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return "paused".to_owned();
+    }
+    if status
+        .get("blossom_upload")
+        .and_then(Value::as_object)
+        .is_some_and(|upload| {
+            let uploaded = upload
+                .get("uploaded")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let already_present = upload
+                .get("already_present")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let total = upload
+                .get("total_hashes")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            total > 0 && uploaded.saturating_add(already_present) < total
+        })
+    {
+        return "syncing".to_owned();
+    }
+    match status
+        .get("event")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "initial_publish_error" | "auto_publish_error" | "apply_error" => "sync error",
+        "initial_publish" | "auto_published" | "blossom_downloaded" => "synced",
+        "drive_root" => "root synced",
+        "shutdown" => "paused",
+        _ => "up to date",
+    }
+    .to_owned()
 }
 
 pub(crate) fn cmd_nhash_resolver(
@@ -458,9 +510,23 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         normalized_relay_statuses_for_relays(&runtime_relays, Some(payload))
     };
     let fips = fips_network_diagnostics(&config, Some(payload));
+    let sync_status = daemon_sync_status(Some(payload));
+    let sync_status_label = sync_status_label(&sync_status);
+    let sync_running = payload
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if let Some(object) = payload.as_object_mut() {
         object.insert("relay_statuses".to_string(), relay_statuses);
         object.insert("fips".to_string(), fips);
+        object.insert(
+            "sync".to_string(),
+            json!({
+                "running": sync_running,
+                "status": sync_status,
+                "status_label": sync_status_label,
+            }),
+        );
     }
 }
 

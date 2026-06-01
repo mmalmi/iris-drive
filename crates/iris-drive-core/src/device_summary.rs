@@ -40,6 +40,21 @@ pub fn primary_status_label(primary_status: &str) -> &'static str {
 }
 
 #[must_use]
+pub fn sync_status_label(sync_status: &str) -> String {
+    match sync_status {
+        "running" => "Sync on".to_owned(),
+        "syncing" => "Syncing".to_owned(),
+        "synced" => "Synced".to_owned(),
+        "root synced" => "Root synced".to_owned(),
+        "up to date" => "Up to date".to_owned(),
+        "sync error" => "Sync failed".to_owned(),
+        "paused" => "Sync paused".to_owned(),
+        value if value.trim().is_empty() => "Sync paused".to_owned(),
+        value => value.to_owned(),
+    }
+}
+
+#[must_use]
 pub fn device_role_key(role: DeviceRole) -> &'static str {
     match role {
         DeviceRole::Admin => "admin",
@@ -161,6 +176,9 @@ mod tests {
             primary_status_label("awaiting_approval"),
             "Waiting for approval"
         );
+        assert_eq!(sync_status_label("running"), "Sync on");
+        assert_eq!(sync_status_label("up to date"), "Up to date");
+        assert_eq!(sync_status_label("paused"), "Sync paused");
 
         assert_eq!(device_role_key(DeviceRole::Admin), "admin");
         assert_eq!(device_role_label(DeviceRole::Member), "Member");

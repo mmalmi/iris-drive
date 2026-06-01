@@ -1681,6 +1681,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                let enabled = gateway["enabled"] as? Bool {
                 status.localNhashResolverEnabled = enabled
             }
+            if let sync = json["sync"] as? [String: Any] {
+                Self.applyDaemonSyncStatus(sync, to: status)
+            }
 
             self.updateLinkMenuState()
         }
@@ -1707,6 +1710,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let primaryStatusLabel = summary["primary_status_label"] as? String {
             status.primaryStatusLabel = primaryStatusLabel
         }
+        if let syncStatus = summary["sync_status"] as? String {
+            status.syncStatus = syncStatus
+        }
+        if let syncStatusLabel = summary["sync_status_label"] as? String {
+            status.syncStatusLabel = syncStatusLabel
+        }
         status.authorizedDeviceCount =
             Self.intValue(summary["authorized_device_count"]) ?? 0
         status.onlineDeviceCount =
@@ -1714,6 +1723,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         status.fileCount = Self.intValue(summary["file_count"]) ?? 0
         status.visibleFileBytes =
             Self.int64Value(summary["visible_file_bytes"]) ?? 0
+    }
+
+    private static func applyDaemonSyncStatus(_ sync: [String: Any], to status: IrisDriveStatus) {
+        if let syncStatus = sync["status"] as? String {
+            status.syncStatus = syncStatus
+        }
+        if let syncStatusLabel = sync["status_label"] as? String {
+            status.syncStatusLabel = syncStatusLabel
+        }
     }
 
     func refreshStatus() {
@@ -1785,6 +1803,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let gateway = json["browser_gateway"] as? [String: Any],
                let enabled = gateway["enabled"] as? Bool {
                 status.localNhashResolverEnabled = enabled
+            }
+            if let sync = json["sync"] as? [String: Any] {
+                Self.applyDaemonSyncStatus(sync, to: status)
             }
 
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
