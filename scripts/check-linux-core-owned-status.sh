@@ -37,6 +37,7 @@ require_contains linux/src/render.rs 'find_string(peer, &["connection_label"])'
 require_contains linux/src/render.rs 'find_bool(peer, &["can_appoint_admin"])'
 require_contains linux/src/render.rs 'find_string(fips, &["state_label"])'
 require_contains linux/src/render.rs 'find_string(fips, &["roster_label"])'
+require_contains linux/src/render.rs 'find_number(fips, &["direct_device_count"])'
 require_contains linux/src/render.rs 'find_string(peer, &["connection_label"])'
 require_contains linux/src/render.rs 'render_relay_statuses(relays_list, network)'
 
@@ -55,5 +56,6 @@ require_absent linux/src/render.rs "fn fips_connection_label"
 require_absent linux/src/render.rs "fn fips_peer_status_label"
 require_absent linux/src/render.rs "pub(crate) fn relay_status"
 require_absent linux/src/render.rs '"roster_connected_peer_count"'
+require_absent linux/src/render.rs '"connected_peer_count"'
 
 echo "LINUX_CORE_OWNED_STATUS_OK"

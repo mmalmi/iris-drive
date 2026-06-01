@@ -175,13 +175,13 @@ pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
     let other = find_number(fips, &["other_peer_count"])
         .unwrap_or(0)
         .to_string();
-    let connected = find_number(fips, &["connected_peer_count"])
+    let direct = find_number(fips, &["direct_device_count"])
         .unwrap_or(0)
         .to_string();
     list.append(&simple_row("State", &state));
     list.append(&simple_row("Roster FIPS", &roster));
     list.append(&simple_row("Other FIPS", &other));
-    list.append(&simple_row("Connected", &connected));
+    list.append(&simple_row("Direct FIPS", &direct));
     if let Some(endpoint) = find_string(fips, &["endpoint_npub"]).filter(|value| !value.is_empty())
     {
         list.append(&simple_row("Endpoint", endpoint));
