@@ -71,7 +71,9 @@ public sealed class IrisDriveStatusData
             OnlineDeviceCount = summary.HasValue ? Int(summary.Value, "online_device_count") : 0,
             ConfigDirectory = String(root, "config_dir"),
             CurrentRootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
-            ProviderRefreshKey = BuildProviderRefreshKey(root),
+            ProviderRefreshKey = summary.HasValue
+                ? String(summary.Value, "provider_refresh_key") ?? ""
+                : "",
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,
@@ -182,47 +184,6 @@ public sealed class IrisDriveStatusData
         }
 
         return rows;
-    }
-
-    private static string BuildProviderRefreshKey(JsonElement root)
-    {
-        var parts = new List<string>();
-        if (Object(root, "hashtree") is { } hashtree)
-        {
-            var current = String(hashtree, "current_root_cid");
-            if (!string.IsNullOrWhiteSpace(current))
-            {
-                parts.Add($"current:{current}");
-            }
-        }
-
-        if (root.TryGetProperty("peers", out var peers) && peers.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var peer in peers.EnumerateArray())
-            {
-                var label = String(peer, "label") ??
-                    String(peer, "device_npub") ??
-                    String(peer, "device_pubkey") ??
-                    "peer";
-                var rootCid = String(peer, "root_cid") ?? "no-root";
-                var syncState = String(peer, "sync_state") ?? "";
-                var rootAvailable = Bool(peer, "root_available");
-                parts.Add($"{label}:{rootCid}:{syncState}:{rootAvailable}");
-                if (Object(peer, "last_block_sync") is { } blockSync)
-                {
-                    var blockRoot = String(blockSync, "root_cid") ?? rootCid;
-                    var transport = String(blockSync, "transport") ?? "";
-                    var fetched = Int(blockSync, "fetched");
-                    var alreadyLocal = Int(blockSync, "already_local");
-                    var totalHashes = Int(blockSync, "total_hashes");
-                    parts.Add(
-                        $"{label}:blocks:{blockRoot}:{transport}:{fetched}:{alreadyLocal}:{totalHashes}");
-                }
-            }
-        }
-
-        parts.Sort(StringComparer.Ordinal);
-        return string.Join("|", parts);
     }
 
     private static IReadOnlyList<PeerRow> PeerRows(JsonElement root)

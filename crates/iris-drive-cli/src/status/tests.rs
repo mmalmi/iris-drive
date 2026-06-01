@@ -122,6 +122,7 @@ fn status_summary_emits_shared_setup_and_count_fields() {
         Some(3),
         Some(42),
         "up to date",
+        "current:root-cid",
     );
 
     assert_eq!(summary["setup_state"], "authorized");
@@ -134,8 +135,9 @@ fn status_summary_emits_shared_setup_and_count_fields() {
     assert_eq!(summary["visible_file_bytes"], 42);
     assert_eq!(summary["sync_status"], "up to date");
     assert_eq!(summary["sync_status_label"], "Up to date");
+    assert_eq!(summary["provider_refresh_key"], "current:root-cid");
 
-    let unconfigured = status_summary(false, None, 0, 0, None, None, "paused");
+    let unconfigured = status_summary(false, None, 0, 0, None, None, "paused", "");
     assert_eq!(unconfigured["setup_state"], "not_configured");
     assert_eq!(unconfigured["setup_label"], "Not linked");
     assert_eq!(unconfigured["primary_status"], "not_setup");

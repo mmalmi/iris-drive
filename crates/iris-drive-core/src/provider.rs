@@ -55,6 +55,77 @@ pub fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> Pro
     }
 }
 
+#[must_use]
+pub fn provider_refresh_key(current_root_cid: Option<&str>, peers: &[serde_json::Value]) -> String {
+    let mut parts = Vec::new();
+    if let Some(current) = current_root_cid
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("current:{current}"));
+    }
+
+    for peer in peers {
+        let label = non_empty_json_str(peer, "label")
+            .or_else(|| non_empty_json_str(peer, "device_npub"))
+            .or_else(|| non_empty_json_str(peer, "device_pubkey"))
+            .unwrap_or("peer");
+        let root_cid = non_empty_json_str(peer, "root_cid").unwrap_or("no-root");
+        let sync_state = peer
+            .get("sync_state")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let root_available = peer
+            .get("root_available")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        parts.push(format!("{label}:{root_cid}:{sync_state}:{root_available}"));
+
+        if let Some(block_sync) = peer
+            .get("last_block_sync")
+            .and_then(serde_json::Value::as_object)
+        {
+            let block_root = block_sync
+                .get("root_cid")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(root_cid);
+            let transport = block_sync
+                .get("transport")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let fetched = json_i64(block_sync.get("fetched"));
+            let already_local = json_i64(block_sync.get("already_local"));
+            let total_hashes = json_i64(block_sync.get("total_hashes"));
+            parts.push(format!(
+                "{label}:blocks:{block_root}:{transport}:{fetched}:{already_local}:{total_hashes}"
+            ));
+        }
+    }
+
+    parts.sort();
+    parts.join("|")
+}
+
+fn non_empty_json_str<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    value
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn json_i64(value: Option<&serde_json::Value>) -> i64 {
+    value
+        .and_then(|value| {
+            value.as_i64().or_else(|| {
+                value
+                    .as_u64()
+                    .and_then(|unsigned| i64::try_from(unsigned).ok())
+            })
+        })
+        .unwrap_or_default()
+}
+
 pub fn normalize_provider_path(path: &str) -> anyhow::Result<String> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
@@ -245,5 +316,39 @@ mod tests {
         assert_eq!(summary.directory_paths, vec!["Reports"]);
         assert!(summary.change_key.contains("Reports/nested.txt"));
         assert!(summary.change_key.contains("file"));
+    }
+
+    #[test]
+    fn provider_refresh_key_includes_root_and_peer_block_sync_state() {
+        let peers = vec![
+            serde_json::json!({
+                "label": "Laptop",
+                "root_cid": "peer-root-b",
+                "sync_state": "synced",
+                "root_available": true,
+                "last_block_sync": {
+                    "root_cid": "peer-root-b",
+                    "transport": "fips",
+                    "fetched": 2,
+                    "already_local": 3,
+                    "total_hashes": 5
+                }
+            }),
+            serde_json::json!({
+                "device_npub": "npub1device",
+                "root_cid": "peer-root-a",
+                "sync_state": "pending"
+            }),
+        ];
+
+        assert_eq!(
+            provider_refresh_key(Some("current-root"), &peers),
+            concat!(
+                "Laptop:blocks:peer-root-b:fips:2:3:5|",
+                "Laptop:peer-root-b:synced:true|",
+                "current:current-root|",
+                "npub1device:peer-root-a:pending:false"
+            )
+        );
     }
 }

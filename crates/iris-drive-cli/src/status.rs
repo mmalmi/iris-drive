@@ -12,6 +12,7 @@ pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
 };
+use iris_drive_core::provider::provider_refresh_key;
 use iris_drive_core::relay_config::normalize_relay_url;
 use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 pub(crate) use network::fips_network_diagnostics;
@@ -69,6 +70,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .and_then(|root| root_conflict_status(config_dir, root))
         .unwrap_or_else(|| conflict_status_payload(&[]));
     let peers = peer_statuses(config_dir, &config, daemon_status.as_ref());
+    let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &peers);
     let authorized_device_count = peers
         .iter()
         .filter(|peer| {
@@ -108,6 +110,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 file_count,
                 visible_file_bytes,
                 &sync_status,
+                &provider_refresh_key,
             ),
             "drives": config.drives.iter().map(|d| json!({
                 "drive_id": d.drive_id,
@@ -160,6 +163,7 @@ pub(crate) fn status_summary(
     file_count: Option<usize>,
     visible_file_bytes: Option<u64>,
     sync_status: &str,
+    provider_refresh_key: &str,
 ) -> Value {
     let setup_state = if initialized {
         account
@@ -177,6 +181,7 @@ pub(crate) fn status_summary(
         "primary_status_label": primary_status_label(primary_status),
         "sync_status": sync_status,
         "sync_status_label": sync_status_label(sync_status),
+        "provider_refresh_key": provider_refresh_key,
         "authorized_device_count": authorized_device_count,
         "online_device_count": online_device_count,
         "file_count": file_count.unwrap_or_default(),
