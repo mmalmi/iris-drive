@@ -210,6 +210,9 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     assert_eq!(current["role_label"], "Admin");
     assert_eq!(current["connection_state"], "local");
     assert_eq!(current["connection_label"], "This device");
+    assert_eq!(current["can_revoke"], false);
+    assert_eq!(current["can_appoint_admin"], false);
+    assert_eq!(current["can_demote_admin"], false);
 
     let linked = peers
         .iter()
@@ -219,6 +222,9 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     assert_eq!(linked["role_label"], "Member");
     assert_eq!(linked["connection_state"], "direct");
     assert_eq!(linked["connection_label"], "Online (TCP, 17 ms)");
+    assert_eq!(linked["can_revoke"], true);
+    assert_eq!(linked["can_appoint_admin"], true);
+    assert_eq!(linked["can_demote_admin"], false);
 }
 
 #[test]

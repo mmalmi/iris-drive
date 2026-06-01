@@ -326,9 +326,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
-    let fipsOnlineVia: String?
-    let fipsTransportType: String?
-    let fipsSrttMS: Int?
     let connectionState: String
     let connectionLabel: String
     let hasRoot: Bool
@@ -344,9 +341,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         let isCurrentDeviceValue = json["is_current_device"] as? Bool ?? false
         let authorizedValue = json["authorized"] as? Bool ?? false
         let fipsOnlineValue = json["fips_online"] as? Bool ?? false
-        let fipsOnlineViaValue = json["fips_online_via"] as? String
-        let fipsTransportTypeValue = json["fips_transport_type"] as? String
-        let fipsSrttMSValue = (json["fips_srtt_ms"] as? NSNumber)?.intValue
         id = pubkey
         npub = json["device_npub"] as? String ?? pubkey
         label = labelValue
@@ -357,9 +351,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         isCurrentDevice = isCurrentDeviceValue
         authorized = authorizedValue
         fipsOnline = fipsOnlineValue
-        fipsOnlineVia = fipsOnlineViaValue
-        fipsTransportType = fipsTransportTypeValue
-        fipsSrttMS = fipsSrttMSValue
         connectionState = json["connection_state"] as? String ?? ""
         connectionLabel = json["connection_label"] as? String ?? ""
         hasRoot = json["has_root"] as? Bool ?? false

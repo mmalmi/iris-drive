@@ -3,8 +3,8 @@ use super::*;
 use std::collections::BTreeSet;
 
 use iris_drive_core::device_summary::{
-    device_connection_label, device_connection_state, device_display_label, device_role_key,
-    device_role_label as device_role_display_label,
+    device_connection_label, device_connection_state, device_display_label,
+    device_management_actions, device_role_key, device_role_label as device_role_display_label,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -44,6 +44,12 @@ pub(crate) fn peer_statuses(
     let block_sync_by_root = daemon_status
         .and_then(|status| status.get("block_sync_by_root"))
         .filter(|value| value.is_object());
+    let can_manage_devices = account.can_manage_devices();
+    let admin_count = snapshot
+        .devices
+        .iter()
+        .filter(|device| device.role == iris_drive_core::DeviceRole::Admin)
+        .count();
 
     snapshot
         .devices
@@ -88,6 +94,12 @@ pub(crate) fn peer_statuses(
             );
             let connection_label =
                 device_connection_label(connection_state, fips_transport_type, fips_srtt_ms);
+            let actions = device_management_actions(
+                can_manage_devices,
+                is_current_device,
+                device.role == iris_drive_core::DeviceRole::Admin,
+                admin_count,
+            );
             let sync_state = device_sync_state(is_current_device, root.is_some(), root_available);
             let last_block_sync = root_cid
                 .as_ref()
@@ -113,6 +125,9 @@ pub(crate) fn peer_statuses(
                 "fips_online_via": fips_online_via,
                 "connection_state": connection_state,
                 "connection_label": connection_label,
+                "can_revoke": actions.can_revoke,
+                "can_appoint_admin": actions.can_appoint_admin,
+                "can_demote_admin": actions.can_demote_admin,
                 "fips_transport_type": fips_transport_type,
                 "fips_transport_addr": fips_peer_status
                     .and_then(|status| status.get("transport_addr"))

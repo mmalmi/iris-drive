@@ -94,9 +94,7 @@ public sealed class IrisDriveStatusData
             LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
             LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
             Drives = drives,
-            Peers = PeerRows(
-                root,
-                account.HasValue && Bool(account.Value, "has_owner_signing_authority")),
+            Peers = PeerRows(root),
             BackupTargets = network.HasValue
                 ? BackupTargetRows(network.Value)
                 : Array.Empty<BackupTargetRow>(),
@@ -246,7 +244,7 @@ public sealed class IrisDriveStatusData
         return string.Join("|", parts);
     }
 
-    private static IReadOnlyList<PeerRow> PeerRows(JsonElement root, bool canManageDevices)
+    private static IReadOnlyList<PeerRow> PeerRows(JsonElement root)
     {
         var rows = new List<PeerRow>();
         if (!root.TryGetProperty("peers", out var peers) || peers.ValueKind != JsonValueKind.Array)
@@ -254,32 +252,23 @@ public sealed class IrisDriveStatusData
             return rows;
         }
 
-        var adminCount = 0;
-        foreach (var peer in peers.EnumerateArray())
-        {
-            if (String(peer, "role") == "admin")
-            {
-                adminCount += 1;
-            }
-        }
-
         foreach (var peer in peers.EnumerateArray())
         {
             var deviceNpub = String(peer, "device_npub") ?? "";
             var isCurrentDevice = Bool(peer, "is_current_device");
             var role = String(peer, "role") ?? "member";
-            var roleLabel = String(peer, "role_label") ?? role;
-            var title = String(peer, "display_label") ??
-                String(peer, "label") ??
-                (!string.IsNullOrWhiteSpace(deviceNpub) ? deviceNpub : String(peer, "device_pubkey")) ??
-                "Device";
+            var roleLabel = String(peer, "role_label") ?? "";
+            var title = String(peer, "display_label") ?? "";
             var details = new List<string>();
             if (isCurrentDevice)
             {
                 details.Add("this device");
             }
 
-            details.Add(roleLabel);
+            if (!string.IsNullOrWhiteSpace(roleLabel))
+            {
+                details.Add(roleLabel);
+            }
             var syncState = String(peer, "sync_state");
             if (!string.IsNullOrWhiteSpace(syncState))
             {
@@ -310,10 +299,8 @@ public sealed class IrisDriveStatusData
             }
 
             var isOnline = Bool(peer, "fips_online");
-            var state = String(peer, "connection_label") ?? (isOnline ? "Online" : "Offline");
-            var canManagePeer = canManageDevices &&
-                !isCurrentDevice &&
-                !string.IsNullOrWhiteSpace(deviceNpub);
+            var state = String(peer, "connection_label") ?? "";
+            var canManagePeer = !string.IsNullOrWhiteSpace(deviceNpub);
             rows.Add(new PeerRow(
                 deviceNpub,
                 title,
@@ -322,9 +309,9 @@ public sealed class IrisDriveStatusData
                 state,
                 isOnline,
                 isCurrentDevice,
-                canManagePeer,
-                canManagePeer && role != "admin",
-                canManagePeer && role == "admin" && adminCount > 1));
+                canManagePeer && Bool(peer, "can_revoke"),
+                canManagePeer && Bool(peer, "can_appoint_admin"),
+                canManagePeer && Bool(peer, "can_demote_admin")));
         }
 
         return rows;
@@ -589,7 +576,7 @@ public sealed record FipsDiagnostics(
         foreach (var peer in peers.EnumerateArray())
         {
             var npub = String(peer, "npub") ?? "peer";
-            var label = String(peer, "connection_label") ?? "Online";
+            var label = String(peer, "connection_label") ?? "";
             rows.Add(new FipsPeerDiagnostic(npub, label));
         }
         return rows;

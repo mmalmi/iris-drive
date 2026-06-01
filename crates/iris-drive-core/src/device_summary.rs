@@ -114,6 +114,27 @@ pub fn device_connection_label(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceManagementActions {
+    pub can_revoke: bool,
+    pub can_appoint_admin: bool,
+    pub can_demote_admin: bool,
+}
+
+#[must_use]
+pub fn device_management_actions(
+    can_manage_devices: bool,
+    is_current_device: bool,
+    is_admin: bool,
+    admin_count: usize,
+) -> DeviceManagementActions {
+    DeviceManagementActions {
+        can_revoke: can_manage_devices && !is_current_device,
+        can_appoint_admin: can_manage_devices && !is_current_device && !is_admin,
+        can_demote_admin: can_manage_devices && !is_current_device && is_admin && admin_count > 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +182,23 @@ mod tests {
         );
         assert_eq!(device_connection_label("mesh", None, None), "Online (Mesh)");
         assert_eq!(device_connection_label("offline", None, None), "Offline");
+
+        let member = device_management_actions(true, false, false, 2);
+        assert!(member.can_revoke);
+        assert!(member.can_appoint_admin);
+        assert!(!member.can_demote_admin);
+
+        let peer_admin = device_management_actions(true, false, true, 2);
+        assert!(peer_admin.can_revoke);
+        assert!(!peer_admin.can_appoint_admin);
+        assert!(peer_admin.can_demote_admin);
+
+        let sole_admin = device_management_actions(true, false, true, 1);
+        assert!(!sole_admin.can_demote_admin);
+
+        let current = device_management_actions(true, true, true, 2);
+        assert!(!current.can_revoke);
+        assert!(!current.can_appoint_admin);
+        assert!(!current.can_demote_admin);
     }
 }

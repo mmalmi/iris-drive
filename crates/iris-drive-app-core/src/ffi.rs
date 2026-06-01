@@ -18,8 +18,8 @@ use iris_drive_core::device_link_transport::{
 };
 use iris_drive_core::device_summary::{
     authorization_state_key, device_connection_label, device_connection_state,
-    device_display_label, device_role_key, device_role_label, primary_status_for_setup_state,
-    primary_status_label, setup_label_for_setup_state,
+    device_display_label, device_management_actions, device_role_key, device_role_label,
+    primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
 };
 #[cfg(not(test))]
 use iris_drive_core::fips_status::online_device_ids;
@@ -780,9 +780,10 @@ impl NativeAppRuntime {
                 .as_deref()
                 .is_some_and(|current| current == device.pubkey);
             let is_admin = device.role == "admin";
-            device.can_revoke = can_manage && !is_current;
-            device.can_appoint_admin = can_manage && !is_current && !is_admin;
-            device.can_demote_admin = can_manage && !is_current && is_admin && admin_count > 1;
+            let actions = device_management_actions(can_manage, is_current, is_admin, admin_count);
+            device.can_revoke = actions.can_revoke;
+            device.can_appoint_admin = actions.can_appoint_admin;
+            device.can_demote_admin = actions.can_demote_admin;
             device.is_current_device = is_current;
         }
     }
