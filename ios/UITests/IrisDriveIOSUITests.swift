@@ -100,8 +100,8 @@ final class IrisDriveIOSUITests: XCTestCase {
         tabButton("Devices", in: app).tap()
         XCTAssertTrue(app.staticTexts["This device"].waitForExistence(timeout: 10))
         XCTAssertTrue(
-            app.staticTexts["Member | Linked | Online"].waitForExistence(timeout: 10)
-                || app.staticTexts["Admin | Linked | Online"].waitForExistence(timeout: 10)
+            waitForLinkedOnlineDeviceRow(in: app, timeout: 10),
+            "Expected a linked online device row. Static texts:\n\(staticTextLabels(in: app))"
         )
         XCTAssertFalse(app.staticTexts["Authorized"].exists)
     }
@@ -191,5 +191,31 @@ final class IrisDriveIOSUITests: XCTestCase {
 
     private func accessibilityValue(_ element: XCUIElement) -> String {
         (element.value as? String ?? element.label).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func waitForLinkedOnlineDeviceRow(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if hasLinkedOnlineDeviceRow(in: app) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return hasLinkedOnlineDeviceRow(in: app)
+    }
+
+    private func hasLinkedOnlineDeviceRow(in app: XCUIApplication) -> Bool {
+        app.staticTexts.allElementsBoundByIndex.contains { element in
+            let label = element.label
+            return label.hasPrefix("Member | Linked | Online")
+                || label.hasPrefix("Admin | Linked | Online")
+        }
+    }
+
+    private func staticTextLabels(in app: XCUIApplication) -> String {
+        app.staticTexts.allElementsBoundByIndex
+            .map(\.label)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 }
