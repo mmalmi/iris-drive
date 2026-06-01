@@ -1960,16 +1960,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private struct ProviderSignalSummary: Decodable {
-        let anchor: String?
         let directoryPaths: [String]
         let changeKey: String
 
-        var effectiveChangeKey: String {
-            changeKey.isEmpty ? anchor ?? "" : changeKey
-        }
-
         enum CodingKeys: String, CodingKey {
-            case anchor
             case directoryPaths = "directory_paths"
             case changeKey = "change_key"
         }
@@ -2057,7 +2051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         summary: ProviderSignalSummary,
         reason: String
     ) {
-        let key = summary.effectiveChangeKey
+        let key = summary.changeKey
         guard !key.isEmpty else { return }
         let now = Date()
         let changed = key != lastExternalFileProviderSignalKey

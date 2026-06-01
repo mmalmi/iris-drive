@@ -847,12 +847,10 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private struct ProviderState: Decodable {
-        var anchor: String?
         var directoryPaths: [String]
         var changeKey: String
 
         enum CodingKeys: String, CodingKey {
-            case anchor
             case directoryPaths = "directory_paths"
             case changeKey = "change_key"
         }
@@ -869,7 +867,7 @@ final class IrisDriveMobileModel: ObservableObject {
         else {
             return ("", [])
         }
-        return (state.changeKey.isEmpty ? state.anchor ?? "" : state.changeKey, state.directoryPaths)
+        return (state.changeKey, state.directoryPaths)
     }
 
     private func signalFileProviderIfNeeded() {
