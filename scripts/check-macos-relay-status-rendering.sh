@@ -7,6 +7,7 @@ PANEL="$ROOT/macos/Sources/IrisDriveControlPanel.swift"
 MAC_APP="$ROOT/macos/Sources/IrisDriveMacApp.swift"
 ANDROID_STATE="$ROOT/android/app/src/main/java/to/iris/drive/app/core/AppState.kt"
 ANDROID_PANEL="$ROOT/android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt"
+IOS_MODEL="$ROOT/ios/Sources/IrisDriveMobileModel.swift"
 WINDOWS_MODELS="$ROOT/windows/IrisDriveModels.cs"
 WINDOWS_PANEL="$ROOT/windows/MainWindow.xaml.cs"
 
@@ -82,6 +83,28 @@ require_android_contains "$ANDROID_PANEL" "state.relayStatuses.forEach"
 require_android_contains "$ANDROID_PANEL" "relay.statusLabel"
 require_android_contains "$ANDROID_PANEL" "relay.health"
 require_android_absent "$ANDROID_PANEL" "state.relays.forEach"
+
+require_ios_contains() {
+  local needle="$1"
+  if ! grep -Fq "$needle" "$IOS_MODEL"; then
+    echo "missing '$needle' in ios/Sources/IrisDriveMobileModel.swift" >&2
+    exit 1
+  fi
+}
+
+require_ios_absent() {
+  local needle="$1"
+  if grep -Fq "$needle" "$IOS_MODEL"; then
+    echo "unexpected '$needle' in ios/Sources/IrisDriveMobileModel.swift" >&2
+    exit 1
+  fi
+}
+
+require_ios_contains "state.ui.relayStatuses.map(IrisDriveRelayStatus.init)"
+require_ios_absent "defaultRelayStatuses"
+require_ios_absent "state.ui.relayStatuses.isEmpty"
+require_ios_absent 'statusLabel: "saved"'
+require_ios_absent 'health: "configured"'
 
 require_windows_contains() {
   local file="$1"
