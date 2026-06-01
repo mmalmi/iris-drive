@@ -170,15 +170,21 @@ enum IrisDriveScreenshotFixtures {
         online: Bool,
         hasRoot: Bool
     ) -> IrisDrivePeerStatus {
-        IrisDrivePeerStatus(json: [
+        let connectionState = current ? "local" : (online ? "direct" : "offline")
+        let connectionLabel = current ? "This device" : (online ? "Online" : "Offline")
+        return IrisDrivePeerStatus(json: [
             "device_pubkey": "fixture-\(id)",
             "device_npub": fakeNpub(id),
             "label": label,
+            "display_label": current ? "This device" : label,
             "role": role,
+            "role_label": role == "admin" ? "Admin" : "Member",
             "authorization_state": "authorized",
             "is_current_device": current,
             "authorized": true,
             "fips_online": online,
+            "connection_state": connectionState,
+            "connection_label": connectionLabel,
             "has_root": hasRoot,
             "root_cid": hasRoot ? "nhash1\(id)rootdemo" : "",
             "root_private": true,

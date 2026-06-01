@@ -5,6 +5,7 @@ pub mod blossom_sync;
 pub mod config;
 pub mod device_link_invite;
 pub mod device_link_transport;
+pub mod device_summary;
 pub mod direct_root_transport;
 pub mod fips_sync;
 

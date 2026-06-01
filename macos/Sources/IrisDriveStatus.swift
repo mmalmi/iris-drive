@@ -203,7 +203,7 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
         id = url
         self.url = url
         status = json["status"] as? String ?? "unknown"
-        statusLabel = json["status_label"] as? String ?? status
+        statusLabel = json["status_label"] as? String ?? ""
         health = json["health"] as? String ?? "unknown"
     }
 }
@@ -335,7 +335,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     init(json: [String: Any]) {
         let pubkey = json["device_pubkey"] as? String ?? UUID().uuidString
         let labelValue = json["label"] as? String
-        let roleValue = json["role"] as? String ?? "member"
         let authorizationStateValue = json["authorization_state"] as? String
         let isCurrentDeviceValue = json["is_current_device"] as? Bool ?? false
         let authorizedValue = json["authorized"] as? Bool ?? false
@@ -343,27 +342,12 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         let fipsOnlineViaValue = json["fips_online_via"] as? String
         let fipsTransportTypeValue = json["fips_transport_type"] as? String
         let fipsSrttMSValue = (json["fips_srtt_ms"] as? NSNumber)?.intValue
-        let connectionStateValue =
-            json["connection_state"] as? String
-            ?? Self.connectionState(
-                isCurrentDevice: isCurrentDeviceValue,
-                fipsOnline: fipsOnlineValue,
-                fipsOnlineVia: fipsOnlineViaValue
-            )
         id = pubkey
         npub = json["device_npub"] as? String ?? pubkey
         label = labelValue
-        displayLabel =
-            json["display_label"] as? String
-            ?? Self.displayLabel(isCurrentDevice: isCurrentDeviceValue, label: labelValue, npub: npub)
-        role = roleValue
-        roleLabel =
-            json["role_label"] as? String
-            ?? Self.roleLabel(
-                role: roleValue,
-                authorized: authorizedValue,
-                authorizationState: authorizationStateValue
-            )
+        displayLabel = json["display_label"] as? String ?? ""
+        role = json["role"] as? String ?? ""
+        roleLabel = json["role_label"] as? String ?? ""
         authorizationState = authorizationStateValue
         isCurrentDevice = isCurrentDeviceValue
         authorized = authorizedValue
@@ -371,93 +355,13 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         fipsOnlineVia = fipsOnlineViaValue
         fipsTransportType = fipsTransportTypeValue
         fipsSrttMS = fipsSrttMSValue
-        connectionState = connectionStateValue
-        connectionLabel =
-            json["connection_label"] as? String
-            ?? Self.connectionLabel(
-                connectionState: connectionStateValue,
-                transportType: fipsTransportTypeValue,
-                srttMS: fipsSrttMSValue
-            )
+        connectionState = json["connection_state"] as? String ?? ""
+        connectionLabel = json["connection_label"] as? String ?? ""
         hasRoot = json["has_root"] as? Bool ?? false
         rootCID = json["root_cid"] as? String
         rootIsPrivate = json["root_private"] as? Bool
         publishedAt = (json["published_at"] as? NSNumber)?.intValue
         dckGeneration = (json["dck_generation"] as? NSNumber)?.intValue
-    }
-
-    private static func displayLabel(isCurrentDevice: Bool, label: String?, npub: String) -> String {
-        if isCurrentDevice {
-            return "This device"
-        }
-        if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
-            return label
-        }
-        return npub
-    }
-
-    private static func roleLabel(
-        role: String,
-        authorized: Bool,
-        authorizationState: String?
-    ) -> String {
-        guard authorized else {
-            switch authorizationState {
-            case "revoked":
-                return "Revoked"
-            case "awaiting_approval":
-                return "Awaiting approval"
-            default:
-                return "Unavailable"
-            }
-        }
-        return role == "admin" ? "Admin" : "Member"
-    }
-
-    private static func connectionState(
-        isCurrentDevice: Bool,
-        fipsOnline: Bool,
-        fipsOnlineVia: String?
-    ) -> String {
-        if isCurrentDevice {
-            return "local"
-        }
-        guard fipsOnline else {
-            return "offline"
-        }
-        if fipsOnlineVia == "direct" {
-            return "direct"
-        }
-        if fipsOnlineVia == "mesh" {
-            return "mesh"
-        }
-        return "online"
-    }
-
-    private static func connectionLabel(
-        connectionState: String,
-        transportType: String?,
-        srttMS: Int?
-    ) -> String {
-        if connectionState == "local" {
-            return "This device"
-        }
-        if connectionState == "offline" {
-            return "Offline"
-        }
-        let transport = transportType?.uppercased()
-        switch (transport, srttMS, connectionState) {
-        case let (transport?, latency?, _):
-            return "Online (\(transport), \(latency) ms)"
-        case let (transport?, nil, _):
-            return "Online (\(transport))"
-        case let (nil, latency?, _):
-            return "Online (\(latency) ms)"
-        case (_, _, "mesh"):
-            return "Online (Mesh)"
-        default:
-            return "Online"
-        }
     }
 }
 

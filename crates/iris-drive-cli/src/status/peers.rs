@@ -1,6 +1,11 @@
 use super::*;
 use std::collections::BTreeSet;
 
+use iris_drive_core::device_summary::{
+    device_connection_label, device_connection_state, device_display_label, device_role_key,
+    device_role_label as device_role_display_label,
+};
+
 pub(crate) fn peer_statuses(
     config_dir: &Path,
     config: &AppConfig,
@@ -73,14 +78,14 @@ pub(crate) fn peer_statuses(
             } else {
                 None
             };
-            let connection_state = peer_connection_state(
+            let connection_state = device_connection_state(
                 is_current_device,
                 fips_online,
                 fips_direct_online,
                 fips_mesh_online,
             );
             let connection_label =
-                peer_connection_label(connection_state, fips_transport_type, fips_srtt_ms);
+                device_connection_label(connection_state, fips_transport_type, fips_srtt_ms);
             let sync_state = device_sync_state(is_current_device, root.is_some(), root_available);
             let last_block_sync = root_cid
                 .as_ref()
@@ -89,12 +94,12 @@ pub(crate) fn peer_statuses(
                 "device_pubkey": device.pubkey,
                 "device_npub": device_npub,
                 "label": device.label,
-                "display_label": peer_display_label(
+                "display_label": device_display_label(
                     is_current_device,
                     device.label.as_deref(),
                     &device_npub
                 ),
-                "role": device_role_label(device.role),
+                "role": device_role_key(device.role),
                 "role_label": device_role_display_label(device.role),
                 "authorized": true,
                 "is_current_device": is_current_device,
@@ -136,64 +141,6 @@ pub(crate) fn peer_statuses(
             })
         })
         .collect()
-}
-
-fn peer_display_label(is_current_device: bool, label: Option<&str>, fallback: &str) -> String {
-    if is_current_device {
-        return "This device".to_owned();
-    }
-    label
-        .map(str::trim)
-        .filter(|label| !label.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn device_role_display_label(role: iris_drive_core::DeviceRole) -> &'static str {
-    match role {
-        iris_drive_core::DeviceRole::Admin => "Admin",
-        iris_drive_core::DeviceRole::Member => "Member",
-    }
-}
-
-fn peer_connection_state(
-    is_current_device: bool,
-    is_online: bool,
-    is_direct: bool,
-    is_mesh: bool,
-) -> &'static str {
-    if is_current_device {
-        "local"
-    } else if is_direct {
-        "direct"
-    } else if is_mesh {
-        "mesh"
-    } else if is_online {
-        "online"
-    } else {
-        "offline"
-    }
-}
-
-fn peer_connection_label(
-    connection_state: &str,
-    transport_type: Option<&str>,
-    srtt_ms: Option<u64>,
-) -> String {
-    if connection_state == "local" {
-        return "This device".to_owned();
-    }
-    if connection_state == "offline" {
-        return "Offline".to_owned();
-    }
-    let transport = transport_type.map(str::to_uppercase);
-    match (transport, srtt_ms, connection_state) {
-        (Some(transport), Some(srtt_ms), _) => format!("Online ({transport}, {srtt_ms} ms)"),
-        (Some(transport), None, _) => format!("Online ({transport})"),
-        (None, Some(srtt_ms), _) => format!("Online ({srtt_ms} ms)"),
-        (None, None, "mesh") => "Online (Mesh)".to_owned(),
-        _ => "Online".to_owned(),
-    }
 }
 
 fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> {

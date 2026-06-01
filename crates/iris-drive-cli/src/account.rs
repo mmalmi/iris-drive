@@ -791,19 +791,11 @@ pub(crate) fn account_npub(hex: &str) -> String {
 }
 
 pub(crate) fn authorization_state_label(state: &AccountState) -> &'static str {
-    use iris_drive_core::DeviceAuthorizationState as S;
-    match state.authorization_state {
-        S::Authorized => "authorized",
-        S::AwaitingApproval => "awaiting_approval",
-        S::Revoked => "revoked",
-    }
+    iris_drive_core::device_summary::authorization_state_key(state.authorization_state)
 }
 
 pub(crate) fn device_role_label(role: iris_drive_core::DeviceRole) -> &'static str {
-    match role {
-        iris_drive_core::DeviceRole::Admin => "admin",
-        iris_drive_core::DeviceRole::Member => "member",
-    }
+    iris_drive_core::device_summary::device_role_key(role)
 }
 
 pub(crate) fn drive_role_label(role: DriveRole) -> &'static str {

@@ -16,8 +16,13 @@ use iris_drive_core::device_link_transport::{
     DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
     pending_device_link_request_frame,
 };
+use iris_drive_core::device_summary::{
+    authorization_state_key, device_connection_label, device_connection_state,
+    device_display_label, device_role_key, device_role_label, primary_status_for_setup_state,
+    primary_status_label, setup_label_for_setup_state,
+};
 use iris_drive_core::paths::{config_path_in, key_path_in};
-use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, DeviceRole, Drive};
+use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
@@ -690,7 +695,7 @@ impl NativeAppRuntime {
             owner_pubkey: account_npub(&account.owner_pubkey),
             device_pubkey: account_npub(&account.device_pubkey),
             device_label: account.device_label.clone().unwrap_or_default(),
-            authorization_state: authorization_state_label(&account).to_owned(),
+            authorization_state: authorization_state_key(account.authorization_state).to_owned(),
             has_owner_signing_authority: account.has_owner_signing_authority,
             device_link_request: device_link_request_url(&account),
             device_link_invite: device_link_invite_url(&account),
@@ -1693,32 +1698,6 @@ fn label_option(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-fn primary_status_for_setup_state(setup_state: &str) -> &'static str {
-    match setup_state {
-        "authorized" => "ready",
-        "awaiting_approval" => "awaiting_approval",
-        "revoked" => "revoked",
-        _ => "not_setup",
-    }
-}
-
-fn setup_label_for_setup_state(setup_state: &str) -> &'static str {
-    match setup_state {
-        "authorized" => "Linked",
-        "awaiting_approval" => "Awaiting approval",
-        "revoked" => "Revoked",
-        _ => "Not linked",
-    }
-}
-
-fn primary_status_label(primary_status: &str) -> &'static str {
-    match primary_status {
-        "revoked" => "Device removed",
-        "awaiting_approval" => "Waiting for approval",
-        _ => "Ready",
-    }
-}
-
 fn normalize_pubkey(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -1742,56 +1721,6 @@ fn account_npub(hex: &str) -> String {
         .ok()
         .and_then(|pubkey| pubkey.to_bech32().ok())
         .unwrap_or_else(|| hex.to_owned())
-}
-
-fn authorization_state_label(state: &iris_drive_core::AccountState) -> &'static str {
-    match state.authorization_state {
-        DeviceAuthorizationState::Authorized => "authorized",
-        DeviceAuthorizationState::AwaitingApproval => "awaiting_approval",
-        DeviceAuthorizationState::Revoked => "revoked",
-    }
-}
-
-fn device_role_label(role: DeviceRole) -> &'static str {
-    match role {
-        DeviceRole::Admin => "admin",
-        DeviceRole::Member => "member",
-    }
-}
-
-fn device_role_display_label(role: DeviceRole) -> &'static str {
-    match role {
-        DeviceRole::Admin => "Admin",
-        DeviceRole::Member => "Member",
-    }
-}
-
-fn device_connection_state(
-    is_current: bool,
-    is_online: bool,
-    is_direct: bool,
-    is_mesh: bool,
-) -> &'static str {
-    if is_current {
-        "local"
-    } else if is_direct {
-        "direct"
-    } else if is_mesh {
-        "mesh"
-    } else if is_online {
-        "online"
-    } else {
-        "offline"
-    }
-}
-
-fn device_connection_label(connection_state: &str) -> &'static str {
-    match connection_state {
-        "local" => "This device",
-        "mesh" => "Online (Mesh)",
-        "direct" | "online" => "Online",
-        _ => "Offline",
-    }
 }
 
 fn devices_from_account(
@@ -1827,26 +1756,18 @@ fn devices_from_account(
                 && fips_status.is_some_and(|status| status.peer_is_mesh(&device_npub));
             let connection_state =
                 device_connection_state(is_current, is_online, is_direct, is_mesh).to_owned();
-            let role = device_role_label(device.role).to_owned();
-            let display_label = if is_current {
-                "This device".to_owned()
-            } else {
-                device
-                    .label
-                    .as_deref()
-                    .and_then(label_option)
-                    .unwrap_or_else(|| "Device".to_owned())
-            };
+            let role = device_role_key(device.role).to_owned();
+            let display_label = device_display_label(is_current, device.label.as_deref(), "Device");
             UiDevice {
                 pubkey: device_npub.clone(),
                 label: device.label.clone().unwrap_or_default(),
                 display_label,
                 state: "Linked".to_owned(),
                 state_label: "Linked".to_owned(),
-                connection_label: device_connection_label(&connection_state).to_owned(),
+                connection_label: device_connection_label(&connection_state, None, None),
                 connection_state,
                 role,
-                role_label: device_role_display_label(device.role).to_owned(),
+                role_label: device_role_label(device.role).to_owned(),
                 detail: device_npub,
                 is_current_device: is_current,
                 is_online,

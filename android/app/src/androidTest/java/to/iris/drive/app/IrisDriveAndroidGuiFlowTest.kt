@@ -514,6 +514,7 @@ class IrisDriveAndroidGuiFlowTest {
     ) = to.iris.drive.app.core.DeviceState(
         pubkey = pubkey,
         label = label,
+        displayLabel = label,
         role = if (isCurrentDevice) "admin" else "member",
         roleLabel = if (isCurrentDevice) "Admin" else "Member",
         state = "linked",

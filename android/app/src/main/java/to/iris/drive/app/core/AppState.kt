@@ -81,16 +81,16 @@ internal data class DeviceLinkRequestState(
 internal data class DeviceState(
     val pubkey: String,
     val label: String,
-    val displayLabel: String = label,
+    val displayLabel: String,
     val role: String,
-    val roleLabel: String = role,
+    val roleLabel: String,
     val state: String,
-    val stateLabel: String = state,
+    val stateLabel: String,
     val detail: String,
     val isCurrentDevice: Boolean,
     val isOnline: Boolean,
-    val connectionState: String = if (isCurrentDevice) "local" else if (isOnline) "online" else "offline",
-    val connectionLabel: String = connectionLabelFor(connectionState),
+    val connectionState: String,
+    val connectionLabel: String,
     val canRevoke: Boolean,
     val canAppointAdmin: Boolean,
     val canDemoteAdmin: Boolean,
@@ -276,49 +276,26 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
             val item = optJSONObject(index) ?: continue
             val isCurrentDevice = item.optBoolean("is_current_device")
             val isOnline = item.optBoolean("is_online")
-            val fallbackConnectionState = if (isCurrentDevice) {
-                "local"
-            } else if (isOnline) {
-                "online"
-            } else {
-                "offline"
-            }
             add(
                 DeviceState(
                     pubkey = item.optString("pubkey"),
                     label = item.optString("label"),
-                    displayLabel = item.optString("display_label", item.optString("label")),
+                    displayLabel = item.optString("display_label"),
                     role = item.optString("role"),
-                    roleLabel = item.optString("role_label", item.optString("role")),
+                    roleLabel = item.optString("role_label"),
                     state = item.optString("state"),
-                    stateLabel = item.optString("state_label", item.optString("state")),
+                    stateLabel = item.optString("state_label"),
                     detail = item.optString("detail"),
                     isCurrentDevice = isCurrentDevice,
                     isOnline = isOnline,
-                    connectionState = item.optNonBlankString("connection_state", fallbackConnectionState),
-                    connectionLabel = item.optNonBlankString(
-                        "connection_label",
-                        connectionLabelFor(fallbackConnectionState),
-                    ),
+                    connectionState = item.optString("connection_state"),
+                    connectionLabel = item.optString("connection_label"),
                     canRevoke = item.optBoolean("can_revoke"),
                     canAppointAdmin = item.optBoolean("can_appoint_admin"),
                     canDemoteAdmin = item.optBoolean("can_demote_admin"),
                 ),
             )
         }
-    }
-}
-
-private fun JSONObject.optNonBlankString(name: String, fallback: String): String {
-    return optString(name, fallback).ifBlank { fallback }
-}
-
-private fun connectionLabelFor(connectionState: String): String {
-    return when (connectionState) {
-        "local" -> "This device"
-        "mesh" -> "Online (Mesh)"
-        "direct", "online" -> "Online"
-        else -> "Offline"
     }
 }
 
