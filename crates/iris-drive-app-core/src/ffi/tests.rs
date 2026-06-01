@@ -70,7 +70,10 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!account.device_link_invite.contains("device-"));
     assert_eq!(state.ui.devices.len(), 1);
     assert_eq!(state.ui.devices[0].label, "Pixel");
+    assert_eq!(state.ui.devices[0].display_label, "This device");
     assert_eq!(state.ui.devices[0].role, "admin");
+    assert_eq!(state.ui.devices[0].role_label, "Admin");
+    assert_eq!(state.ui.devices[0].state_label, "Linked");
     assert!(state.ui.snapshot_link.is_empty());
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
@@ -79,7 +82,9 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.backups[0].label, "Blossom remote");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
     assert_eq!(state.ui.setup_state, "authorized");
+    assert_eq!(state.ui.setup_label, "Linked");
     assert_eq!(state.ui.primary_status, "ready");
+    assert_eq!(state.ui.primary_status_label, "Ready");
     assert_eq!(state.ui.authorized_device_count, 1);
     assert_eq!(state.ui.online_device_count, 0);
 
@@ -100,7 +105,9 @@ fn uninitialized_state_exposes_summary_defaults() {
     let state = app.state();
 
     assert_eq!(state.ui.setup_state, "not_configured");
+    assert_eq!(state.ui.setup_label, "Not linked");
     assert_eq!(state.ui.primary_status, "not_setup");
+    assert_eq!(state.ui.primary_status_label, "Ready");
     assert_eq!(state.ui.authorized_device_count, 0);
     assert_eq!(state.ui.online_device_count, 0);
     assert_eq!(state.ui.file_count, 0);

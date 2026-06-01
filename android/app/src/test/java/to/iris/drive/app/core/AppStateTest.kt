@@ -7,6 +7,41 @@ import org.json.JSONObject
 
 class AppStateTest {
     @Test
+    fun appCoreLabelsAreParsedFromNativeState() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "setup_state": "authorized",
+                "setup_label": "Linked",
+                "primary_status": "ready",
+                "primary_status_label": "Ready",
+                "devices": [{
+                  "pubkey": "device-a",
+                  "label": "Pixel",
+                  "display_label": "This device",
+                  "role": "admin",
+                  "role_label": "Admin",
+                  "state": "linked",
+                  "state_label": "Linked",
+                  "detail": "device-a",
+                  "is_current_device": true,
+                  "is_online": true
+                }]
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("Linked", state.setupLabel)
+        assertEquals("Ready", state.primaryStatusLabel)
+        assertEquals("This device", state.devices.single().displayLabel)
+        assertEquals("Admin", state.devices.single().roleLabel)
+        assertEquals("Linked", state.devices.single().stateLabel)
+    }
+
+    @Test
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
             account = AccountState(

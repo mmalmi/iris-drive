@@ -700,8 +700,8 @@ final class IrisDriveMobileModel: ObservableObject {
             ? state.ui.account?.deviceLabel ?? deviceLabel
             : deviceLabel
         syncRunning = state.ui.sync.running
-        authorizationState = authorizationTitle(state.ui.setupState)
-        statusTitle = statusTitle(for: state.ui.primaryStatus)
+        authorizationState = state.ui.setupLabel
+        statusTitle = state.ui.primaryStatusLabel
         statusDetail = state.error.isEmpty ? syncStateTitle : state.error
         if !fileProviderError.isEmpty {
             statusTitle = "Open in Files failed"
@@ -710,11 +710,10 @@ final class IrisDriveMobileModel: ObservableObject {
         relays = state.ui.relays.isEmpty ? defaultRelays : state.ui.relays
         relay = relays.first ?? defaultRelay
         devices = state.ui.devices.map { device in
-            let displayLabel = device.label.isEmpty ? "Device" : device.label
             return IrisDriveDevice(
-                label: device.isCurrentDevice ? "This device" : displayLabel,
-                role: roleTitle(device.role),
-                state: deviceStateTitle(device.state),
+                label: device.displayLabel,
+                role: device.roleLabel,
+                state: device.stateLabel,
                 detail: device.detail,
                 isCurrentDevice: device.isCurrentDevice,
                 isOnline: device.isOnline,
@@ -828,54 +827,6 @@ final class IrisDriveMobileModel: ObservableObject {
         )
         try? json.write(to: url, atomically: true, encoding: .utf8)
         #endif
-    }
-
-    private func authorizationTitle(_ value: String?) -> String {
-        switch value {
-        case "authorized", "Authorized":
-            "Linked"
-        case "awaiting_approval", "Awaiting approval":
-            "Awaiting approval"
-        case "revoked", "Revoked":
-            "Revoked"
-        case "Admin":
-            "Admin"
-        default:
-            ownerPublicKey.isEmpty ? "Not linked" : (value ?? "Linked")
-        }
-    }
-
-    private func statusTitle(for value: String) -> String {
-        switch value {
-        case "revoked":
-            "Device removed"
-        case "awaiting_approval":
-            "Waiting for approval"
-        default:
-            "Ready"
-        }
-    }
-
-    private func deviceStateTitle(_ value: String?) -> String {
-        switch value {
-        case "awaiting_approval", "Awaiting approval":
-            "Awaiting approval"
-        case "revoked", "Revoked":
-            "Revoked"
-        default:
-            "Linked"
-        }
-    }
-
-    private func roleTitle(_ value: String) -> String {
-        switch value {
-        case "admin":
-            "Admin"
-        case "member":
-            "Member"
-        default:
-            value
-        }
     }
 
     private struct ProviderState: Decodable {

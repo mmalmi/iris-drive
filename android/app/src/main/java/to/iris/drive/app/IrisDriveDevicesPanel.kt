@@ -83,9 +83,9 @@ internal fun DevicesPanel(
                 DeviceStatusDot(device = device)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(device.label, fontWeight = FontWeight.SemiBold)
+                    Text(device.displayLabel, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${device.role.ifBlank { "member" }} | ${device.state} | ${device.onlineStateText}",
+                        "${device.roleLabel} | ${device.stateLabel} | ${device.onlineStateText}",
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -112,7 +112,7 @@ internal fun DevicesPanel(
                     IconButton(onClick = { devicePendingDelete = device }) {
                         Icon(
                             painterResource(R.drawable.ic_delete),
-                            contentDescription = "Delete ${device.label}",
+                            contentDescription = "Delete ${device.displayLabel}",
                             tint = Danger,
                         )
                     }
@@ -176,7 +176,7 @@ private val DeviceState.onlineStateText: String
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {
-        val title = label.ifBlank { "Device" }
+        val title = displayLabel.ifBlank { "Device" }
         return "$title ${if (isOnline) "online" else "offline"}"
     }
 

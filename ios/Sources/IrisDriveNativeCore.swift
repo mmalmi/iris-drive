@@ -273,7 +273,9 @@ struct NativeUiState: Codable {
     var sync: NativeSyncStatus
     var fips: NativeFipsStatus
     var setupState: String
+    var setupLabel: String
     var primaryStatus: String
+    var primaryStatusLabel: String
     var authorizedDeviceCount: UInt64
     var onlineDeviceCount: UInt64
     var fileCount: UInt64
@@ -291,7 +293,9 @@ struct NativeUiState: Codable {
         case sync
         case fips
         case setupState = "setup_state"
+        case setupLabel = "setup_label"
         case primaryStatus = "primary_status"
+        case primaryStatusLabel = "primary_status_label"
         case authorizedDeviceCount = "authorized_device_count"
         case onlineDeviceCount = "online_device_count"
         case fileCount = "file_count"
@@ -403,8 +407,11 @@ struct QrMatrix: Codable, Equatable {
 struct NativeDevice: Codable {
     var pubkey: String
     var label: String
+    var displayLabel: String
     var role: String
+    var roleLabel: String
     var state: String
+    var stateLabel: String
     var detail: String
     var isCurrentDevice: Bool
     var isOnline: Bool
@@ -415,8 +422,11 @@ struct NativeDevice: Codable {
     enum CodingKeys: String, CodingKey {
         case pubkey
         case label
+        case displayLabel = "display_label"
         case role
+        case roleLabel = "role_label"
         case state
+        case stateLabel = "state_label"
         case detail
         case isCurrentDevice = "is_current_device"
         case isOnline = "is_online"

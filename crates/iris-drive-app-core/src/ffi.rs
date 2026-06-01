@@ -639,7 +639,9 @@ impl NativeAppRuntime {
             paths,
             sync,
             setup_state: "not_configured".to_owned(),
+            setup_label: setup_label_for_setup_state("not_configured").to_owned(),
             primary_status: "not_setup".to_owned(),
+            primary_status_label: primary_status_label("not_setup").to_owned(),
             snapshot_link: String::new(),
             ..UiState::default()
         };
@@ -768,6 +770,10 @@ impl NativeAppRuntime {
             .unwrap_or_else(|| "not_configured".to_owned());
         self.state.ui.primary_status = primary_status_for_setup_state(&setup_state).to_owned();
         self.state.ui.setup_state = setup_state;
+        self.state.ui.setup_label =
+            setup_label_for_setup_state(&self.state.ui.setup_state).to_owned();
+        self.state.ui.primary_status_label =
+            primary_status_label(&self.state.ui.primary_status).to_owned();
         self.state.ui.authorized_device_count = self.state.ui.devices.len() as u64;
         self.state.ui.online_device_count = self
             .state
@@ -1647,6 +1653,23 @@ fn primary_status_for_setup_state(setup_state: &str) -> &'static str {
     }
 }
 
+fn setup_label_for_setup_state(setup_state: &str) -> &'static str {
+    match setup_state {
+        "authorized" => "Linked",
+        "awaiting_approval" => "Awaiting approval",
+        "revoked" => "Revoked",
+        _ => "Not linked",
+    }
+}
+
+fn primary_status_label(primary_status: &str) -> &'static str {
+    match primary_status {
+        "revoked" => "Device removed",
+        "awaiting_approval" => "Waiting for approval",
+        _ => "Ready",
+    }
+}
+
 fn normalize_pubkey(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -1687,6 +1710,13 @@ fn device_role_label(role: DeviceRole) -> &'static str {
     }
 }
 
+fn device_role_display_label(role: DeviceRole) -> &'static str {
+    match role {
+        DeviceRole::Admin => "Admin",
+        DeviceRole::Member => "Member",
+    }
+}
+
 fn devices_from_account(
     state: &iris_drive_core::AccountState,
     fips_status: Option<&NativeFipsStatus>,
@@ -1713,11 +1743,23 @@ fn devices_from_account(
                     status.peer_is_online(&device_npub)
                 });
             let role = device_role_label(device.role).to_owned();
+            let display_label = if is_current {
+                "This device".to_owned()
+            } else {
+                device
+                    .label
+                    .as_deref()
+                    .and_then(label_option)
+                    .unwrap_or_else(|| "Device".to_owned())
+            };
             UiDevice {
                 pubkey: device_npub.clone(),
                 label: device.label.clone().unwrap_or_default(),
+                display_label,
                 state: "Linked".to_owned(),
+                state_label: "Linked".to_owned(),
                 role,
+                role_label: device_role_display_label(device.role).to_owned(),
                 detail: device_npub,
                 is_current_device: is_current,
                 is_online,
