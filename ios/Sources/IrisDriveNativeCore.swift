@@ -511,26 +511,58 @@ struct NativeFipsStatus: Codable {
     var enabled: Bool
     var running: Bool
     var fresh: Bool
+    var state: String
+    var stateLabel: String
     var endpointNpub: String
+    var discoveryScope: String
+    var rosterLabel: String
+    var rosterPeerCount: UInt64
+    var rosterOnlineDeviceCount: UInt64
+    var rosterDirectDeviceCount: UInt64
     var onlineDeviceCount: UInt64
     var directDeviceCount: UInt64
     var meshDeviceCount: UInt64
+    var otherPeerCount: UInt64
     var onlineDevices: [String]
     var directDevices: [String]
     var meshDevices: [String]
+    var peerStatuses: [NativeFipsPeerStatus]
     var error: String
 
     enum CodingKeys: String, CodingKey {
         case enabled
         case running
         case fresh
+        case state
+        case stateLabel = "state_label"
         case endpointNpub = "endpoint_npub"
+        case discoveryScope = "discovery_scope"
+        case rosterLabel = "roster_label"
+        case rosterPeerCount = "roster_peer_count"
+        case rosterOnlineDeviceCount = "roster_online_device_count"
+        case rosterDirectDeviceCount = "roster_direct_device_count"
         case onlineDeviceCount = "online_device_count"
         case directDeviceCount = "direct_device_count"
         case meshDeviceCount = "mesh_device_count"
+        case otherPeerCount = "other_peer_count"
         case onlineDevices = "online_devices"
         case directDevices = "direct_devices"
         case meshDevices = "mesh_devices"
+        case peerStatuses = "peer_statuses"
         case error
+    }
+}
+
+struct NativeFipsPeerStatus: Codable {
+    var npub: String
+    var transportType: String
+    var srttMS: UInt64?
+    var connectionLabel: String
+
+    enum CodingKeys: String, CodingKey {
+        case npub
+        case transportType = "transport_type"
+        case srttMS = "srtt_ms"
+        case connectionLabel = "connection_label"
     }
 }

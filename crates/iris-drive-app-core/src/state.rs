@@ -109,13 +109,28 @@ pub struct UiFipsStatus {
     pub state: String,
     pub state_label: String,
     pub endpoint_npub: String,
+    pub discovery_scope: String,
+    pub roster_label: String,
+    pub roster_peer_count: u64,
+    pub roster_online_device_count: u64,
+    pub roster_direct_device_count: u64,
     pub online_device_count: u64,
     pub direct_device_count: u64,
     pub mesh_device_count: u64,
+    pub other_peer_count: u64,
     pub online_devices: Vec<String>,
     pub direct_devices: Vec<String>,
     pub mesh_devices: Vec<String>,
+    pub peer_statuses: Vec<UiFipsPeerStatus>,
     pub error: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiFipsPeerStatus {
+    pub npub: String,
+    pub transport_type: String,
+    pub srtt_ms: Option<u64>,
+    pub connection_label: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

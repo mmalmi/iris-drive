@@ -562,6 +562,17 @@ fn native_fips_status_drives_device_online_presence() {
     assert_eq!(current.connection_label, "This device");
     assert_eq!(refreshed.ui.fips.state, "running");
     assert_eq!(refreshed.ui.fips.state_label, "Running");
+    assert_eq!(refreshed.ui.fips.roster_label, "1/1 online");
+    assert_eq!(refreshed.ui.fips.roster_peer_count, 1);
+    assert_eq!(refreshed.ui.fips.roster_online_device_count, 1);
+    assert_eq!(refreshed.ui.fips.roster_direct_device_count, 1);
+    assert_eq!(refreshed.ui.fips.other_peer_count, 0);
+    assert_eq!(refreshed.ui.fips.peer_statuses.len(), 1);
+    assert_eq!(refreshed.ui.fips.peer_statuses[0].npub, linked_device);
+    assert_eq!(
+        refreshed.ui.fips.peer_statuses[0].connection_label,
+        "TCP, 12 ms"
+    );
     let linked = refreshed
         .ui
         .devices
@@ -596,13 +607,15 @@ fn native_fips_status_drives_device_online_presence() {
         owner_dir.path(),
         &current_device,
         &[],
-        &[],
+        &[linked_device.as_str()],
         super::unix_now_seconds().saturating_sub(120),
     );
     let stale = app.refresh();
     assert!(stale.ui.devices.iter().all(|device| !device.is_online));
     assert_eq!(stale.ui.fips.state, "stale");
     assert_eq!(stale.ui.fips.state_label, "Stale");
+    assert_eq!(stale.ui.fips.roster_label, "0/1 online");
+    assert_eq!(stale.ui.fips.roster_online_device_count, 0);
     let linked = stale
         .ui
         .devices
@@ -685,8 +698,14 @@ fn write_native_fips_status_fixture(
         "running": true,
         "updated_at": updated_at,
         "endpoint_npub": endpoint_npub,
+        "authorized_peers": connected_peers.iter().chain(mesh_peers.iter()).copied().collect::<Vec<_>>(),
         "connected_peers": connected_peers,
         "mesh_peers": mesh_peers,
+        "peer_statuses": connected_peers.iter().map(|peer| serde_json::json!({
+            "npub": peer,
+            "transport_type": "tcp",
+            "srtt_ms": 12
+        })).collect::<Vec<_>>(),
         "error": null,
     });
     std::fs::write(path, value.to_string()).unwrap();

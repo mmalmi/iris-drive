@@ -42,6 +42,10 @@ require_absent crates/iris-drive-cli/src/status/network.rs "fn normalized_fips_p
 
 require_contains crates/iris-drive-app-core/src/ffi.rs "normalize_fips_status_value("
 require_contains crates/iris-drive-app-core/src/ffi.rs "online_device_ids("
+require_contains crates/iris-drive-app-core/src/state.rs "pub roster_label: String"
+require_contains crates/iris-drive-app-core/src/state.rs "pub roster_online_device_count: u64"
+require_contains crates/iris-drive-app-core/src/state.rs "pub peer_statuses: Vec<UiFipsPeerStatus>"
+require_contains crates/iris-drive-app-core/src/ffi.rs "peer_statuses: ui_fips_peer_statuses("
 require_absent crates/iris-drive-app-core/src/ffi.rs "struct NativeFipsStatus"
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn native_fips_state_label"
 require_absent crates/iris-drive-app-core/src/lib.rs "mod native_fips;"
@@ -62,5 +66,11 @@ require_absent windows/IrisDriveModels.cs '"connected_peer_count"'
 require_absent windows/IrisDriveModels.cs '"fips_online_via"'
 require_absent windows/IrisDriveModels.cs '"fips_transport_type"'
 require_absent windows/IrisDriveModels.cs '"fips_srtt_ms"'
+
+require_contains ios/Sources/IrisDriveNativeCore.swift "var rosterLabel: String"
+require_contains ios/Sources/IrisDriveNativeCore.swift 'case peerStatuses = "peer_statuses"'
+require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt "val fips: FipsState"
+require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt "rosterOnlineDeviceCount = optInt(\"roster_online_device_count\")"
+require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt "connectionLabel = item.optString(\"connection_label\", \"Online\")"
 
 echo "FIPS_STATUS_NORMALIZATION_OK"

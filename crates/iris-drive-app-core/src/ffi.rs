@@ -53,8 +53,8 @@ pub(crate) use crate::native_provider::{
     native_provider_write_json,
 };
 use crate::state::{
-    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsStatus, UiPaths,
-    UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
+    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus,
+    UiFipsStatus, UiPaths, UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
 };
 use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 
@@ -1526,12 +1526,27 @@ fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        online_device_count: online_devices.len() as u64,
-        direct_device_count: direct_devices.len() as u64,
-        mesh_device_count: mesh_devices.len() as u64,
+        discovery_scope: normalized
+            .get("discovery_scope")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        roster_label: normalized
+            .get("roster_label")
+            .and_then(Value::as_str)
+            .unwrap_or("0/0 online")
+            .to_owned(),
+        roster_peer_count: normalized_u64(&normalized, "roster_peer_count"),
+        roster_online_device_count: normalized_u64(&normalized, "roster_online_device_count"),
+        roster_direct_device_count: normalized_u64(&normalized, "roster_direct_device_count"),
+        online_device_count: normalized_u64(&normalized, "online_device_count"),
+        direct_device_count: normalized_u64(&normalized, "direct_device_count"),
+        mesh_device_count: normalized_u64(&normalized, "mesh_device_count"),
+        other_peer_count: normalized_u64(&normalized, "other_peer_count"),
         online_devices,
         direct_devices,
         mesh_devices,
+        peer_statuses: ui_fips_peer_statuses(normalized.get("peer_statuses")),
         error: normalized
             .get("error")
             .and_then(Value::as_str)
@@ -1544,8 +1559,40 @@ fn paused_ui_fips_status() -> UiFipsStatus {
     UiFipsStatus {
         state: "paused".to_owned(),
         state_label: "Paused".to_owned(),
+        roster_label: "0/0 online".to_owned(),
         ..UiFipsStatus::default()
     }
+}
+
+fn normalized_u64(status: &Value, key: &str) -> u64 {
+    status.get(key).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn ui_fips_peer_statuses(value: Option<&Value>) -> Vec<UiFipsPeerStatus> {
+    value
+        .and_then(Value::as_array)
+        .map(|statuses| {
+            statuses
+                .iter()
+                .filter_map(|status| {
+                    Some(UiFipsPeerStatus {
+                        npub: status.get("npub")?.as_str()?.to_owned(),
+                        transport_type: status
+                            .get("transport_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        srtt_ms: status.get("srtt_ms").and_then(Value::as_u64),
+                        connection_label: status
+                            .get("connection_label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Online")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn native_fips_status_is_fresh(status: &Value) -> bool {

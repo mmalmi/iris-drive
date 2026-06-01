@@ -24,6 +24,29 @@ class AppStateTest {
                   "status": "up to date",
                   "status_label": "Up to date"
                 },
+                "fips": {
+                  "enabled": true,
+                  "running": true,
+                  "fresh": true,
+                  "state": "running",
+                  "state_label": "Running",
+                  "endpoint_npub": "device-a",
+                  "discovery_scope": "iris-drive:test",
+                  "roster_label": "1/1 online",
+                  "roster_peer_count": 1,
+                  "roster_online_device_count": 1,
+                  "roster_direct_device_count": 1,
+                  "online_device_count": 1,
+                  "direct_device_count": 1,
+                  "mesh_device_count": 0,
+                  "other_peer_count": 0,
+                  "peer_statuses": [{
+                    "npub": "device-b",
+                    "transport_type": "tcp",
+                    "srtt_ms": 12,
+                    "connection_label": "TCP, 12 ms"
+                  }]
+                },
                 "devices": [{
                   "pubkey": "device-a",
                   "label": "Pixel",
@@ -48,6 +71,10 @@ class AppStateTest {
         assertTrue(state.isSetupComplete)
         assertEquals("Ready", state.primaryStatusLabel)
         assertEquals("Up to date", state.sync.statusLabel)
+        assertEquals("Running", state.fips.stateLabel)
+        assertEquals("1/1 online", state.fips.rosterLabel)
+        assertEquals(1, state.fips.rosterOnlineDeviceCount)
+        assertEquals("TCP, 12 ms", state.fips.peerStatuses.single().connectionLabel)
         assertEquals("This device", state.devices.single().displayLabel)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)

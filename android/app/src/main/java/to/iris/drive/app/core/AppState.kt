@@ -12,6 +12,7 @@ internal data class AppState(
     val backups: List<BackupState> = emptyList(),
     val paths: PathState = PathState(),
     val sync: SyncState = SyncState(),
+    val fips: FipsState = FipsState(),
     val snapshotLink: String = "",
     val error: String = "",
     val setupState: String = "not_configured",
@@ -41,6 +42,7 @@ internal data class AppState(
                 backups = ui.optJSONArray("backups").toBackups(),
                 paths = ui.optJSONObject("paths")?.toPaths() ?: PathState(),
                 sync = ui.optJSONObject("sync")?.toSync() ?: SyncState(),
+                fips = ui.optJSONObject("fips")?.toFips() ?: FipsState(),
                 snapshotLink = ui.optString("snapshot_link"),
                 error = json.optString("error"),
                 setupState = ui.optString("setup_state", "not_configured"),
@@ -118,6 +120,33 @@ internal data class SyncState(
     val running: Boolean = false,
     val status: String = "",
     val statusLabel: String = "Sync paused",
+)
+
+internal data class FipsState(
+    val enabled: Boolean = false,
+    val running: Boolean = false,
+    val fresh: Boolean = false,
+    val state: String = "paused",
+    val stateLabel: String = "Paused",
+    val endpointNpub: String = "",
+    val discoveryScope: String = "",
+    val rosterLabel: String = "0/0 online",
+    val rosterPeerCount: Int = 0,
+    val rosterOnlineDeviceCount: Int = 0,
+    val rosterDirectDeviceCount: Int = 0,
+    val onlineDeviceCount: Int = 0,
+    val directDeviceCount: Int = 0,
+    val meshDeviceCount: Int = 0,
+    val otherPeerCount: Int = 0,
+    val peerStatuses: List<FipsPeerStatus> = emptyList(),
+    val error: String = "",
+)
+
+internal data class FipsPeerStatus(
+    val npub: String,
+    val transportType: String,
+    val srttMs: Long?,
+    val connectionLabel: String,
 )
 
 internal data class SyncRoot(
@@ -261,6 +290,27 @@ private fun JSONObject.toSync(): SyncState =
         statusLabel = optString("status_label", "Sync paused"),
     )
 
+private fun JSONObject.toFips(): FipsState =
+    FipsState(
+        enabled = optBoolean("enabled"),
+        running = optBoolean("running"),
+        fresh = optBoolean("fresh"),
+        state = optString("state", "paused"),
+        stateLabel = optString("state_label", "Paused"),
+        endpointNpub = optString("endpoint_npub"),
+        discoveryScope = optString("discovery_scope"),
+        rosterLabel = optString("roster_label", "0/0 online"),
+        rosterPeerCount = optInt("roster_peer_count"),
+        rosterOnlineDeviceCount = optInt("roster_online_device_count"),
+        rosterDirectDeviceCount = optInt("roster_direct_device_count"),
+        onlineDeviceCount = optInt("online_device_count"),
+        directDeviceCount = optInt("direct_device_count"),
+        meshDeviceCount = optInt("mesh_device_count"),
+        otherPeerCount = optInt("other_peer_count"),
+        peerStatuses = optJSONArray("peer_statuses").toFipsPeerStatuses(),
+        error = optString("error"),
+    )
+
 private fun JSONArray?.toRoots(): List<SyncRoot> {
     if (this == null) return emptyList()
     return buildList {
@@ -336,6 +386,25 @@ private fun JSONArray?.toRelayStatuses(): List<RelayStatus> {
                     status = item.optString("status"),
                     statusLabel = item.optString("status_label"),
                     health = item.optString("health"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toFipsPeerStatuses(): List<FipsPeerStatus> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            val npub = item.optString("npub")
+            if (npub.isBlank()) continue
+            add(
+                FipsPeerStatus(
+                    npub = npub,
+                    transportType = item.optString("transport_type"),
+                    srttMs = item.opt("srtt_ms")?.let { (it as? Number)?.toLong() },
+                    connectionLabel = item.optString("connection_label", "Online"),
                 ),
             )
         }
