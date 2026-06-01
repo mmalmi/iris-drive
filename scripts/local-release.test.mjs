@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -487,6 +489,115 @@ test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /ensure-app/)
   assert.match(result.stdout, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
   assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
 })
+
+test('TestFlight helper creates a missing App Store Connect app record', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const requests = []
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    const chunks = []
+    for await (const chunk of request) {
+      chunks.push(chunk)
+    }
+    const rawBody = Buffer.concat(chunks).toString('utf8')
+    const body = rawBody ? JSON.parse(rawBody) : null
+    requests.push({ method: request.method, path: url.pathname, query: url.searchParams, body })
+
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, { data: [] })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/bundleIds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'bundleIds',
+            id: 'BUNDLE123',
+            attributes: { identifier: 'to.iris.drive.ios' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/apps') {
+      writeJson(response, 201, {
+        data: {
+          type: 'apps',
+          id: 'APP123',
+          attributes: { name: body.data.attributes.name, bundleId: 'to.iris.drive.ios' },
+        },
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'ensure-app'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'to.iris.drive.ios',
+      IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
+    },
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Created App Store Connect app: Iris Drive \[APP123\]/)
+  const createRequest = requests.find((request) => request.method === 'POST' && request.path === '/v1/apps')
+  assert.ok(createRequest)
+  assert.deepEqual(createRequest.body, {
+    data: {
+      type: 'apps',
+      attributes: {
+        name: 'Iris Drive',
+        primaryLocale: 'en-US',
+        sku: 'to.iris.drive.ios',
+        platform: 'IOS',
+      },
+      relationships: {
+        bundleId: { data: { type: 'bundleIds', id: 'BUNDLE123' } },
+      },
+    },
+  })
+})
+
+function writeJson(response, status, body) {
+  response.writeHead(status, { 'content-type': 'application/json' })
+  response.end(JSON.stringify(body))
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+}
+
+function spawnForTest(command, args, options) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { ...options, encoding: 'utf8' })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+  })
+}

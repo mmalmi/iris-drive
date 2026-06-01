@@ -9,19 +9,20 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
-const baseUrl = 'https://api.appstoreconnect.apple.com/v1/'
+loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
+const rawBaseUrl = process.env.IRIS_DRIVE_ASC_BASE_URL || 'https://api.appstoreconnect.apple.com/v1/'
+const baseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
 const mode = process.argv[2] || ''
 const action = process.argv[3] || 'put'
 const publicActions = new Set(['put', 'submit', 'attach', 'status', 'groups'])
-const internalActions = new Set(['put', 'attach', 'wait', 'status', 'groups', 'compliance'])
-
-loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
+const internalActions = new Set(['ensure-app', 'put', 'attach', 'wait', 'status', 'groups', 'compliance'])
 
 function usage() {
-  console.log(`usage: scripts/testflight-internal <put|attach|wait|status|groups|compliance>
+  console.log(`usage: scripts/testflight-internal <ensure-app|put|attach|wait|status|groups|compliance>
        scripts/testflight-public <put|submit|attach|status|groups>
 
 Commands:
+  ensure-app create the App Store Connect app record if it is missing
   put        wait for the uploaded build and publish it to the selected channel
   attach     attach an already-valid build to the selected TestFlight group(s)
   submit     public only: update metadata and submit Beta App Review
@@ -34,6 +35,9 @@ Environment:
   IRIS_DRIVE_ASC_AUTH_KEY_PATH or IRIS_DRIVE_ASC_KEY_PATH
   IRIS_DRIVE_ASC_AUTH_KEY_ID or IRIS_DRIVE_ASC_KEY_ID
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
+  IRIS_DRIVE_ASC_APP_NAME
+  IRIS_DRIVE_ASC_APP_SKU
+  IRIS_DRIVE_ASC_APP_PRIMARY_LOCALE
   IRIS_DRIVE_IOS_BUNDLE_ID
   IRIS_DRIVE_IOS_MARKETING_VERSION
   IRIS_DRIVE_IOS_BUILD_NUMBER
@@ -66,6 +70,8 @@ if (mode === 'public' && !publicActions.has(action)) {
 
 const appName = envValue(['IRIS_DRIVE_ASC_APP_NAME'], 'Iris Drive')
 const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios')
+const appSku = envValue(['IRIS_DRIVE_ASC_APP_SKU'], bundleId)
+const appPrimaryLocale = envValue(['IRIS_DRIVE_ASC_APP_PRIMARY_LOCALE'], 'en-US')
 const versionName = envValue(['IRIS_DRIVE_IOS_MARKETING_VERSION'], workspaceVersion())
 const buildNumber = envValue(['IRIS_DRIVE_IOS_BUILD_NUMBER'], semanticVersionCode(versionName))
 const waitAttempts = intEnv('IRIS_DRIVE_TESTFLIGHT_WAIT_ATTEMPTS', 40)
@@ -91,9 +97,13 @@ try {
 
 async function main() {
   authToken = createToken(resolveAscAuth())
+  if (action === 'ensure-app') {
+    await ensureApp()
+    return
+  }
   const app = await findApp()
   if (!app) {
-    fail(`No App Store Connect app found for bundle ${bundleId}. Create it first in ASC.`)
+    fail(`No App Store Connect app found for bundle ${bundleId}. Run ensure-app first.`)
   }
   const appId = app.id
 
@@ -333,6 +343,55 @@ async function getAll(path, params = {}) {
 async function findApp() {
   const apps = await getAll('apps', { 'filter[bundleId]': bundleId, limit: '10' })
   return apps.find((app) => app.attributes?.bundleId === bundleId) ?? apps[0] ?? null
+}
+
+async function exactBundleId() {
+  const bundleIds = await getAll('bundleIds', { 'filter[identifier]': bundleId, limit: '200' })
+  const exact = bundleIds.find((candidate) => candidate.attributes?.identifier === bundleId)
+  if (!exact) {
+    fail(`No Apple Developer bundle ID found for ${bundleId}`)
+  }
+  return exact
+}
+
+async function ensureApp() {
+  const existing = await findApp()
+  if (existing) {
+    console.log(`App Store Connect app exists: ${existing.attributes?.name ?? appName} [${existing.id}]`)
+    return existing
+  }
+
+  const developerBundleId = await exactBundleId()
+  const body = {
+    data: {
+      type: 'apps',
+      attributes: {
+        name: appName,
+        primaryLocale: appPrimaryLocale,
+        sku: appSku,
+        platform: 'IOS',
+      },
+      relationships: {
+        bundleId: {
+          data: {
+            type: 'bundleIds',
+            id: developerBundleId.id,
+          },
+        },
+      },
+    },
+  }
+  const [status, response] = await request('POST', 'apps', {}, body)
+  if (status === 409) {
+    const app = await findApp()
+    if (app) {
+      console.log(`App Store Connect app exists: ${app.attributes?.name ?? appName} [${app.id}]`)
+      return app
+    }
+  }
+  const app = requireOk(status, response, 'Create App Store Connect app').data
+  console.log(`Created App Store Connect app: ${appName} [${app.id}]`)
+  return app
 }
 
 async function findBuild(appId) {
