@@ -25,6 +25,7 @@ require_absent() {
 require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_connection_label"
 require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_display_label"
 require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_management_actions"
+require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_roster_rows"
 require_contains crates/iris-drive-core/src/device_summary.rs "pub fn primary_status_for_setup_state"
 require_contains crates/iris-drive-core/src/device_summary.rs "pub fn setup_state_flags"
 require_contains crates/iris-drive-app-core/src/ffi.rs "use iris_drive_core::device_summary"
@@ -35,9 +36,10 @@ require_contains crates/iris-drive-cli/src/status.rs '"setup_complete": setup_fl
 require_contains crates/iris-drive-cli/src/status.rs '"awaiting_approval": setup_flags.awaiting_approval'
 require_contains crates/iris-drive-cli/src/status.rs '"revoked": setup_flags.revoked'
 require_contains crates/iris-drive-cli/src/status/peers.rs "use iris_drive_core::device_summary"
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": actions.can_revoke'
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": actions.can_appoint_admin'
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": actions.can_demote_admin'
+require_contains crates/iris-drive-cli/src/status/peers.rs "device_roster_rows("
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": device.can_revoke'
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": device.can_appoint_admin'
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": device.can_demote_admin'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["display_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var setupComplete = false'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var awaitingApproval = false'
@@ -64,6 +66,7 @@ require_contains linux/src/data.rs 'find_bool(summary_json(json), &["revoked"])'
 
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn device_connection_label("
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn device_connection_state("
+require_absent crates/iris-drive-app-core/src/ffi.rs "fn refresh_device_actions("
 require_absent crates/iris-drive-cli/src/status/peers.rs "fn peer_connection_label("
 require_absent crates/iris-drive-cli/src/status/peers.rs "fn peer_connection_state("
 require_absent crates/iris-drive-cli/src/status/peers.rs "fn peer_display_label("

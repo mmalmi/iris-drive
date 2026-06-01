@@ -583,7 +583,7 @@ fn native_fips_status_drives_device_online_presence() {
     assert!(linked.is_online);
     assert_eq!(linked.state, "Linked");
     assert_eq!(linked.connection_state, "direct");
-    assert_eq!(linked.connection_label, "Online");
+    assert_eq!(linked.connection_label, "Online (TCP, 12 ms)");
 
     write_native_fips_status_fixture(
         owner_dir.path(),

@@ -17,8 +17,7 @@ use iris_drive_core::device_link_transport::{
     pending_device_link_request_frame,
 };
 use iris_drive_core::device_summary::{
-    authorization_state_key, device_connection_label, device_connection_state,
-    device_display_label, device_management_actions, device_role_key, device_role_label,
+    DeviceConnectionDetails, DeviceConnectivity, authorization_state_key, device_roster_rows,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
     setup_state_flags, sync_status_label,
 };
@@ -748,46 +747,9 @@ impl NativeAppRuntime {
         let fips_status = load_native_fips_status(Path::new(&self.data_dir));
         let ui_fips_status = ui_fips_status(fips_status.as_ref());
         self.state.ui.devices = devices_from_account(&account, &ui_fips_status);
-        self.refresh_device_actions();
         update_snapshot_link(&mut self.state, &config);
         self.refresh_provider_summary();
         self.refresh_ui_summary(Some(ui_fips_status));
-    }
-
-    fn can_manage_devices(&self) -> bool {
-        self.state
-            .ui
-            .account
-            .as_ref()
-            .is_some_and(|account| account.has_owner_signing_authority)
-    }
-
-    fn refresh_device_actions(&mut self) {
-        let can_manage = self.can_manage_devices();
-        let current_device = self
-            .state
-            .ui
-            .account
-            .as_ref()
-            .map(|account| account.device_pubkey.clone());
-        let admin_count = self
-            .state
-            .ui
-            .devices
-            .iter()
-            .filter(|device| device.role == "admin")
-            .count();
-        for device in &mut self.state.ui.devices {
-            let is_current = current_device
-                .as_deref()
-                .is_some_and(|current| current == device.pubkey);
-            let is_admin = device.role == "admin";
-            let actions = device_management_actions(can_manage, is_current, is_admin, admin_count);
-            device.can_revoke = actions.can_revoke;
-            device.can_appoint_admin = actions.can_appoint_admin;
-            device.can_demote_admin = actions.can_demote_admin;
-            device.is_current_device = is_current;
-        }
     }
 
     fn refresh_provider_summary(&mut self) {
@@ -1801,58 +1763,62 @@ fn devices_from_account(
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
-    let fips_is_fresh = fips_status.fresh;
+    let current_device_npub = account_npub(&state.device_pubkey);
+    let current_device_online = fips_status.fresh
+        && (fips_status.endpoint_npub.is_empty()
+            || fips_status.endpoint_npub == current_device_npub);
+    let connectivity = device_connectivity_from_fips_status(fips_status);
 
-    app_keys
-        .devices
-        .iter()
-        .map(|device| {
-            let is_current = device.pubkey == state.device_pubkey;
-            let device_npub = account_npub(&device.pubkey);
-            let is_online = fips_is_fresh
-                && if is_current {
-                    fips_status.endpoint_npub.is_empty() || fips_status.endpoint_npub == device_npub
-                } else {
-                    fips_status
-                        .online_devices
-                        .iter()
-                        .any(|peer| peer == &device_npub)
-                };
-            let is_direct = fips_is_fresh
-                && !is_current
-                && fips_status
-                    .direct_devices
-                    .iter()
-                    .any(|peer| peer == &device_npub);
-            let is_mesh = fips_is_fresh
-                && !is_current
-                && fips_status
-                    .mesh_devices
-                    .iter()
-                    .any(|peer| peer == &device_npub);
-            let connection_state =
-                device_connection_state(is_current, is_online, is_direct, is_mesh).to_owned();
-            let role = device_role_key(device.role).to_owned();
-            let display_label = device_display_label(is_current, device.label.as_deref(), "Device");
-            UiDevice {
-                pubkey: device_npub.clone(),
-                label: device.label.clone().unwrap_or_default(),
-                display_label,
-                state: "Linked".to_owned(),
-                state_label: "Linked".to_owned(),
-                connection_label: device_connection_label(&connection_state, None, None),
-                connection_state,
-                role,
-                role_label: device_role_label(device.role).to_owned(),
-                detail: device_npub,
-                is_current_device: is_current,
-                is_online,
-                can_revoke: false,
-                can_appoint_admin: false,
-                can_demote_admin: false,
-            }
-        })
-        .collect()
+    device_roster_rows(
+        &app_keys.devices,
+        &state.device_pubkey,
+        state.can_manage_devices(),
+        current_device_online,
+        &connectivity,
+    )
+    .iter()
+    .map(|device| UiDevice {
+        pubkey: device.npub.clone(),
+        label: device.label.clone().unwrap_or_default(),
+        display_label: device.display_label.clone(),
+        state: device.state.clone(),
+        state_label: device.state_label.clone(),
+        connection_label: device.connection_label.clone(),
+        connection_state: device.connection_state.clone(),
+        role: device.role.clone(),
+        role_label: device.role_label.clone(),
+        detail: device.npub.clone(),
+        is_current_device: device.is_current_device,
+        is_online: device.is_online,
+        can_revoke: device.can_revoke,
+        can_appoint_admin: device.can_appoint_admin,
+        can_demote_admin: device.can_demote_admin,
+    })
+    .collect()
+}
+
+fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceConnectivity {
+    if !fips_status.fresh {
+        return DeviceConnectivity::default();
+    }
+    DeviceConnectivity {
+        online_devices: fips_status.online_devices.iter().cloned().collect(),
+        direct_devices: fips_status.direct_devices.iter().cloned().collect(),
+        mesh_devices: fips_status.mesh_devices.iter().cloned().collect(),
+        peer_statuses: fips_status
+            .peer_statuses
+            .iter()
+            .map(|peer| {
+                (
+                    peer.npub.clone(),
+                    DeviceConnectionDetails {
+                        transport_type: label_option(&peer.transport_type),
+                        srtt_ms: peer.srtt_ms,
+                    },
+                )
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

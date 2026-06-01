@@ -1,5 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::account::DeviceAuthorizationState;
-use crate::app_keys::DeviceRole;
+use crate::app_keys::{DeviceEntry, DeviceRole};
+use nostr_sdk::PublicKey;
+use nostr_sdk::nips::nip19::ToBech32;
 
 #[must_use]
 pub fn authorization_state_key(state: DeviceAuthorizationState) -> &'static str {
@@ -166,6 +170,143 @@ pub fn device_management_actions(
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceConnectionDetails {
+    pub transport_type: Option<String>,
+    pub srtt_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceConnectivity {
+    pub online_devices: BTreeSet<String>,
+    pub direct_devices: BTreeSet<String>,
+    pub mesh_devices: BTreeSet<String>,
+    pub peer_statuses: BTreeMap<String, DeviceConnectionDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRosterRow {
+    pub pubkey_hex: String,
+    pub npub: String,
+    pub label: Option<String>,
+    pub display_label: String,
+    pub role: String,
+    pub role_label: String,
+    pub state: String,
+    pub state_label: String,
+    pub is_current_device: bool,
+    pub is_online: bool,
+    pub is_direct: bool,
+    pub is_mesh: bool,
+    pub online_via: Option<String>,
+    pub connection_state: String,
+    pub connection_label: String,
+    pub transport_type: Option<String>,
+    pub srtt_ms: Option<u64>,
+    pub can_revoke: bool,
+    pub can_appoint_admin: bool,
+    pub can_demote_admin: bool,
+    pub added_at: i64,
+}
+
+#[must_use]
+pub fn pubkey_npub(hex: &str) -> String {
+    PublicKey::from_hex(hex)
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .unwrap_or_else(|| hex.to_owned())
+}
+
+#[must_use]
+pub fn device_roster_rows(
+    devices: &[DeviceEntry],
+    current_device_pubkey: &str,
+    can_manage_devices: bool,
+    current_device_online: bool,
+    connectivity: &DeviceConnectivity,
+) -> Vec<DeviceRosterRow> {
+    let admin_count = devices
+        .iter()
+        .filter(|device| device.role == DeviceRole::Admin)
+        .count();
+
+    devices
+        .iter()
+        .map(|device| {
+            let npub = pubkey_npub(&device.pubkey);
+            let is_current_device = device.pubkey == current_device_pubkey;
+            let is_direct = !is_current_device && connectivity.direct_devices.contains(&npub);
+            let is_mesh = !is_current_device && connectivity.mesh_devices.contains(&npub);
+            let is_online = if is_current_device {
+                current_device_online
+            } else {
+                connectivity.online_devices.contains(&npub) || is_direct || is_mesh
+            };
+            let online_via = device_online_via(is_current_device, is_online, is_direct, is_mesh);
+            let connection_state =
+                device_connection_state(is_current_device, is_online, is_direct, is_mesh)
+                    .to_owned();
+            let connection = connectivity.peer_statuses.get(&npub);
+            let transport_type = connection.and_then(|status| status.transport_type.clone());
+            let srtt_ms = connection.and_then(|status| status.srtt_ms);
+            let actions = device_management_actions(
+                can_manage_devices,
+                is_current_device,
+                device.role == DeviceRole::Admin,
+                admin_count,
+            );
+            DeviceRosterRow {
+                pubkey_hex: device.pubkey.clone(),
+                npub: npub.clone(),
+                label: device.label.clone(),
+                display_label: device_display_label(
+                    is_current_device,
+                    device.label.as_deref(),
+                    &npub,
+                ),
+                role: device_role_key(device.role).to_owned(),
+                role_label: device_role_label(device.role).to_owned(),
+                state: "Linked".to_owned(),
+                state_label: "Linked".to_owned(),
+                is_current_device,
+                is_online,
+                is_direct,
+                is_mesh,
+                online_via,
+                connection_label: device_connection_label(
+                    &connection_state,
+                    transport_type.as_deref(),
+                    srtt_ms,
+                ),
+                connection_state,
+                transport_type,
+                srtt_ms,
+                can_revoke: actions.can_revoke,
+                can_appoint_admin: actions.can_appoint_admin,
+                can_demote_admin: actions.can_demote_admin,
+                added_at: device.added_at,
+            }
+        })
+        .collect()
+}
+
+fn device_online_via(
+    is_current_device: bool,
+    is_online: bool,
+    is_direct: bool,
+    is_mesh: bool,
+) -> Option<String> {
+    if is_current_device && is_online {
+        Some("local".to_owned())
+    } else if is_direct {
+        Some("direct".to_owned())
+    } else if is_mesh {
+        Some("mesh".to_owned())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +399,55 @@ mod tests {
         assert!(!current.can_revoke);
         assert!(!current.can_appoint_admin);
         assert!(!current.can_demote_admin);
+    }
+
+    #[test]
+    fn shared_device_rows_include_presence_roles_and_actions() {
+        let current = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let remote = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let current_npub = pubkey_npub(current);
+        let remote_npub = pubkey_npub(remote);
+        let devices = vec![
+            crate::app_keys::DeviceEntry::admin(current.to_owned(), 10, Some("Mac".to_owned())),
+            crate::app_keys::DeviceEntry::member(remote.to_owned(), 11, Some("Phone".to_owned())),
+        ];
+        let connectivity = DeviceConnectivity {
+            online_devices: [remote_npub.clone()].into_iter().collect(),
+            direct_devices: [remote_npub.clone()].into_iter().collect(),
+            peer_statuses: [(
+                remote_npub.clone(),
+                DeviceConnectionDetails {
+                    transport_type: Some("tcp".to_owned()),
+                    srtt_ms: Some(12),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..DeviceConnectivity::default()
+        };
+
+        let rows = device_roster_rows(&devices, current, true, true, &connectivity);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].npub, current_npub);
+        assert_eq!(rows[0].display_label, "This device");
+        assert_eq!(rows[0].role, "admin");
+        assert_eq!(rows[0].role_label, "Admin");
+        assert_eq!(rows[0].connection_state, "local");
+        assert_eq!(rows[0].connection_label, "This device");
+        assert!(!rows[0].can_revoke);
+
+        assert_eq!(rows[1].npub, remote_npub);
+        assert_eq!(rows[1].display_label, "Phone");
+        assert_eq!(rows[1].role, "member");
+        assert_eq!(rows[1].role_label, "Member");
+        assert!(rows[1].is_online);
+        assert!(rows[1].is_direct);
+        assert_eq!(rows[1].online_via.as_deref(), Some("direct"));
+        assert_eq!(rows[1].connection_state, "direct");
+        assert_eq!(rows[1].connection_label, "Online (TCP, 12 ms)");
+        assert!(rows[1].can_revoke);
+        assert!(rows[1].can_appoint_admin);
+        assert!(!rows[1].can_demote_admin);
     }
 }
