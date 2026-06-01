@@ -46,6 +46,31 @@ class AppStateTest {
     }
 
     @Test
+    fun relayStatusesAreParsedFromNativeState() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "relays": ["wss://relay.example"],
+                "relay_statuses": [{
+                  "url": "wss://relay.example",
+                  "status": "connected",
+                  "status_label": "connected",
+                  "health": "online"
+                }]
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("wss://relay.example", state.relayStatuses.single().url)
+        assertEquals("connected", state.relayStatuses.single().status)
+        assertEquals("connected", state.relayStatuses.single().statusLabel)
+        assertEquals("online", state.relayStatuses.single().health)
+    }
+
+    @Test
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
             account = AccountState(

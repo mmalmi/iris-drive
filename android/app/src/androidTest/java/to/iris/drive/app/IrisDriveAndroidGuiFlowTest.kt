@@ -38,6 +38,7 @@ import org.json.JSONObject
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.core.RelayStatus
 import to.iris.drive.app.core.SyncState
 import to.iris.drive.app.provider.IrisDriveDocumentStore
 
@@ -295,6 +296,29 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("devicesContent").assertIsDisplayed()
         compose.onAllNodesWithTag("driveContent").assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsViewUsesNativeRelayStatusRows() {
+        val state = AppState(
+            account = accountState(),
+            setupState = "authorized",
+            relayStatuses = listOf(
+                RelayStatus(
+                    url = "wss://relay.example",
+                    status = "connected",
+                    statusLabel = "connected",
+                    health = "online",
+                ),
+            ),
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabSettings").activate()
+        compose.onNodeWithTag("settingsContent").performScrollToNode(hasText("wss://relay.example"))
+        compose.onNodeWithText("wss://relay.example").assertIsDisplayed()
+        compose.onNodeWithText("connected").assertIsDisplayed()
     }
 
     @Test

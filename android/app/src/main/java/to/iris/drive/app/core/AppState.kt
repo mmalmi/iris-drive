@@ -8,6 +8,7 @@ internal data class AppState(
     val roots: List<SyncRoot> = emptyList(),
     val devices: List<DeviceState> = emptyList(),
     val relays: List<String> = emptyList(),
+    val relayStatuses: List<RelayStatus> = emptyList(),
     val backups: List<BackupState> = emptyList(),
     val paths: PathState = PathState(),
     val sync: SyncState = SyncState(),
@@ -42,6 +43,7 @@ internal data class AppState(
                 roots = ui.optJSONArray("roots").toRoots(),
                 devices = ui.optJSONArray("devices").toDevices(),
                 relays = ui.optJSONArray("relays").toStrings(),
+                relayStatuses = ui.optJSONArray("relay_statuses").toRelayStatuses(),
                 backups = ui.optJSONArray("backups").toBackups(),
                 paths = ui.optJSONObject("paths")?.toPaths() ?: PathState(),
                 sync = ui.optJSONObject("sync")?.toSync() ?: SyncState(),
@@ -100,6 +102,13 @@ internal data class BackupState(
     val label: String,
     val state: String,
     val detail: String,
+)
+
+internal data class RelayStatus(
+    val url: String,
+    val status: String,
+    val statusLabel: String,
+    val health: String,
 )
 
 internal data class PathState(
@@ -309,6 +318,25 @@ private fun JSONArray?.toBackups(): List<BackupState> {
                     label = item.optString("label"),
                     state = item.optString("state"),
                     detail = item.optString("detail"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toRelayStatuses(): List<RelayStatus> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            val url = item.optString("url")
+            if (url.isBlank()) continue
+            add(
+                RelayStatus(
+                    url = url,
+                    status = item.optString("status"),
+                    statusLabel = item.optString("status_label"),
+                    health = item.optString("health"),
                 ),
             )
         }

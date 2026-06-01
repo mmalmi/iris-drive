@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -419,10 +420,19 @@ private fun SettingsPanel(
 
     CardSection(title = "Settings", trailing = "network") {
         Text("Relays", fontWeight = FontWeight.SemiBold)
-        state.relays.forEach { relay ->
+        state.relayStatuses.forEach { relay ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(relay, color = Muted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                IconButton(onClick = { onRemoveRelay(relay) }) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(relayHealthColor(relay.health), RoundedCornerShape(4.dp)),
+                )
+                Spacer(Modifier.size(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(relay.url, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(relay.statusLabel, color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = { onRemoveRelay(relay.url) }) {
                     Icon(painterResource(R.drawable.ic_delete), contentDescription = "Remove relay")
                 }
             }
@@ -525,6 +535,15 @@ private fun StatRow(label: String, value: String) {
         Text(value.ifBlank { "-" }, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+@Composable
+private fun relayHealthColor(health: String): Color =
+    when (health) {
+        "online" -> Color(0xFF16A34A)
+        "connecting" -> Color(0xFFF5A524)
+        "error" -> Danger
+        else -> Muted
+    }
 
 private fun byteString(bytes: Long): String {
     if (bytes <= 0L) return "0 bytes"
