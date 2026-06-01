@@ -514,7 +514,7 @@ private struct DevicesView: View {
                                 .foregroundStyle(device.isOnline ? .green : .secondary)
                             VStack(alignment: .leading) {
                                 Text(device.label)
-                                Text("\(device.role) | \(device.state) | \(device.isOnline ? "Online" : "Offline")")
+                                Text("\(device.role) | \(device.state) | \(device.connectionLabel)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

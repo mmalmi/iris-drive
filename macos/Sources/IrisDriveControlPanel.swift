@@ -1158,7 +1158,7 @@ private struct PeerRow: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     DetailRow(label: "Public key", value: peer.npub, copyable: true)
-                    DetailRow(label: "Role", value: roleLabel)
+                    DetailRow(label: "Role", value: peer.roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)
                     }
@@ -1216,35 +1216,14 @@ private struct PeerRow: View {
     }
 
     private var title: String {
-        peer.label ?? (peer.isCurrentDevice ? "This Mac" : peer.npub)
+        peer.displayLabel
     }
 
     private var subtitle: String {
         if peer.isCurrentDevice {
-            return "This device | \(roleLabel)"
+            return "\(peer.connectionLabel) | \(peer.roleLabel)"
         }
-        return [roleLabel, fipsConnectionLabel].joined(separator: " | ")
-    }
-
-    private var fipsConnectionLabel: String {
-        guard peer.fipsOnline else {
-            return "Offline"
-        }
-        let via = peer.fipsOnlineVia ?? "direct"
-        let transport = peer.fipsTransportType?.uppercased()
-        let latency = peer.fipsSrttMS.map { "\($0) ms" }
-        switch (transport, latency, via) {
-        case let (transport?, latency?, _):
-            return "Online (\(transport), \(latency))"
-        case let (transport?, nil, _):
-            return "Online (\(transport))"
-        case let (nil, latency?, _):
-            return "Online (\(latency))"
-        case (_, _, "mesh"):
-            return "Online (Mesh)"
-        default:
-            return "Online"
-        }
+        return [peer.roleLabel, peer.connectionLabel].joined(separator: " | ")
     }
 
     private var privacy: String {
@@ -1261,19 +1240,6 @@ private struct PeerRow: View {
         canManageDevices && !peer.isCurrentDevice
     }
 
-    private var roleLabel: String {
-        if !peer.authorized {
-            switch peer.authorizationState {
-            case "revoked":
-                return "Revoked"
-            case "awaiting_approval":
-                return "Awaiting approval"
-            default:
-                return "Unavailable"
-            }
-        }
-        return peer.role == "admin" ? "Admin" : "Member"
-    }
 }
 
 private struct DeviceLinkRequestRow: View {

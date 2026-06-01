@@ -325,8 +325,8 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOnline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOffline").assertIsDisplayed()
-        compose.onNodeWithText("admin | Authorized | Online").assertIsDisplayed()
-        compose.onNodeWithText("member | Authorized | Offline").assertIsDisplayed()
+        compose.onNodeWithText("Admin | Linked | This device").assertIsDisplayed()
+        compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
     }
 
     @Test
@@ -515,7 +515,11 @@ class IrisDriveAndroidGuiFlowTest {
         pubkey = pubkey,
         label = label,
         role = if (isCurrentDevice) "admin" else "member",
-        state = "Authorized",
+        roleLabel = if (isCurrentDevice) "Admin" else "Member",
+        state = "linked",
+        stateLabel = "Linked",
+        connectionState = if (isCurrentDevice) "local" else "offline",
+        connectionLabel = if (isCurrentDevice) "This device" else "Offline",
         detail = pubkey,
         isCurrentDevice = isCurrentDevice,
         isOnline = isCurrentDevice,

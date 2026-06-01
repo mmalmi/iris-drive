@@ -58,6 +58,8 @@ pub struct UiDevice {
     pub role_label: String,
     pub state: String,
     pub state_label: String,
+    pub connection_state: String,
+    pub connection_label: String,
     pub detail: String,
     pub is_current_device: bool,
     pub is_online: bool,

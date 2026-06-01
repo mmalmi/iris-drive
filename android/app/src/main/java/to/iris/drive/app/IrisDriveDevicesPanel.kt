@@ -85,7 +85,7 @@ internal fun DevicesPanel(
                 Column(Modifier.weight(1f)) {
                     Text(device.displayLabel, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${device.roleLabel} | ${device.stateLabel} | ${device.onlineStateText}",
+                        "${device.roleLabel} | ${device.stateLabel} | ${device.connectionLabel}",
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -170,9 +170,6 @@ private fun DeviceStatusDot(device: DeviceState) {
 }
 
 private val OnlineGreen = Color(0xFF16A34A)
-
-private val DeviceState.onlineStateText: String
-    get() = if (isOnline) "Online" else "Offline"
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {

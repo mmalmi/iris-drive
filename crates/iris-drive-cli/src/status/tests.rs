@@ -127,6 +127,55 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
 }
 
 #[test]
+fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    owner
+        .approve_device(&linked_device, Some("Phone".into()))
+        .unwrap();
+    let mut config = AppConfig {
+        account: Some(owner.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(&owner.state.owner_pubkey));
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let linked_npub = account_npub(&linked_device);
+    let daemon_status = json!({
+        "running": true,
+        "fresh": true,
+        "fips_block_sync": {
+            "connected_peers": [linked_npub],
+            "peer_statuses": [{
+                "npub": linked_npub,
+                "transport_type": "tcp",
+                "srtt_ms": 17
+            }]
+        }
+    });
+
+    let peers = peer_statuses(dir.path(), &config, Some(&daemon_status));
+    let current = peers
+        .iter()
+        .find(|peer| peer["is_current_device"] == true)
+        .expect("current device peer");
+    assert_eq!(current["display_label"], "This device");
+    assert_eq!(current["role_label"], "Admin");
+    assert_eq!(current["connection_state"], "local");
+    assert_eq!(current["connection_label"], "This device");
+
+    let linked = peers
+        .iter()
+        .find(|peer| peer["device_npub"] == linked_npub)
+        .expect("linked device peer");
+    assert_eq!(linked["display_label"], "Phone");
+    assert_eq!(linked["role_label"], "Member");
+    assert_eq!(linked["connection_state"], "direct");
+    assert_eq!(linked["connection_label"], "Online (TCP, 17 ms)");
+}
+
+#[test]
 fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = AppConfig::default();

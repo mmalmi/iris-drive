@@ -714,6 +714,8 @@ final class IrisDriveMobileModel: ObservableObject {
                 label: device.displayLabel,
                 role: device.roleLabel,
                 state: device.stateLabel,
+                connectionState: device.connectionState,
+                connectionLabel: device.connectionLabel,
                 detail: device.detail,
                 isCurrentDevice: device.isCurrentDevice,
                 isOnline: device.isOnline,

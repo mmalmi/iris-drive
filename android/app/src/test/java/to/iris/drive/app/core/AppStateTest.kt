@@ -24,6 +24,8 @@ class AppStateTest {
                   "role_label": "Admin",
                   "state": "linked",
                   "state_label": "Linked",
+                  "connection_state": "local",
+                  "connection_label": "This device",
                   "detail": "device-a",
                   "is_current_device": true,
                   "is_online": true
@@ -39,6 +41,8 @@ class AppStateTest {
         assertEquals("This device", state.devices.single().displayLabel)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)
+        assertEquals("local", state.devices.single().connectionState)
+        assertEquals("This device", state.devices.single().connectionLabel)
     }
 
     @Test

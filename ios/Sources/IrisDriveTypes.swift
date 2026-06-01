@@ -5,6 +5,8 @@ struct IrisDriveDevice: Identifiable, Equatable {
     var label: String
     var role: String
     var state: String
+    var connectionState: String
+    var connectionLabel: String
     var detail: String
     var isCurrentDevice: Bool
     var isOnline: Bool

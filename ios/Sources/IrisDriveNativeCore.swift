@@ -412,6 +412,8 @@ struct NativeDevice: Codable {
     var roleLabel: String
     var state: String
     var stateLabel: String
+    var connectionState: String
+    var connectionLabel: String
     var detail: String
     var isCurrentDevice: Bool
     var isOnline: Bool
@@ -427,6 +429,8 @@ struct NativeDevice: Codable {
         case roleLabel = "role_label"
         case state
         case stateLabel = "state_label"
+        case connectionState = "connection_state"
+        case connectionLabel = "connection_label"
         case detail
         case isCurrentDevice = "is_current_device"
         case isOnline = "is_online"

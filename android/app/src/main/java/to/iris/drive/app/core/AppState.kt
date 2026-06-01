@@ -89,6 +89,8 @@ internal data class DeviceState(
     val detail: String,
     val isCurrentDevice: Boolean,
     val isOnline: Boolean,
+    val connectionState: String = if (isCurrentDevice) "local" else if (isOnline) "online" else "offline",
+    val connectionLabel: String = connectionLabelFor(connectionState),
     val canRevoke: Boolean,
     val canAppointAdmin: Boolean,
     val canDemoteAdmin: Boolean,
@@ -272,6 +274,15 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
     return buildList {
         for (index in 0 until length()) {
             val item = optJSONObject(index) ?: continue
+            val isCurrentDevice = item.optBoolean("is_current_device")
+            val isOnline = item.optBoolean("is_online")
+            val fallbackConnectionState = if (isCurrentDevice) {
+                "local"
+            } else if (isOnline) {
+                "online"
+            } else {
+                "offline"
+            }
             add(
                 DeviceState(
                     pubkey = item.optString("pubkey"),
@@ -282,14 +293,32 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
                     state = item.optString("state"),
                     stateLabel = item.optString("state_label", item.optString("state")),
                     detail = item.optString("detail"),
-                    isCurrentDevice = item.optBoolean("is_current_device"),
-                    isOnline = item.optBoolean("is_online"),
+                    isCurrentDevice = isCurrentDevice,
+                    isOnline = isOnline,
+                    connectionState = item.optNonBlankString("connection_state", fallbackConnectionState),
+                    connectionLabel = item.optNonBlankString(
+                        "connection_label",
+                        connectionLabelFor(fallbackConnectionState),
+                    ),
                     canRevoke = item.optBoolean("can_revoke"),
                     canAppointAdmin = item.optBoolean("can_appoint_admin"),
                     canDemoteAdmin = item.optBoolean("can_demote_admin"),
                 ),
             )
         }
+    }
+}
+
+private fun JSONObject.optNonBlankString(name: String, fallback: String): String {
+    return optString(name, fallback).ifBlank { fallback }
+}
+
+private fun connectionLabelFor(connectionState: String): String {
+    return when (connectionState) {
+        "local" -> "This device"
+        "mesh" -> "Online (Mesh)"
+        "direct", "online" -> "Online"
+        else -> "Offline"
     }
 }
 

@@ -1466,6 +1466,18 @@ impl NativeFipsStatus {
             .any(|peer| peer == npub)
     }
 
+    fn peer_is_direct(&self, npub: &str) -> bool {
+        self.normalized_direct_devices()
+            .iter()
+            .any(|peer| peer == npub)
+    }
+
+    fn peer_is_mesh(&self, npub: &str) -> bool {
+        self.normalized_mesh_devices()
+            .iter()
+            .any(|peer| peer == npub)
+    }
+
     fn normalized_direct_devices(&self) -> Vec<String> {
         string_union([
             &self.direct_devices,
@@ -1717,6 +1729,34 @@ fn device_role_display_label(role: DeviceRole) -> &'static str {
     }
 }
 
+fn device_connection_state(
+    is_current: bool,
+    is_online: bool,
+    is_direct: bool,
+    is_mesh: bool,
+) -> &'static str {
+    if is_current {
+        "local"
+    } else if is_direct {
+        "direct"
+    } else if is_mesh {
+        "mesh"
+    } else if is_online {
+        "online"
+    } else {
+        "offline"
+    }
+}
+
+fn device_connection_label(connection_state: &str) -> &'static str {
+    match connection_state {
+        "local" => "This device",
+        "mesh" => "Online (Mesh)",
+        "direct" | "online" => "Online",
+        _ => "Offline",
+    }
+}
+
 fn devices_from_account(
     state: &iris_drive_core::AccountState,
     fips_status: Option<&NativeFipsStatus>,
@@ -1742,6 +1782,14 @@ fn devices_from_account(
                     }
                     status.peer_is_online(&device_npub)
                 });
+            let is_direct = fips_is_fresh
+                && !is_current
+                && fips_status.is_some_and(|status| status.peer_is_direct(&device_npub));
+            let is_mesh = fips_is_fresh
+                && !is_current
+                && fips_status.is_some_and(|status| status.peer_is_mesh(&device_npub));
+            let connection_state =
+                device_connection_state(is_current, is_online, is_direct, is_mesh).to_owned();
             let role = device_role_label(device.role).to_owned();
             let display_label = if is_current {
                 "This device".to_owned()
@@ -1758,6 +1806,8 @@ fn devices_from_account(
                 display_label,
                 state: "Linked".to_owned(),
                 state_label: "Linked".to_owned(),
+                connection_label: device_connection_label(&connection_state).to_owned(),
+                connection_state,
                 role,
                 role_label: device_role_display_label(device.role).to_owned(),
                 detail: device_npub,
@@ -2189,5 +2239,7 @@ fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
     Some(format!("https://drive.iris.to/#/{nhash}"))
 }
 
+#[cfg(test)]
+mod provider_tests;
 #[cfg(test)]
 mod tests;
