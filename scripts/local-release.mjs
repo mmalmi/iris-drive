@@ -573,13 +573,17 @@ function buildIosTestFlight({ env, tag, dryRun }) {
     throw new SkipStepError('iOS TestFlight builds must be created on macOS.')
   }
   const channels = resolveIosTestFlightChannels(env)
+  const releaseVersion = releaseVersionInfo(tag)
   const publicTestFlight = channels.includes('public')
   const command = publicTestFlight ? 'ios-testflight-public' : 'ios-testflight'
+  console.log(`iOS TestFlight version: ${releaseVersion.version} (${releaseVersion.build})`)
   run('bash', [join(repoRoot, 'scripts', 'ios-build'), command], {
     dryRun,
     env: {
       ...env,
       IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS: channels.join(','),
+      IRIS_DRIVE_IOS_MARKETING_VERSION: releaseVersion.version,
+      IRIS_DRIVE_IOS_BUILD_NUMBER: releaseVersion.build,
       IRIS_DRIVE_RELEASE_TAG: tag,
     },
   })
