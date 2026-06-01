@@ -780,6 +780,7 @@ public partial class MainWindow : Window
             Style = (Style)FindResource("PrimaryButton"),
             MinWidth = 92,
             Margin = new Thickness(8, 0, 0, 0),
+            IsEnabled = false,
         };
         var buttons = new StackPanel
         {
@@ -814,8 +815,26 @@ public partial class MainWindow : Window
             Content = body,
         };
 
+        var deviceValidationSequence = 0;
+        async Task RefreshAddDeviceInputAsync()
+        {
+            var sequence = ++deviceValidationSequence;
+            add.IsEnabled = false;
+            var isComplete = await service.IsCompleteLinkInputAsync(deviceBox.Text);
+            if (sequence == deviceValidationSequence)
+            {
+                add.IsEnabled = isComplete;
+            }
+        }
+
         async Task SubmitDeviceAsync()
         {
+            if (!await service.IsCompleteLinkInputAsync(deviceBox.Text))
+            {
+                notice.Text = "Paste the complete Device ID or device invite.";
+                add.IsEnabled = false;
+                return;
+            }
             add.IsEnabled = false;
             try
             {
@@ -825,11 +844,12 @@ public partial class MainWindow : Window
             catch (Exception error)
             {
                 notice.Text = error.Message;
-                add.IsEnabled = true;
+                await RefreshAddDeviceInputAsync();
             }
         }
         cancel.Click += (_, _) => dialog.Close();
         add.Click += async (_, _) => await SubmitDeviceAsync();
+        deviceBox.TextChanged += async (_, _) => await RefreshAddDeviceInputAsync();
         deviceBox.KeyDown += async (_, key) =>
         {
             if (key.Key != Key.Enter)

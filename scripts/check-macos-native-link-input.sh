@@ -32,6 +32,8 @@ require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!setupOwne
 require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!approveDeviceKeyIsComplete)"
 require_contains windows/IrisDriveService.cs '"link-input", "classify"'
 require_contains windows/DeviceLinkInput.cs "IsCompleteLinkInputAsync"
+require_contains windows/MainWindow.xaml.cs "RefreshAddDeviceInputAsync"
+require_contains windows/MainWindow.xaml.cs "IsCompleteLinkInputAsync(deviceBox.Text)"
 require_absent macos/Sources/IrisDriveControlPanel.swift ".disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"
 require_absent macos/Sources/IrisDriveControlPanel.swift ".disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"
 require_absent windows/DeviceLinkInput.cs "IsCompleteDeviceLinkOwnerInput"
