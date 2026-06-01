@@ -243,6 +243,10 @@ node scripts/local-release.mjs --build --only ios
 Use `--dry-run` to print the planned artifact names and commands without
 building. The iOS step runs `scripts/ios-build ios-testflight`; set
 `IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1` for the public-TestFlight-capable export.
+Before the first iOS upload for a bundle ID, run
+`scripts/testflight-internal ensure-app` or create the App Store Connect app
+record manually with the documented bundle ID and SKU if the API key cannot
+create app records.
 `just release` runs the same build entrypoint.
 
 4. Stage the release tree:

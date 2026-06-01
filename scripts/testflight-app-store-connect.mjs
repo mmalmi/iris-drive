@@ -389,9 +389,30 @@ async function ensureApp() {
       return app
     }
   }
+  if (isAppCreatePermissionFailure(status, response)) {
+    fail([
+      'The current App Store Connect API key cannot create App Store Connect app records.',
+      'Create the iOS app record in App Store Connect, or rerun with credentials that can create apps:',
+      `  Name: ${appName}`,
+      `  Bundle ID: ${bundleId}`,
+      `  SKU: ${appSku}`,
+      `  Primary locale: ${appPrimaryLocale}`,
+      `Apple response: ${JSON.stringify(response, null, 2)}`,
+    ].join('\n'))
+  }
   const app = requireOk(status, response, 'Create App Store Connect app').data
   console.log(`Created App Store Connect app: ${appName} [${app.id}]`)
   return app
+}
+
+function isAppCreatePermissionFailure(status, body) {
+  if (status !== 403) {
+    return false
+  }
+  const detail = (body.errors ?? [])
+    .map((error) => `${error.code ?? ''} ${error.title ?? ''} ${error.detail ?? ''}`)
+    .join('\n')
+  return detail.includes('apps') && detail.includes('CREATE')
 }
 
 async function findBuild(appId) {
