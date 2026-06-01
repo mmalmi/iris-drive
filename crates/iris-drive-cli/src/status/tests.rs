@@ -420,6 +420,41 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
 }
 
 #[test]
+fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let root_cid = Cid::encrypted([0x11; 32], [0x22; 32]).to_string();
+    let mut drive = Drive::primary(&owner.state.owner_pubkey);
+    drive.device_roots.insert(
+        owner.state.device_pubkey.clone(),
+        DeviceRootRef::legacy(&root_cid, 10, 1),
+    );
+    let config = AppConfig {
+        account: Some(owner.state.clone()),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        write_daemon_status(dir.path(), json!({"event": "relay_statuses"}));
+    });
+
+    let status: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
+            .unwrap();
+    assert_eq!(status["summary"]["authorized_device_count"], 1);
+    assert_eq!(
+        status["summary"]["provider_refresh_key"],
+        format!("current:{root_cid}")
+    );
+}
+
+#[test]
 fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     let dir = tempfile::tempdir().unwrap();
     AppConfig::default()

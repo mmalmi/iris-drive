@@ -11,8 +11,8 @@ pub(crate) use backups::{
     backup_target_kind_label, backup_targets_status, configured_backup_targets_status,
 };
 use iris_drive_core::device_summary::{
-    primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
-    setup_state_flags, sync_status_label,
+    DeviceConnectivity, device_roster_rows, primary_status_for_setup_state, primary_status_label,
+    setup_label_for_setup_state, setup_state_flags, sync_status_label,
 };
 pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
@@ -443,23 +443,8 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let account_block = status_account_block(&config);
-    let peers = peer_statuses(config_dir, &config, Some(payload));
-    let authorized_device_count = peers
-        .iter()
-        .filter(|peer| {
-            peer.get("authorized")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .count();
-    let online_device_count = peers
-        .iter()
-        .filter(|peer| {
-            peer.get("fips_online")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .count();
+    let (authorized_device_count, online_device_count) =
+        daemon_summary_device_counts(&config, payload);
     let file_count = payload
         .get("summary")
         .and_then(|summary| summary.get("file_count"))
@@ -480,7 +465,14 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         })
         .and_then(Value::as_u64);
     let current_root_cid = current_primary_root_cid(&config);
-    let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &peers);
+    let provider_refresh_key = payload
+        .get("summary")
+        .and_then(|summary| summary.get("provider_refresh_key"))
+        .and_then(Value::as_str)
+        .map_or_else(
+            || provider_refresh_key(current_root_cid.as_deref(), &[]),
+            ToOwned::to_owned,
+        );
     let summary = status_summary(
         already_initialized(config_dir),
         account_block.as_ref(),
@@ -504,6 +496,43 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
             }),
         );
     }
+}
+
+fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, usize) {
+    let Some(account) = config.account.as_ref() else {
+        return (0, 0);
+    };
+    let Some(snapshot) = account.app_keys.as_ref() else {
+        return (0, 0);
+    };
+    let fips_status = payload
+        .get("fips_block_sync")
+        .filter(|value| value.is_object());
+    let connectivity = DeviceConnectivity {
+        online_devices: fips_online_devices_from_status(fips_status)
+            .into_iter()
+            .collect(),
+        direct_devices: fips_direct_devices_from_status(fips_status)
+            .into_iter()
+            .collect(),
+        mesh_devices: fips_mesh_devices_from_status(fips_status)
+            .into_iter()
+            .collect(),
+        peer_statuses: BTreeMap::new(),
+    };
+    let daemon_running = payload
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let rows = device_roster_rows(
+        &snapshot.devices,
+        &account.device_pubkey,
+        account.can_manage_devices(),
+        daemon_running,
+        &connectivity,
+    );
+    let online = rows.iter().filter(|row| row.is_online).count();
+    (rows.len(), online)
 }
 
 pub(crate) fn normalized_relay_statuses(
