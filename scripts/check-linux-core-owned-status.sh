@@ -23,7 +23,7 @@ require_absent() {
 }
 
 require_contains linux/Cargo.toml 'iris-drive-app-core = { path = "../crates/iris-drive-app-core" }'
-require_contains linux/src/setup.rs 'iris_drive_app_core::classify_link_input(value.to_string()).is_complete'
+require_contains linux/src/setup.rs 'iris_drive_app_core::validate_link_input(value.to_string()).is_complete'
 require_contains linux/src/data.rs 'summary_json(json)'
 require_contains linux/src/data.rs 'find_bool(summary_json(json), &["awaiting_approval"])'
 require_contains linux/src/data.rs 'find_bool(summary_json(json), &["revoked"])'

@@ -478,7 +478,7 @@ fn submit_link_device(
 }
 
 fn link_owner_input_is_complete(value: &str) -> bool {
-    iris_drive_app_core::classify_link_input(value.to_string()).is_complete
+    iris_drive_app_core::validate_link_input(value.to_string()).is_complete
 }
 
 pub(crate) fn append_centered_setup(model: &AppRef, child: &gtk::Box) {
