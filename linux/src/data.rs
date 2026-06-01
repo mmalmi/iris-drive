@@ -49,20 +49,16 @@ pub(crate) fn summary_json(json: &Value) -> &Value {
     json.get("summary").unwrap_or(&Value::Null)
 }
 
-pub(crate) fn setup_state_value(json: &Value) -> &str {
-    find_string(summary_json(json), &["setup_state"]).unwrap_or("not_configured")
-}
-
 pub(crate) fn setup_label_value(json: &Value) -> &str {
     find_string(summary_json(json), &["setup_label"]).unwrap_or("-")
 }
 
 pub(crate) fn is_awaiting_link_approval(json: &Value) -> bool {
-    setup_state_value(json) == "awaiting_approval"
+    find_bool(summary_json(json), &["awaiting_approval"]).unwrap_or(false)
 }
 
 pub(crate) fn is_revoked(json: &Value) -> bool {
-    setup_state_value(json) == "revoked"
+    find_bool(summary_json(json), &["revoked"]).unwrap_or(false)
 }
 
 pub(crate) fn file_count_value(json: &Value) -> String {

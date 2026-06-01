@@ -290,6 +290,9 @@ struct NativeUiState: Codable {
     var sync: NativeSyncStatus
     var fips: NativeFipsStatus
     var setupState: String
+    var setupComplete: Bool
+    var awaitingApproval: Bool
+    var revoked: Bool
     var setupLabel: String
     var primaryStatus: String
     var primaryStatusLabel: String
@@ -310,6 +313,9 @@ struct NativeUiState: Codable {
         case sync
         case fips
         case setupState = "setup_state"
+        case setupComplete = "setup_complete"
+        case awaitingApproval = "awaiting_approval"
+        case revoked
         case setupLabel = "setup_label"
         case primaryStatus = "primary_status"
         case primaryStatusLabel = "primary_status_label"

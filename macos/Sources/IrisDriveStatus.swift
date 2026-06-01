@@ -18,6 +18,9 @@ final class IrisDriveStatus: ObservableObject {
     @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
     @Published var hasOwnerSigningAuthority = false
     @Published var setupState = "not_configured"
+    @Published var setupComplete = false
+    @Published var awaitingApproval = false
+    @Published var revoked = false
     @Published var setupLabel = "Not linked"
     @Published var primaryStatus = "not_setup"
     @Published var primaryStatusLabel = "Ready"
@@ -51,17 +54,6 @@ final class IrisDriveStatus: ObservableObject {
         return snapshotURL
     }
 
-    var setupComplete: Bool {
-        setupState == "authorized"
-    }
-
-    var awaitingApproval: Bool {
-        setupState == "awaiting_approval"
-    }
-
-    var revoked: Bool {
-        setupState == "revoked"
-    }
 }
 
 struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {

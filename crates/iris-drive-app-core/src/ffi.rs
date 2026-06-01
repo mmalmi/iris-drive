@@ -20,7 +20,7 @@ use iris_drive_core::device_summary::{
     authorization_state_key, device_connection_label, device_connection_state,
     device_display_label, device_management_actions, device_role_key, device_role_label,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
-    sync_status_label,
+    setup_state_flags, sync_status_label,
 };
 #[cfg(not(test))]
 use iris_drive_core::fips_status::online_device_ids;
@@ -811,6 +811,10 @@ impl NativeAppRuntime {
         );
         primary_status_for_setup_state(&setup_state).clone_into(&mut self.state.ui.primary_status);
         self.state.ui.setup_state = setup_state;
+        let setup_flags = setup_state_flags(&self.state.ui.setup_state);
+        self.state.ui.setup_complete = setup_flags.setup_complete;
+        self.state.ui.awaiting_approval = setup_flags.awaiting_approval;
+        self.state.ui.revoked = setup_flags.revoked;
         setup_label_for_setup_state(&self.state.ui.setup_state)
             .clone_into(&mut self.state.ui.setup_label);
         primary_status_label(&self.state.ui.primary_status)

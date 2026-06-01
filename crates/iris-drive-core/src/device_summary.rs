@@ -30,6 +30,22 @@ pub fn setup_label_for_setup_state(setup_state: &str) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupStateFlags {
+    pub setup_complete: bool,
+    pub awaiting_approval: bool,
+    pub revoked: bool,
+}
+
+#[must_use]
+pub fn setup_state_flags(setup_state: &str) -> SetupStateFlags {
+    SetupStateFlags {
+        setup_complete: setup_state == "authorized",
+        awaiting_approval: setup_state == "awaiting_approval",
+        revoked: setup_state == "revoked",
+    }
+}
+
 #[must_use]
 pub fn primary_status_label(primary_status: &str) -> &'static str {
     match primary_status {
@@ -172,6 +188,30 @@ mod tests {
 
         assert_eq!(primary_status_for_setup_state("authorized"), "ready");
         assert_eq!(setup_label_for_setup_state("authorized"), "Linked");
+        assert_eq!(
+            setup_state_flags("authorized"),
+            SetupStateFlags {
+                setup_complete: true,
+                awaiting_approval: false,
+                revoked: false,
+            }
+        );
+        assert_eq!(
+            setup_state_flags("awaiting_approval"),
+            SetupStateFlags {
+                setup_complete: false,
+                awaiting_approval: true,
+                revoked: false,
+            }
+        );
+        assert_eq!(
+            setup_state_flags("revoked"),
+            SetupStateFlags {
+                setup_complete: false,
+                awaiting_approval: false,
+                revoked: true,
+            }
+        );
         assert_eq!(
             primary_status_label("awaiting_approval"),
             "Waiting for approval"

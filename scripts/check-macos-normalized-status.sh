@@ -27,7 +27,9 @@ require_contains macos/Sources/IrisDriveStatus.swift 'json["roster_direct_device
 require_contains macos/Sources/IrisDriveStatus.swift 'json["online_device_count"]'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["direct_device_count"]'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["mesh_device_count"]'
-require_contains macos/Sources/IrisDriveStatus.swift "setupState == \"authorized\""
+require_contains macos/Sources/IrisDriveStatus.swift "@Published var setupComplete = false"
+require_contains macos/Sources/IrisDriveStatus.swift "@Published var awaitingApproval = false"
+require_contains macos/Sources/IrisDriveStatus.swift "@Published var revoked = false"
 require_contains macos/Sources/IrisDriveMacApp.swift 'json["summary"]'
 require_contains macos/Sources/IrisDriveMacApp.swift "applyStatusSummary"
 
@@ -37,6 +39,9 @@ require_absent macos/Sources/IrisDriveStatus.swift "online_peer_count"
 require_absent macos/Sources/IrisDriveStatus.swift "direct_peer_count"
 require_absent macos/Sources/IrisDriveStatus.swift "connected_peer_count"
 require_absent macos/Sources/IrisDriveStatus.swift "mesh_peer_count"
+require_absent macos/Sources/IrisDriveStatus.swift 'setupState == "authorized"'
+require_absent macos/Sources/IrisDriveStatus.swift 'setupState == "awaiting_approval"'
+require_absent macos/Sources/IrisDriveStatus.swift 'setupState == "revoked"'
 require_absent macos/Sources/IrisDriveStatus.swift 'authorizationState == "authorized"'
 require_absent macos/Sources/IrisDriveStatus.swift 'authorizationState == "awaiting_approval"'
 require_absent macos/Sources/IrisDriveStatus.swift 'authorizationState == "revoked"'

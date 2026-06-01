@@ -18,20 +18,14 @@ internal data class AppState(
     val setupLabel: String = "Not linked",
     val primaryStatus: String = "not_setup",
     val primaryStatusLabel: String = "Ready",
+    val isSetupComplete: Boolean = false,
+    val isAwaitingApproval: Boolean = false,
+    val isRevoked: Boolean = false,
     val authorizedDeviceCount: Int = 0,
     val onlineDeviceCount: Int = 0,
     val fileCount: Int = 0,
     val visibleFileBytes: Long = 0,
 ) {
-    val isSetupComplete: Boolean
-        get() = setupState == "authorized"
-
-    val isAwaitingApproval: Boolean
-        get() = setupState == "awaiting_approval"
-
-    val isRevoked: Boolean
-        get() = setupState == "revoked"
-
     companion object {
         fun fromJson(jsonText: String): AppState {
             val json = runCatching { JSONObject(jsonText) }.getOrElse {
@@ -53,6 +47,9 @@ internal data class AppState(
                 setupLabel = ui.optString("setup_label", "Not linked"),
                 primaryStatus = ui.optString("primary_status", "not_setup"),
                 primaryStatusLabel = ui.optString("primary_status_label", "Ready"),
+                isSetupComplete = ui.optBoolean("setup_complete"),
+                isAwaitingApproval = ui.optBoolean("awaiting_approval"),
+                isRevoked = ui.optBoolean("revoked"),
                 authorizedDeviceCount = ui.optInt("authorized_device_count"),
                 onlineDeviceCount = ui.optInt("online_device_count"),
                 fileCount = ui.optInt("file_count"),

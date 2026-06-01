@@ -1493,7 +1493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else {
             return false
         }
-        return summary["setup_state"] as? String == "authorized"
+        return summary["setup_complete"] as? Bool ?? false
     }
 
     private func applyStatusData(_ data: Data) {
@@ -1695,6 +1695,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let setupState = summary["setup_state"] as? String {
             status.setupState = setupState
         }
+        status.setupComplete = summary["setup_complete"] as? Bool ?? false
+        status.awaitingApproval = summary["awaiting_approval"] as? Bool ?? false
+        status.revoked = summary["revoked"] as? Bool ?? false
         if let setupLabel = summary["setup_label"] as? String {
             status.setupLabel = setupLabel
         }

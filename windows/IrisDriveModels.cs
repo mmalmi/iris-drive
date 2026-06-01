@@ -14,6 +14,9 @@ public sealed class IrisDriveStatusData
     public string? AuthorizationState { get; init; }
     public string SetupState { get; init; } = "not_configured";
     public string SetupLabel { get; init; } = "Not linked";
+    public bool SetupComplete { get; init; }
+    public bool AwaitingApproval { get; init; }
+    public bool Revoked { get; init; }
     public string PrimaryStatus { get; init; } = "not_setup";
     public string PrimaryStatusLabel { get; init; } = "Ready";
     public string? DeviceLinkRequestUrl { get; init; }
@@ -60,6 +63,9 @@ public sealed class IrisDriveStatusData
                 account.HasValue ? String(account.Value, "authorization_state") : null,
             SetupState = summary.HasValue ? String(summary.Value, "setup_state") ?? "not_configured" : "not_configured",
             SetupLabel = summary.HasValue ? String(summary.Value, "setup_label") ?? "Not linked" : "Not linked",
+            SetupComplete = summary.HasValue && Bool(summary.Value, "setup_complete"),
+            AwaitingApproval = summary.HasValue && Bool(summary.Value, "awaiting_approval"),
+            Revoked = summary.HasValue && Bool(summary.Value, "revoked"),
             PrimaryStatus = summary.HasValue ? String(summary.Value, "primary_status") ?? "not_setup" : "not_setup",
             PrimaryStatusLabel = summary.HasValue ? String(summary.Value, "primary_status_label") ?? "Ready" : "Ready",
             DeviceLinkRequestUrl = deviceLinkRequest.HasValue
@@ -101,13 +107,13 @@ public sealed class IrisDriveStatusData
     }
 
     public bool IsAwaitingLinkedApproval =>
-        Initialized && string.Equals(SetupState, "awaiting_approval", StringComparison.Ordinal);
+        Initialized && AwaitingApproval;
 
     public bool IsSetupComplete =>
-        Initialized && string.Equals(SetupState, "authorized", StringComparison.Ordinal);
+        Initialized && SetupComplete;
 
     public bool IsRevoked =>
-        Initialized && string.Equals(SetupState, "revoked", StringComparison.Ordinal);
+        Initialized && Revoked;
 
     private static string ExtractDriveName(JsonElement root)
     {
@@ -133,11 +139,7 @@ public sealed class IrisDriveStatusData
     private static string? ExtractDrivePath(JsonElement root)
     {
         var summary = Object(root, "summary");
-        return summary.HasValue &&
-            string.Equals(
-                String(summary.Value, "setup_state"),
-                "authorized",
-                StringComparison.Ordinal)
+        return summary.HasValue && Bool(summary.Value, "setup_complete")
             ? WindowsCloudFiles.SyncRootPath
             : null;
     }

@@ -39,6 +39,7 @@ enum IrisDriveScreenshotFixtures {
         ]
         status.hasOwnerSigningAuthority = true
         status.setupState = "authorized"
+        status.setupComplete = true
         status.setupLabel = "Linked"
         status.primaryStatus = "ready"
         status.primaryStatusLabel = "Ready"

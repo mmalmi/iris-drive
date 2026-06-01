@@ -13,6 +13,9 @@ class AppStateTest {
             {
               "ui": {
                 "setup_state": "authorized",
+                "setup_complete": true,
+                "awaiting_approval": false,
+                "revoked": false,
                 "setup_label": "Linked",
                 "primary_status": "ready",
                 "primary_status_label": "Ready",
@@ -42,6 +45,7 @@ class AppStateTest {
         )
 
         assertEquals("Linked", state.setupLabel)
+        assertTrue(state.isSetupComplete)
         assertEquals("Ready", state.primaryStatusLabel)
         assertEquals("Up to date", state.sync.statusLabel)
         assertEquals("This device", state.devices.single().displayLabel)
@@ -133,6 +137,7 @@ class AppStateTest {
                 ),
             ),
             setupState = "authorized",
+            isSetupComplete = true,
             authorizedDeviceCount = 2,
             onlineDeviceCount = 1,
         )
@@ -159,6 +164,7 @@ class AppStateTest {
                 inboundDeviceLinkRequests = emptyList(),
             ),
             setupState = "awaiting_approval",
+            isAwaitingApproval = true,
         )
 
         assertTrue(state.isAwaitingApproval)
@@ -180,6 +186,7 @@ class AppStateTest {
                 inboundDeviceLinkRequests = emptyList(),
             ),
             setupState = "revoked",
+            isRevoked = true,
         )
 
         assertTrue(state.isRevoked)

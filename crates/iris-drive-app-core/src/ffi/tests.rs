@@ -87,6 +87,9 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.backups[0].label, "Blossom remote");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
     assert_eq!(state.ui.setup_state, "authorized");
+    assert!(state.ui.setup_complete);
+    assert!(!state.ui.awaiting_approval);
+    assert!(!state.ui.revoked);
     assert_eq!(state.ui.setup_label, "Linked");
     assert_eq!(state.ui.primary_status, "ready");
     assert_eq!(state.ui.primary_status_label, "Ready");
@@ -163,6 +166,9 @@ fn uninitialized_state_exposes_summary_defaults() {
     let state = app.state();
 
     assert_eq!(state.ui.setup_state, "not_configured");
+    assert!(!state.ui.setup_complete);
+    assert!(!state.ui.awaiting_approval);
+    assert!(!state.ui.revoked);
     assert_eq!(state.ui.setup_label, "Not linked");
     assert_eq!(state.ui.primary_status, "not_setup");
     assert_eq!(state.ui.primary_status_label, "Ready");
@@ -320,6 +326,9 @@ fn link_action_tracks_pending_approval() {
         "pending devices should not appear in the authorized-device roster"
     );
     assert_eq!(state.ui.setup_state, "awaiting_approval");
+    assert!(!state.ui.setup_complete);
+    assert!(state.ui.awaiting_approval);
+    assert!(!state.ui.revoked);
     assert_eq!(state.ui.primary_status, "awaiting_approval");
     assert_eq!(state.ui.authorized_device_count, 0);
 }

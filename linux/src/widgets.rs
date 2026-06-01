@@ -164,14 +164,6 @@ pub(crate) fn close_to_tray_enabled(model: &AppRef) -> bool {
     !model.quit_requested.get() && model.tray_available.get() && model.ui.tray_on_close.is_active()
 }
 
-pub(crate) fn add_field(grid: &gtk::Grid, row: i32, column: i32, name: &str, value: &gtk::Label) {
-    let label = gtk::Label::new(Some(name));
-    label.add_css_class("iris-field-name");
-    label.set_xalign(0.0);
-    grid.attach(&label, column * 2, row, 1, 1);
-    grid.attach(value, column * 2 + 1, row, 1, 1);
-}
-
 pub(crate) fn add_copy_field(
     grid: &gtk::Grid,
     row: i32,

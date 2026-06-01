@@ -12,7 +12,7 @@ pub(crate) use backups::{
 };
 use iris_drive_core::device_summary::{
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
-    sync_status_label,
+    setup_state_flags, sync_status_label,
 };
 pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
@@ -180,8 +180,12 @@ pub(crate) fn status_summary(
         "not_configured"
     };
     let primary_status = primary_status_for_setup_state(setup_state);
+    let setup_flags = setup_state_flags(setup_state);
     json!({
         "setup_state": setup_state,
+        "setup_complete": setup_flags.setup_complete,
+        "awaiting_approval": setup_flags.awaiting_approval,
+        "revoked": setup_flags.revoked,
         "setup_label": setup_label_for_setup_state(setup_state),
         "primary_status": primary_status,
         "primary_status_label": primary_status_label(primary_status),

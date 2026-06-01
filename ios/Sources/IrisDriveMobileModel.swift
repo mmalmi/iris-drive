@@ -119,15 +119,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var isSetupComplete: Bool {
-        lastState?.ui.setupState == "authorized"
+        lastState?.ui.setupComplete ?? false
     }
 
     var isAwaitingApproval: Bool {
-        lastState?.ui.setupState == "awaiting_approval"
+        lastState?.ui.awaitingApproval ?? false
     }
 
     var isRevoked: Bool {
-        lastState?.ui.setupState == "revoked"
+        lastState?.ui.revoked ?? false
     }
 
     var hasOwnerAuthority: Bool {

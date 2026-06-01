@@ -152,6 +152,7 @@ class IrisDriveAndroidGuiFlowTest {
         val state = AppState(
             account = accountState(),
             setupState = "authorized",
+            isSetupComplete = true,
         )
 
         render(state = state)
@@ -306,6 +307,7 @@ class IrisDriveAndroidGuiFlowTest {
         val state = AppState(
             account = accountState(),
             setupState = "authorized",
+            isSetupComplete = true,
             relayStatuses = listOf(
                 RelayStatus(
                     url = "wss://relay.example",
@@ -329,6 +331,7 @@ class IrisDriveAndroidGuiFlowTest {
         val state = AppState(
             account = accountState(),
             setupState = "authorized",
+            isSetupComplete = true,
             devices = listOf(
                 deviceState(
                     pubkey = "device-a",
@@ -401,6 +404,7 @@ class IrisDriveAndroidGuiFlowTest {
         val state = AppState(
             account = accountState(),
             setupState = "authorized",
+            isSetupComplete = true,
             devices = listOf(
                 deviceState(
                     pubkey = "device-a",

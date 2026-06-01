@@ -182,6 +182,9 @@ fn status_summary_emits_shared_setup_and_count_fields() {
     );
 
     assert_eq!(summary["setup_state"], "authorized");
+    assert_eq!(summary["setup_complete"], true);
+    assert_eq!(summary["awaiting_approval"], false);
+    assert_eq!(summary["revoked"], false);
     assert_eq!(summary["setup_label"], "Linked");
     assert_eq!(summary["primary_status"], "ready");
     assert_eq!(summary["primary_status_label"], "Ready");
@@ -195,6 +198,9 @@ fn status_summary_emits_shared_setup_and_count_fields() {
 
     let unconfigured = status_summary(false, None, 0, 0, None, None, "paused", "");
     assert_eq!(unconfigured["setup_state"], "not_configured");
+    assert_eq!(unconfigured["setup_complete"], false);
+    assert_eq!(unconfigured["awaiting_approval"], false);
+    assert_eq!(unconfigured["revoked"], false);
     assert_eq!(unconfigured["setup_label"], "Not linked");
     assert_eq!(unconfigured["primary_status"], "not_setup");
 }
