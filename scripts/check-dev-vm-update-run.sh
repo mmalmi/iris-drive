@@ -68,4 +68,14 @@ if ! grep -F -- "-LogonType S4U" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null
   exit 1
 fi
 
+if ! grep -F 'CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG_DEFAULT}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "POSIX VM Cargo builds must disable dev debuginfo by default to fit small macOS VM disks" >&2
+  exit 1
+fi
+
+if ! grep -F '$env:CARGO_PROFILE_DEV_DEBUG = $CargoProfileDevDebugDefault' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "Windows VM Cargo builds must use the same dev debuginfo override" >&2
+  exit 1
+fi
+
 echo "DEV_VM_UPDATE_RUN_CHECK_OK"

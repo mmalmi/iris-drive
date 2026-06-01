@@ -73,6 +73,11 @@ Environment:
   IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE=1
                                       Also prune compiled Cargo deps/build
                                       artifacts when below MIN_FREE_KB.
+  IRIS_DRIVE_DEV_VM_CARGO_INCREMENTAL Override VM Cargo incremental builds
+                                      (default: 0).
+  IRIS_DRIVE_DEV_VM_CARGO_PROFILE_DEV_DEBUG
+                                      Override VM Cargo dev debuginfo
+                                      (default: 0).
   IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK=1
                                       Skip the final all-VM FIPS online check.
   IRIS_DRIVE_DEV_VM_CONNECTIVITY_TIMEOUT
@@ -678,6 +683,8 @@ run_posix_target() {
     printf 'FIPS_OPEN_DISCOVERY_MAX_PENDING=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
     printf 'PRUNE_COMPILED_CACHE=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_PRUNE_COMPILED_CACHE:-0}")"
+    printf 'CARGO_INCREMENTAL_DEFAULT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_CARGO_INCREMENTAL:-0}")"
+    printf 'CARGO_PROFILE_DEV_DEBUG_DEFAULT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_CARGO_PROFILE_DEV_DEBUG:-0}")"
     printf 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-0}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_WRITE_APP_GROUP_RUNTIME:-}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_DEVELOPMENT_TEAM:-}")"
@@ -837,13 +844,19 @@ ensure_build_space() {
   fi
 }
 
+cargo_dev_build() {
+  CARGO_INCREMENTAL="${CARGO_INCREMENTAL_DEFAULT}" \
+    CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG_DEFAULT}" \
+    cargo build "$@"
+}
+
 build_idrive() {
   local iris_repo="$1"
   local phase="$2"
 
   ensure_build_space "$iris_repo" "$phase"
   log "building idrive helper"
-  (cd "$iris_repo" && cargo build -p idrive)
+  (cd "$iris_repo" && cargo_dev_build -p idrive)
 }
 
 detect_overlay_ip() {
@@ -1095,7 +1108,7 @@ run_linux() {
   local mountpoint="${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-$HOME/Iris Drive}"
 
   build_idrive "$iris_repo" "Linux build"
-  log "building Linux GTK app"; (cd "$iris_repo/linux" && cargo build)
+  log "building Linux GTK app"; (cd "$iris_repo/linux" && cargo_dev_build)
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
@@ -1904,6 +1917,8 @@ run_windows_target() {
     printf '$StaticPeers = %s\n' "$(ps_quote "$static_peers")"
     printf '$FipsEnableBootstrap = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP:-}")"
     printf '$FipsOpenDiscoveryMaxPending = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
+    printf '$CargoIncrementalDefault = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_CARGO_INCREMENTAL:-0}")"
+    printf '$CargoProfileDevDebugDefault = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_CARGO_PROFILE_DEV_DEBUG:-0}")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -1992,6 +2007,8 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch 
 
 function Build-Idrive([string]$IrisRepo) {
   Write-Log "building idrive helper"
+  $env:CARGO_INCREMENTAL = $CargoIncrementalDefault
+  $env:CARGO_PROFILE_DEV_DEBUG = $CargoProfileDevDebugDefault
   cargo build -p idrive --locked
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
