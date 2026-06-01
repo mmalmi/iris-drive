@@ -16,6 +16,7 @@ internal object NativeCore {
     external fun dispatchJson(handle: Long, actionJson: String): String
     external fun qrMatrixJson(text: String): String
     external fun classifyLinkInputJson(text: String): String
+    external fun validateLinkInputJson(text: String): String
     external fun providerListJson(dataDir: String): String
     external fun providerReadJson(dataDir: String, path: String, outputPath: String): String
     external fun providerWriteJson(dataDir: String, path: String, sourcePath: String): String
@@ -44,7 +45,7 @@ internal object NativeCore {
 
     fun isCompleteLinkInput(text: String): Boolean =
         runCatching {
-            JSONObject(classifyLinkInputJson(text.trim())).optBoolean("is_complete")
+            JSONObject(validateLinkInputJson(text.trim())).optBoolean("is_complete")
         }.getOrDefault(false)
 
     fun normalizedProviderPath(path: String): String? {

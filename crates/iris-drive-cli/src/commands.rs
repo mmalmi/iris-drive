@@ -314,6 +314,11 @@ pub(crate) enum LinkInputCmd {
         /// Device-link, invite, owner npub, or owner hex input to classify.
         input: String,
     },
+    /// Print the app-core link input validation as JSON.
+    Validate {
+        /// Device-link, invite, owner npub, or owner hex input to validate.
+        input: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

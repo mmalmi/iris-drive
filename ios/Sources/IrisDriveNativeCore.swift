@@ -27,6 +27,9 @@ private func irisDriveQrMatrixJson(_ text: UnsafePointer<CChar>) -> UnsafeMutabl
 @_silgen_name("iris_drive_classify_link_input_json")
 private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_validate_link_input_json")
+private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_list_json")
 private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -149,8 +152,20 @@ enum IrisDriveNativeLinkInput {
         return value
     }
 
+    static func validate(_ text: String) -> NativeLinkInputClassification {
+        let json = text.withCString { pointer in
+            takeString(irisDriveValidateLinkInputJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeLinkInputClassification.self, from: data)
+        else {
+            return NativeLinkInputClassification(error: "native link validator returned invalid JSON")
+        }
+        return value
+    }
+
     static func isComplete(_ text: String) -> Bool {
-        classify(text).isComplete
+        validate(text).isComplete
     }
 
     private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

@@ -589,7 +589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             do {
                 let data = try self.runIDrive(
                     idrive,
-                    arguments: ["link-input", "classify", trimmed],
+                    arguments: ["link-input", "validate", trimmed],
                     paths: paths
                 )
                 let classification = try JSONDecoder().decode(

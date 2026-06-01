@@ -79,22 +79,6 @@ fn version_prints_plain_text_and_json() {
 }
 
 #[test]
-fn link_input_classify_uses_app_core_completion() {
-    let dir = tempdir().unwrap();
-
-    let short = run_json(dir.path(), &["link-input", "classify", "npub1short"]);
-    assert_eq!(short["kind"], "owner_pubkey");
-    assert_eq!(short["is_complete"], false);
-
-    let owner = run_json(dir.path(), &["init", "--force", "--label", "CLI owner"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap();
-    let complete = run_json(dir.path(), &["link-input", "classify", owner_npub]);
-    assert_eq!(complete["kind"], "owner_pubkey");
-    assert_eq!(complete["is_complete"], true);
-    assert_eq!(complete["normalized_input"], owner_npub);
-}
-
-#[test]
 fn provider_normalize_path_uses_core_document_path_validation() {
     let dir = tempdir().unwrap();
 

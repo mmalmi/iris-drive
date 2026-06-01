@@ -12,12 +12,18 @@ use qrcode::QrCode;
 use serde::Serialize;
 
 use crate::{
-    FfiApp, NativeAppAction, NativeAppState, ffi::classify_link_input,
-    ffi::native_provider_delete_json, ffi::native_provider_import_shared_file_json,
-    ffi::native_provider_is_child_document_json, ffi::native_provider_list_json,
-    ffi::native_provider_mkdir_json, ffi::native_provider_normalize_path_json,
-    ffi::native_provider_read_json, ffi::native_provider_rename_json,
-    ffi::native_provider_resolve_path_json, ffi::native_provider_write_json,
+    FfiApp, NativeAppAction, NativeAppState,
+    ffi::native_provider_delete_json,
+    ffi::native_provider_import_shared_file_json,
+    ffi::native_provider_is_child_document_json,
+    ffi::native_provider_list_json,
+    ffi::native_provider_mkdir_json,
+    ffi::native_provider_normalize_path_json,
+    ffi::native_provider_read_json,
+    ffi::native_provider_rename_json,
+    ffi::native_provider_resolve_path_json,
+    ffi::native_provider_write_json,
+    ffi::{classify_link_input, validate_link_input},
 };
 
 pub struct IrisDriveAppHandle {
@@ -111,6 +117,11 @@ pub extern "C" fn iris_drive_qr_matrix_json(text: *const c_char) -> *mut c_char 
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_classify_link_input_json(text: *const c_char) -> *mut c_char {
     json_string(&classify_link_input(c_string_lossy(text)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_validate_link_input_json(text: *const c_char) -> *mut c_char {
+    json_string(&validate_link_input(c_string_lossy(text)))
 }
 
 #[unsafe(no_mangle)]
@@ -346,6 +357,17 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_classifyLinkInputJ
 ) -> jstring {
     let text = jni_string_lossy(&mut env, &text);
     jni_json_string(env, &classify_link_input(text))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_validateLinkInputJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    jni_json_string(env, &validate_link_input(text))
 }
 
 #[cfg(target_os = "android")]
@@ -636,6 +658,7 @@ mod tests {
     use super::{
         iris_drive_app_dispatch_json, iris_drive_app_free, iris_drive_app_new,
         iris_drive_app_state_json, iris_drive_qr_matrix_json, iris_drive_string_free,
+        iris_drive_validate_link_input_json,
     };
 
     #[test]
@@ -674,6 +697,16 @@ mod tests {
                 .is_some_and(|cells| !cells.is_empty())
         );
         assert_eq!(qr["error"], "");
+    }
+
+    #[test]
+    fn c_abi_returns_link_input_validation() {
+        let input = CString::new("npub1short").expect("link input CString");
+        let validation_json = take_string(iris_drive_validate_link_input_json(input.as_ptr()));
+        let validation: Value = serde_json::from_str(&validation_json).expect("validation JSON");
+
+        assert_eq!(validation["kind"], "owner_pubkey");
+        assert_eq!(validation["is_complete"], false);
     }
 
     fn take_string(ptr: *mut std::ffi::c_char) -> String {

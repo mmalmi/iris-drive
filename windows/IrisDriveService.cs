@@ -67,7 +67,7 @@ public sealed class IrisDriveService
             return false;
         }
 
-        using var document = await RunJsonAsync("link-input", "classify", input.Trim());
+        using var document = await RunJsonAsync("link-input", "validate", input.Trim());
         return document.RootElement.TryGetProperty("is_complete", out var isComplete) &&
             isComplete.ValueKind == JsonValueKind.True;
     }

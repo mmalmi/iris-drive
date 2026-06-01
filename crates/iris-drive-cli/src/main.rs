@@ -224,6 +224,11 @@ fn cmd_link_input(command: LinkInputCmd) -> Result<()> {
             println!("{}", serde_json::to_string(&classification)?);
             Ok(())
         }
+        LinkInputCmd::Validate { input } => {
+            let classification = iris_drive_app_core::validate_link_input(input);
+            println!("{}", serde_json::to_string(&classification)?);
+            Ok(())
+        }
     }
 }
 
