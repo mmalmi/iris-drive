@@ -403,13 +403,16 @@ private fun SetupContent(
     var submittedLinkOwner by remember { mutableStateOf("") }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
     var showLinkScanner by remember { mutableStateOf(false) }
+    val linkOwnerIsComplete = remember(linkOwner) {
+        NativeCore.isCompleteLinkInput(linkOwner)
+    }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedPhoto = uri?.lastPathSegment.orEmpty()
     }
     fun submitLinkOwner(value: String, force: Boolean) {
         val trimmed = value.trim()
         if (trimmed.isBlank()) return
-        if (!force && !NativeCore.isCompleteLinkInput(trimmed)) return
+        if (!NativeCore.isCompleteLinkInput(trimmed)) return
         if (submittedLinkOwner == trimmed) return
         submittedLinkOwner = trimmed
         onLinkDevice(trimmed)
@@ -559,7 +562,7 @@ private fun SetupContent(
                     SetupPrimaryButton(
                         text = "Link device",
                         onClick = { submitLinkOwner(linkOwner, force = true) },
-                        enabled = linkOwner.isNotBlank(),
+                        enabled = linkOwnerIsComplete,
                         testTag = "linkDeviceSubmit",
                     )
                     SetupSecondaryButton(

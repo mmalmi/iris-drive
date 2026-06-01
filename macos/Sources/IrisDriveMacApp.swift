@@ -25,6 +25,14 @@ private let irisDriveAssociatedHosts: Set<String> = [
     "git.iris.to",
 ]
 
+private struct IrisDriveLinkInputCLIClassification: Decodable {
+    let isComplete: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case isComplete = "is_complete"
+    }
+}
+
 @main
 struct IrisDriveMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -562,6 +570,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let args = setupArguments(command: "link", label: "", extra: [owner, "--force"])
         finishSetup(arguments: args)
+    }
+
+    func classifyLinkInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            DispatchQueue.main.async {
+                completion(trimmed, false)
+            }
+            return
+        }
+
+        let idrive = idriveExecutableURL()
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        DispatchQueue.global(qos: .utility).async {
+            let isComplete: Bool
+            do {
+                let data = try self.runIDrive(
+                    idrive,
+                    arguments: ["link-input", "classify", trimmed],
+                    paths: paths
+                )
+                let classification = try JSONDecoder().decode(
+                    IrisDriveLinkInputCLIClassification.self,
+                    from: data
+                )
+                isComplete = classification.isComplete
+            } catch {
+                NSLog("Iris Drive link input classification failed: \(error)")
+                isComplete = false
+            }
+            DispatchQueue.main.async {
+                completion(trimmed, isComplete)
+            }
+        }
     }
 
     @objc func logout() {

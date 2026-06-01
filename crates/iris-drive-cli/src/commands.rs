@@ -108,6 +108,12 @@ pub(crate) enum Command {
     Status,
     /// Print compact GUI summary stats as JSON.
     Stats,
+    /// Classify device-link, invite, and owner-key input using app-core parsing.
+    #[command(name = "link-input")]
+    LinkInput {
+        #[command(subcommand)]
+        command: LinkInputCmd,
+    },
     /// Manage linked devices and device-link requests.
     #[command(subcommand)]
     Devices(DevicesCmd),
@@ -298,6 +304,15 @@ pub(crate) enum DevicesCmd {
     DemoteAdmin {
         /// Device pubkey to demote (npub1... or 64-char hex).
         device: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum LinkInputCmd {
+    /// Print the app-core link input classification as JSON.
+    Classify {
+        /// Device-link, invite, owner npub, or owner hex input to classify.
+        input: String,
     },
 }
 

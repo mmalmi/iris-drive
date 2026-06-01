@@ -155,6 +155,7 @@ fn run_cli() -> ExitCode {
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
         Command::Stats => cmd_stats(&config_dir),
+        Command::LinkInput { command } => cmd_link_input(command),
         Command::Devices(command) => cmd_devices(&config_dir, command),
         Command::NhashResolver { command } => cmd_nhash_resolver(&config_dir, command),
         Command::Conflicts(command) => cmd_conflicts(&config_dir, command),
@@ -213,6 +214,16 @@ fn cmd_version(json_output: bool) {
         );
     } else {
         println!("{}", env!("CARGO_PKG_VERSION"));
+    }
+}
+
+fn cmd_link_input(command: LinkInputCmd) -> Result<()> {
+    match command {
+        LinkInputCmd::Classify { input } => {
+            let classification = iris_drive_app_core::classify_link_input(input);
+            println!("{}", serde_json::to_string(&classification)?);
+            Ok(())
+        }
     }
 }
 

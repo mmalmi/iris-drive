@@ -359,7 +359,7 @@ private struct LinkDeviceSetupView: View {
                     Label("Link device", systemImage: "link")
                 }
                 .accessibilityIdentifier("linkDeviceSubmit")
-                .disabled(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!IrisDriveNativeLinkInput.isComplete(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)))
                 Button {
                     scannerPresented = true
                 } label: {
@@ -380,10 +380,10 @@ private struct LinkDeviceSetupView: View {
         }
     }
 
-    private func submitLinkDevice(_ value: String, force: Bool) {
+    private func submitLinkDevice(_ value: String, force _: Bool) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard force || IrisDriveNativeLinkInput.isComplete(trimmed) else { return }
+        guard IrisDriveNativeLinkInput.isComplete(trimmed) else { return }
         guard submittedOwnerPublicKey != trimmed else { return }
         submittedOwnerPublicKey = trimmed
         model.ownerPublicKey = trimmed

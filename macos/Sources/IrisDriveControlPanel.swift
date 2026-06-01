@@ -86,7 +86,9 @@ struct IrisDriveControlPanel: View {
     @State private var setupSecret = ""
     @State private var setupOwner = ""
     @State var submittedSetupOwner = ""
+    @State private var setupOwnerLinkInputIsComplete = false
     @State private var approveDeviceKey = ""
+    @State private var approveDeviceKeyIsComplete = false
     @State private var approveDeviceLabel = ""
     @State private var showAddDevice = false
     @State private var showAddBackup = false
@@ -135,6 +137,43 @@ struct IrisDriveControlPanel: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func refreshSetupOwnerLinkInput(_ value: String) {
+        let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        setupOwnerLinkInputIsComplete = false
+        guard !query.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard setupOwner.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                return
+            }
+            controller.classifyLinkInput(query) { input, isComplete in
+                guard setupOwner.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
+                    return
+                }
+                setupOwnerLinkInputIsComplete = isComplete
+                if isComplete {
+                    submitSetupOwner(input, force: false, inputIsComplete: true)
+                }
+            }
+        }
+    }
+
+    private func refreshApproveDeviceLinkInput(_ value: String) {
+        let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        approveDeviceKeyIsComplete = false
+        guard !query.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                return
+            }
+            controller.classifyLinkInput(query) { input, isComplete in
+                guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
+                    return
+                }
+                approveDeviceKeyIsComplete = isComplete
+            }
         }
     }
 
@@ -262,15 +301,26 @@ struct IrisDriveControlPanel: View {
                 TextField("Owner public key or invite link", text: $setupOwner)
                     .accessibilityLabel("Owner public key or invite link")
                     .onSubmit {
-                        submitSetupOwner(setupOwner, force: true)
+                        submitSetupOwner(
+                            setupOwner,
+                            force: true,
+                            inputIsComplete: setupOwnerLinkInputIsComplete
+                        )
                     }
                     .onChange(of: setupOwner) { _, newValue in
-                        submitSetupOwner(newValue, force: false)
+                        refreshSetupOwnerLinkInput(newValue)
+                    }
+                    .onAppear {
+                        refreshSetupOwnerLinkInput(setupOwner)
                     }
                 setupSubmit("Link device") {
-                    submitSetupOwner(setupOwner, force: true)
+                    submitSetupOwner(
+                        setupOwner,
+                        force: true,
+                        inputIsComplete: setupOwnerLinkInputIsComplete
+                    )
                 }
-                .disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!setupOwnerLinkInputIsComplete)
             }
         }
         }
@@ -571,6 +621,12 @@ struct IrisDriveControlPanel: View {
             TextField("Device ID", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
+                .onChange(of: approveDeviceKey) { _, newValue in
+                    refreshApproveDeviceLinkInput(newValue)
+                }
+                .onAppear {
+                    refreshApproveDeviceLinkInput(approveDeviceKey)
+                }
             TextField("Name (optional)", text: $approveDeviceLabel)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -581,11 +637,12 @@ struct IrisDriveControlPanel: View {
                 Button("Add") {
                     controller.approveDevice(approveDeviceKey, label: approveDeviceLabel)
                     approveDeviceKey = ""
+                    approveDeviceKeyIsComplete = false
                     approveDeviceLabel = ""
                     showAddDevice = false
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!approveDeviceKeyIsComplete)
             }
         }
         .padding(20)

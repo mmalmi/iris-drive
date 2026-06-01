@@ -107,6 +107,17 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun linkDeviceSubmitRequiresCompleteNativeLinkInput() {
+        render(state = AppState())
+
+        compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
+        compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
+        compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput("npub1short")
+
+        compose.onNodeWithTag("linkDeviceSubmit").assertIsNotEnabled()
+    }
+
+    @Test
     fun linkAnotherDeviceFlowApprovesFromAddDeviceDialog() {
         val owner = createOwnerProfile("Android UI owner")
         val linked = createLinkedProfile(owner.invite)

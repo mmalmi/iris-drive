@@ -8,7 +8,7 @@ mod provider_metadata;
 pub mod state;
 
 pub use actions::NativeAppAction;
-pub use ffi::FfiApp;
+pub use ffi::{FfiApp, LinkInputClassification, classify_link_input, validate_link_input};
 pub use state::{NativeAppState, UiState};
 
 uniffi::setup_scaffolding!();

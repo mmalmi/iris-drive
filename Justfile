@@ -181,6 +181,7 @@ structure:
     ./scripts/check-platform-parity-matrix.sh
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
+    ./scripts/check-macos-native-link-input.sh
     ./scripts/check-macos-normalized-status.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh

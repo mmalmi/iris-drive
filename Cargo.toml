@@ -62,6 +62,7 @@ notify-debouncer-mini = "0.4"
 tao = "0.30"
 tray-icon = "0.21"
 iris-drive-core = { version = "0.1.0", path = "crates/iris-drive-core" }
+iris-drive-app-core = { version = "0.1.0", path = "crates/iris-drive-app-core" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

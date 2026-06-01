@@ -20,6 +20,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 iris-drive-core.workspace = true
+iris-drive-app-core.workspace = true
 hashtree-blossom.workspace = true
 hashtree-core.workspace = true
 hashtree-embedded.workspace = true
