@@ -45,6 +45,10 @@ pub(crate) fn account_json(json: &Value) -> &Value {
     json.get("account").unwrap_or(&Value::Null)
 }
 
+pub(crate) fn summary_json(json: &Value) -> &Value {
+    json.get("summary").unwrap_or(&Value::Null)
+}
+
 pub(crate) fn is_awaiting_link_approval(json: &Value) -> bool {
     let account = account_json(json);
     find_string(account, &["authorization_state"]) == Some("awaiting_approval")
@@ -56,34 +60,29 @@ pub(crate) fn is_revoked(json: &Value) -> bool {
 }
 
 pub(crate) fn file_count_value(json: &Value) -> String {
-    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
-    find_number(hashtree, &["file_count", "top_level_entries"])
+    find_number(summary_json(json), &["file_count"])
         .map(|value| value.to_string())
         .unwrap_or_else(|| "0".to_string())
 }
 
 pub(crate) fn storage_value(json: &Value) -> String {
-    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
-    find_number(hashtree, &["local_block_bytes"])
+    find_number(summary_json(json), &["visible_file_bytes"])
         .map(format_bytes)
         .unwrap_or_else(|| "0 B".to_string())
 }
 
 pub(crate) fn device_count_value(json: &Value) -> String {
-    let network = json.get("network").unwrap_or(&Value::Null);
-    let published = find_number(network, &["published_device_roots"]).unwrap_or(0);
-    let authorized = find_number(network, &["authorized_device_count"]).unwrap_or(0);
-    format!("{published}/{authorized}")
+    let online = find_number(summary_json(json), &["online_device_count"]).unwrap_or(0);
+    let authorized = find_number(summary_json(json), &["authorized_device_count"]).unwrap_or(0);
+    format!("{online}/{authorized}")
 }
 
 pub(crate) fn sidebar_online_value(json: &Value) -> String {
-    let fips = json
-        .get("network")
-        .and_then(|network| network.get("fips"))
-        .unwrap_or(&Value::Null);
-    let online = find_number(fips, &["roster_connected_peer_count"]).unwrap_or(0);
-    let expected = find_number(fips, &["roster_peer_count"]).unwrap_or(0);
-    format!("{online}/{expected} online")
+    format!("{} online", device_count_value(json))
+}
+
+pub(crate) fn primary_status_label_value(json: &Value) -> &str {
+    find_string(summary_json(json), &["primary_status_label"]).unwrap_or("Ready")
 }
 
 pub(crate) fn local_nhash_resolver_enabled(json: &Value) -> bool {

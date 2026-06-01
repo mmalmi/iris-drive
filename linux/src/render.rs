@@ -34,21 +34,9 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
         list.append(&simple_row("No devices", ""));
         return;
     }
-    let can_manage_devices = json
-        .get("account")
-        .and_then(|account| account.get("has_owner_signing_authority"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let admin_count = peers
-        .iter()
-        .filter(|peer| find_string(peer, &["role"]) == Some("admin"))
-        .count();
     for peer in peers {
-        let title =
-            find_string(peer, &["label", "device_npub", "device_pubkey"]).unwrap_or("Device");
+        let title = find_string(peer, &["display_label"]).unwrap_or("Device");
         let device_npub = find_string(peer, &["device_npub"]).unwrap_or("");
-        let role = find_string(peer, &["role"]).unwrap_or("member");
-        let is_admin = role == "admin";
         let is_current_device = peer
             .get("is_current_device")
             .and_then(Value::as_bool)
@@ -60,7 +48,11 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
                 metadata.push(format!("Device ID: {device_npub}"));
             }
         }
-        metadata.push(role.to_string());
+        metadata.push(
+            find_string(peer, &["role_label"])
+                .unwrap_or("Member")
+                .to_string(),
+        );
         if let Some(sync_state) = find_string(peer, &["sync_state"]) {
             metadata.push(sync_state.to_string());
         }
@@ -83,8 +75,7 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
             .get("fips_online")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let state = fips_connection_label(peer, fips_online);
-        let can_manage_peer = can_manage_devices && !is_current_device && !device_npub.is_empty();
+        let state = find_string(peer, &["connection_label"]).unwrap_or("Offline");
         list.append(&peer_row(
             model,
             title,
@@ -92,9 +83,9 @@ pub(crate) fn render_peers(model: &AppRef, json: &Value) {
             &state,
             fips_online,
             device_npub,
-            can_manage_peer && !is_admin,
-            can_manage_peer && is_admin && admin_count > 1,
-            can_manage_peer,
+            find_bool(peer, &["can_appoint_admin"]).unwrap_or(false),
+            find_bool(peer, &["can_demote_admin"]).unwrap_or(false),
+            find_bool(peer, &["can_revoke"]).unwrap_or(false),
         ));
     }
 }
@@ -165,15 +156,7 @@ pub(crate) fn render_network(
     clear_list(blossom_list);
     let network = json.get("network").unwrap_or(&Value::Null);
     render_fips_network(fips_list, network);
-
-    if let Some(relays) = network.get("relays").and_then(Value::as_array) {
-        for relay in relays.iter().filter_map(Value::as_str) {
-            relays_list.append(&simple_row(relay, relay_status(relay, network)));
-        }
-    }
-    if relays_list.first_child().is_none() {
-        relays_list.append(&simple_row("No relays", ""));
-    }
+    render_relay_statuses(relays_list, network);
 
     if let Some(servers) = network.get("blossom_servers").and_then(Value::as_array) {
         for server in servers.iter().filter_map(Value::as_str) {
@@ -187,12 +170,8 @@ pub(crate) fn render_network(
 
 pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
     let fips = network.get("fips").unwrap_or(&Value::Null);
-    let state = fips_state_text(fips);
-    let roster = format!(
-        "{}/{} direct",
-        find_number(fips, &["roster_connected_peer_count"]).unwrap_or(0),
-        find_number(fips, &["roster_peer_count"]).unwrap_or(0)
-    );
+    let state = find_string(fips, &["state_label"]).unwrap_or("Paused");
+    let roster = find_string(fips, &["roster_label"]).unwrap_or("0/0 online");
     let other = find_number(fips, &["other_peer_count"])
         .unwrap_or(0)
         .to_string();
@@ -213,7 +192,7 @@ pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
     if let Some(peer_statuses) = fips.get("peer_statuses").and_then(Value::as_array) {
         for peer in peer_statuses {
             let npub = find_string(peer, &["npub"]).unwrap_or("peer");
-            let label = fips_peer_status_label(peer);
+            let label = find_string(peer, &["connection_label"]).unwrap_or("Online");
             list.append(&simple_row(&format!("Peer {}", short_text(npub)), &label));
         }
     }
@@ -222,67 +201,17 @@ pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
     }
 }
 
-fn fips_connection_label(peer: &Value, fips_online: bool) -> String {
-    if !fips_online {
-        return "Offline".to_string();
+fn render_relay_statuses(list: &gtk::ListBox, network: &Value) {
+    if let Some(statuses) = network.get("relay_statuses").and_then(Value::as_array) {
+        for status in statuses {
+            let relay = find_string(status, &["url"]).unwrap_or("relay");
+            let label = find_string(status, &["status_label", "status"]).unwrap_or("saved");
+            list.append(&simple_row(relay, label));
+        }
     }
-    if let Some(label) = fips_peer_status_label_opt(peer) {
-        return label;
+    if list.first_child().is_none() {
+        list.append(&simple_row("No relays", ""));
     }
-    if find_string(peer, &["fips_online_via"]) == Some("mesh") {
-        "Online (Mesh)".to_string()
-    } else {
-        "Online".to_string()
-    }
-}
-
-fn fips_peer_status_label(peer: &Value) -> String {
-    fips_peer_status_label_opt(peer).unwrap_or_else(|| "Online".to_string())
-}
-
-fn fips_peer_status_label_opt(peer: &Value) -> Option<String> {
-    let transport = find_string(peer, &["fips_transport_type", "transport_type"])
-        .map(|value| value.to_ascii_uppercase());
-    let latency = find_number(peer, &["fips_srtt_ms", "srtt_ms"]).map(|value| format!("{value} ms"));
-    match (transport, latency) {
-        (Some(transport), Some(latency)) => Some(format!("Online ({transport}, {latency})")),
-        (Some(transport), None) => Some(format!("Online ({transport})")),
-        (None, Some(latency)) => Some(format!("Online ({latency})")),
-        (None, None) => None,
-    }
-}
-
-pub(crate) fn fips_state_text(fips: &Value) -> String {
-    if find_string(fips, &["error"]).is_some_and(|error| !error.is_empty()) {
-        return "Error".to_string();
-    }
-    let enabled = find_bool(fips, &["enabled"]).unwrap_or(false);
-    let running = find_bool(fips, &["running"]).unwrap_or(false);
-    let fresh = find_bool(fips, &["fresh"]).unwrap_or(false);
-    if enabled && fresh {
-        "Running".to_string()
-    } else if enabled || running {
-        "Stale".to_string()
-    } else {
-        "Paused".to_string()
-    }
-}
-
-pub(crate) fn relay_status<'a>(relay: &str, network: &'a Value) -> &'a str {
-    network
-        .get("relay_statuses")
-        .and_then(Value::as_array)
-        .and_then(|statuses| {
-            statuses.iter().find_map(|status| {
-                let url = status.get("url").and_then(Value::as_str)?;
-                if url == relay {
-                    status.get("status").and_then(Value::as_str)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or("saved")
 }
 
 pub(crate) fn clear_list(list: &gtk::ListBox) {

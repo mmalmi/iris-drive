@@ -26,18 +26,10 @@ pub(crate) fn refresh(model: &AppRef) {
                 return;
             }
             model.ui.drive_title.set_text(&drive_name(&json));
-            model
-                .ui
-                .drive_message
-                .set_text(if sync_running { "Sync on" } else { "Paused" });
-            model
-                .ui
-                .status_pill
-                .set_text(if sync_running { "On" } else { "Paused" });
-            model
-                .ui
-                .status
-                .set_text(if sync_running { "Sync on" } else { "Paused" });
+            let primary_status_label = primary_status_label_value(&json);
+            model.ui.drive_message.set_text(primary_status_label);
+            model.ui.status_pill.set_text(primary_status_label);
+            model.ui.status.set_text(primary_status_label);
             model.ui.folder.set_text(&drive_mount_text(&json));
             let account = account_json(&json);
             let owner_npub = find_string(account, &["owner_npub"]);

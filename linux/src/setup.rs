@@ -425,7 +425,7 @@ pub(crate) fn render_link_device(model: &AppRef) {
         let submitted_owner = Rc::clone(&submitted_owner);
         owner.connect_changed(move |entry| {
             let owner_value = entry.text().trim().to_string();
-            if !is_complete_link_owner_input(&owner_value)
+            if !link_owner_input_is_complete(&owner_value)
                 || *submitted_owner.borrow() == owner_value
             {
                 return;
@@ -477,33 +477,8 @@ fn submit_link_device(
     }
 }
 
-fn is_complete_link_owner_input(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
-        return false;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("npub1") {
-        return lower.len() >= 63;
-    }
-    if lower.len() == 64 && lower.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return true;
-    }
-    for prefix in [
-        "iris-drive://invite/",
-        "iris-drive:/invite/",
-        "https://drive.iris.to/invite/",
-    ] {
-        if lower.starts_with(prefix) {
-            return lower[prefix.len()..].len() >= 32;
-        }
-    }
-    (lower.starts_with("iris-drive://link-device?")
-        || lower.starts_with("iris-drive:/link-device?")
-        || lower.starts_with("https://drive.iris.to/link-device?"))
-        && lower.contains("owner=")
-        && lower.contains("admin=")
-        && lower.contains("secret=")
+fn link_owner_input_is_complete(value: &str) -> bool {
+    iris_drive_app_core::classify_link_input(value.to_string()).is_complete
 }
 
 pub(crate) fn append_centered_setup(model: &AppRef, child: &gtk::Box) {
