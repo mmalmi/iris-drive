@@ -742,9 +742,8 @@ final class IrisDriveMobileModel: ObservableObject {
         onlineDeviceCount = Int(state.ui.onlineDeviceCount)
         fileCount = Int(state.ui.fileCount)
         visibleFileBytes = state.ui.visibleFileBytes
-        let signal = loadProviderSignalSummary()
-        currentProviderSignalKey = signal.changeKey
-        currentProviderDirectoryPaths = signal.directoryPaths
+        currentProviderSignalKey = state.ui.providerChangeKey
+        currentProviderDirectoryPaths = state.ui.providerDirectoryPaths
         signalFileProviderIfNeeded()
         backups = state.ui.backups.map { backup in
             IrisDriveBackup(
@@ -844,30 +843,6 @@ final class IrisDriveMobileModel: ObservableObject {
         )
         try? json.write(to: url, atomically: true, encoding: .utf8)
         #endif
-    }
-
-    private struct ProviderState: Decodable {
-        var directoryPaths: [String]
-        var changeKey: String
-
-        enum CodingKeys: String, CodingKey {
-            case directoryPaths = "directory_paths"
-            case changeKey = "change_key"
-        }
-    }
-
-    private func loadProviderSignalSummary() -> (
-        changeKey: String,
-        directoryPaths: [String]
-    ) {
-        guard let data = IrisDriveNativeProvider
-            .list(dataDir: IrisDriveSharedContainer.baseDirectory.path)
-            .data(using: .utf8),
-              let state = try? JSONDecoder().decode(ProviderState.self, from: data)
-        else {
-            return ("", [])
-        }
-        return (state.changeKey, state.directoryPaths)
     }
 
     private func signalFileProviderIfNeeded() {

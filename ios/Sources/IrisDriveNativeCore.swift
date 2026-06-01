@@ -300,6 +300,8 @@ struct NativeUiState: Codable {
     var onlineDeviceCount: UInt64
     var fileCount: UInt64
     var visibleFileBytes: UInt64
+    var providerChangeKey: String
+    var providerDirectoryPaths: [String]
     var snapshotLink: String
 
     enum CodingKeys: String, CodingKey {
@@ -323,6 +325,8 @@ struct NativeUiState: Codable {
         case onlineDeviceCount = "online_device_count"
         case fileCount = "file_count"
         case visibleFileBytes = "visible_file_bytes"
+        case providerChangeKey = "provider_change_key"
+        case providerDirectoryPaths = "provider_directory_paths"
         case snapshotLink = "snapshot_link"
     }
 }

@@ -802,6 +802,22 @@ impl NativeAppRuntime {
             .get("visible_file_bytes")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or_default();
+        self.state.ui.provider_change_key = value
+            .get("change_key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        self.state.ui.provider_directory_paths = value
+            .get("directory_paths")
+            .and_then(serde_json::Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
     }
 
     fn refresh_ui_summary(&mut self, fips_status: Option<UiFipsStatus>) {

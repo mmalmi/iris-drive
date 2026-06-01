@@ -22,6 +22,8 @@ pub struct UiState {
     pub online_device_count: u64,
     pub file_count: u64,
     pub visible_file_bytes: u64,
+    pub provider_change_key: String,
+    pub provider_directory_paths: Vec<String>,
     pub snapshot_link: String,
 }
 

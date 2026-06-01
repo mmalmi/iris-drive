@@ -46,7 +46,10 @@ require_contains "android/app/src/main/java/to/iris/drive/app/provider/IrisDrive
 require_contains "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" 'displayName = entry.optString("display_name")'
 require_contains "android/app/src/main/java/to/iris/drive/app/core/NativeCore.kt" "external fun providerNormalizePathJson"
 require_contains "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" "NativeCore.normalizedProviderPath(path)"
-require_contains "ios/Sources/IrisDriveMobileModel.swift" "return (state.changeKey, state.directoryPaths)"
+require_contains "crates/iris-drive-app-core/src/state.rs" "pub provider_change_key: String"
+require_contains "crates/iris-drive-app-core/src/state.rs" "pub provider_directory_paths: Vec<String>"
+require_contains "ios/Sources/IrisDriveNativeCore.swift" 'case providerChangeKey = "provider_change_key"'
+require_contains "ios/Sources/IrisDriveMobileModel.swift" "currentProviderSignalKey = state.ui.providerChangeKey"
 require_contains "macos/Sources/IrisDriveMacApp.swift" "let key = summary.changeKey"
 
 require_absent "ios/FileProvider/FileProviderStorage.swift" "parentPath(for:"
@@ -54,6 +57,8 @@ require_absent "ios/FileProvider/FileProviderStorage.swift" "fileName(for:"
 require_absent "ios/FileProvider/FileProviderStorage.swift" "isSafeRelativePath"
 require_absent "ios/Sources/IrisDriveMobileModel.swift" "var anchor: String?"
 require_absent "ios/Sources/IrisDriveMobileModel.swift" "case anchor"
+require_absent "ios/Sources/IrisDriveMobileModel.swift" "loadProviderSignalSummary"
+require_absent "ios/Sources/IrisDriveMobileModel.swift" "ProviderState"
 require_absent "ios/Sources/IrisDriveMobileModel.swift" "changeKey.isEmpty"
 require_absent "macos/FileProvider/FileProviderItem.swift" "parentPath(for:"
 require_absent "macos/FileProvider/FileProviderItem.swift" "fileName(for:"

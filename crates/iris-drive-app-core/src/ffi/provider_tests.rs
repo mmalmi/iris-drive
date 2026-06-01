@@ -93,6 +93,12 @@ fn provider_list_includes_summary_and_change_key() {
         .unwrap();
     assert_eq!(nested["parent_path"], "Reports");
     assert_eq!(nested["display_name"], "nested.txt");
+
+    let state = app.refresh();
+    assert_eq!(state.ui.file_count, 1);
+    assert_eq!(state.ui.visible_file_bytes, 12);
+    assert_eq!(state.ui.provider_directory_paths, vec!["Reports"]);
+    assert!(state.ui.provider_change_key.contains("Reports/nested.txt"));
 }
 
 #[test]
