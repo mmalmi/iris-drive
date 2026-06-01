@@ -1909,6 +1909,26 @@ run_heavy_projection_stress() {
     "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
 }
 
+run_linux_ui_smoke() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_LINUX_UI:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping Linux GTK UI smoke"; return 0 ;;
+  esac
+
+  log "checking Linux GTK GUI shell"
+  "$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_SSH_HOST"
+}
+
+run_windows_ui_smoke() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_WINDOWS_UI:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping Windows WPF UI smoke"; return 0 ;;
+  esac
+
+  log "checking Windows WPF GUI shell"
+  "$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_SSH_HOST"
+}
+
 run_macos_open_smoke() {
   case "${IRIS_DRIVE_DEV_VM_SMOKE_MACOS_UI:-1}" in
     1|true|TRUE|yes|YES|on|ON) ;;
@@ -1964,6 +1984,10 @@ case "$SMOKE_ONLY" in
     SMOKE_ACTIVE_PHASE="heavy-projection"
     run_heavy_projection_stress
     delete_ubuntu_path "$SMOKE_DIR" || true
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
     SMOKE_ACTIVE_PHASE="macos-ui"
     run_macos_open_smoke
     ;;
@@ -1985,8 +2009,24 @@ case "$SMOKE_ONLY" in
     SMOKE_ACTIVE_PHASE="macos-ui"
     run_macos_open_smoke
     ;;
+  linux-ui)
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    ;;
+  windows-ui)
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
+    ;;
+  desktop-ui)
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
   *)
-    die "unknown IRIS_DRIVE_DEV_VM_SMOKE_ONLY=$SMOKE_ONLY (expected all, sync, heavy-projection, or macos-ui)"
+    die "unknown IRIS_DRIVE_DEV_VM_SMOKE_ONLY=$SMOKE_ONLY (expected all, sync, heavy-projection, linux-ui, windows-ui, desktop-ui, or macos-ui)"
     ;;
 esac
 log "timings written to $TIMINGS_FILE"

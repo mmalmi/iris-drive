@@ -5,7 +5,7 @@ crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1100 Scenario m
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
 scripts/dev-vm-update-run.sh 2600 Cross-platform VM orchestration needs a later split.
 macos/Sources/IrisDriveMacApp.swift 2500 Legacy macOS shell pending view/runtime split.
-scripts/dev-vm-smoke.sh 2000 Multi-platform dev VM smoke harness needs a later split.
+scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 1450 Legacy macOS control panel pending view split.

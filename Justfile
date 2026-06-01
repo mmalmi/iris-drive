@@ -34,6 +34,7 @@ info:
     @echo "  just ios-gui-smoke"
     @echo "  just lab"
     @echo "  just lab-smoke"
+    @echo "  just desktop-gui-smoke linux local"
     @echo "  just lab-test"
     @echo "  just e2e"
     @echo "  just e2e-3vms"
@@ -146,6 +147,9 @@ lab *args:
 lab-smoke:
     ./scripts/dev-vm-smoke.sh
 
+desktop-gui-smoke target host="local":
+    ./scripts/desktop-gui-smoke.sh {{target}} {{host}}
+
 lab-test *args:
     just lab {{args}}
     just lab-smoke
@@ -181,6 +185,7 @@ structure:
     ./scripts/check-platform-parity-matrix.sh
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
+    ./scripts/check-desktop-gui-e2e-kit.sh
     ./scripts/check-device-summary-ownership.sh
     ./scripts/check-fips-status-normalization.sh
     ./scripts/check-macos-native-link-input.sh

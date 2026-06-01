@@ -41,7 +41,10 @@ just e2e-3vms
 
 It runs the Rust workspace tests, updates/builds/starts the configured macOS,
 Ubuntu, and Windows dev VMs, then runs the native 3-VM sync battery against the
-real FileProvider, FUSE, and Cloud Files surfaces. VM hostnames stay in
+real FileProvider, FUSE, and Cloud Files surfaces. Linux GTK and Windows WPF GUI smokes
+also run as first-class desktop UI phases: Linux must expose a visible GTK
+window on the VM display or a disposable Xvfb display, and Windows must expose
+and navigate the WPF window through UI Automation. VM hostnames stay in
 `~/.config/iris-drive/dev-lab.env` or local git remotes, not in tracked files.
 The native smoke writes per-hop timing JSONL to `target/e2e-3vms-*-timings.jsonl`.
 
@@ -85,5 +88,6 @@ just e2e-5devices
 ```
 
 That runs the iOS simulator and GUI linking smokes, runs the Android GUI
-linking and provider smokes on the configured Android host, then includes both
-mobile host labels as daemon peers in the shared multidevice sync harness.
+linking and provider smokes on the configured Android host, runs Linux GTK and
+Windows WPF GUI smokes on the desktop hosts, then includes both mobile host
+labels as daemon peers in the shared multidevice sync harness.

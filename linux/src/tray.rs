@@ -2,6 +2,13 @@
 use super::*;
 
 pub(crate) fn connect_tray(model: &AppRef, window: &adw::ApplicationWindow) {
+    if tray_disabled() {
+        model.tray_available.set(false);
+        model.ui.tray_on_close.set_sensitive(false);
+        model.ui.tray_on_close.set_active(false);
+        return;
+    }
+
     let (sender, receiver) = mpsc::channel();
     let tray = install_tray(sender);
     let available = tray.is_some();
@@ -34,6 +41,10 @@ pub(crate) fn connect_tray(model: &AppRef, window: &adw::ApplicationWindow) {
         }
         glib::ControlFlow::Continue
     });
+}
+
+fn tray_disabled() -> bool {
+    std::env::var_os("IRIS_DRIVE_DISABLE_TRAY").is_some()
 }
 
 pub(crate) fn handle_tray_command(

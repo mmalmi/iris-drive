@@ -24,7 +24,8 @@ Options:
   --rust-filter FILTER     Run only matching Rust tests before the VM e2e.
                            Use FILTER=all or omit this option for all tests.
   --smoke-only PHASE       Run one native smoke phase: all, sync,
-                           heavy-projection, or macos-ui.
+                           heavy-projection, linux-ui, windows-ui, desktop-ui,
+                           or macos-ui.
 
 Environment:
   IRIS_DRIVE_E2E_SKIP_CARGO=1   Skip cargo test --workspace.

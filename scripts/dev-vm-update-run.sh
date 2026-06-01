@@ -1095,10 +1095,12 @@ run_linux() {
   local mountpoint="${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-$HOME/Iris Drive}"
 
   build_idrive "$iris_repo" "Linux build"
+  log "building Linux GTK app"; (cd "$iris_repo/linux" && cargo build)
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
   mkdir -p "$config_dir" "$mountpoint"
+  pkill -u "$(id -u)" -f "$iris_repo/linux/target/debug/iris-drive" >/dev/null 2>&1 || true; rm -f "$config_dir/app.lock"
   stop_idrive_daemon "$config_dir" "$mountpoint"
   rm -f "$config_dir/daemon.lock"
   nohup env \
@@ -2195,8 +2197,16 @@ Write-Log "starting Windows idrive daemon"
 Start-IdriveDaemon $Idrive $ConfigDir $PublishDir
 $env:IRIS_DRIVE_CLI = $Idrive
 $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
-Write-Log "starting Windows app"
-$LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
+function Test-InteractiveDesktop {
+  $Computer = Get-CimInstance Win32_ComputerSystem
+  if (-not [string]::IsNullOrWhiteSpace($Computer.UserName)) { return $true }
+  return [bool](Get-Process -Name "explorer" -ErrorAction SilentlyContinue)
+}
+
+$HasInteractiveDesktop = Test-InteractiveDesktop
+if ($HasInteractiveDesktop) {
+  Write-Log "starting Windows app"
+  $LaunchScript = Join-Path $PublishDir "launch-iris-drive-dev.cmd"
 @"
 @echo off
 set IRIS_DRIVE_CLI=$Idrive
@@ -2213,25 +2223,18 @@ cd /d "$PublishDir"
 start "" "$Exe"
 "@ | Set-Content -Encoding ASCII $LaunchScript
 
-$TaskName = "IrisDriveDevLaunch"
-try {
+  $TaskName = "IrisDriveDevLaunch"
   $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
   $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
-  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
+  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
-} catch {
-  Write-Log "interactive scheduled launch failed, using SSH session launch: $_"
-  Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
-}
-Start-Sleep -Seconds 8
-if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
-  Write-Log "scheduled launch did not create an IrisDrive process; starting in SSH session"
-  Start-Process -FilePath $Exe -WorkingDirectory $PublishDir
   Start-Sleep -Seconds 5
-}
-if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
-  throw "Windows app did not start"
+  if (-not (Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue)) {
+    Write-Log "interactive scheduled launch did not create an IrisDrive process"
+  }
+} else {
+  Write-Log "no unlocked interactive Windows desktop session; skipping Windows app GUI launch"
 }
 
 try {

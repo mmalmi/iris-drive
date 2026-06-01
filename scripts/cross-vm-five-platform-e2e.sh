@@ -66,6 +66,12 @@ MACOS_HOST="$(required_env IRIS_DRIVE_E2E_MACOS_HOST)"
 IOS_HOST="$(required_env IRIS_DRIVE_E2E_IOS_HOST)"
 ANDROID_HOST="$(required_env IRIS_DRIVE_E2E_ANDROID_HOST)"
 
+echo "[e2e-5devices] running Linux GTK GUI smoke on $UBUNTU_HOST" >&2
+"$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_HOST"
+
+echo "[e2e-5devices] running Windows WPF GUI smoke on $WINDOWS_HOST" >&2
+"$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_HOST"
+
 echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
 run_host_repo_command "$IOS_HOST" scripts/ios-simulator-smoke.sh
 
