@@ -534,8 +534,8 @@ struct IrisDriveControlPanel: View {
     }
 
     private var summaryLine: String {
-        let files = status.fileCount ?? status.topLevelEntries ?? 0
-        let usedBytes = status.visibleFileBytes ?? status.localBlockBytes
+        let files = status.fileCount ?? 0
+        let usedBytes = status.visibleFileBytes ?? 0
         return [
             countLabel(files, "file"),
             "\(byteString(usedBytes)) used",
@@ -775,7 +775,7 @@ struct IrisDriveControlPanel: View {
                     .disabled(status.snapshotLinkURL == nil)
                 LabeledContent(
                     "Storage",
-                    value: byteString(status.visibleFileBytes ?? status.localBlockBytes)
+                    value: byteString(status.visibleFileBytes ?? 0)
                 )
             }
 
