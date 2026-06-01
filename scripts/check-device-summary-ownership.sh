@@ -57,6 +57,9 @@ require_absent windows/IrisDriveModels.cs '(isOnline ? "Online" : "Offline")'
 require_absent windows/IrisDriveModels.cs 'String(peer, "connection_label") ?? "Online"'
 require_absent windows/IrisDriveModels.cs 'String(peer, "role_label") ?? role'
 require_absent windows/IrisDriveModels.cs '?? "Device"'
+require_absent windows/IrisDriveModels.cs 'network.HasValue ? Int(network.Value, "authorized_device_count") : 0'
+require_absent windows/IrisDriveModels.cs 'hashtree.HasValue ? Int(hashtree.Value, "file_count") : 0'
+require_absent windows/IrisDriveModels.cs 'hashtree.HasValue ? Long(hashtree.Value, "visible_file_bytes") : 0'
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt "connectionLabelFor"
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt "optNonBlankString"
 

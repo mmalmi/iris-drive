@@ -73,7 +73,7 @@ public sealed class IrisDriveStatusData
             RosterSize = account.HasValue ? Int(account.Value, "roster_size") : 0,
             AuthorizedDeviceCount = summary.HasValue
                 ? Int(summary.Value, "authorized_device_count")
-                : network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
+                : 0,
             OnlineDeviceCount = summary.HasValue ? Int(summary.Value, "online_device_count") : 0,
             PublishedDeviceRoots =
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
@@ -83,13 +83,11 @@ public sealed class IrisDriveStatusData
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,
-            FileCount = summary.HasValue
-                ? Int(summary.Value, "file_count")
-                : hashtree.HasValue ? Int(hashtree.Value, "file_count") : 0,
+            FileCount = summary.HasValue ? Int(summary.Value, "file_count") : 0,
             TopLevelEntries = hashtree.HasValue ? Int(hashtree.Value, "top_level_entries") : 0,
             VisibleFileBytes = summary.HasValue
                 ? Long(summary.Value, "visible_file_bytes")
-                : hashtree.HasValue ? Long(hashtree.Value, "visible_file_bytes") : 0,
+                : 0,
             LocalBlockCount = hashtree.HasValue ? Int(hashtree.Value, "local_block_count") : 0,
             LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
             LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
