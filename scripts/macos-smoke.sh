@@ -11,6 +11,7 @@ case "$(uname -s)" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-target}"
 APP_PROCESS_NAME="Iris Drive"
 APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"
@@ -231,6 +232,12 @@ show_recent_logs() {
     cat "$APP_STDOUT" >&2 2>/dev/null || true
     echo "Captured app stderr:" >&2
     cat "$APP_STDERR" >&2 2>/dev/null || true
+  fi
+  if [[ -s "$SMOKE_DIR/owner-daemon.stdout.log" || -s "$SMOKE_DIR/owner-daemon.stderr.log" ]]; then
+    echo "Captured owner daemon stdout:" >&2
+    cat "$SMOKE_DIR/owner-daemon.stdout.log" >&2 2>/dev/null || true
+    echo "Captured owner daemon stderr:" >&2
+    cat "$SMOKE_DIR/owner-daemon.stderr.log" >&2 2>/dev/null || true
   fi
   /usr/bin/log show \
     --start "$START_TIME" \
@@ -798,7 +805,10 @@ run_user_journey() {
     echo "$owner_json" >&2
     return 1
   }
-  "$idrive" --config-dir "$owner_config_dir" daemon --watch-interval 0 \
+  IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false \
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false \
+    IRIS_DRIVE_FIPS_ENABLE_UDP=false \
+    "$idrive" --config-dir "$owner_config_dir" daemon --watch-interval 0 --no-gateway \
     >"$SMOKE_DIR/owner-daemon.stdout.log" 2>"$SMOKE_DIR/owner-daemon.stderr.log" &
   OWNER_DAEMON_PID="$!"
   sleep 1

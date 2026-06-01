@@ -464,8 +464,15 @@ build_app() {
   local appex_entitlements=""
 
   mode="$(signing_mode)"
-  log "Generating macOS project"
-  (cd "$ROOT/macos" && xcodegen generate) >&2
+  if command -v xcodegen >/dev/null 2>&1; then
+    log "Generating macOS project"
+    (cd "$ROOT/macos" && xcodegen generate) >&2
+  elif [[ ! -d "$PROJECT" ]]; then
+    echo "Missing $PROJECT and xcodegen is not installed." >&2
+    exit 1
+  else
+    log "Using existing macOS project; xcodegen is not installed"
+  fi
 
   log "Building idrive helper"
   cargo build -p idrive >&2

@@ -302,9 +302,8 @@ base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
 idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}}\"; idrive=\"\${idrive:-\$HOME/src/iris-drive/target/debug/idrive}\"
-if [[ ! -x \"\$idrive\" ]]; then
-  idrive=\"\$HOME/.cargo/bin/idrive\"
-fi
+[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cargo/bin/idrive\"
 if [[ ! -x \"\$idrive\" ]]; then
   idrive=\"\$(command -v idrive || true)\"
 fi
