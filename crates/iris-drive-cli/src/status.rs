@@ -19,8 +19,7 @@ pub(crate) use iris_drive_core::fips_status::{
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
 };
 use iris_drive_core::provider::provider_refresh_key;
-use iris_drive_core::relay_config::normalize_relay_url;
-use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
+use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 pub(crate) use network::fips_network_diagnostics;
 use peers::peer_statuses;
 
@@ -434,7 +433,7 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
     let relay_statuses = if runtime_relays.is_empty() {
         normalized_relay_statuses(&config, Some(payload))
     } else {
-        normalized_relay_statuses_for_relays(&runtime_relays, Some(payload))
+        relay_statuses_json(&runtime_relays, Some(payload))
     };
     let fips = fips_network_diagnostics(&config, Some(payload));
     let sync_status = daemon_sync_status(Some(payload));
@@ -461,46 +460,11 @@ pub(crate) fn normalized_relay_statuses(
     config: &AppConfig,
     daemon_status: Option<&Value>,
 ) -> Value {
-    normalized_relay_statuses_for_relays(&config.relays, daemon_status)
+    relay_statuses_json(&config.relays, daemon_status)
 }
 
-fn normalized_relay_statuses_for_relays(relays: &[String], daemon_status: Option<&Value>) -> Value {
-    let mut by_url = BTreeMap::new();
-    if let Some(statuses) = daemon_status
-        .and_then(|status| status.get("relay_statuses"))
-        .and_then(Value::as_array)
-    {
-        for status in statuses {
-            let Some(url) = status.get("url").and_then(Value::as_str) else {
-                continue;
-            };
-            let Ok(url) = normalize_relay_url(url) else {
-                continue;
-            };
-            let value = status
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            by_url.insert(url, value.to_owned());
-        }
-    }
-    Value::Array(
-        relays
-            .iter()
-            .filter_map(|relay| {
-                let Ok(url) = normalize_relay_url(relay) else {
-                    return None;
-                };
-                let status = by_url.get(&url).map_or("configured", String::as_str);
-                Some(json!({
-                    "url": url,
-                    "status": status,
-                    "status_label": relay_status_label(status),
-                    "health": relay_status_health(status),
-                }))
-            })
-            .collect(),
-    )
+fn relay_statuses_json(relays: &[String], daemon_status: Option<&Value>) -> Value {
+    json!(normalized_relay_statuses_for_relays(relays, daemon_status))
 }
 
 pub(crate) fn merge_daemon_status(

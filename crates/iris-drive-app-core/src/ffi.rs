@@ -29,6 +29,7 @@ use iris_drive_core::fips_status::{
 };
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
+use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
@@ -56,7 +57,6 @@ use crate::state::{
     NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus,
     UiFipsStatus, UiPaths, UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
 };
-use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 
 #[cfg(target_os = "android")]
 #[path = "ffi_android_test_support.rs"]
@@ -1742,13 +1742,13 @@ fn normalized_config_relays(
 }
 
 fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
-    relays
-        .iter()
+    normalized_relay_statuses_for_relays(relays, None)
+        .into_iter()
         .map(|relay| UiRelayStatus {
-            url: relay.clone(),
-            status: "configured".to_owned(),
-            status_label: relay_status_label("configured"),
-            health: relay_status_health("configured").to_owned(),
+            url: relay.url,
+            status: relay.status,
+            status_label: relay.status_label,
+            health: relay.health,
         })
         .collect()
 }
