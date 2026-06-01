@@ -42,11 +42,8 @@ enum IrisDriveScreenshotFixtures {
         status.setupLabel = "Linked"
         status.primaryStatus = "ready"
         status.primaryStatusLabel = "Ready"
-        status.authorizationState = "authorized"
-        status.rosterSize = 4
         status.authorizedDeviceCount = 4
         status.onlineDeviceCount = 3
-        status.publishedDeviceRoots = 4
         status.workingDirectory = "/Users/demo/Iris Drive"
         status.configDirectory = "/Users/demo/Library/Application Support/Iris Drive"
         status.blocksDirectory = "/Users/demo/Library/Application Support/Iris Drive/Hashtree"
@@ -181,7 +178,6 @@ enum IrisDriveScreenshotFixtures {
             "display_label": current ? "This device" : label,
             "role": role,
             "role_label": role == "admin" ? "Admin" : "Member",
-            "authorization_state": "authorized",
             "is_current_device": current,
             "authorized": true,
             "fips_online": online,

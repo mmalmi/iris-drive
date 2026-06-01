@@ -1511,8 +1511,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceNpub = account["device_npub"] as? String
                 status.hasOwnerSigningAuthority =
                     account["has_owner_signing_authority"] as? Bool ?? false
-                status.authorizationState = account["authorization_state"] as? String
-                status.rosterSize = Self.intValue(account["roster_size"]) ?? 0
                 status.deviceLinkInviteURL =
                     (account["device_link_invite"] as? [String: Any])?["url"] as? String
                 status.inboundDeviceLinkRequests =
@@ -1524,8 +1522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceLinkInviteURL = nil
                 status.inboundDeviceLinkRequests = []
                 status.hasOwnerSigningAuthority = false
-                status.authorizationState = nil
-                status.rosterSize = 0
             }
 
             if let drives = json["drives"] as? [[String: Any]],
@@ -1559,8 +1555,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.fips = IrisDriveFipsStatus(
                     json: network["fips"] as? [String: Any] ?? [:]
                 )
-                status.publishedDeviceRoots =
-                    Self.intValue(network["published_device_roots"]) ?? 0
             }
 
             if let summary = json["summary"] as? [String: Any] {

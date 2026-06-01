@@ -23,11 +23,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var primaryStatusLabel = "Ready"
     @Published var syncStatus = "paused"
     @Published var syncStatusLabel = "Sync paused"
-    @Published var authorizationState: String?
-    @Published var rosterSize = 0
     @Published var authorizedDeviceCount = 0
     @Published var onlineDeviceCount = 0
-    @Published var publishedDeviceRoots = 0
     @Published var workingDirectory: String?
     @Published var configDirectory: String?
     @Published var blocksDirectory: String?
@@ -321,7 +318,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let displayLabel: String
     let role: String
     let roleLabel: String
-    let authorizationState: String?
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
@@ -336,7 +332,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     init(json: [String: Any]) {
         let pubkey = json["device_pubkey"] as? String ?? UUID().uuidString
         let labelValue = json["label"] as? String
-        let authorizationStateValue = json["authorization_state"] as? String
         let isCurrentDeviceValue = json["is_current_device"] as? Bool ?? false
         let authorizedValue = json["authorized"] as? Bool ?? false
         let fipsOnlineValue = json["fips_online"] as? Bool ?? false
@@ -346,7 +341,6 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         displayLabel = json["display_label"] as? String ?? ""
         role = json["role"] as? String ?? ""
         roleLabel = json["role_label"] as? String ?? ""
-        authorizationState = authorizationStateValue
         isCurrentDevice = isCurrentDeviceValue
         authorized = authorizedValue
         fipsOnline = fipsOnlineValue
