@@ -444,6 +444,21 @@ function androidSigningIsComplete(env) {
   )
 }
 
+function validateFinalReleaseBuildInputs({ env, steps }) {
+  const missing = []
+  if (steps.includes('android') && !androidSigningIsComplete(env)) {
+    missing.push(
+      'Android signing inputs: ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD',
+    )
+  }
+  if (steps.includes('windows') && !String(env.IRIS_DRIVE_WINDOWS_INSTALLER_PATH ?? '').trim()) {
+    missing.push('IRIS_DRIVE_WINDOWS_INSTALLER_PATH for the signed Windows x64 installer')
+  }
+  if (missing.length > 0) {
+    throw new Error(`Missing final release input(s): ${missing.join('; ')}`)
+  }
+}
+
 function buildAndroidArtifacts({ env, tag, dryRun }) {
   if (!dryRun && !commandExists('cargo-ndk')) {
     throw new Error('Missing cargo-ndk; install it before building Android release artifacts.')
@@ -752,6 +767,10 @@ function main() {
   console.log(`Release tree: ${releaseTree}`)
   console.log(`Asset dir: ${assetDir}`)
   console.log(`Stage dir: ${stageDir}`)
+
+  if (options.build && options.publish && !options.draft) {
+    validateFinalReleaseBuildInputs({ env, steps: buildSteps })
+  }
 
   if (options.build) {
     buildReleaseArtifacts({ env, tag, options })

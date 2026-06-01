@@ -188,6 +188,27 @@ test('local-release dry-run validates planned build assets over partial existing
   assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
 })
 
+test('local-release final dry-run requires the signed Windows installer input', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'windows',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /IRIS_DRIVE_WINDOWS_INSTALLER_PATH/)
+})
+
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-build-only-test-'))
   const assetDir = join(root, 'dist')
