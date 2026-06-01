@@ -183,6 +183,17 @@ terminate_app_process() {
   pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
 }
 
+remove_smoke_path_best_effort() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  for _ in {1..5}; do
+    rm -rf "$path" >/dev/null 2>&1 || true
+    [[ ! -e "$path" ]] && return 0
+    sleep 0.2
+  done
+  echo "warning: smoke cleanup left $path" >&2
+}
+
 cleanup() {
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
@@ -207,8 +218,8 @@ on run argv
 end run
 APPLESCRIPT
   fi
-  rm -rf "$SMOKE_APP_DATA"
-  rm -rf "$SMOKE_DIR"
+  remove_smoke_path_best_effort "$SMOKE_APP_DATA"
+  remove_smoke_path_best_effort "$SMOKE_DIR"
 }
 trap cleanup EXIT
 

@@ -1536,8 +1536,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if let hashtree = json["hashtree"] as? [String: Any] {
                 status.blocksDirectory = hashtree["blocks_dir"] as? String
-                status.localBlockCount = Self.intValue(hashtree["local_block_count"]) ?? 0
-                status.localBlockBytes = Self.int64Value(hashtree["local_block_bytes"]) ?? 0
                 status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
                 status.rootIsPrivate = hashtree["current_root_private"] as? Bool
                 status.filesIrisURL =
@@ -1547,7 +1545,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     hashtree["snapshot_url"] as? String
                     ?? hashtree["permalink_url"] as? String
                     ?? status.snapshotURL
-                status.topLevelEntries = Self.intValue(hashtree["top_level_entries"])
             }
 
             if let network = json["network"] as? [String: Any] {
@@ -1675,13 +1672,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if let link = json["snapshot_url"] as? String ?? json["permalink_url"] as? String {
                 status.snapshotURL = link
-            }
-            if let files = Self.intValue(json["file_count"]) {
-                status.fileCount = files
-            }
-            if let entries = Self.intValue(json["top_level_entries"])
-                ?? Self.intValue(json["entries"]) {
-                status.topLevelEntries = entries
             }
             if let upload = json["blossom_upload"] as? [String: Any] {
                 let uploadStatus = IrisDriveUploadStatus(json: upload)

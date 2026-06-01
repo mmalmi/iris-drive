@@ -46,7 +46,12 @@ require_absent macos/Sources/IrisDriveMacApp.swift '?? status.authorizedDeviceCo
 require_absent macos/Sources/IrisDriveMacApp.swift '?? status.onlineDeviceCount'
 require_absent macos/Sources/IrisDriveMacApp.swift '?? status.fileCount'
 require_absent macos/Sources/IrisDriveMacApp.swift '?? status.visibleFileBytes'
+require_absent macos/Sources/IrisDriveMacApp.swift 'status.fileCount = files'
+require_absent macos/Sources/IrisDriveMacApp.swift 'status.topLevelEntries = entries'
 require_absent macos/Sources/IrisDriveControlPanel.swift 'status.fileCount ?? status.topLevelEntries'
 require_absent macos/Sources/IrisDriveControlPanel.swift 'status.visibleFileBytes ?? status.localBlockBytes'
+require_absent macos/Sources/IrisDriveStatus.swift 'topLevelEntries'
+require_absent macos/Sources/IrisDriveStatus.swift 'localBlockCount'
+require_absent macos/Sources/IrisDriveStatus.swift 'localBlockBytes'
 
 echo "MACOS_NORMALIZED_STATUS_OK"

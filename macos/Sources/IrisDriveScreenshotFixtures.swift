@@ -55,10 +55,7 @@ enum IrisDriveScreenshotFixtures {
         status.filesIrisURL = "https://drive.iris.to/#/demo/main"
         status.snapshotURL = "https://drive.iris.to/#/demo/snapshot"
         status.fileCount = 1284
-        status.topLevelEntries = 18
         status.visibleFileBytes = Int64(41_600_000_000)
-        status.localBlockCount = 18_420
-        status.localBlockBytes = Int64(41_600_000_000)
         status.relays = [
             "wss://relay.damus.io",
             "wss://relay.nostr.band",
