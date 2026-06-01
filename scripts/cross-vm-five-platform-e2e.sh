@@ -73,7 +73,9 @@ echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
 run_host_repo_command "$IOS_HOST" scripts/ios-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
-run_host_repo_command "$ANDROID_HOST" scripts/android-gui-linking-smoke.sh
+run_host_repo_command "$ANDROID_HOST" \
+  env "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER=${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}" \
+  scripts/android-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
 run_host_repo_command "$ANDROID_HOST" scripts/mobile-android-smoke.sh --no-build

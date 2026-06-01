@@ -83,6 +83,7 @@ require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndro
 require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_E2E_ANDROID_HOST"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh 'run_host_repo_command "$ANDROID_HOST"'
+require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER"
 require_contains scripts/cross-vm-e2e.sh '"local"'
 require_contains Justfile "android-build"
 require_contains Justfile "android-smoke"
