@@ -22,9 +22,18 @@ require_absent() {
   fi
 }
 
-require_contains crates/iris-drive-cli/src/status/backups.rs '"title": backup_target_title(target, label)'
-require_contains crates/iris-drive-cli/src/status/backups.rs '"state": backup_target_state(target)'
-require_contains crates/iris-drive-cli/src/status/backups.rs '"detail": backup_target_detail(target)'
+require_contains crates/iris-drive-core/src/lib.rs "pub mod backup_summary;"
+require_contains crates/iris-drive-core/src/backup_summary.rs "pub fn backup_target_summary"
+require_contains crates/iris-drive-core/src/backup_summary.rs "pub fn backup_target_kind_label"
+require_contains crates/iris-drive-core/src/backup_summary.rs "pub fn blossom_backup_target"
+require_contains crates/iris-drive-cli/src/status/backups.rs "backup_target_summary(target)"
+require_contains crates/iris-drive-app-core/src/ffi.rs "backup_ui_rows_for_config"
+require_contains crates/iris-drive-app-core/src/ffi.rs "backup_target_summary(target)"
+require_contains crates/iris-drive-app-core/src/ffi.rs "blossom_backup_target(server)"
+require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_title"
+require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_state"
+require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_detail"
+require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_format_bytes"
 
 require_contains windows/IrisDriveModels.cs 'String(target, "title")'
 require_contains windows/IrisDriveModels.cs 'String(target, "detail")'

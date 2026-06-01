@@ -1,6 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use hashtree_core::diff::collect_hashes;
+use iris_drive_core::backup_summary::is_default_blossom_server;
 
 pub(crate) fn cmd_blossom_servers(
     config_dir: &std::path::Path,
@@ -490,13 +491,6 @@ fn implicit_configured_blossom_backup_targets(config: &AppConfig) -> Vec<BackupT
         .filter(|server| !is_default_blossom_server(server))
         .filter_map(|server| parse_backup_target(server, None).ok())
         .collect()
-}
-
-pub(crate) fn is_default_blossom_server(server: &str) -> bool {
-    iris_drive_core::config::DEFAULT_BLOSSOM_SERVERS
-        .iter()
-        .filter_map(|default| normalize_blossom_url(default).ok())
-        .any(|default| normalize_blossom_url(server).is_ok_and(|server| server == default))
 }
 
 pub(crate) fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupTarget> {

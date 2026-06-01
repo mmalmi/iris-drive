@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hashtree_core::{Cid, NHashData, nhash_encode_full};
+use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(not(test))]
 use iris_drive_core::device_link_transport::{
@@ -29,7 +30,7 @@ use iris_drive_core::fips_status::{
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
-use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, Drive};
+use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
@@ -697,15 +698,7 @@ impl NativeAppRuntime {
             config.relays.clone()
         };
         self.state.ui.relay_statuses = default_relay_statuses(&self.state.ui.relays);
-        self.state.ui.backups = config
-            .blossom_servers
-            .iter()
-            .map(|server| UiBackup {
-                label: "Blossom remote".to_owned(),
-                state: "configured".to_owned(),
-                detail: server.clone(),
-            })
-            .collect();
+        self.state.ui.backups = backup_ui_rows_for_config(&config);
         self.state.ui.roots = if config.drives.is_empty() {
             previous_roots
         } else {
@@ -1715,14 +1708,38 @@ fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
         .collect()
 }
 
+fn backup_ui_rows_for_config(config: &AppConfig) -> Vec<UiBackup> {
+    let mut targets = config.backup_targets.clone();
+    for server in &config.blossom_servers {
+        let Some(target) = blossom_backup_target(server) else {
+            continue;
+        };
+        if !targets.iter().any(|existing| existing.id == target.id) {
+            targets.push(target);
+        }
+    }
+
+    if targets.is_empty() {
+        return default_backups();
+    }
+
+    targets.iter().map(ui_backup_from_target).collect()
+}
+
+fn ui_backup_from_target(target: &BackupTarget) -> UiBackup {
+    let summary = backup_target_summary(target);
+    UiBackup {
+        label: summary.title,
+        state: summary.state,
+        detail: summary.detail,
+    }
+}
+
 fn default_backups() -> Vec<UiBackup> {
     DEFAULT_BLOSSOM_SERVERS
         .iter()
-        .map(|server| UiBackup {
-            label: "Blossom remote".to_owned(),
-            state: "configured".to_owned(),
-            detail: (*server).to_owned(),
-        })
+        .filter_map(|server| blossom_backup_target(server))
+        .map(|target| ui_backup_from_target(&target))
         .collect()
 }
 

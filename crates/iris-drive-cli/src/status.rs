@@ -7,9 +7,8 @@ mod peers;
 
 #[cfg(test)]
 pub(crate) use backups::backup_target_status;
-pub(crate) use backups::{
-    backup_target_kind_label, backup_targets_status, configured_backup_targets_status,
-};
+pub(crate) use backups::{backup_targets_status, configured_backup_targets_status};
+pub(crate) use iris_drive_core::backup_summary::backup_target_kind_label;
 use iris_drive_core::device_summary::{
     DeviceConnectivity, device_roster_rows, primary_status_for_setup_state, primary_status_label,
     setup_label_for_setup_state, setup_state_flags, sync_status_label,
