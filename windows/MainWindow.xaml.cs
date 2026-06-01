@@ -431,16 +431,15 @@ public partial class MainWindow : Window
         }
 
         RelaysList.Items.Clear();
-        if (status.Relays.Count == 0)
+        if (status.RelayStatuses.Count == 0)
         {
             RelaysList.Items.Add(Row("No relays", "", ""));
             return;
         }
 
-        foreach (var relay in status.Relays)
+        foreach (var relay in status.RelayStatuses)
         {
-            var state = status.RelayStatuses.TryGetValue(relay, out var value) ? value : "saved";
-            RelaysList.Items.Add(Row(relay, "", state));
+            RelaysList.Items.Add(Row(relay.Url, relay.Health, relay.StatusLabel));
         }
     }
 

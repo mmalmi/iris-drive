@@ -38,8 +38,8 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
-    public IReadOnlyDictionary<string, string> RelayStatuses { get; init; } =
-        new Dictionary<string, string>();
+    public IReadOnlyList<RelayStatusRow> RelayStatuses { get; init; } =
+        Array.Empty<RelayStatusRow>();
 
     public static IrisDriveStatusData FromJson(JsonElement root)
     {
@@ -108,8 +108,8 @@ public sealed class IrisDriveStatusData
                 ? FipsDiagnostics.FromJson(Object(network.Value, "fips"))
                 : FipsDiagnostics.Empty,
             RelayStatuses = network.HasValue
-                ? RelayStatusMap(network.Value)
-                : new Dictionary<string, string>(),
+                ? RelayStatusesFromJson(network.Value)
+                : Array.Empty<RelayStatusRow>(),
         };
     }
 
@@ -413,13 +413,13 @@ public sealed class IrisDriveStatusData
         return values;
     }
 
-    private static IReadOnlyDictionary<string, string> RelayStatusMap(JsonElement network)
+    private static IReadOnlyList<RelayStatusRow> RelayStatusesFromJson(JsonElement network)
     {
-        var map = new Dictionary<string, string>();
+        var rows = new List<RelayStatusRow>();
         if (!network.TryGetProperty("relay_statuses", out var statuses) ||
             statuses.ValueKind != JsonValueKind.Array)
         {
-            return map;
+            return rows;
         }
 
         foreach (var status in statuses.EnumerateArray())
@@ -427,11 +427,15 @@ public sealed class IrisDriveStatusData
             var url = String(status, "url");
             if (!string.IsNullOrWhiteSpace(url))
             {
-                map[url] = String(status, "status") ?? "saved";
+                rows.Add(new RelayStatusRow(
+                    url,
+                    String(status, "status") ?? "unknown",
+                    String(status, "status_label") ?? "",
+                    String(status, "health") ?? "unknown"));
             }
         }
 
-        return map;
+        return rows;
     }
 
     private static JsonElement? Object(JsonElement root, string name)
@@ -615,6 +619,12 @@ public sealed record FipsDiagnostics(
 }
 
 public sealed record FipsPeerDiagnostic(string Npub, string Subtitle);
+
+public sealed record RelayStatusRow(
+    string Url,
+    string Status,
+    string StatusLabel,
+    string Health);
 
 public sealed record PeerRow(
     string DeviceNpub,

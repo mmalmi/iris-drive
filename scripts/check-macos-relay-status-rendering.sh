@@ -7,6 +7,8 @@ PANEL="$ROOT/macos/Sources/IrisDriveControlPanel.swift"
 MAC_APP="$ROOT/macos/Sources/IrisDriveMacApp.swift"
 ANDROID_STATE="$ROOT/android/app/src/main/java/to/iris/drive/app/core/AppState.kt"
 ANDROID_PANEL="$ROOT/android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt"
+WINDOWS_MODELS="$ROOT/windows/IrisDriveModels.cs"
+WINDOWS_PANEL="$ROOT/windows/MainWindow.xaml.cs"
 
 require_contains() {
   local needle="$1"
@@ -80,5 +82,33 @@ require_android_contains "$ANDROID_PANEL" "state.relayStatuses.forEach"
 require_android_contains "$ANDROID_PANEL" "relay.statusLabel"
 require_android_contains "$ANDROID_PANEL" "relay.health"
 require_android_absent "$ANDROID_PANEL" "state.relays.forEach"
+
+require_windows_contains() {
+  local file="$1"
+  local needle="$2"
+  if ! grep -Fq "$needle" "$file"; then
+    echo "missing '$needle' in ${file#$ROOT/}" >&2
+    exit 1
+  fi
+}
+
+require_windows_absent() {
+  local file="$1"
+  local needle="$2"
+  if grep -Fq "$needle" "$file"; then
+    echo "unexpected '$needle' in ${file#$ROOT/}" >&2
+    exit 1
+  fi
+}
+
+require_windows_contains "$WINDOWS_MODELS" "IReadOnlyList<RelayStatusRow> RelayStatuses"
+require_windows_contains "$WINDOWS_MODELS" '"status_label"'
+require_windows_contains "$WINDOWS_MODELS" '"health"'
+require_windows_contains "$WINDOWS_PANEL" "status.RelayStatuses.Count"
+require_windows_contains "$WINDOWS_PANEL" "relay.StatusLabel"
+require_windows_contains "$WINDOWS_PANEL" "relay.Health"
+require_windows_absent "$WINDOWS_MODELS" "RelayStatusMap"
+require_windows_absent "$WINDOWS_PANEL" "status.Relays.Count"
+require_windows_absent "$WINDOWS_PANEL" 'value : "saved"'
 
 echo "MACOS_RELAY_STATUS_RENDERING_OK"
