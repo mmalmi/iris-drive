@@ -1489,11 +1489,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private static func statusPayloadSetupComplete(_ json: [String: Any]) -> Bool {
         guard json["initialized"] as? Bool ?? false,
-              let account = json["account"] as? [String: Any]
+              let summary = json["summary"] as? [String: Any]
         else {
             return false
         }
-        return account["authorization_state"] as? String == "authorized"
+        return summary["setup_state"] as? String == "authorized"
     }
 
     private func applyStatusData(_ data: Data) {
@@ -1538,7 +1538,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.blocksDirectory = hashtree["blocks_dir"] as? String
                 status.localBlockCount = Self.intValue(hashtree["local_block_count"]) ?? 0
                 status.localBlockBytes = Self.int64Value(hashtree["local_block_bytes"]) ?? 0
-                status.visibleFileBytes = Self.int64Value(hashtree["visible_file_bytes"])
                 status.rootCID = hashtree["current_root_cid"] as? String ?? status.rootCID
                 status.rootIsPrivate = hashtree["current_root_private"] as? Bool
                 status.filesIrisURL =
@@ -1548,7 +1547,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     hashtree["snapshot_url"] as? String
                     ?? hashtree["permalink_url"] as? String
                     ?? status.snapshotURL
-                status.fileCount = Self.intValue(hashtree["file_count"])
                 status.topLevelEntries = Self.intValue(hashtree["top_level_entries"])
             }
 
@@ -1564,10 +1562,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.fips = IrisDriveFipsStatus(
                     json: network["fips"] as? [String: Any] ?? [:]
                 )
-                status.authorizedDeviceCount =
-                    Self.intValue(network["authorized_device_count"]) ?? 0
                 status.publishedDeviceRoots =
                     Self.intValue(network["published_device_roots"]) ?? 0
+            }
+
+            if let summary = json["summary"] as? [String: Any] {
+                Self.applyStatusSummary(summary, to: status)
             }
 
             if let settings = json["settings"] as? [String: Any] {
@@ -1711,6 +1711,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             IrisDriveStatus.shared.message = message
             self.statusMenuItem?.title = message
         }
+    }
+
+    private static func applyStatusSummary(_ summary: [String: Any], to status: IrisDriveStatus) {
+        if let setupState = summary["setup_state"] as? String {
+            status.setupState = setupState
+        }
+        if let setupLabel = summary["setup_label"] as? String {
+            status.setupLabel = setupLabel
+        }
+        if let primaryStatus = summary["primary_status"] as? String {
+            status.primaryStatus = primaryStatus
+        }
+        if let primaryStatusLabel = summary["primary_status_label"] as? String {
+            status.primaryStatusLabel = primaryStatusLabel
+        }
+        status.authorizedDeviceCount =
+            Self.intValue(summary["authorized_device_count"]) ?? status.authorizedDeviceCount
+        status.onlineDeviceCount =
+            Self.intValue(summary["online_device_count"]) ?? status.onlineDeviceCount
+        status.fileCount = Self.intValue(summary["file_count"]) ?? status.fileCount
+        status.visibleFileBytes =
+            Self.int64Value(summary["visible_file_bytes"]) ?? status.visibleFileBytes
     }
 
     func refreshStatus() {

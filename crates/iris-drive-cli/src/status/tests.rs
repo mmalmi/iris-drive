@@ -111,6 +111,32 @@ fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
 }
 
 #[test]
+fn status_summary_emits_shared_setup_and_count_fields() {
+    let summary = status_summary(
+        true,
+        Some(&json!({"authorization_state": "authorized"})),
+        2,
+        1,
+        Some(3),
+        Some(42),
+    );
+
+    assert_eq!(summary["setup_state"], "authorized");
+    assert_eq!(summary["setup_label"], "Linked");
+    assert_eq!(summary["primary_status"], "ready");
+    assert_eq!(summary["primary_status_label"], "Ready");
+    assert_eq!(summary["authorized_device_count"], 2);
+    assert_eq!(summary["online_device_count"], 1);
+    assert_eq!(summary["file_count"], 3);
+    assert_eq!(summary["visible_file_bytes"], 42);
+
+    let unconfigured = status_summary(false, None, 0, 0, None, None);
+    assert_eq!(unconfigured["setup_state"], "not_configured");
+    assert_eq!(unconfigured["setup_label"], "Not linked");
+    assert_eq!(unconfigured["primary_status"], "not_setup");
+}
+
+#[test]
 fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
     let config = AppConfig::default();
     let daemon_status = json!({

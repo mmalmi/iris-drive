@@ -17,9 +17,14 @@ final class IrisDriveStatus: ObservableObject {
     @Published var deviceLinkInviteURL: String?
     @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
     @Published var hasOwnerSigningAuthority = false
+    @Published var setupState = "not_configured"
+    @Published var setupLabel = "Not linked"
+    @Published var primaryStatus = "not_setup"
+    @Published var primaryStatusLabel = "Ready"
     @Published var authorizationState: String?
     @Published var rosterSize = 0
     @Published var authorizedDeviceCount = 0
+    @Published var onlineDeviceCount = 0
     @Published var publishedDeviceRoots = 0
     @Published var workingDirectory: String?
     @Published var configDirectory: String?
@@ -51,15 +56,15 @@ final class IrisDriveStatus: ObservableObject {
     }
 
     var setupComplete: Bool {
-        initialized && authorizationState == "authorized"
+        setupState == "authorized"
     }
 
     var awaitingApproval: Bool {
-        initialized && authorizationState == "awaiting_approval"
+        setupState == "awaiting_approval"
     }
 
     var revoked: Bool {
-        initialized && authorizationState == "revoked"
+        setupState == "revoked"
     }
 }
 

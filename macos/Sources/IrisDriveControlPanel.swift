@@ -539,7 +539,7 @@ struct IrisDriveControlPanel: View {
         return [
             countLabel(files, "file"),
             "\(byteString(usedBytes)) used",
-            countLabel(status.authorizedDeviceCount, "device"),
+            "\(status.onlineDeviceCount)/\(status.authorizedDeviceCount) online",
         ].joined(separator: "  ·  ")
     }
 

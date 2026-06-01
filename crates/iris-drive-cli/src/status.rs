@@ -4,6 +4,9 @@ use super::*;
 mod network;
 mod peers;
 
+use iris_drive_core::device_summary::{
+    primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
+};
 use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 pub(crate) use network::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status, fips_network_diagnostics,
@@ -71,6 +74,14 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 .unwrap_or(false)
         })
         .count();
+    let online_device_count = peers
+        .iter()
+        .filter(|peer| {
+            peer.get("fips_online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
     let published_device_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .map_or(0, |drive| drive.device_roots.len());
@@ -85,6 +96,14 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             "config_dir": config_dir.display().to_string(),
             "pubkey_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
             "account": account_block,
+            "summary": status_summary(
+                initialized,
+                account_block.as_ref(),
+                authorized_device_count,
+                online_device_count,
+                file_count,
+                visible_file_bytes,
+            ),
             "drives": config.drives.iter().map(|d| json!({
                 "drive_id": d.drive_id,
                 "display_name": d.display_name,
@@ -126,6 +145,35 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         })
     );
     Ok(())
+}
+
+pub(crate) fn status_summary(
+    initialized: bool,
+    account: Option<&Value>,
+    authorized_device_count: usize,
+    online_device_count: usize,
+    file_count: Option<usize>,
+    visible_file_bytes: Option<u64>,
+) -> Value {
+    let setup_state = if initialized {
+        account
+            .and_then(|account| account.get("authorization_state"))
+            .and_then(Value::as_str)
+            .unwrap_or("not_configured")
+    } else {
+        "not_configured"
+    };
+    let primary_status = primary_status_for_setup_state(setup_state);
+    json!({
+        "setup_state": setup_state,
+        "setup_label": setup_label_for_setup_state(setup_state),
+        "primary_status": primary_status,
+        "primary_status_label": primary_status_label(primary_status),
+        "authorized_device_count": authorized_device_count,
+        "online_device_count": online_device_count,
+        "file_count": file_count.unwrap_or_default(),
+        "visible_file_bytes": visible_file_bytes.unwrap_or_default(),
+    })
 }
 
 pub(crate) fn cmd_nhash_resolver(
