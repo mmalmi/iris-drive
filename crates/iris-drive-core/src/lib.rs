@@ -40,6 +40,7 @@ pub mod network_sync;
 pub mod nostr_events;
 pub mod paths;
 pub mod projection;
+pub mod provider;
 pub mod relay_sync;
 pub mod root_meta;
 pub mod sync;

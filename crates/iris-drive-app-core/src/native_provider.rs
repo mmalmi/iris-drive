@@ -5,34 +5,18 @@ use anyhow::Context;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
+use iris_drive_core::provider::{
+    ProviderListEntry, normalize_provider_parent_path, normalize_provider_path,
+    optional_normalized_provider_path, provider_list_summary, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path,
+};
 use iris_drive_core::{Account, AppConfig};
-use serde::Serialize;
 use serde_json::json;
 
 use crate::provider_metadata::provider_modified_at_index;
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
-
-#[derive(Debug, Serialize)]
-struct ProviderListEntry {
-    path: String,
-    parent_path: String,
-    display_name: String,
-    kind: &'static str,
-    size: u64,
-    version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    modified_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProviderListSummary {
-    file_count: u64,
-    visible_file_bytes: u64,
-    directory_paths: Vec<String>,
-    change_key: String,
-}
 
 pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
     match run_native_provider_list(data_dir) {
@@ -336,37 +320,6 @@ where
     Ok(entries)
 }
 
-fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> ProviderListSummary {
-    let mut file_count = 0_u64;
-    let mut visible_file_bytes = 0_u64;
-    let mut directory_paths = Vec::new();
-    let mut entry_keys = Vec::new();
-    for entry in entries {
-        if entry.kind == "directory" {
-            directory_paths.push(entry.path.clone());
-        } else {
-            file_count += 1;
-            visible_file_bytes = visible_file_bytes.saturating_add(entry.size);
-        }
-        entry_keys.push(format!(
-            "{}:{}:{}:{}:{}",
-            entry.kind,
-            entry.path,
-            entry.size,
-            entry.version,
-            entry.modified_at.unwrap_or_default()
-        ));
-    }
-    directory_paths.sort();
-    entry_keys.sort();
-    ProviderListSummary {
-        file_count,
-        visible_file_bytes,
-        directory_paths,
-        change_key: format!("{anchor}|{}", entry_keys.join("|")),
-    }
-}
-
 async fn import_provider_mutation<P>(
     daemon: &mut iris_drive_core::Daemon,
     provider: &P,
@@ -638,105 +591,6 @@ where
         .rename(&old_parent, &old_name, &new_parent, &new_name)
         .await?;
     Ok(())
-}
-
-fn split_provider_path(path: &str) -> anyhow::Result<(String, String)> {
-    let path = normalize_provider_path(path)?;
-    let Some((parent, name)) = path.rsplit_once('/') else {
-        return Ok((String::new(), path));
-    };
-    Ok((parent.to_owned(), name.to_owned()))
-}
-
-fn normalize_provider_path(path: &str) -> anyhow::Result<String> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        anyhow::bail!("provider path is required");
-    }
-    let mut segments = Vec::new();
-    for segment in trimmed.split('/') {
-        if segment.is_empty()
-            || segment == "."
-            || segment == ".."
-            || segment.contains('\\')
-            || segment.contains(':')
-        {
-            anyhow::bail!("unsafe provider path: {path}");
-        }
-        segments.push(segment);
-    }
-    Ok(segments.join("/"))
-}
-
-fn normalize_provider_parent_path(path: &str) -> anyhow::Result<String> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        return Ok(String::new());
-    }
-    normalize_provider_path(trimmed)
-}
-
-fn optional_normalized_provider_path(path: &str) -> anyhow::Result<Option<String>> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        normalize_provider_path(trimmed).map(Some)
-    }
-}
-
-fn sanitized_provider_file_name(display_name: &str) -> String {
-    let mut name = display_name
-        .split(['/', ':', '\\'])
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-        .collect::<Vec<_>>()
-        .join("_");
-    if name.is_empty() {
-        "Shared file".clone_into(&mut name);
-    }
-    name
-}
-
-fn unique_provider_path(
-    entries: &[ProviderListEntry],
-    parent: &str,
-    name: &str,
-    excluding: Option<&str>,
-) -> String {
-    let prefix = if parent.is_empty() {
-        String::new()
-    } else {
-        format!("{parent}/")
-    };
-    let existing = entries
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .filter(|path| Some(*path) != excluding)
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut candidate = format!("{prefix}{name}");
-    if !existing.contains(candidate.as_str()) {
-        return candidate;
-    }
-
-    let path = Path::new(name);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Shared file");
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    let mut index = 2;
-    while existing.contains(candidate.as_str()) {
-        candidate = format!("{prefix}{stem} ({index}){extension}");
-        index += 1;
-    }
-    candidate
 }
 
 fn provider_import_error_message_is_retryable(message: &str) -> bool {

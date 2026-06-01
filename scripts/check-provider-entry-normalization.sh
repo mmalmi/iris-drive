@@ -22,10 +22,12 @@ require_absent() {
   fi
 }
 
-require_contains "crates/iris-drive-app-core/src/native_provider.rs" "parent_path: String"
-require_contains "crates/iris-drive-app-core/src/native_provider.rs" "display_name: String"
-require_contains "crates/iris-drive-cli/src/drive.rs" "parent_path: String"
-require_contains "crates/iris-drive-cli/src/drive.rs" "display_name: String"
+require_contains "crates/iris-drive-core/src/provider.rs" "pub parent_path: String"
+require_contains "crates/iris-drive-core/src/provider.rs" "pub display_name: String"
+require_contains "crates/iris-drive-app-core/src/native_provider.rs" "use iris_drive_core::provider::{"
+require_contains "crates/iris-drive-cli/src/drive.rs" "use iris_drive_core::provider::{"
+require_absent "crates/iris-drive-app-core/src/native_provider.rs" "struct ProviderListEntry"
+require_absent "crates/iris-drive-cli/src/drive.rs" "struct ProviderListEntry"
 
 require_contains "ios/FileProvider/FileProviderStorage.swift" 'case parentPath = "parent_path"'
 require_contains "ios/FileProvider/FileProviderStorage.swift" 'case displayName = "display_name"'

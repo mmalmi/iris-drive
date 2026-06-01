@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::provider::normalize_provider_path;
 
 include!("daemon/runtime.rs");
 async fn publish_provider_root_if_changed(

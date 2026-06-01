@@ -1,5 +1,10 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::provider::{
+    ProviderListEntry, normalize_provider_parent_path, normalize_provider_path,
+    provider_cache_destination, provider_list_summary, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path,
+};
 
 mod commands;
 pub(crate) use commands::*;
@@ -135,26 +140,6 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
         );
         Ok::<_, anyhow::Error>(())
     })
-}
-
-#[derive(Debug, Serialize)]
-struct ProviderListEntry {
-    path: String,
-    parent_path: String,
-    display_name: String,
-    kind: &'static str,
-    size: u64,
-    version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    modified_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProviderListSummary {
-    file_count: u64,
-    visible_file_bytes: u64,
-    directory_paths: Vec<String>,
-    change_key: String,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -427,37 +412,6 @@ async fn provider_entries(
     Ok(entries)
 }
 
-fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> ProviderListSummary {
-    let mut file_count = 0_u64;
-    let mut visible_file_bytes = 0_u64;
-    let mut directory_paths = Vec::new();
-    let mut entry_keys = Vec::new();
-    for entry in entries {
-        if entry.kind == "directory" {
-            directory_paths.push(entry.path.clone());
-        } else {
-            file_count += 1;
-            visible_file_bytes = visible_file_bytes.saturating_add(entry.size);
-        }
-        entry_keys.push(format!(
-            "{}:{}:{}:{}:{}",
-            entry.kind,
-            entry.path,
-            entry.size,
-            entry.version,
-            entry.modified_at.unwrap_or_default()
-        ));
-    }
-    directory_paths.sort();
-    entry_keys.sort();
-    ProviderListSummary {
-        file_count,
-        visible_file_bytes,
-        directory_paths,
-        change_key: format!("{anchor}|{}", entry_keys.join("|")),
-    }
-}
-
 fn provider_modified_at_index(
     view: &iris_drive_core::projection::PrimaryMergedView,
 ) -> BTreeMap<String, i64> {
@@ -557,25 +511,6 @@ async fn hydrate_provider_cache(
         }
     }
     Ok(report)
-}
-
-fn provider_cache_destination(
-    target_dir: &Path,
-    provider_path: &str,
-) -> Option<std::path::PathBuf> {
-    let mut destination = target_dir.to_path_buf();
-    for segment in provider_path.split('/') {
-        if segment.is_empty()
-            || segment == "."
-            || segment == ".."
-            || segment.contains('\\')
-            || segment.contains(':')
-        {
-            return None;
-        }
-        destination.push(segment);
-    }
-    Some(destination)
 }
 
 fn remove_provider_cache_destination(path: &Path) -> Result<()> {
@@ -807,96 +742,6 @@ fn provider_import_error_message_is_retryable(message: &str) -> bool {
             || message.contains("No such file or directory")
             || message.contains("The system cannot find the file specified"))
         || message.contains("Missing chunk")
-}
-
-pub(crate) fn normalize_provider_path(path: &str) -> Result<String> {
-    let trimmed = path.trim_matches('/');
-    let parts = trimmed
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| {
-            if segment == "." || segment == ".." || segment.contains('\\') || segment.contains(':')
-            {
-                anyhow::bail!("invalid virtual path component: {segment}");
-            }
-            Ok(segment)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if parts.is_empty() {
-        anyhow::bail!("virtual path must not be empty");
-    }
-    Ok(parts.join("/"))
-}
-
-fn normalize_provider_parent_path(path: &str) -> Result<String> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        Ok(String::new())
-    } else {
-        normalize_provider_path(trimmed)
-    }
-}
-
-fn sanitized_provider_file_name(display_name: &str) -> String {
-    let mut name = display_name
-        .split(['/', ':', '\\'])
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-        .collect::<Vec<_>>()
-        .join("_");
-    if name.is_empty() {
-        "Shared file".clone_into(&mut name);
-    }
-    name
-}
-
-fn unique_provider_path(
-    entries: &[ProviderListEntry],
-    parent: &str,
-    name: &str,
-    excluding: Option<&str>,
-) -> String {
-    let prefix = if parent.is_empty() {
-        String::new()
-    } else {
-        format!("{parent}/")
-    };
-    let existing = entries
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .filter(|path| Some(*path) != excluding)
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut candidate = format!("{prefix}{name}");
-    if !existing.contains(candidate.as_str()) {
-        return candidate;
-    }
-
-    let path = Path::new(name);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Shared file");
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    let mut index = 2;
-    while existing.contains(candidate.as_str()) {
-        candidate = format!("{prefix}{stem} ({index}){extension}");
-        index += 1;
-    }
-    candidate
-}
-
-fn split_provider_path(path: &str) -> Result<(String, String)> {
-    let path = normalize_provider_path(path)?;
-    let mut parts = path.rsplitn(2, '/');
-    let name = parts.next().unwrap_or_default().to_string();
-    let parent = parts.next().unwrap_or_default().to_string();
-    Ok((parent, name))
 }
 
 #[cfg(test)]
