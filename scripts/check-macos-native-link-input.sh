@@ -30,7 +30,12 @@ require_contains macos/Sources/IrisDriveControlPanel.swift "setupOwnerLinkInputI
 require_contains macos/Sources/IrisDriveControlPanel.swift "approveDeviceKeyIsComplete"
 require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!setupOwnerLinkInputIsComplete)"
 require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!approveDeviceKeyIsComplete)"
+require_contains windows/IrisDriveService.cs '"link-input", "classify"'
+require_contains windows/DeviceLinkInput.cs "IsCompleteLinkInputAsync"
 require_absent macos/Sources/IrisDriveControlPanel.swift ".disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"
 require_absent macos/Sources/IrisDriveControlPanel.swift ".disabled(approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"
+require_absent windows/DeviceLinkInput.cs "IsCompleteDeviceLinkOwnerInput"
+require_absent windows/DeviceLinkInput.cs "iris-drive://invite/"
+require_absent windows/DeviceLinkInput.cs "iris-drive://link-device?"
 
 echo "MACOS_NATIVE_LINK_INPUT_OK"

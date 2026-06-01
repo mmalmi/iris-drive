@@ -60,6 +60,18 @@ public sealed class IrisDriveService
         return FinishSetupAsync(new[] { "link", owner.Trim() });
     }
 
+    public async Task<bool> IsCompleteLinkInputAsync(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        using var document = await RunJsonAsync("link-input", "classify", input.Trim());
+        return document.RootElement.TryGetProperty("is_complete", out var isComplete) &&
+            isComplete.ValueKind == JsonValueKind.True;
+    }
+
     public Task RelinkDeviceAsync(string owner)
     {
         if (string.IsNullOrWhiteSpace(owner))
