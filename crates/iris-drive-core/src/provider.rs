@@ -23,6 +23,7 @@ pub struct ProviderListSummary {
     pub change_key: String,
 }
 
+#[must_use]
 pub fn provider_list_summary(anchor: &str, entries: &[ProviderListEntry]) -> ProviderListSummary {
     let mut file_count = 0_u64;
     let mut visible_file_bytes = 0_u64;
@@ -99,6 +100,7 @@ pub fn optional_normalized_provider_path(path: &str) -> anyhow::Result<Option<St
     }
 }
 
+#[must_use]
 pub fn sanitized_provider_file_name(display_name: &str) -> String {
     let mut name = display_name
         .split(['/', ':', '\\'])
@@ -112,6 +114,7 @@ pub fn sanitized_provider_file_name(display_name: &str) -> String {
     name
 }
 
+#[must_use]
 pub fn unique_provider_path(
     entries: &[ProviderListEntry],
     parent: &str,
@@ -161,6 +164,7 @@ pub fn split_provider_path(path: &str) -> anyhow::Result<(String, String)> {
     Ok((parent.to_owned(), name.to_owned()))
 }
 
+#[must_use]
 pub fn provider_cache_destination(target_dir: &Path, provider_path: &str) -> Option<PathBuf> {
     let path = normalize_provider_path(provider_path).ok()?;
     let mut destination = target_dir.to_path_buf();

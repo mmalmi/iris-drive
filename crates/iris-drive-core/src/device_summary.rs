@@ -1,6 +1,7 @@
 use crate::account::DeviceAuthorizationState;
 use crate::app_keys::DeviceRole;
 
+#[must_use]
 pub fn authorization_state_key(state: DeviceAuthorizationState) -> &'static str {
     match state {
         DeviceAuthorizationState::Authorized => "authorized",
@@ -9,6 +10,7 @@ pub fn authorization_state_key(state: DeviceAuthorizationState) -> &'static str 
     }
 }
 
+#[must_use]
 pub fn primary_status_for_setup_state(setup_state: &str) -> &'static str {
     match setup_state {
         "authorized" => "ready",
@@ -18,6 +20,7 @@ pub fn primary_status_for_setup_state(setup_state: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn setup_label_for_setup_state(setup_state: &str) -> &'static str {
     match setup_state {
         "authorized" => "Linked",
@@ -27,6 +30,7 @@ pub fn setup_label_for_setup_state(setup_state: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn primary_status_label(primary_status: &str) -> &'static str {
     match primary_status {
         "revoked" => "Device removed",
@@ -35,6 +39,7 @@ pub fn primary_status_label(primary_status: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn device_role_key(role: DeviceRole) -> &'static str {
     match role {
         DeviceRole::Admin => "admin",
@@ -42,6 +47,7 @@ pub fn device_role_key(role: DeviceRole) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn device_role_label(role: DeviceRole) -> &'static str {
     match role {
         DeviceRole::Admin => "Admin",
@@ -49,6 +55,7 @@ pub fn device_role_label(role: DeviceRole) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn device_display_label(
     is_current_device: bool,
     label: Option<&str>,
@@ -64,6 +71,8 @@ pub fn device_display_label(
         .to_owned()
 }
 
+#[allow(clippy::fn_params_excessive_bools)]
+#[must_use]
 pub fn device_connection_state(
     is_current_device: bool,
     is_online: bool,
@@ -83,6 +92,7 @@ pub fn device_connection_state(
     }
 }
 
+#[must_use]
 pub fn device_connection_label(
     connection_state: &str,
     transport_type: Option<&str>,

@@ -305,11 +305,13 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             &self.tree,
             &self.current_root().await,
             &parent_segs,
-            name,
-            &cid,
-            size,
-            link_type_for_size(size),
-            Some(file_meta(&[], None)),
+            EntryWrite {
+                name,
+                cid: &cid,
+                size,
+                link_type: link_type_for_size(size),
+                meta: Some(file_meta(&[], None)),
+            },
         )
         .await
         .map_err(map_err)?;
@@ -443,11 +445,13 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             &self.tree,
             &self.current_root().await,
             &new_parent_segs,
-            new_name,
-            &resolved.cid,
-            resolved.size,
-            resolved.link_type,
-            resolved.meta,
+            EntryWrite {
+                name: new_name,
+                cid: &resolved.cid,
+                size: resolved.size,
+                link_type: resolved.link_type,
+                meta: resolved.meta,
+            },
         )
         .await
         .map_err(map_err)?;
@@ -516,11 +520,13 @@ impl<S: Store> HashTreeProviderFs<S> {
             &self.tree,
             &self.current_root().await,
             &parent_segs,
-            name,
-            &cid,
-            size,
-            link_type_for_size(size),
-            Some(file_meta(bytes, meta)),
+            EntryWrite {
+                name,
+                cid: &cid,
+                size,
+                link_type: link_type_for_size(size),
+                meta: Some(file_meta(bytes, meta)),
+            },
         )
         .await
         .map_err(map_err)?;
@@ -528,15 +534,19 @@ impl<S: Store> HashTreeProviderFs<S> {
     }
 }
 
+struct EntryWrite<'a> {
+    name: &'a str,
+    cid: &'a Cid,
+    size: u64,
+    link_type: LinkType,
+    meta: Option<HashMap<String, serde_json::Value>>,
+}
+
 fn set_entry_with_meta<'a, S: Store>(
     tree: &'a HashTree<S>,
     root: &'a Cid,
     path: &'a [&'a str],
-    name: &'a str,
-    entry_cid: &'a Cid,
-    size: u64,
-    link_type: LinkType,
-    meta: Option<HashMap<String, serde_json::Value>>,
+    entry: EntryWrite<'a>,
 ) -> futures::future::BoxFuture<'a, Result<Cid, HashTreeError>> {
     Box::pin(async move {
         if path.is_empty() {
@@ -544,7 +554,7 @@ fn set_entry_with_meta<'a, S: Store>(
                 .list_directory(root)
                 .await?
                 .into_iter()
-                .filter(|entry| entry.name != name)
+                .filter(|item| item.name != entry.name)
                 .map(|entry| DirEntry {
                     name: entry.name,
                     hash: entry.hash,
@@ -555,12 +565,12 @@ fn set_entry_with_meta<'a, S: Store>(
                 })
                 .collect::<Vec<_>>();
             entries.push(DirEntry {
-                name: name.to_string(),
-                hash: entry_cid.hash,
-                size,
-                key: entry_cid.key,
-                link_type,
-                meta,
+                name: entry.name.to_string(),
+                hash: entry.cid.hash,
+                size: entry.size,
+                key: entry.cid.key,
+                link_type: entry.link_type,
+                meta: entry.meta,
             });
             return tree.put_directory(entries).await;
         }
@@ -575,17 +585,7 @@ fn set_entry_with_meta<'a, S: Store>(
             hash: child.hash,
             key: child.key,
         };
-        let new_child = set_entry_with_meta(
-            tree,
-            &child_cid,
-            &path[1..],
-            name,
-            entry_cid,
-            size,
-            link_type,
-            meta,
-        )
-        .await?;
+        let new_child = set_entry_with_meta(tree, &child_cid, &path[1..], entry).await?;
         let updated = entries
             .into_iter()
             .map(|entry| {

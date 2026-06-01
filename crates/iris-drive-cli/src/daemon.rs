@@ -1,6 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::provider::normalize_provider_path;
+use iris_drive_core::relay_config::normalize_relay_url;
 
 include!("daemon/runtime.rs");
 async fn publish_provider_root_if_changed(
@@ -292,7 +293,9 @@ pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serd
     let relays = client.relays().await;
     let mut payload = Vec::with_capacity(relays.len());
     for (url, relay) in relays {
-        let url = normalize_relay_url(url.as_ref());
+        let Ok(url) = normalize_relay_url(url.as_ref()) else {
+            continue;
+        };
         payload.push(json!({
             "url": url,
             "status": relay_status_label(relay.status().await),

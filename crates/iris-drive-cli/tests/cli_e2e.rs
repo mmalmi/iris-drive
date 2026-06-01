@@ -408,7 +408,8 @@ async fn backup_check_records_sample_latency_and_bandwidth_for_blossom_target() 
     let check_started_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs() as i64;
+        .as_secs()
+        .cast_signed();
     let checked = run_json(
         cfg.path(),
         &[
@@ -540,6 +541,7 @@ async fn backup_sync_uploads_private_root_to_lmdb_target() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn status_reports_fips_network_diagnostics_from_daemon_status() {
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();

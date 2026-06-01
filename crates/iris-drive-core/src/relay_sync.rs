@@ -63,7 +63,7 @@ pub enum DeviceLinkRosterApply {
     Ignored,
     /// The local roster already matches this event.
     Current,
-    /// The event was accepted by the AppKeys timeline rules.
+    /// The event was accepted by the `AppKeys` timeline rules.
     Applied(ApplyDecision),
 }
 

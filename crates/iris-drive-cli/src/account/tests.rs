@@ -97,6 +97,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn device_link_roster_message_authorizes_only_after_local_request() {
     let admin_dir = tempdir().unwrap();
     let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();

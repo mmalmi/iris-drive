@@ -60,6 +60,7 @@ pub async fn sync_once(
     sync_once_with_fips(config_dir, relay_override, timeout, None).await
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn sync_once_with_fips(
     config_dir: &Path,
     relay_override: &[String],
@@ -255,22 +256,20 @@ async fn download_roots(
     }
 
     let fips_policy = fips_download_policy(config);
-    match fips {
-        Some(fips) => match download_roots_over_fips(fips, root_cid_strs, fips_policy).await {
+    if let Some(fips) = fips {
+        match download_roots_over_fips(fips, root_cid_strs, fips_policy).await {
             Ok(download) => report.fips_download = Some(download),
             Err(error) => report.fips_download_error = Some(format!("{error:#}")),
-        },
-        None => {
-            let mut block_config = config.clone();
-            block_config.relays = report.relays.clone();
-            match start_fips_block_sync(config_dir, &block_config).await {
-                Ok(fips) => match download_roots_over_fips(&fips, root_cid_strs, fips_policy).await
-                {
-                    Ok(download) => report.fips_download = Some(download),
-                    Err(error) => report.fips_download_error = Some(format!("{error:#}")),
-                },
+        }
+    } else {
+        let mut block_config = config.clone();
+        block_config.relays = report.relays.clone();
+        match start_fips_block_sync(config_dir, &block_config).await {
+            Ok(fips) => match download_roots_over_fips(&fips, root_cid_strs, fips_policy).await {
+                Ok(download) => report.fips_download = Some(download),
                 Err(error) => report.fips_download_error = Some(format!("{error:#}")),
-            }
+            },
+            Err(error) => report.fips_download_error = Some(format!("{error:#}")),
         }
     }
 

@@ -50,6 +50,7 @@ pub struct UiDeviceLinkRequest {
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct UiDevice {
     pub pubkey: String,
     pub label: String,

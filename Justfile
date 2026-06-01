@@ -187,6 +187,7 @@ structure:
     ./scripts/check-macos-normalized-status.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh
+    ./scripts/check-relay-config-normalization.sh
     ./scripts/check-provider-entry-normalization.sh
     ./scripts/check-release-readiness.sh
     ./scripts/check-dev-vm-update-run.sh

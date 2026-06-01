@@ -77,11 +77,13 @@ fn status_lists_default_blossom_server_as_backup_target() {
 
 #[test]
 fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
-    let mut config = AppConfig::default();
-    config.relays = vec![
-        "wss://relay.example/".to_owned(),
-        "wss://relay.two".to_owned(),
-    ];
+    let config = AppConfig {
+        relays: vec![
+            "wss://relay.example/".to_owned(),
+            "wss://relay.two".to_owned(),
+        ],
+        ..AppConfig::default()
+    };
     let daemon_status = json!({
         "relay_statuses": [
             {"url": "wss://relay.example", "status": "connected"},
@@ -95,7 +97,7 @@ fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
         statuses,
         json!([
             {
-                "url": "wss://relay.example/",
+                "url": "wss://relay.example",
                 "status": "connected",
                 "status_label": "connected",
                 "health": "online",
@@ -222,11 +224,13 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
 #[test]
 fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
     let dir = tempfile::tempdir().unwrap();
-    let mut config = AppConfig::default();
-    config.relays = vec![
-        "wss://relay.example/".to_owned(),
-        "wss://relay.two".to_owned(),
-    ];
+    let config = AppConfig {
+        relays: vec![
+            "wss://relay.example/".to_owned(),
+            "wss://relay.two".to_owned(),
+        ],
+        ..AppConfig::default()
+    };
     config.save(config_path_in(dir.path())).unwrap();
 
     write_daemon_status(
@@ -252,7 +256,7 @@ fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
         status["relay_statuses"],
         json!([
             {
-                "url": "wss://relay.example/",
+                "url": "wss://relay.example",
                 "status": "connected",
                 "status_label": "connected",
                 "health": "online",

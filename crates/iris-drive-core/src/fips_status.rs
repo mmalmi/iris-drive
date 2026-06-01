@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
+#[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn normalize_fips_status_value(
     fips_status: Option<&Value>,
     running: bool,
@@ -205,6 +207,7 @@ pub fn normalize_fips_status_value(
     Value::Object(object)
 }
 
+#[must_use]
 pub fn fips_state(enabled: bool, running: bool, fresh: bool, error: &Value) -> &'static str {
     if fips_error_is_present(error) {
         return "error";
@@ -218,6 +221,7 @@ pub fn fips_state(enabled: bool, running: bool, fresh: bool, error: &Value) -> &
     "paused"
 }
 
+#[must_use]
 pub fn fips_state_label(state: &str) -> &'static str {
     match state {
         "error" => "Error",
@@ -227,10 +231,12 @@ pub fn fips_state_label(state: &str) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn fips_roster_label(online_count: usize, roster_count: usize) -> String {
     format!("{online_count}/{roster_count} online")
 }
 
+#[must_use]
 pub fn normalized_fips_peer_statuses(value: Option<&Value>) -> Value {
     Value::Array(
         value
@@ -253,6 +259,7 @@ pub fn normalized_fips_peer_statuses(value: Option<&Value>) -> Value {
     )
 }
 
+#[must_use]
 pub fn fips_peer_connection_label(status: &Value) -> String {
     let transport = status
         .get("transport_type")
@@ -267,6 +274,7 @@ pub fn fips_peer_connection_label(status: &Value) -> String {
     }
 }
 
+#[must_use]
 pub fn fips_online_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
     let mut peers =
         string_set_from_json_array(fips_status.and_then(|status| status.get("online_devices")));
@@ -291,6 +299,7 @@ pub fn fips_online_devices_from_status(fips_status: Option<&Value>) -> Vec<Strin
     peers.into_iter().collect()
 }
 
+#[must_use]
 pub fn fips_direct_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
     let direct_devices =
         string_vec_from_json_array(fips_status.and_then(|status| status.get("direct_devices")));
@@ -306,6 +315,7 @@ pub fn fips_direct_devices_from_status(fips_status: Option<&Value>) -> Vec<Strin
     }
 }
 
+#[must_use]
 pub fn fips_mesh_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
     let mesh_devices =
         string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_devices")));
@@ -316,6 +326,7 @@ pub fn fips_mesh_devices_from_status(fips_status: Option<&Value>) -> Vec<String>
     }
 }
 
+#[must_use]
 pub fn online_device_ids(direct_devices: &[String], mesh_devices: &[String]) -> Vec<String> {
     direct_devices
         .iter()
@@ -326,10 +337,12 @@ pub fn online_device_ids(direct_devices: &[String], mesh_devices: &[String]) -> 
         .collect()
 }
 
+#[must_use]
 pub fn string_vec_from_json_array(value: Option<&Value>) -> Vec<String> {
     string_set_from_json_array(value).into_iter().collect()
 }
 
+#[must_use]
 pub fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {
     value
         .and_then(Value::as_array)
@@ -343,6 +356,7 @@ pub fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+#[must_use]
 pub fn fips_error_is_present(error: &Value) -> bool {
     match error {
         Value::Null => false,

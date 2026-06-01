@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::fips_status::normalize_fips_status_value;
 

@@ -246,12 +246,12 @@ async fn indexed_files_preserve_modified_at_metadata() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("note.txt");
     std::fs::write(&file_path, b"note").unwrap();
-    let modified_at = 1_700_000_123;
+    let modified_at: i64 = 1_700_000_123;
     std::fs::OpenOptions::new()
         .write(true)
         .open(&file_path)
         .unwrap()
-        .set_modified(UNIX_EPOCH + Duration::from_secs(modified_at as u64))
+        .set_modified(UNIX_EPOCH + Duration::from_secs(modified_at.cast_unsigned()))
         .unwrap();
     let tree = new_tree();
 

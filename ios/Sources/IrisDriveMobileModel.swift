@@ -557,12 +557,10 @@ final class IrisDriveMobileModel: ObservableObject {
     func addRelay(_ value: String? = nil) {
         let candidate = (value ?? relayInput).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else { return }
-        if !relays.contains(candidate) {
-            dispatch([
-                "type": "add_relay",
-                "url": candidate,
-            ])
-        }
+        dispatch([
+            "type": "add_relay",
+            "url": candidate,
+        ])
         relayInput = ""
         persistLocalSettings()
     }

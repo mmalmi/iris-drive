@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 use std::collections::BTreeSet;
 
@@ -6,6 +7,7 @@ use iris_drive_core::device_summary::{
     device_role_label as device_role_display_label,
 };
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn peer_statuses(
     config_dir: &Path,
     config: &AppConfig,

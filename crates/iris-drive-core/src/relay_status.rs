@@ -1,3 +1,4 @@
+#[must_use]
 pub fn relay_status_label(status: &str) -> String {
     if status == "configured" {
         "saved".to_owned()
@@ -6,6 +7,7 @@ pub fn relay_status_label(status: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn relay_status_health(status: &str) -> &'static str {
     match status {
         "connected" => "online",

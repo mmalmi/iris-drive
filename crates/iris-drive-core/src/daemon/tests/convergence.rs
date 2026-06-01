@@ -1,6 +1,7 @@
 use super::*;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());

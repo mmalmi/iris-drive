@@ -324,19 +324,17 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
 
 fn insert_write_candidate(
     writes: &mut BTreeMap<String, WriteCandidate>,
-    mut conflicts: Option<&mut std::collections::BTreeSet<String>>,
-    mut conflict_details: Option<&mut BTreeMap<String, MergedConflict>>,
+    conflicts: Option<&mut std::collections::BTreeSet<String>>,
+    conflict_details: Option<&mut BTreeMap<String, MergedConflict>>,
     candidate: WriteCandidate,
 ) {
     let path = candidate.entry.path.clone();
     if let Some(existing) = writes.get_mut(&path) {
-        if should_mark_write_conflict(&candidate, existing) {
-            if let (Some(conflicts), Some(conflict_details)) =
-                (conflicts.as_deref_mut(), conflict_details.as_deref_mut())
-            {
-                conflicts.insert(candidate.entry.path.clone());
-                record_write_conflict(conflict_details, &candidate, existing);
-            }
+        if should_mark_write_conflict(&candidate, existing)
+            && let (Some(conflicts), Some(conflict_details)) = (conflicts, conflict_details)
+        {
+            conflicts.insert(candidate.entry.path.clone());
+            record_write_conflict(conflict_details, &candidate, existing);
         }
         if write_candidate_wins(&candidate, existing) {
             *existing = candidate;

@@ -93,6 +93,7 @@ async fn import_visible_root_records_mount_deletions_as_tombstones() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());
@@ -308,6 +309,7 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());

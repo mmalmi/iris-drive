@@ -11,6 +11,7 @@ pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
 };
+use iris_drive_core::relay_config::normalize_relay_url;
 use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 pub(crate) use network::fips_network_diagnostics;
 use peers::peer_statuses;
@@ -480,34 +481,33 @@ fn normalized_relay_statuses_for_relays(relays: &[String], daemon_status: Option
             let Some(url) = status.get("url").and_then(Value::as_str) else {
                 continue;
             };
+            let Ok(url) = normalize_relay_url(url) else {
+                continue;
+            };
             let value = status
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            by_url.insert(normalized_relay_url(url), value.to_owned());
+            by_url.insert(url, value.to_owned());
         }
     }
     Value::Array(
         relays
             .iter()
-            .map(|relay| {
-                let status = by_url
-                    .get(&normalized_relay_url(relay))
-                    .map(String::as_str)
-                    .unwrap_or("configured");
-                json!({
-                    "url": relay,
+            .filter_map(|relay| {
+                let Ok(url) = normalize_relay_url(relay) else {
+                    return None;
+                };
+                let status = by_url.get(&url).map_or("configured", String::as_str);
+                Some(json!({
+                    "url": url,
                     "status": status,
                     "status_label": relay_status_label(status),
                     "health": relay_status_health(status),
-                })
+                }))
             })
             .collect(),
     )
-}
-
-fn normalized_relay_url(url: &str) -> String {
-    url.trim().trim_matches('/').to_owned()
 }
 
 pub(crate) fn merge_daemon_status(

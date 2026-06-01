@@ -43,6 +43,7 @@ pub mod nostr_events;
 pub mod paths;
 pub mod projection;
 pub mod provider;
+pub mod relay_config;
 pub mod relay_status;
 pub mod relay_sync;
 pub mod root_meta;

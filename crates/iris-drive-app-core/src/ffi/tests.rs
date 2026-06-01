@@ -102,6 +102,57 @@ fn profile_actions_populate_mobile_parity_state() {
 }
 
 #[test]
+fn relay_actions_normalize_and_dedupe_urls() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let state = app.dispatch(NativeAppAction::AddRelay {
+        url: " relay.example/ ".to_owned(),
+    });
+
+    assert!(state.error.is_empty());
+    assert!(state.ui.relays.contains(&"wss://relay.example".to_owned()));
+    assert!(!state.ui.relays.contains(&"relay.example/".to_owned()));
+    assert_eq!(
+        state
+            .ui
+            .relays
+            .iter()
+            .filter(|relay| relay.as_str() == "wss://relay.example")
+            .count(),
+        1
+    );
+
+    let state = app.dispatch(NativeAppAction::AddRelay {
+        url: "wss://relay.example".to_owned(),
+    });
+    assert_eq!(
+        state
+            .ui
+            .relays
+            .iter()
+            .filter(|relay| relay.as_str() == "wss://relay.example")
+            .count(),
+        1
+    );
+
+    let relay_status = state
+        .ui
+        .relay_statuses
+        .iter()
+        .find(|relay| relay.url == "wss://relay.example")
+        .expect("normalized relay status is emitted");
+    assert_eq!(relay_status.status_label, "saved");
+    assert_eq!(relay_status.health, "configured");
+
+    let state = app.dispatch(NativeAppAction::RemoveRelay {
+        url: "relay.example/".to_owned(),
+    });
+    assert!(state.error.is_empty());
+    assert!(!state.ui.relays.contains(&"wss://relay.example".to_owned()));
+}
+
+#[test]
 fn uninitialized_state_exposes_summary_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

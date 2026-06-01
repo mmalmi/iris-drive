@@ -27,6 +27,7 @@ use iris_drive_core::fips_status::{
     fips_error_is_present, normalize_fips_status_value, string_vec_from_json_array,
 };
 use iris_drive_core::paths::{config_path_in, key_path_in};
+use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
@@ -89,12 +90,14 @@ pub struct LinkInputClassification {
 
 #[uniffi::export]
 #[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn classify_link_input(input: String) -> LinkInputClassification {
     classify_link_input_value(&input)
 }
 
 #[uniffi::export]
 #[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn validate_link_input(input: String) -> LinkInputClassification {
     classify_link_input_value(&input)
 }
@@ -501,11 +504,13 @@ impl NativeAppRuntime {
     }
 
     fn add_relay(&mut self, url: &str) {
-        let url = url.trim();
-        if url.is_empty() {
-            "relay URL is required".clone_into(&mut self.state.error);
-            return;
-        }
+        let url = match normalize_relay_url(url) {
+            Ok(url) => url,
+            Err(error) => {
+                self.state.error = error.to_string();
+                return;
+            }
+        };
         let mut config = match self.load_config() {
             Ok(config) => config,
             Err(error) => {
@@ -513,16 +518,30 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if !config.relays.iter().any(|existing| existing == url) {
-            config.relays.push(url.to_owned());
+        let mut relays = match normalized_config_relays(&config.relays) {
+            Ok(relays) => relays,
+            Err(error) => {
+                self.state.error = format!("normalizing relays: {error}");
+                return;
+            }
+        };
+        if !relays.iter().any(|existing| existing == &url) {
+            relays.push(url);
         }
+        config.relays = relays;
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
     }
 
     fn remove_relay(&mut self, url: &str) {
-        let url = url.trim();
+        let url = match normalize_relay_url(url) {
+            Ok(url) => url,
+            Err(error) => {
+                self.state.error = error.to_string();
+                return;
+            }
+        };
         let mut config = match self.load_config() {
             Ok(config) => config,
             Err(error) => {
@@ -530,12 +549,20 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let before = config.relays.len();
-        config.relays.retain(|relay| relay != url);
-        if before == config.relays.len() {
+        let mut relays = match normalized_config_relays(&config.relays) {
+            Ok(relays) => relays,
+            Err(error) => {
+                self.state.error = format!("normalizing relays: {error}");
+                return;
+            }
+        };
+        let before = relays.len();
+        relays.retain(|relay| relay != &url);
+        if before == relays.len() {
             self.state.error = format!("relay not found: {url}");
             return;
         }
+        config.relays = relays;
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -595,6 +622,7 @@ impl NativeAppRuntime {
             .map_err(|error| format!("saving config: {error}"))
     }
 
+    #[allow(clippy::unused_self)]
     fn start_device_link_exchange_if_needed(&mut self) {
         #[cfg(not(test))]
         {
@@ -625,6 +653,7 @@ impl NativeAppRuntime {
         }
     }
 
+    #[allow(clippy::unused_self)]
     fn stop_device_link_exchange(&mut self) {
         #[cfg(not(test))]
         {
@@ -773,19 +802,16 @@ impl NativeAppRuntime {
     }
 
     fn refresh_ui_summary(&mut self, fips_status: Option<UiFipsStatus>) {
-        let setup_state = self
-            .state
-            .ui
-            .account
-            .as_ref()
-            .map(|account| account.authorization_state.clone())
-            .unwrap_or_else(|| "not_configured".to_owned());
-        self.state.ui.primary_status = primary_status_for_setup_state(&setup_state).to_owned();
+        let setup_state = self.state.ui.account.as_ref().map_or_else(
+            || "not_configured".to_owned(),
+            |account| account.authorization_state.clone(),
+        );
+        primary_status_for_setup_state(&setup_state).clone_into(&mut self.state.ui.primary_status);
         self.state.ui.setup_state = setup_state;
-        self.state.ui.setup_label =
-            setup_label_for_setup_state(&self.state.ui.setup_state).to_owned();
-        self.state.ui.primary_status_label =
-            primary_status_label(&self.state.ui.primary_status).to_owned();
+        setup_label_for_setup_state(&self.state.ui.setup_state)
+            .clone_into(&mut self.state.ui.setup_label);
+        primary_status_label(&self.state.ui.primary_status)
+            .clone_into(&mut self.state.ui.primary_status_label);
         self.state.ui.authorized_device_count = self.state.ui.devices.len() as u64;
         self.state.ui.online_device_count = self
             .state
@@ -808,10 +834,10 @@ impl NativeAppRuntime {
         self.set_sync_running(true);
         match run_native_sync_once(&self.data_dir) {
             Ok(report) => {
-                self.state.ui.sync.status = native_sync_status_label(&report).to_owned();
+                native_sync_status_label(&report).clone_into(&mut self.state.ui.sync.status);
             }
             Err(error) => {
-                self.state.ui.sync.status = "sync error".to_owned();
+                "sync error".clone_into(&mut self.state.ui.sync.status);
                 self.state.error = format!("syncing drive: {error:#}");
             }
         }
@@ -1227,6 +1253,7 @@ fn handle_native_device_link_request(
 }
 
 #[cfg(not(test))]
+#[allow(clippy::too_many_lines)]
 async fn handle_native_device_link_roster(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
@@ -1625,6 +1652,14 @@ fn default_relays() -> Vec<String> {
         .collect()
 }
 
+fn normalized_config_relays(
+    relays: &[String],
+) -> Result<Vec<String>, iris_drive_core::relay_config::RelayConfigError> {
+    let mut relays = relays.to_vec();
+    dedupe_relay_urls(&mut relays)?;
+    Ok(relays)
+}
+
 fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
     relays
         .iter()
@@ -1757,8 +1792,8 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
         return classification;
     }
     if trimmed.contains(char::is_whitespace) {
-        classification.kind = "unknown".to_owned();
-        classification.error = "link input must not contain whitespace".to_owned();
+        "unknown".clone_into(&mut classification.kind);
+        "link input must not contain whitespace".clone_into(&mut classification.error);
         return classification;
     }
 
@@ -1769,14 +1804,16 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
         return result;
     }
     if looks_like_owner_pubkey_input(trimmed) {
-        classification.kind = "owner_pubkey".to_owned();
+        "owner_pubkey".clone_into(&mut classification.kind);
         classification.is_complete = owner_pubkey_input_is_complete(trimmed);
         if classification.is_complete {
             match normalize_pubkey(trimmed) {
                 Ok(owner_hex) => {
                     classification.is_valid = true;
                     classification.owner_pubkey = account_npub(&owner_hex);
-                    classification.normalized_input = classification.owner_pubkey.clone();
+                    classification
+                        .normalized_input
+                        .clone_from(&classification.owner_pubkey);
                 }
                 Err(error) => {
                     classification.error = error;
@@ -1786,8 +1823,8 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
         return classification;
     }
 
-    classification.kind = "unknown".to_owned();
-    classification.error = "expected owner public key or device invite link".to_owned();
+    "unknown".clone_into(&mut classification.kind);
+    "expected owner public key or device invite link".clone_into(&mut classification.error);
     classification
 }
 
@@ -1863,7 +1900,7 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
             classification.has_link_secret = !invite.link_secret.trim().is_empty();
         }
         Ok(None) => {
-            classification.error = "device invite was not recognized".to_owned();
+            "device invite was not recognized".clone_into(&mut classification.error);
         }
         Err(error) if classification.is_complete => {
             classification.error = error.to_string();

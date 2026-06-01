@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 
 pub(crate) async fn walk_device_tree(
     tree: &HashTree<hashtree_fs::FsBlobStore>,
@@ -15,15 +16,21 @@ pub(crate) fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -
     match sub.unwrap_or(RelaysCmd::List) {
         RelaysCmd::List => {}
         RelaysCmd::Add { url } => {
-            let url = normalize_relay_url(&url);
-            if !config.relays.contains(&url) {
+            let url = normalize_relay_url(&url)?;
+            let before = config.relays.clone();
+            dedupe_relay_urls(&mut config.relays)?;
+            if !config.relays.iter().any(|relay| relay == &url) {
                 config.relays.push(url);
+            }
+            if config.relays != before {
                 config.save(config_path_in(config_dir))?;
             }
         }
         RelaysCmd::Update { old_url, new_url } => {
-            let old_url = normalize_relay_url(&old_url);
-            let new_url = normalize_relay_url(&new_url);
+            let old_url = normalize_relay_url(&old_url)?;
+            let new_url = normalize_relay_url(&new_url)?;
+            let before = config.relays.clone();
+            dedupe_relay_urls(&mut config.relays)?;
             let mut changed = false;
             for relay in &mut config.relays {
                 if relay == &old_url {
@@ -31,16 +38,18 @@ pub(crate) fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -
                     changed = true;
                 }
             }
-            dedupe_relays(&mut config.relays);
-            if changed {
+            dedupe_relay_urls(&mut config.relays)?;
+            if changed || config.relays != before {
                 config.save(config_path_in(config_dir))?;
             }
         }
         RelaysCmd::Remove { url } => {
-            let url = normalize_relay_url(&url);
-            let before = config.relays.len();
+            let url = normalize_relay_url(&url)?;
+            let original = config.relays.clone();
+            dedupe_relay_urls(&mut config.relays)?;
+            let before_len = config.relays.len();
             config.relays.retain(|s| s != &url);
-            if config.relays.len() != before {
+            if config.relays.len() != before_len || config.relays != original {
                 config.save(config_path_in(config_dir))?;
             }
         }
@@ -54,20 +63,6 @@ pub(crate) fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -
     }
     println!("{}", serde_json::to_string_pretty(&config.relays)?);
     Ok(())
-}
-
-pub(crate) fn normalize_relay_url(value: &str) -> String {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
-        trimmed.to_string()
-    } else {
-        format!("wss://{trimmed}")
-    }
-}
-
-pub(crate) fn dedupe_relays(relays: &mut Vec<String>) {
-    let mut seen = std::collections::BTreeSet::new();
-    relays.retain(|relay| seen.insert(relay.clone()));
 }
 
 pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<()> {
