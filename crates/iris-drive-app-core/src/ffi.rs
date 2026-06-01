@@ -44,6 +44,7 @@ use crate::state::{
     NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsStatus, UiPaths,
     UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
 };
+use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 
 #[cfg(target_os = "android")]
 #[path = "ffi_android_test_support.rs"]
@@ -1670,6 +1671,8 @@ fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
         .map(|relay| UiRelayStatus {
             url: relay.clone(),
             status: "configured".to_owned(),
+            status_label: relay_status_label("configured"),
+            health: relay_status_health("configured").to_owned(),
         })
         .collect()
 }

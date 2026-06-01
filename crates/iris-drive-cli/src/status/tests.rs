@@ -94,8 +94,18 @@ fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
     assert_eq!(
         statuses,
         json!([
-            {"url": "wss://relay.example/", "status": "connected"},
-            {"url": "wss://relay.two", "status": "configured"}
+            {
+                "url": "wss://relay.example/",
+                "status": "connected",
+                "status_label": "connected",
+                "health": "online",
+            },
+            {
+                "url": "wss://relay.two",
+                "status": "configured",
+                "status_label": "saved",
+                "health": "configured",
+            }
         ])
     );
 }
@@ -215,8 +225,18 @@ fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
     assert_eq!(
         status["relay_statuses"],
         json!([
-            {"url": "wss://relay.example/", "status": "connected"},
-            {"url": "wss://relay.two", "status": "configured"}
+            {
+                "url": "wss://relay.example/",
+                "status": "connected",
+                "status_label": "connected",
+                "health": "online",
+            },
+            {
+                "url": "wss://relay.two",
+                "status": "configured",
+                "status_label": "saved",
+                "health": "configured",
+            }
         ])
     );
     assert_eq!(status["fips"]["direct_devices"], json!(["npub1b"]));
@@ -252,7 +272,12 @@ fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     assert_eq!(
         status["relay_statuses"],
         json!([
-            {"url": "ws://127.0.0.1:7000", "status": "connected"}
+            {
+                "url": "ws://127.0.0.1:7000",
+                "status": "connected",
+                "status_label": "connected",
+                "health": "online",
+            }
         ])
     );
 }

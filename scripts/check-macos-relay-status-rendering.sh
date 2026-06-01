@@ -23,8 +23,12 @@ require_absent() {
 
 require_contains "private var relayRows: [IrisDriveRelayStatus]"
 require_contains "status.relayStatuses"
+require_contains "relay.statusLabel"
+require_contains "relay.health"
 require_absent "status.relays.map"
 require_absent 'IrisDriveRelayStatus(url: relay, status: "configured")'
 require_absent "reduce(into: [String: IrisDriveRelayStatus]())"
+require_absent "relayStatusLabel("
+require_absent 'status == "configured" ? "saved" : status'
 
 echo "MACOS_RELAY_STATUS_RENDERING_OK"

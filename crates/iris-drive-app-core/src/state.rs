@@ -79,6 +79,8 @@ pub struct UiBackup {
 pub struct UiRelayStatus {
     pub url: String,
     pub status: String,
+    pub status_label: String,
+    pub health: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

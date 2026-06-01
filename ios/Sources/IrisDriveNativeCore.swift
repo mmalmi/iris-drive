@@ -449,6 +449,15 @@ struct NativeBackup: Codable {
 struct NativeRelayStatus: Codable {
     var url: String
     var status: String
+    var statusLabel: String
+    var health: String
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case status
+        case statusLabel = "status_label"
+        case health
+    }
 }
 
 struct NativePaths: Codable {

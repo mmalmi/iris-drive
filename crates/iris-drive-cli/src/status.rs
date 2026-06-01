@@ -4,6 +4,7 @@ use super::*;
 mod network;
 mod peers;
 
+use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
 pub(crate) use network::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status, fips_network_diagnostics,
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
@@ -441,12 +442,15 @@ fn normalized_relay_statuses_for_relays(relays: &[String], daemon_status: Option
         relays
             .iter()
             .map(|relay| {
+                let status = by_url
+                    .get(&normalized_relay_url(relay))
+                    .map(String::as_str)
+                    .unwrap_or("configured");
                 json!({
                     "url": relay,
-                    "status": by_url
-                        .get(&normalized_relay_url(relay))
-                        .map(String::as_str)
-                        .unwrap_or("configured"),
+                    "status": status,
+                    "status_label": relay_status_label(status),
+                    "health": relay_status_health(status),
                 })
             })
             .collect(),

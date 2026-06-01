@@ -60,7 +60,13 @@ enum IrisDriveScreenshotFixtures {
             "wss://nos.lol",
         ]
         status.relayStatuses = status.relays.map {
-            IrisDriveRelayStatus(url: $0, status: $0.contains("nostr.band") ? "connecting" : "connected")
+            let status = $0.contains("nostr.band") ? "connecting" : "connected"
+            return IrisDriveRelayStatus(
+                url: $0,
+                status: status,
+                statusLabel: status,
+                health: status == "connected" ? "online" : "connecting"
+            )
         }
         status.blossomServers = [
             "https://blossom.primal.net",

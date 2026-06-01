@@ -857,14 +857,14 @@ struct IrisDriveControlPanel: View {
         } else {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(relayStatusColor(relay.status))
+                    .fill(relayHealthColor(relay.health))
                     .frame(width: 8, height: 8)
                 Text(relay.url)
                     .font(.system(.body, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
-                Text(relayStatusLabel(relay.status))
+                Text(relay.statusLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {
@@ -929,21 +929,17 @@ struct IrisDriveControlPanel: View {
         editingRelayDraft = ""
     }
 
-    private func relayStatusColor(_ status: String) -> Color {
-        switch status {
-        case "connected":
+    private func relayHealthColor(_ health: String) -> Color {
+        switch health {
+        case "online":
             return .green
         case "connecting":
             return .yellow
-        case "blocked", "offline", "terminated":
+        case "error":
             return .red.opacity(0.85)
         default:
             return .secondary.opacity(0.65)
         }
-    }
-
-    private func relayStatusLabel(_ status: String) -> String {
-        status == "configured" ? "saved" : status
     }
 }
 

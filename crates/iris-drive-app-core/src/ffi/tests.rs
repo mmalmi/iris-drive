@@ -79,6 +79,9 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
     assert!(!state.ui.relays.is_empty());
+    assert_eq!(state.ui.relay_statuses.len(), state.ui.relays.len());
+    assert_eq!(state.ui.relay_statuses[0].status_label, "saved");
+    assert_eq!(state.ui.relay_statuses[0].health, "configured");
     assert!(!state.ui.backups.is_empty());
     assert_eq!(state.ui.backups[0].label, "Blossom remote");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());

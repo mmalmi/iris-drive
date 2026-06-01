@@ -187,11 +187,15 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
     let id: String
     let url: String
     let status: String
+    let statusLabel: String
+    let health: String
 
-    init(url: String, status: String) {
+    init(url: String, status: String, statusLabel: String, health: String) {
         id = url
         self.url = url
         self.status = status
+        self.statusLabel = statusLabel
+        self.health = health
     }
 
     init(json: [String: Any]) {
@@ -199,6 +203,8 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
         id = url
         self.url = url
         status = json["status"] as? String ?? "unknown"
+        statusLabel = json["status_label"] as? String ?? status
+        health = json["health"] as? String ?? "unknown"
     }
 }
 
