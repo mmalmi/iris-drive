@@ -78,4 +78,11 @@ if ! grep -F '$env:CARGO_PROFILE_DEV_DEBUG = $CargoProfileDevDebugDefault' "$ROO
   exit 1
 fi
 
+if ! grep -F 'entitlements.pop("com.apple.developer.associated-domains", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'entitlements.pop("com.apple.security.application-groups", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM signing must strip provisioned-only entitlements unless FileProvider is explicitly required" >&2
+  exit 1
+fi
+
 echo "DEV_VM_UPDATE_RUN_CHECK_OK"

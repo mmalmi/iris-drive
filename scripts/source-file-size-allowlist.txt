@@ -3,7 +3,7 @@ windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithi
 crates/iris-drive-app-core/src/ffi.rs 2400 Legacy app-core FFI runtime pending action/provider split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1100 Scenario matrix needs a later harness split.
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
-scripts/dev-vm-update-run.sh 2620 Cross-platform VM orchestration needs a later split; VM Cargo build env keeps macOS smoke viable on small disks.
+scripts/dev-vm-update-run.sh 2661 Cross-platform VM orchestration needs a later split; VM Cargo build env keeps macOS smoke viable on small disks.
 macos/Sources/IrisDriveMacApp.swift 2500 Legacy macOS shell pending view/runtime split.
 scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.

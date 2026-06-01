@@ -1253,13 +1253,57 @@ macos_prepare_entitlements_for_signing() {
   local output
 
   [[ -n "$entitlements" && -f "$entitlements" ]] || return 0
-  if ! grep -q '\$(TeamIdentifierPrefix)' "$entitlements"; then
+  if grep -q '\$(TeamIdentifierPrefix)' "$entitlements" && [[ -z "$team" ]]; then
     return 0
   fi
-  [[ -n "$team" ]] || return 0
 
   output="$(mktemp -t iris-drive-entitlements.XXXXXX.plist)"
-  sed "s|\$(TeamIdentifierPrefix)|$team.|g" "$entitlements" > "$output"
+  IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM="$team" python3 - "$entitlements" "$output" <<'PY'
+import os
+import plistlib
+import sys
+
+source, destination = sys.argv[1], sys.argv[2]
+team = os.environ.get("IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM", "").rstrip(".")
+
+
+def truthy(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value in {"1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On"}
+
+
+def expand(value):
+    if isinstance(value, str) and team:
+        return value.replace("$(TeamIdentifierPrefix)", f"{team}.")
+    if isinstance(value, list):
+        return [expand(item) for item in value]
+    if isinstance(value, dict):
+        return {key: expand(item) for key, item in value.items()}
+    return value
+
+
+with open(source, "rb") as handle:
+    entitlements = expand(plistlib.load(handle))
+
+keep_provisioned = truthy("IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER") or truthy(
+    "IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS"
+)
+keep_fileprovider_testing = truthy(
+    "IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE",
+    keep_provisioned,
+)
+
+if not keep_provisioned:
+    entitlements.pop("com.apple.developer.associated-domains", None)
+    entitlements.pop("com.apple.security.application-groups", None)
+if not keep_fileprovider_testing:
+    entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)
+
+with open(destination, "wb") as handle:
+    plistlib.dump(entitlements, handle, sort_keys=False)
+PY
   printf '%s\n' "$output"
 }
 
