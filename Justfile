@@ -188,6 +188,7 @@ structure:
     ./scripts/check-desktop-gui-e2e-kit.sh
     ./scripts/check-client-primary-status-ownership.sh
     ./scripts/check-client-sync-status-ownership.sh
+    ./scripts/check-backup-target-summary-ownership.sh
     ./scripts/check-windows-provider-refresh-key-ownership.sh
     ./scripts/check-device-summary-ownership.sh
     ./scripts/check-fips-status-normalization.sh

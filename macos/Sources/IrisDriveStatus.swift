@@ -214,6 +214,8 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
     let kind: String
     let target: String
     let label: String?
+    let title: String
+    let detail: String
     let state: String
     let uploaded: Int?
     let totalHashes: Int?
@@ -231,12 +233,14 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         kind = json["kind"] as? String ?? "backup"
         target = json["target"] as? String ?? ""
         label = json["label"] as? String
+        title = json["title"] as? String ?? "Backup"
+        detail = json["detail"] as? String ?? target
         if let lastSync = json["last_sync"] as? [String: Any] {
-            state = lastSync["state"] as? String ?? "synced"
+            state = json["state"] as? String ?? lastSync["state"] as? String ?? "synced"
             uploaded = (lastSync["uploaded"] as? NSNumber)?.intValue
             totalHashes = (lastSync["total_hashes"] as? NSNumber)?.intValue
         } else {
-            state = kind == "fips" ? "Pending" : "Ready"
+            state = json["state"] as? String ?? (kind == "fips" ? "pending" : "ready")
             uploaded = nil
             totalHashes = nil
         }
@@ -262,30 +266,6 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         }
     }
 
-    var title: String {
-        if let label, !label.isEmpty {
-            return label
-        }
-        return kind == "fips" ? shortValue(target) : target
-    }
-
-    var detail: String {
-        var parts = [kind == "fips" ? shortValue(target) : target]
-        if let uploaded, let totalHashes {
-            parts.append("\(uploaded)/\(totalHashes)")
-        }
-        if let checkState {
-            parts.append("check \(checkState)")
-        }
-        if let latencyMs {
-            parts.append("\(latencyMs) ms")
-        }
-        if let downloadBytesPerSecond {
-            parts.append("\(Self.byteString(downloadBytesPerSecond))/s")
-        }
-        return parts.joined(separator: " | ")
-    }
-
     var iconName: String {
         switch kind {
         case "fips":
@@ -297,10 +277,6 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
         default:
             return "cloud.fill"
         }
-    }
-
-    private static func byteString(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }
 

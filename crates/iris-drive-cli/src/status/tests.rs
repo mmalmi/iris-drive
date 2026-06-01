@@ -76,6 +76,62 @@ fn status_lists_default_blossom_server_as_backup_target() {
 }
 
 #[test]
+fn backup_target_status_emits_shared_row_fields() {
+    let status = backup_target_status(&BackupTarget {
+        id: "backup-1".to_owned(),
+        kind: BackupTargetKind::Blossom,
+        target: "https://backup.example".to_owned(),
+        label: Some("Archive".to_owned()),
+        enabled: true,
+        last_sync: Some(BackupTargetSync {
+            state: "uploading".to_owned(),
+            root_cid: "root".to_owned(),
+            synced_at: 1_700_000_000,
+            total_hashes: 5,
+            uploaded: 2,
+            already_present: 1,
+        }),
+        last_check: Some(BackupTargetCheck {
+            state: "verified".to_owned(),
+            root_cid: "root".to_owned(),
+            checked_at: 1_700_000_100,
+            total_hashes: 5,
+            sample_size: 5,
+            sampled_hashes: 5,
+            present: 5,
+            missing: 0,
+            unknown: 0,
+            latency_ms: Some(35),
+            download_bytes: Some(2048),
+            download_ms: Some(1000),
+            download_bytes_per_second: Some(2048),
+            error: None,
+        }),
+    });
+
+    assert_eq!(status["title"], "Archive");
+    assert_eq!(status["state"], "uploading");
+    assert_eq!(
+        status["detail"],
+        "https://backup.example | 2/5 | check verified | 35 ms | 2.0 KB/s"
+    );
+
+    let fips_status = backup_target_status(&BackupTarget {
+        id: "fips-1".to_owned(),
+        kind: BackupTargetKind::Fips,
+        target: "abcdefghijklmnopqrstuvwxyz0123456789".to_owned(),
+        label: None,
+        enabled: true,
+        last_sync: None,
+        last_check: None,
+    });
+
+    assert_eq!(fips_status["title"], "abcdefghijklmn...0123456789");
+    assert_eq!(fips_status["state"], "pending");
+    assert_eq!(fips_status["detail"], "abcdefghijklmn...0123456789");
+}
+
+#[test]
 fn network_status_merges_configured_relays_with_daemon_relay_statuses() {
     let config = AppConfig {
         relays: vec![

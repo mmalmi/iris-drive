@@ -1,9 +1,15 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+mod backups;
 mod network;
 mod peers;
 
+#[cfg(test)]
+pub(crate) use backups::backup_target_status;
+pub(crate) use backups::{
+    backup_target_kind_label, backup_targets_status, configured_backup_targets_status,
+};
 use iris_drive_core::device_summary::{
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
     sync_status_label,
@@ -325,94 +331,6 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
                 .and_then(|drive| drive.last_root_cid.clone())
         })
-}
-
-pub(crate) fn backup_targets_status(config: &AppConfig) -> Vec<Value> {
-    visible_backup_targets(config)
-        .iter()
-        .map(backup_target_status)
-        .collect()
-}
-
-pub(crate) fn configured_backup_targets_status(config: &AppConfig) -> Vec<Value> {
-    effective_backup_targets(config)
-        .iter()
-        .map(backup_target_status)
-        .collect()
-}
-
-fn visible_backup_targets(config: &AppConfig) -> Vec<BackupTarget> {
-    let mut targets = effective_backup_targets(config);
-    for target in visible_default_blossom_backup_targets(config) {
-        if !targets.iter().any(|existing| existing.id == target.id) {
-            targets.push(target);
-        }
-    }
-    targets
-}
-
-fn visible_default_blossom_backup_targets(config: &AppConfig) -> Vec<BackupTarget> {
-    config
-        .blossom_servers
-        .iter()
-        .filter(|server| is_default_blossom_server(server))
-        .filter_map(|server| parse_backup_target(server, None).ok())
-        .collect()
-}
-
-pub(crate) fn backup_target_status(target: &BackupTarget) -> Value {
-    let label = target.label.as_deref().or_else(|| {
-        (target.kind == BackupTargetKind::Blossom && is_default_blossom_server(&target.target))
-            .then_some("Blossom remote")
-    });
-    json!({
-        "id": target.id.as_str(),
-        "kind": backup_target_kind_label(target.kind),
-        "target": target.target.as_str(),
-        "label": label,
-        "enabled": target.enabled,
-        "last_sync": target.last_sync.as_ref().map(backup_target_sync_status),
-        "last_check": target.last_check.as_ref().map(backup_target_check_status),
-    })
-}
-
-pub(crate) fn backup_target_sync_status(sync: &BackupTargetSync) -> Value {
-    json!({
-        "state": sync.state.as_str(),
-        "root_cid": sync.root_cid.as_str(),
-        "synced_at": sync.synced_at,
-        "total_hashes": sync.total_hashes,
-        "uploaded": sync.uploaded,
-        "already_present": sync.already_present,
-    })
-}
-
-pub(crate) fn backup_target_check_status(check: &BackupTargetCheck) -> Value {
-    json!({
-        "state": check.state.as_str(),
-        "root_cid": check.root_cid.as_str(),
-        "checked_at": check.checked_at,
-        "total_hashes": check.total_hashes,
-        "sample_size": check.sample_size,
-        "sampled_hashes": check.sampled_hashes,
-        "present": check.present,
-        "missing": check.missing,
-        "unknown": check.unknown,
-        "latency_ms": check.latency_ms,
-        "download_bytes": check.download_bytes,
-        "download_ms": check.download_ms,
-        "download_bytes_per_second": check.download_bytes_per_second,
-        "error": check.error.as_deref(),
-    })
-}
-
-pub(crate) fn backup_target_kind_label(kind: BackupTargetKind) -> &'static str {
-    match kind {
-        BackupTargetKind::Blossom => "blossom",
-        BackupTargetKind::Fips => "fips",
-        BackupTargetKind::Filesystem => "filesystem",
-        BackupTargetKind::Lmdb => "lmdb",
-    }
 }
 
 const DAEMON_STATUS_SCHEMA: u32 = 1;

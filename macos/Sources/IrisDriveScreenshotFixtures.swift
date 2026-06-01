@@ -77,6 +77,9 @@ enum IrisDriveScreenshotFixtures {
                 "kind": "fips",
                 "target": fakeNpub("server"),
                 "label": "Home server",
+                "title": "Home server",
+                "state": "synced",
+                "detail": "\(shortValue(fakeNpub("server"))) | 0/0 | check ok | 24 ms | 13.5 MB/s",
                 "last_sync": [
                     "state": "synced",
                     "uploaded": 0,
@@ -93,6 +96,9 @@ enum IrisDriveScreenshotFixtures {
                 "kind": "filesystem",
                 "target": "/Volumes/Archive/Iris Drive",
                 "label": "Archive disk",
+                "title": "Archive disk",
+                "state": "synced",
+                "detail": "/Volumes/Archive/Iris Drive | 0/0",
                 "last_sync": [
                     "state": "synced",
                     "uploaded": 0,

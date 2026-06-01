@@ -95,49 +95,17 @@ pub(crate) fn render_backups(list: &gtk::ListBox, json: &Value) {
     let network = json.get("network").unwrap_or(&Value::Null);
     if let Some(targets) = network.get("backup_targets").and_then(Value::as_array) {
         for target in targets {
-            let kind = find_string(target, &["kind"]).unwrap_or("backup");
-            let target_value = find_string(target, &["target"]).unwrap_or("");
-            let title = find_string(target, &["label"])
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    if kind == "fips" {
-                        short_text(target_value)
-                    } else {
-                        target_value.to_string()
-                    }
-                });
-            let last_sync = target.get("last_sync").unwrap_or(&Value::Null);
-            let state = find_string(last_sync, &["state"]).unwrap_or(if kind == "fips" {
-                "pending"
+            let title = find_string(target, &["title"]).unwrap_or("Backup");
+            let state = find_string(target, &["state"]).unwrap_or("");
+            let detail = find_string(target, &["detail"]).unwrap_or("");
+            let subtitle = if state.is_empty() {
+                detail.to_string()
+            } else if detail.is_empty() {
+                state.to_string()
             } else {
-                "ready"
-            });
-            let mut detail = if kind == "fips" {
-                short_text(target_value)
-            } else {
-                target_value.to_string()
+                format!("{state} | {detail}")
             };
-            if let (Some(uploaded), Some(total)) = (
-                find_number(last_sync, &["uploaded"]),
-                find_number(last_sync, &["total_hashes"]),
-            ) {
-                detail = format!("{detail} | {uploaded}/{total}");
-            }
-            if let Some(check) = target.get("last_check").and_then(Value::as_object) {
-                let check = Value::Object(check.clone());
-                if let Some(check_state) = find_string(&check, &["state"]) {
-                    detail = format!("{detail} | check {check_state}");
-                }
-                if let Some(latency) = find_number(&check, &["latency_ms"]) {
-                    detail = format!("{detail} | {latency} ms");
-                }
-                if let Some(bytes_per_second) = find_number(&check, &["download_bytes_per_second"])
-                {
-                    detail = format!("{detail} | {}/s", format_bytes(bytes_per_second));
-                }
-            }
-            list.append(&simple_row(&title, &format!("{state} | {detail}")));
+            list.append(&simple_row(title, &subtitle));
         }
     }
     if list.first_child().is_none() {

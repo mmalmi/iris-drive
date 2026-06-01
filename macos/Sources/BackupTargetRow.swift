@@ -22,7 +22,7 @@ struct BackupTargetRow: View {
                             Text(target.title)
                                 .font(.callout.weight(.medium))
                                 .lineLimit(1)
-                            Text(target.target)
+                            Text(target.detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
