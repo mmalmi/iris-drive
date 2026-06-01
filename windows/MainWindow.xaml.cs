@@ -114,7 +114,7 @@ public partial class MainWindow : Window
             {
                 SetupRoot.Visibility = Visibility.Visible;
                 MainRoot.Visibility = Visibility.Collapsed;
-                SetupNotice.Text = status.AuthorizationState ?? "Setup needed";
+                SetupNotice.Text = status.SetupLabel;
                 return;
             }
 
@@ -183,8 +183,8 @@ public partial class MainWindow : Window
         StatusPill.Text = syncRunning ? "On" : "Paused";
         FilesValue.Text = (status.FileCount > 0 ? status.FileCount : status.TopLevelEntries)
             .ToString(CultureInfo.InvariantCulture);
-        StorageValue.Text = FormatBytes(status.LocalBlockBytes);
-        DevicesValue.Text = $"{status.PublishedDeviceRoots}/{status.AuthorizedDeviceCount}";
+        StorageValue.Text = FormatBytes(status.VisibleFileBytes);
+        DevicesValue.Text = $"{status.OnlineDeviceCount}/{status.AuthorizedDeviceCount}";
         NoticeText.Text = notice ?? "";
 
         CopySnapshotButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SnapshotUrl);
@@ -196,7 +196,7 @@ public partial class MainWindow : Window
 
         OwnerValue.Text = status.OwnerNpub ?? "-";
         DeviceValue.Text = status.DeviceNpub ?? "-";
-        AuthValue.Text = status.AuthorizationState ?? "-";
+        AuthValue.Text = status.SetupLabel;
         ApprovePanel.Visibility =
             status.HasOwnerSigningAuthority ? Visibility.Visible : Visibility.Collapsed;
 
@@ -391,10 +391,12 @@ public partial class MainWindow : Window
     private void RenderNetwork(IrisDriveStatusData status)
     {
         FipsList.Items.Clear();
-        FipsList.Items.Add(Row("State", "", status.Fips.State));
-        FipsList.Items.Add(Row("Roster FIPS", status.Fips.RosterText, ""));
+        FipsList.Items.Add(Row("State", status.Fips.State, status.Fips.StateLabel));
+        FipsList.Items.Add(Row("Roster FIPS", status.Fips.RosterLabel, ""));
         FipsList.Items.Add(Row("Other FIPS", status.Fips.OtherPeerCount.ToString(), ""));
-        FipsList.Items.Add(Row("Connected", status.Fips.ConnectedPeerCount.ToString(), ""));
+        FipsList.Items.Add(Row("Online", status.Fips.OnlineDeviceCount.ToString(), ""));
+        FipsList.Items.Add(Row("Direct", status.Fips.DirectDeviceCount.ToString(), ""));
+        FipsList.Items.Add(Row("Mesh", status.Fips.MeshDeviceCount.ToString(), ""));
         if (!string.IsNullOrWhiteSpace(status.Fips.EndpointNpub))
         {
             FipsList.Items.Add(Row("Endpoint", status.Fips.EndpointNpub, ""));

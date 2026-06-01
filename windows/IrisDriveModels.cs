@@ -12,9 +12,14 @@ public sealed class IrisDriveStatusData
     public string? DeviceNpub { get; init; }
     public bool HasOwnerSigningAuthority { get; init; }
     public string? AuthorizationState { get; init; }
+    public string SetupState { get; init; } = "not_configured";
+    public string SetupLabel { get; init; } = "Not linked";
+    public string PrimaryStatus { get; init; } = "not_setup";
+    public string PrimaryStatusLabel { get; init; } = "Ready";
     public string? DeviceLinkRequestUrl { get; init; }
     public int RosterSize { get; init; }
     public int AuthorizedDeviceCount { get; init; }
+    public int OnlineDeviceCount { get; init; }
     public int PublishedDeviceRoots { get; init; }
     public string? ConfigDirectory { get; init; }
     public string? CurrentRootCid { get; init; }
@@ -22,6 +27,7 @@ public sealed class IrisDriveStatusData
     public string? SnapshotUrl { get; init; }
     public int FileCount { get; init; }
     public int TopLevelEntries { get; init; }
+    public long VisibleFileBytes { get; init; }
     public int LocalBlockCount { get; init; }
     public long LocalBlockBytes { get; init; }
     public bool LocalNhashResolverEnabled { get; init; } = true;
@@ -43,6 +49,7 @@ public sealed class IrisDriveStatusData
             : null;
         var hashtree = Object(root, "hashtree");
         var network = Object(root, "network");
+        var summary = Object(root, "summary");
         var mountPath = ExtractDrivePath(root);
         var drives = DriveRows(root, mountPath);
 
@@ -56,12 +63,18 @@ public sealed class IrisDriveStatusData
                 account.HasValue && Bool(account.Value, "has_owner_signing_authority"),
             AuthorizationState =
                 account.HasValue ? String(account.Value, "authorization_state") : null,
+            SetupState = summary.HasValue ? String(summary.Value, "setup_state") ?? "not_configured" : "not_configured",
+            SetupLabel = summary.HasValue ? String(summary.Value, "setup_label") ?? "Not linked" : "Not linked",
+            PrimaryStatus = summary.HasValue ? String(summary.Value, "primary_status") ?? "not_setup" : "not_setup",
+            PrimaryStatusLabel = summary.HasValue ? String(summary.Value, "primary_status_label") ?? "Ready" : "Ready",
             DeviceLinkRequestUrl = deviceLinkRequest.HasValue
                 ? String(deviceLinkRequest.Value, "url")
                 : null,
             RosterSize = account.HasValue ? Int(account.Value, "roster_size") : 0,
-            AuthorizedDeviceCount =
-                network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
+            AuthorizedDeviceCount = summary.HasValue
+                ? Int(summary.Value, "authorized_device_count")
+                : network.HasValue ? Int(network.Value, "authorized_device_count") : 0,
+            OnlineDeviceCount = summary.HasValue ? Int(summary.Value, "online_device_count") : 0,
             PublishedDeviceRoots =
                 network.HasValue ? Int(network.Value, "published_device_roots") : 0,
             ConfigDirectory = String(root, "config_dir"),
@@ -70,8 +83,13 @@ public sealed class IrisDriveStatusData
             SnapshotUrl = hashtree.HasValue
                 ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
                 : null,
-            FileCount = hashtree.HasValue ? Int(hashtree.Value, "file_count") : 0,
+            FileCount = summary.HasValue
+                ? Int(summary.Value, "file_count")
+                : hashtree.HasValue ? Int(hashtree.Value, "file_count") : 0,
             TopLevelEntries = hashtree.HasValue ? Int(hashtree.Value, "top_level_entries") : 0,
+            VisibleFileBytes = summary.HasValue
+                ? Long(summary.Value, "visible_file_bytes")
+                : hashtree.HasValue ? Long(hashtree.Value, "visible_file_bytes") : 0,
             LocalBlockCount = hashtree.HasValue ? Int(hashtree.Value, "local_block_count") : 0,
             LocalBlockBytes = hashtree.HasValue ? Long(hashtree.Value, "local_block_bytes") : 0,
             LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
@@ -96,15 +114,13 @@ public sealed class IrisDriveStatusData
     }
 
     public bool IsAwaitingLinkedApproval =>
-        Initialized &&
-        !HasOwnerSigningAuthority &&
-        string.Equals(AuthorizationState, "awaiting_approval", StringComparison.Ordinal);
+        Initialized && string.Equals(SetupState, "awaiting_approval", StringComparison.Ordinal);
 
     public bool IsSetupComplete =>
-        Initialized && string.Equals(AuthorizationState, "authorized", StringComparison.Ordinal);
+        Initialized && string.Equals(SetupState, "authorized", StringComparison.Ordinal);
 
     public bool IsRevoked =>
-        Initialized && string.Equals(AuthorizationState, "revoked", StringComparison.Ordinal);
+        Initialized && string.Equals(SetupState, "revoked", StringComparison.Ordinal);
 
     private static string ExtractDriveName(JsonElement root)
     {
@@ -251,8 +267,10 @@ public sealed class IrisDriveStatusData
         {
             var deviceNpub = String(peer, "device_npub") ?? "";
             var isCurrentDevice = Bool(peer, "is_current_device");
-            var role = String(peer, "role") == "admin" ? "admin" : "member";
-            var title = String(peer, "label") ??
+            var role = String(peer, "role") ?? "member";
+            var roleLabel = String(peer, "role_label") ?? role;
+            var title = String(peer, "display_label") ??
+                String(peer, "label") ??
                 (!string.IsNullOrWhiteSpace(deviceNpub) ? deviceNpub : String(peer, "device_pubkey")) ??
                 "Device";
             var details = new List<string>();
@@ -261,7 +279,7 @@ public sealed class IrisDriveStatusData
                 details.Add("this device");
             }
 
-            details.Add(role);
+            details.Add(roleLabel);
             var syncState = String(peer, "sync_state");
             if (!string.IsNullOrWhiteSpace(syncState))
             {
@@ -292,7 +310,7 @@ public sealed class IrisDriveStatusData
             }
 
             var isOnline = Bool(peer, "fips_online");
-            var state = FipsConnectionLabel(peer, isOnline);
+            var state = String(peer, "connection_label") ?? (isOnline ? "Online" : "Offline");
             var canManagePeer = canManageDevices &&
                 !isCurrentDevice &&
                 !string.IsNullOrWhiteSpace(deviceNpub);
@@ -374,38 +392,6 @@ public sealed class IrisDriveStatusData
         }
 
         return rows;
-    }
-
-    private static string FipsConnectionLabel(JsonElement peer, bool isOnline)
-    {
-        if (!isOnline)
-        {
-            return "Offline";
-        }
-
-        var direct = FipsPeerStatusLabel(peer, "fips_transport_type", "fips_srtt_ms");
-        if (!string.IsNullOrWhiteSpace(direct))
-        {
-            return direct;
-        }
-
-        return String(peer, "fips_online_via") == "mesh" ? "Online (Mesh)" : "Online";
-    }
-
-    internal static string? FipsPeerStatusLabel(
-        JsonElement peer,
-        string transportProperty,
-        string latencyProperty)
-    {
-        var transport = String(peer, transportProperty)?.ToUpperInvariant();
-        var latency = Int(peer, latencyProperty);
-        return (transport, latency) switch
-        {
-            ({ Length: > 0 }, > 0) => $"Online ({transport}, {latency} ms)",
-            ({ Length: > 0 }, _) => $"Online ({transport})",
-            (_, > 0) => $"Online ({latency} ms)",
-            _ => null,
-        };
     }
 
     private static IReadOnlyList<string> StringArray(JsonElement root, string name)
@@ -524,25 +510,40 @@ public sealed record FipsDiagnostics(
     bool Enabled,
     bool Running,
     bool Fresh,
+    string State,
+    string StateLabel,
     string? EndpointNpub,
     string? DiscoveryScope,
+    string RosterLabel,
     int RosterPeerCount,
-    int RosterConnectedPeerCount,
-    int ConnectedPeerCount,
+    int RosterOnlineDeviceCount,
+    int RosterDirectDeviceCount,
+    int OnlineDeviceCount,
+    int DirectDeviceCount,
+    int MeshDeviceCount,
     int OtherPeerCount,
     IReadOnlyList<FipsPeerDiagnostic> Peers,
     string? Error)
 {
     public static FipsDiagnostics Empty { get; } =
-        new(false, false, false, null, null, 0, 0, 0, 0, Array.Empty<FipsPeerDiagnostic>(), null);
-
-    public string State =>
-        !string.IsNullOrWhiteSpace(Error) ? "Error" :
-        Enabled && Fresh ? "Running" :
-        Enabled || Running ? "Stale" :
-        "Paused";
-
-    public string RosterText => $"{RosterConnectedPeerCount}/{RosterPeerCount} direct";
+        new(
+            false,
+            false,
+            false,
+            "paused",
+            "Paused",
+            null,
+            null,
+            "0/0 online",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            Array.Empty<FipsPeerDiagnostic>(),
+            null);
 
     public static FipsDiagnostics FromJson(JsonElement? fips)
     {
@@ -556,11 +557,17 @@ public sealed record FipsDiagnostics(
             Bool(value, "enabled"),
             Bool(value, "running"),
             Bool(value, "fresh"),
+            String(value, "state") ?? "paused",
+            String(value, "state_label") ?? "Paused",
             String(value, "endpoint_npub"),
             String(value, "discovery_scope"),
+            String(value, "roster_label") ?? "0/0 online",
             Int(value, "roster_peer_count"),
-            Int(value, "roster_connected_peer_count"),
-            Int(value, "connected_peer_count"),
+            Int(value, "roster_online_device_count"),
+            Int(value, "roster_direct_device_count"),
+            Int(value, "online_device_count"),
+            Int(value, "direct_device_count"),
+            Int(value, "mesh_device_count"),
             Int(value, "other_peer_count"),
             PeerDiagnostics(value),
             String(value, "error"));
@@ -578,8 +585,7 @@ public sealed record FipsDiagnostics(
         foreach (var peer in peers.EnumerateArray())
         {
             var npub = String(peer, "npub") ?? "peer";
-            var label = IrisDriveStatusData.FipsPeerStatusLabel(peer, "transport_type", "srtt_ms") ??
-                "Online";
+            var label = String(peer, "connection_label") ?? "Online";
             rows.Add(new FipsPeerDiagnostic(npub, label));
         }
         return rows;

@@ -47,4 +47,20 @@ require_absent crates/iris-drive-app-core/src/ffi.rs "fn native_fips_state_label
 require_absent crates/iris-drive-app-core/src/lib.rs "mod native_fips;"
 require_missing_file crates/iris-drive-app-core/src/native_fips.rs
 
+require_contains windows/IrisDriveModels.cs '"summary"'
+require_contains windows/IrisDriveModels.cs '"visible_file_bytes"'
+require_contains windows/IrisDriveModels.cs '"connection_label"'
+require_contains windows/IrisDriveModels.cs '"state_label"'
+require_contains windows/IrisDriveModels.cs '"roster_label"'
+require_contains windows/IrisDriveModels.cs '"roster_online_device_count"'
+require_contains windows/IrisDriveModels.cs '"direct_device_count"'
+require_contains windows/IrisDriveModels.cs '"mesh_device_count"'
+require_absent windows/IrisDriveModels.cs "FipsConnectionLabel"
+require_absent windows/IrisDriveModels.cs "FipsPeerStatusLabel"
+require_absent windows/IrisDriveModels.cs '"roster_connected_peer_count"'
+require_absent windows/IrisDriveModels.cs '"connected_peer_count"'
+require_absent windows/IrisDriveModels.cs '"fips_online_via"'
+require_absent windows/IrisDriveModels.cs '"fips_transport_type"'
+require_absent windows/IrisDriveModels.cs '"fips_srtt_ms"'
+
 echo "FIPS_STATUS_NORMALIZATION_OK"
