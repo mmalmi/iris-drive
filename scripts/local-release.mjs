@@ -470,6 +470,38 @@ function androidKeystorePath(env) {
   return value ? resolve(repoRoot, value) : ''
 }
 
+function resolveIosAscAuth(env) {
+  const ascRoot = String(env.IRIS_DRIVE_ASC_ROOT ?? join(os.homedir(), '.appstoreconnect')).trim()
+  let keyPath = String(env.IRIS_DRIVE_ASC_AUTH_KEY_PATH ?? env.IRIS_DRIVE_ASC_KEY_PATH ?? '').trim()
+  if (!keyPath) {
+    const keyDir = join(ascRoot, 'private_keys')
+    if (existsSync(keyDir)) {
+      const keyName = readdirSync(keyDir)
+        .filter((entry) => /^AuthKey_.*\.p8$/.test(entry))
+        .sort()[0]
+      if (keyName) {
+        keyPath = join(keyDir, keyName)
+      }
+    }
+  }
+  let keyId = String(env.IRIS_DRIVE_ASC_AUTH_KEY_ID ?? env.IRIS_DRIVE_ASC_KEY_ID ?? '').trim()
+  if (!keyId && keyPath) {
+    keyId = basename(keyPath).replace(/^AuthKey_/, '').replace(/\.p8$/, '')
+  }
+  let issuerId = String(
+    env.IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID ?? env.IRIS_DRIVE_ASC_ISSUER_ID ?? '',
+  ).trim()
+  const issuerPath = join(ascRoot, 'issuer.txt')
+  if (!issuerId && existsSync(issuerPath)) {
+    issuerId = readFileSync(issuerPath, 'utf8').trim()
+  }
+  return {
+    keyPath: keyPath ? resolve(repoRoot, keyPath) : '',
+    keyId,
+    issuerId,
+  }
+}
+
 function validateFinalReleaseBuildInputs({ env, steps }) {
   const missing = []
   if (steps.includes('android') && !androidSigningIsComplete(env)) {
@@ -481,6 +513,20 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
     const keystorePath = androidKeystorePath(env)
     if (!existsSync(keystorePath)) {
       missing.push(`Android keystore file not found: ${keystorePath}`)
+    }
+  }
+  if (steps.includes('ios')) {
+    const ascAuth = resolveIosAscAuth(env)
+    if (!ascAuth.keyPath) {
+      missing.push('App Store Connect API key file is required for iOS TestFlight')
+    } else if (!existsSync(ascAuth.keyPath)) {
+      missing.push(`App Store Connect API key file not found: ${ascAuth.keyPath}`)
+    }
+    if (!ascAuth.keyId) {
+      missing.push('App Store Connect API key ID is required for iOS TestFlight')
+    }
+    if (!ascAuth.issuerId) {
+      missing.push('App Store Connect issuer ID is required for iOS TestFlight')
     }
   }
   if (missing.length > 0) {

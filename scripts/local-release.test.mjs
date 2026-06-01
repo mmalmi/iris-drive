@@ -219,6 +219,41 @@ test('local-release final dry-run rejects a missing Android keystore file', () =
   assert.match(result.stderr, /Android keystore file not found/)
 })
 
+test('local-release final dry-run rejects missing App Store Connect auth for iOS', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-preflight-test-'))
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'ios',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_ASC_ROOT: root,
+        IRIS_DRIVE_ASC_AUTH_KEY_PATH: '',
+        IRIS_DRIVE_ASC_KEY_PATH: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ID: '',
+        IRIS_DRIVE_ASC_KEY_ID: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ISSUER_ID: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /App Store Connect/)
+  assert.doesNotMatch(result.stdout, /htree release publish/)
+})
+
 test('local-release final dry-run preflights Zapstore signing before publishing', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-preflight-test-'))
   const keystorePath = join(root, 'upload-keystore.jks')
