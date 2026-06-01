@@ -65,8 +65,8 @@ commands:
   ios-archive              archive the app for App Store Connect
   ios-export               export an IPA from the archive
   ios-upload               upload the exported IPA to App Store Connect
-  ios-testflight           archive + export + upload for internal TestFlight
-  ios-testflight-public    archive + export + upload as public-TestFlight capable
+  ios-testflight           archive + export + upload + attach internal TestFlight
+  ios-testflight-public    archive + export + upload + submit internal/public TestFlight
   ios-release-artifacts    alias for ios-testflight
 
 env:
@@ -74,8 +74,10 @@ env:
   IRIS_DRIVE_ASC_AUTH_KEY_ID   or IRIS_DRIVE_ASC_KEY_ID
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
   IRIS_DRIVE_IOS_TEAM_ID
+  IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=internal,public for both channels
   IRIS_DRIVE_IOS_INTERNAL_ONLY=false for public-TestFlight capable exports
   IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND optional shell command after upload
+  IRIS_DRIVE_IOS_SKIP_TESTFLIGHT_PUBLISH=1 to upload without attaching/submitting
 EOF
 }
 
@@ -329,11 +331,24 @@ run_ios_upload() {
   fi
 }
 
+run_testflight_helper() {
+  local helper="$1"
+  local action="${2:-put}"
+  if bool_is_true "${IRIS_DRIVE_IOS_SKIP_TESTFLIGHT_PUBLISH:-false}"; then
+    echo "Skipping TestFlight publish helper for $helper."
+    return 0
+  fi
+  IRIS_DRIVE_IOS_MARKETING_VERSION="$(marketing_version)" \
+    IRIS_DRIVE_IOS_BUILD_NUMBER="$(build_number)" \
+    "$ROOT/scripts/$helper" "$action"
+}
+
 run_ios_testflight() {
   IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
   run_ios_archive
   run_ios_export
   run_ios_upload
+  run_testflight_helper testflight-internal put
 }
 
 run_ios_testflight_public() {
@@ -341,6 +356,8 @@ run_ios_testflight_public() {
   run_ios_archive
   run_ios_export
   run_ios_upload
+  run_testflight_helper testflight-internal put
+  run_testflight_helper testflight-public put
 }
 
 case "${1:-}" in

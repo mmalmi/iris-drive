@@ -536,12 +536,34 @@ function buildIosTestFlight({ env, tag, dryRun }) {
   if (!dryRun && process.platform !== 'darwin') {
     throw new SkipStepError('iOS TestFlight builds must be created on macOS.')
   }
-  const publicTestFlight = String(env.IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT ?? '').trim() === '1'
+  const channels = resolveIosTestFlightChannels(env)
+  const publicTestFlight = channels.includes('public')
   const command = publicTestFlight ? 'ios-testflight-public' : 'ios-testflight'
   run('bash', [join(repoRoot, 'scripts', 'ios-build'), command], {
     dryRun,
-    env: { ...env, IRIS_DRIVE_RELEASE_TAG: tag },
+    env: {
+      ...env,
+      IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS: channels.join(','),
+      IRIS_DRIVE_RELEASE_TAG: tag,
+    },
   })
+}
+
+function resolveIosTestFlightChannels(env) {
+  const rawChannels = String(env.IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS ?? '').trim()
+  if (rawChannels) {
+    const channels = [...new Set(splitCsv(rawChannels))]
+    const unknown = channels.filter((channel) => !['internal', 'public'].includes(channel))
+    if (unknown.length > 0) {
+      throw new Error(`Unknown iOS TestFlight channel(s): ${unknown.join(', ')}`)
+    }
+    if (channels.length === 0) {
+      throw new Error('IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS did not name any channels')
+    }
+    return channels
+  }
+  const publicTestFlight = String(env.IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT ?? '').trim() === '1'
+  return publicTestFlight ? ['public'] : ['internal']
 }
 
 function buildReleaseArtifacts({ env, tag, options }) {

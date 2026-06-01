@@ -232,3 +232,39 @@ test('local-release dry-run routes iOS builds through the TestFlight script', ()
   assert.match(result.stdout, /scripts\/ios-build ios-testflight/)
   assert.doesNotMatch(result.stdout, /Would archive\/export\/upload/)
 })
+
+test('local-release dry-run uses a public-capable iOS upload for internal plus public TestFlight', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--only',
+      'ios',
+      '--tag',
+      'v9.9.9',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS: 'internal,public',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/ios-build ios-testflight-public/)
+})
+
+test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
+  const result = spawnSync('bash', ['scripts/testflight-internal', '--help'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
+  assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
+})

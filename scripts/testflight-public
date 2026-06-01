@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ACTION="${1:-put}"
+
+case "$ACTION" in
+  put|submit|attach|status|groups|-h|--help|help)
+    exec node "$ROOT/scripts/testflight-app-store-connect.mjs" public "$ACTION"
+    ;;
+  *)
+    echo "Unknown public TestFlight action: $ACTION" >&2
+    exit 2
+    ;;
+esac
