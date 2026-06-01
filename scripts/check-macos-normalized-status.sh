@@ -42,5 +42,9 @@ require_absent macos/Sources/IrisDriveStatus.swift 'authorizationState == "await
 require_absent macos/Sources/IrisDriveStatus.swift 'authorizationState == "revoked"'
 require_absent macos/Sources/IrisDriveMacApp.swift 'status.fileCount = Self.intValue(hashtree["file_count"])'
 require_absent macos/Sources/IrisDriveMacApp.swift 'network["authorized_device_count"]'
+require_absent macos/Sources/IrisDriveMacApp.swift '?? status.authorizedDeviceCount'
+require_absent macos/Sources/IrisDriveMacApp.swift '?? status.onlineDeviceCount'
+require_absent macos/Sources/IrisDriveMacApp.swift '?? status.fileCount'
+require_absent macos/Sources/IrisDriveMacApp.swift '?? status.visibleFileBytes'
 
 echo "MACOS_NORMALIZED_STATUS_OK"

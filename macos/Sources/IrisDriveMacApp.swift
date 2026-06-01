@@ -1718,12 +1718,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.primaryStatusLabel = primaryStatusLabel
         }
         status.authorizedDeviceCount =
-            Self.intValue(summary["authorized_device_count"]) ?? status.authorizedDeviceCount
+            Self.intValue(summary["authorized_device_count"]) ?? 0
         status.onlineDeviceCount =
-            Self.intValue(summary["online_device_count"]) ?? status.onlineDeviceCount
-        status.fileCount = Self.intValue(summary["file_count"]) ?? status.fileCount
+            Self.intValue(summary["online_device_count"]) ?? 0
+        status.fileCount = Self.intValue(summary["file_count"]) ?? 0
         status.visibleFileBytes =
-            Self.int64Value(summary["visible_file_bytes"]) ?? status.visibleFileBytes
+            Self.int64Value(summary["visible_file_bytes"]) ?? 0
     }
 
     func refreshStatus() {
