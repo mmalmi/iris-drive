@@ -7,11 +7,12 @@ mod peers;
 use iris_drive_core::device_summary::{
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
 };
-use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
-pub(crate) use network::{
-    fips_direct_devices_from_status, fips_mesh_devices_from_status, fips_network_diagnostics,
+pub(crate) use iris_drive_core::fips_status::{
+    fips_direct_devices_from_status, fips_mesh_devices_from_status,
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
 };
+use iris_drive_core::relay_status::{relay_status_health, relay_status_label};
+pub(crate) use network::fips_network_diagnostics;
 use peers::peer_statuses;
 
 #[allow(clippy::too_many_lines)]

@@ -21,6 +21,11 @@ use iris_drive_core::device_summary::{
     device_display_label, device_role_key, device_role_label, primary_status_for_setup_state,
     primary_status_label, setup_label_for_setup_state,
 };
+#[cfg(not(test))]
+use iris_drive_core::fips_status::online_device_ids;
+use iris_drive_core::fips_status::{
+    fips_error_is_present, normalize_fips_status_value, string_vec_from_json_array,
+};
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::{Account, AppConfig, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
@@ -28,12 +33,11 @@ use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 #[cfg(not(test))]
 use serde_json::json;
 
 use crate::actions::NativeAppAction;
-#[cfg(not(test))]
-use crate::native_fips;
 #[cfg(test)]
 pub(crate) use crate::native_provider::run_native_sync_once_with_drive_root_events_for_test;
 use crate::native_provider::{
@@ -710,11 +714,12 @@ impl NativeAppRuntime {
             return;
         }
         let fips_status = load_native_fips_status(Path::new(&self.data_dir));
-        self.state.ui.devices = devices_from_account(&account, fips_status.as_ref());
+        let ui_fips_status = ui_fips_status(fips_status.as_ref());
+        self.state.ui.devices = devices_from_account(&account, &ui_fips_status);
         self.refresh_device_actions();
         update_snapshot_link(&mut self.state, &config);
         self.refresh_provider_summary();
-        self.refresh_ui_summary(fips_status.as_ref());
+        self.refresh_ui_summary(Some(ui_fips_status));
     }
 
     fn can_manage_devices(&self) -> bool {
@@ -766,7 +771,7 @@ impl NativeAppRuntime {
             .unwrap_or_default();
     }
 
-    fn refresh_ui_summary(&mut self, fips_status: Option<&NativeFipsStatus>) {
+    fn refresh_ui_summary(&mut self, fips_status: Option<UiFipsStatus>) {
         let setup_state = self
             .state
             .ui
@@ -788,7 +793,7 @@ impl NativeAppRuntime {
             .iter()
             .filter(|device| device.is_online)
             .count() as u64;
-        self.state.ui.fips = ui_fips_status(fips_status);
+        self.state.ui.fips = fips_status.unwrap_or_else(paused_ui_fips_status);
     }
 
     fn set_sync_running(&mut self, running: bool) {
@@ -1433,157 +1438,90 @@ fn device_link_roster_fingerprint(
     )
 }
 
-#[derive(Debug, Deserialize)]
-struct NativeFipsStatus {
-    #[serde(default)]
-    running: bool,
-    #[serde(default)]
-    endpoint_npub: Option<String>,
-    #[serde(default)]
-    updated_at: u64,
-    #[serde(default)]
-    online_devices: Vec<String>,
-    #[serde(default)]
-    direct_devices: Vec<String>,
-    #[serde(default)]
-    direct_peers: Vec<String>,
-    #[serde(default)]
-    mesh_devices: Vec<String>,
-    #[serde(default)]
-    connected_peers: Vec<String>,
-    #[serde(default)]
-    mesh_peers: Vec<String>,
-    #[serde(default)]
-    online_peers: Vec<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl NativeFipsStatus {
-    fn is_fresh(&self) -> bool {
-        self.running
-            && self.error.as_deref().unwrap_or_default().is_empty()
-            && unix_now_seconds().saturating_sub(self.updated_at) <= NATIVE_FIPS_STATUS_FRESH_SECS
-    }
-
-    fn peer_is_online(&self, npub: &str) -> bool {
-        self.normalized_online_devices()
-            .iter()
-            .any(|peer| peer == npub)
-    }
-
-    fn peer_is_direct(&self, npub: &str) -> bool {
-        self.normalized_direct_devices()
-            .iter()
-            .any(|peer| peer == npub)
-    }
-
-    fn peer_is_mesh(&self, npub: &str) -> bool {
-        self.normalized_mesh_devices()
-            .iter()
-            .any(|peer| peer == npub)
-    }
-
-    fn normalized_direct_devices(&self) -> Vec<String> {
-        string_union([
-            &self.direct_devices,
-            &self.direct_peers,
-            &self.connected_peers,
-        ])
-    }
-
-    fn normalized_mesh_devices(&self) -> Vec<String> {
-        string_union([&self.mesh_devices, &self.mesh_peers])
-    }
-
-    fn normalized_online_devices(&self) -> Vec<String> {
-        if !self.is_fresh() {
-            return Vec::new();
-        }
-        let direct = self.normalized_direct_devices();
-        let mesh = self.normalized_mesh_devices();
-        string_union([&self.online_devices, &self.online_peers, &direct, &mesh])
-    }
-}
-
-fn string_union<'a>(values: impl IntoIterator<Item = &'a Vec<String>>) -> Vec<String> {
-    values
-        .into_iter()
-        .flat_map(|values| values.iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn ui_fips_status(status: Option<&NativeFipsStatus>) -> UiFipsStatus {
+fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
     let Some(status) = status else {
-        return UiFipsStatus {
-            state: "paused".to_owned(),
-            state_label: "Paused".to_owned(),
-            ..UiFipsStatus::default()
-        };
+        return paused_ui_fips_status();
     };
-    let fresh = status.is_fresh();
-    let direct_devices = if fresh {
-        status.normalized_direct_devices()
-    } else {
-        Vec::new()
-    };
-    let mesh_devices = if fresh {
-        status.normalized_mesh_devices()
-    } else {
-        Vec::new()
-    };
-    let online_devices = status.normalized_online_devices();
-    let state = native_fips_state(status, fresh);
+    let running = status
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fresh = native_fips_status_is_fresh(status);
+    let error = status.get("error").cloned().unwrap_or(Value::Null);
+    let normalized = normalize_fips_status_value(Some(status), running, fresh, error, &[]);
+    let online_devices = string_vec_from_json_array(normalized.get("online_devices"));
+    let direct_devices = string_vec_from_json_array(normalized.get("direct_devices"));
+    let mesh_devices = string_vec_from_json_array(normalized.get("mesh_devices"));
     UiFipsStatus {
-        enabled: true,
-        running: status.running,
-        fresh,
-        state: state.to_owned(),
-        state_label: native_fips_state_label(state).to_owned(),
-        endpoint_npub: status.endpoint_npub.clone().unwrap_or_default(),
+        enabled: normalized
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        running: normalized
+            .get("running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        fresh: normalized
+            .get("fresh")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        state: normalized
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("paused")
+            .to_owned(),
+        state_label: normalized
+            .get("state_label")
+            .and_then(Value::as_str)
+            .unwrap_or("Paused")
+            .to_owned(),
+        endpoint_npub: normalized
+            .get("endpoint_npub")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
         online_device_count: online_devices.len() as u64,
         direct_device_count: direct_devices.len() as u64,
         mesh_device_count: mesh_devices.len() as u64,
         online_devices,
         direct_devices,
         mesh_devices,
-        error: status.error.clone().unwrap_or_default(),
+        error: normalized
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
     }
 }
 
-fn native_fips_state(status: &NativeFipsStatus, fresh: bool) -> &'static str {
-    if status
-        .error
-        .as_deref()
-        .is_some_and(|error| !error.is_empty())
-    {
-        return "error";
+fn paused_ui_fips_status() -> UiFipsStatus {
+    UiFipsStatus {
+        state: "paused".to_owned(),
+        state_label: "Paused".to_owned(),
+        ..UiFipsStatus::default()
     }
-    if fresh {
-        return "running";
-    }
-    if status.running {
-        return "stale";
-    }
-    "paused"
 }
 
-fn native_fips_state_label(state: &str) -> &'static str {
-    match state {
-        "error" => "Error",
-        "running" => "Running",
-        "stale" => "Stale",
-        _ => "Paused",
-    }
+fn native_fips_status_is_fresh(status: &Value) -> bool {
+    let running = status
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let error = status.get("error").unwrap_or(&Value::Null);
+    let updated_at = status
+        .get("updated_at")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    running
+        && !fips_error_is_present(error)
+        && unix_now_seconds().saturating_sub(updated_at) <= NATIVE_FIPS_STATUS_FRESH_SECS
 }
 
 fn native_fips_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join(NATIVE_FIPS_STATUS_FILE_NAME)
 }
 
-fn load_native_fips_status(config_dir: &Path) -> Option<NativeFipsStatus> {
+fn load_native_fips_status(config_dir: &Path) -> Option<Value> {
     let data = std::fs::read(native_fips_status_path(config_dir)).ok()?;
     serde_json::from_slice(&data).ok()
 }
@@ -1596,10 +1534,12 @@ async fn write_native_fips_status(
 ) -> Result<(), String> {
     let direct_devices = sync.connected_peer_ids().await;
     let mesh_devices = sync.mesh_peer_ids().await;
-    let online_devices = native_fips::online_device_ids(&direct_devices, &mesh_devices);
-    let value = json!({
+    let online_devices = online_device_ids(&direct_devices, &mesh_devices);
+    let updated_at = unix_now_seconds();
+    let error_value = error.map_or(Value::Null, |error| Value::String(error.to_owned()));
+    let raw = json!({
         "running": error.is_none(),
-        "updated_at": unix_now_seconds(),
+        "updated_at": updated_at,
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
         "authorized_peers": sync.authorized_peer_ids().await,
@@ -1613,12 +1553,19 @@ async fn write_native_fips_status(
         "peer_statuses": sync.fips_peer_statuses().await,
         "error": error,
     });
+    let value = normalize_fips_status_value(
+        Some(&raw),
+        error.is_none(),
+        error.is_none(),
+        error_value,
+        &[],
+    );
     write_native_fips_status_value(config_dir, &value)
 }
 
 #[cfg(not(test))]
 fn write_native_fips_error(config_dir: &Path, error: &str) {
-    let value = json!({
+    let raw = json!({
         "running": false,
         "updated_at": unix_now_seconds(),
         "online_devices": [],
@@ -1631,6 +1578,13 @@ fn write_native_fips_error(config_dir: &Path, error: &str) {
         "peer_statuses": [],
         "error": error,
     });
+    let value = normalize_fips_status_value(
+        Some(&raw),
+        false,
+        false,
+        Value::String(error.to_owned()),
+        &[],
+    );
     if let Err(write_error) = write_native_fips_status_value(config_dir, &value) {
         tracing::warn!(error = %write_error, "writing native FIPS error failed");
     }
@@ -1725,12 +1679,12 @@ fn account_npub(hex: &str) -> String {
 
 fn devices_from_account(
     state: &iris_drive_core::AccountState,
-    fips_status: Option<&NativeFipsStatus>,
+    fips_status: &UiFipsStatus,
 ) -> Vec<UiDevice> {
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
-    let fips_is_fresh = fips_status.is_some_and(NativeFipsStatus::is_fresh);
+    let fips_is_fresh = fips_status.fresh;
 
     app_keys
         .devices
@@ -1739,21 +1693,26 @@ fn devices_from_account(
             let is_current = device.pubkey == state.device_pubkey;
             let device_npub = account_npub(&device.pubkey);
             let is_online = fips_is_fresh
-                && fips_status.is_some_and(|status| {
-                    if is_current {
-                        return status
-                            .endpoint_npub
-                            .as_deref()
-                            .is_none_or(|endpoint| endpoint == device_npub);
-                    }
-                    status.peer_is_online(&device_npub)
-                });
+                && if is_current {
+                    fips_status.endpoint_npub.is_empty() || fips_status.endpoint_npub == device_npub
+                } else {
+                    fips_status
+                        .online_devices
+                        .iter()
+                        .any(|peer| peer == &device_npub)
+                };
             let is_direct = fips_is_fresh
                 && !is_current
-                && fips_status.is_some_and(|status| status.peer_is_direct(&device_npub));
+                && fips_status
+                    .direct_devices
+                    .iter()
+                    .any(|peer| peer == &device_npub);
             let is_mesh = fips_is_fresh
                 && !is_current
-                && fips_status.is_some_and(|status| status.peer_is_mesh(&device_npub));
+                && fips_status
+                    .mesh_devices
+                    .iter()
+                    .any(|peer| peer == &device_npub);
             let connection_state =
                 device_connection_state(is_current, is_online, is_direct, is_mesh).to_owned();
             let role = device_role_key(device.role).to_owned();

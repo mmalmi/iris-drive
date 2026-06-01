@@ -7,6 +7,7 @@ pub mod device_link_invite;
 pub mod device_link_transport;
 pub mod device_summary;
 pub mod direct_root_transport;
+pub mod fips_status;
 pub mod fips_sync;
 
 /// Convenience constructor: a `BlossomClient` wired with the given
