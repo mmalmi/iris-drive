@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PANEL="$ROOT/macos/Sources/IrisDriveControlPanel.swift"
+MAC_APP="$ROOT/macos/Sources/IrisDriveMacApp.swift"
 ANDROID_STATE="$ROOT/android/app/src/main/java/to/iris/drive/app/core/AppState.kt"
 ANDROID_PANEL="$ROOT/android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt"
 
@@ -32,6 +33,26 @@ require_absent 'IrisDriveRelayStatus(url: relay, status: "configured")'
 require_absent "reduce(into: [String: IrisDriveRelayStatus]())"
 require_absent "relayStatusLabel("
 require_absent 'status == "configured" ? "saved" : status'
+
+require_macos_app_contains() {
+  local needle="$1"
+  if ! grep -Fq "$needle" "$MAC_APP"; then
+    echo "missing '$needle' in macos/Sources/IrisDriveMacApp.swift" >&2
+    exit 1
+  fi
+}
+
+require_macos_app_absent() {
+  local needle="$1"
+  if grep -Fq "$needle" "$MAC_APP"; then
+    echo "unexpected '$needle' in macos/Sources/IrisDriveMacApp.swift" >&2
+    exit 1
+  fi
+}
+
+require_macos_app_contains "self.refreshStatus()"
+require_macos_app_absent "applyRelaysData"
+require_macos_app_absent 'JSONSerialization.jsonObject(with: data) as? [String]'
 
 require_android_contains() {
   local file="$1"

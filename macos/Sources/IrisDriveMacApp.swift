@@ -856,8 +856,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let shouldRestart = IrisDriveStatus.shared.daemonRunning
         DispatchQueue.global(qos: .utility).async {
             do {
-                let data = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                self.applyRelaysData(data)
+                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                self.refreshStatus()
                 if shouldRestart {
                     DispatchQueue.main.async {
                         self.restartSync()
@@ -1695,15 +1695,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.updateLinkMenuState()
         }
         refreshStatus()
-    }
-
-    private func applyRelaysData(_ data: Data) {
-        let relays = (try? JSONSerialization.jsonObject(with: data) as? [String]) ?? []
-        DispatchQueue.main.async {
-            let status = IrisDriveStatus.shared
-            status.relays = relays
-            NSLog("Iris Drive relays updated")
-        }
     }
 
     func updateStatus(_ message: String) {
