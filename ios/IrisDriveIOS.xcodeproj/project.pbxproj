@@ -256,9 +256,11 @@
 				TargetAttributes = {
 					0B4BA6D0DE3050B42370896F = {
 						DevelopmentTeam = J8PPJKD7TA;
+						ProvisioningStyle = Manual;
 					};
 					2AEF53C9FE79D54F9AB8EE95 = {
 						DevelopmentTeam = J8PPJKD7TA;
+						ProvisioningStyle = Manual;
 					};
 					67B67C05CCBE0A7C7C7E41CA = {
 						DevelopmentTeam = J8PPJKD7TA;
@@ -267,6 +269,7 @@
 					};
 					F8BA9ACB95AFB2250E4FE292 = {
 						DevelopmentTeam = J8PPJKD7TA;
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -460,6 +463,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -469,6 +474,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.ShareExtension;
 				PRODUCT_MODULE_NAME = IrisDriveShareExtension;
 				PRODUCT_NAME = IrisDriveShareExtension;
+				PROVISIONING_PROFILE = "$(IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -541,6 +547,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = FileProvider/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -550,6 +558,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.FileProvider;
 				PRODUCT_MODULE_NAME = IrisDriveFileProvider;
 				PRODUCT_NAME = IrisDriveFileProvider;
+				PROVISIONING_PROFILE = "$(IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -601,7 +610,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = IrisDriveIOS.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "$(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -611,6 +621,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios;
 				PRODUCT_MODULE_NAME = IrisDriveIOS;
 				PRODUCT_NAME = "Iris Drive";
+				PROVISIONING_PROFILE = "$(IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

@@ -39,6 +39,7 @@ DIST_DIR="${IRIS_DRIVE_IOS_DIST_DIR:-$ROOT/dist/ios}"
 ARCHIVE_PATH="${IRIS_DRIVE_IOS_ARCHIVE_PATH:-$DIST_DIR/IrisDriveIOS.xcarchive}"
 EXPORT_DIR="${IRIS_DRIVE_IOS_EXPORT_DIR:-$DIST_DIR/export}"
 EXPORT_OPTIONS="$DIST_DIR/ExportOptions.plist"
+PROVISIONING_ENV="$DIST_DIR/provisioning.env"
 PROJECT="$IOS_DIR/IrisDriveIOS.xcodeproj"
 SCHEME="${IRIS_DRIVE_IOS_SCHEME:-IrisDriveIOS}"
 CONFIGURATION="${IRIS_DRIVE_IOS_CONFIGURATION:-Release}"
@@ -53,7 +54,6 @@ RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 IOS_UPLOAD_TRANSPORT="${IRIS_DRIVE_IOS_UPLOAD_TRANSPORT:-HTTP}"
 IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
 TRANSPORTER="${IRIS_DRIVE_ITMS_TRANSPORTER:-/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter}"
-ASC_AUTH_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -74,6 +74,8 @@ env:
   IRIS_DRIVE_ASC_AUTH_KEY_ID   or IRIS_DRIVE_ASC_KEY_ID
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
   IRIS_DRIVE_IOS_TEAM_ID
+  IRIS_DRIVE_IOS_PROFILES_ENV_PATH optional provisioning env output
+  IRIS_DRIVE_IOS_PROFILE_RECREATE=true to force new provisioning profiles
   IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=internal,public for both channels
   IRIS_DRIVE_IOS_INTERNAL_ONLY=false for public-TestFlight capable exports
   IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND optional shell command after upload
@@ -154,25 +156,6 @@ asc_key_id() {
   printf '%s' "${key_file%.p8}"
 }
 
-load_asc_auth_args() {
-  local key_path key_id issuer_id
-  ASC_AUTH_ARGS=()
-  key_path="$(asc_key_path)"
-  key_id="$(asc_key_id)"
-  issuer_id="$(asc_issuer_id)"
-  if [[ -z "$key_path" && -z "$key_id" && -z "$issuer_id" ]]; then
-    return 0
-  fi
-  [[ -n "$key_path" ]] || { echo "IRIS_DRIVE_ASC_KEY_PATH is required when ASC auth is configured." >&2; exit 2; }
-  [[ -n "$key_id" ]] || { echo "IRIS_DRIVE_ASC_KEY_ID is required when ASC auth is configured." >&2; exit 2; }
-  [[ -n "$issuer_id" ]] || { echo "IRIS_DRIVE_ASC_ISSUER_ID is required when ASC auth is configured." >&2; exit 2; }
-  ASC_AUTH_ARGS=(
-    -authenticationKeyPath "$key_path" \
-    -authenticationKeyID "$key_id" \
-    -authenticationKeyIssuerID "$issuer_id"
-  )
-}
-
 workspace_version() {
   python3 - "$ROOT/Cargo.toml" <<'PY'
 import re
@@ -228,16 +211,35 @@ run_ios_project() {
   fi
 }
 
+ensure_profiles() {
+  require_darwin
+  ensure_dir "$DIST_DIR"
+  IRIS_DRIVE_IOS_PROFILES_ENV_PATH="$PROVISIONING_ENV" "$ROOT/scripts/ios-profiles" ensure
+}
+
+load_profiles_env() {
+  if [[ ! -f "$PROVISIONING_ENV" ]]; then
+    ensure_profiles
+  fi
+  # shellcheck disable=SC1090
+  source "$PROVISIONING_ENV"
+  require_var IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY
+  require_var IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID
+  require_var IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID
+  require_var IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID
+}
+
 run_ios_archive() {
   local version build
   require_darwin
   ensure_dir "$DIST_DIR"
   rm -rf "$ARCHIVE_PATH"
+  ensure_profiles
+  load_profiles_env
   run_ios_rust
   run_ios_project
   version="$(marketing_version)"
   build="$(build_number)"
-  load_asc_auth_args
 
   xcodebuild \
     -project "$PROJECT" \
@@ -245,9 +247,12 @@ run_ios_archive() {
     -configuration "$CONFIGURATION" \
     -destination "generic/platform=iOS" \
     -archivePath "$ARCHIVE_PATH" \
-    -allowProvisioningUpdates \
-    ${ASC_AUTH_ARGS[@]+"${ASC_AUTH_ARGS[@]}"} \
     DEVELOPMENT_TEAM="$TEAM_ID" \
+    CODE_SIGN_STYLE=Manual \
+    IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY="$IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY" \
+    IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID" \
+    IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID" \
+    IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID" \
     MARKETING_VERSION="$version" \
     CURRENT_PROJECT_VERSION="$build" \
     LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
@@ -256,18 +261,11 @@ run_ios_archive() {
 }
 
 write_export_options() {
-  local internal_only signing_style
+  local internal_only
   if bool_is_true "$IOS_INTERNAL_ONLY"; then
     internal_only="<true/>"
   else
     internal_only="<false/>"
-  fi
-
-  signing_style="automatic"
-  if [[ -n "${IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID:-}" \
-    && -n "${IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID:-}" \
-    && -n "${IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID:-}" ]]; then
-    signing_style="manual"
   fi
 
   cat >"$EXPORT_OPTIONS" <<EOF
@@ -282,19 +280,15 @@ write_export_options() {
   <key>teamID</key>
   <string>$TEAM_ID</string>
   <key>signingStyle</key>
-  <string>$signing_style</string>
+  <string>manual</string>
+  <key>signingCertificate</key>
+  <string>$IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY</string>
   <key>uploadSymbols</key>
   <true/>
   <key>uploadBitcode</key>
   <false/>
   <key>testFlightInternalTestingOnly</key>
   $internal_only
-EOF
-
-  if [[ "$signing_style" == "manual" ]]; then
-    cat >>"$EXPORT_OPTIONS" <<EOF
-  <key>signingCertificate</key>
-  <string>${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}</string>
   <key>provisioningProfiles</key>
   <dict>
     <key>$BUNDLE_ID</key>
@@ -304,10 +298,6 @@ EOF
     <key>$SHARE_EXTENSION_BUNDLE_ID</key>
     <string>$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID</string>
   </dict>
-EOF
-  fi
-
-  cat >>"$EXPORT_OPTIONS" <<'EOF'
 </dict>
 </plist>
 EOF
@@ -318,16 +308,14 @@ run_ios_export() {
   [[ -d "$ARCHIVE_PATH" ]] || { echo "Archive not found: $ARCHIVE_PATH" >&2; exit 1; }
   rm -rf "$EXPORT_DIR"
   ensure_dir "$EXPORT_DIR"
+  load_profiles_env
   write_export_options
-  load_asc_auth_args
 
   xcodebuild \
     -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_DIR" \
-    -exportOptionsPlist "$EXPORT_OPTIONS" \
-    -allowProvisioningUpdates \
-    ${ASC_AUTH_ARGS[@]+"${ASC_AUTH_ARGS[@]}"}
+    -exportOptionsPlist "$EXPORT_OPTIONS"
 }
 
 ipa_path() {

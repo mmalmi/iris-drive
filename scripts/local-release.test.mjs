@@ -496,13 +496,15 @@ test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
   assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
 })
 
-test('iOS build handles missing App Store Connect auth args under bash nounset', () => {
+test('iOS build keeps App Store Connect auth out of Xcode signing', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
     'utf8',
   )
 
-  assert.match(script, /\$\{ASC_AUTH_ARGS\[@\]\+"\$\{ASC_AUTH_ARGS\[@\]\}"\}/)
+  assert.doesNotMatch(script, /-authenticationKeyPath/)
+  assert.match(script, /scripts\/ios-profiles/)
+  assert.match(script, /CODE_SIGN_STYLE=Manual/)
 })
 
 test('iOS build uses the shared App Store Connect auth defaults', () => {
@@ -515,6 +517,49 @@ test('iOS build uses the shared App Store Connect auth defaults', () => {
   assert.match(script, /private_keys/)
   assert.match(script, /AuthKey_\*\.p8/)
   assert.match(script, /issuer\.txt/)
+})
+
+test('iOS build provisions manual App Store profiles before TestFlight export', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /PROVISIONING_ENV=/)
+  assert.match(script, /ensure_profiles\(\)/)
+  assert.match(script, /scripts\/ios-profiles/)
+  assert.match(script, /source "\$PROVISIONING_ENV"/)
+  assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID/)
+  assert.match(script, /IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID/)
+})
+
+test('iOS project uses manual Release provisioning for all shipped targets', () => {
+  const project = readFileSync(
+    fileURLToPath(new URL('../ios/project.yml', import.meta.url)),
+    'utf8',
+  )
+
+  for (const uuidEnv of [
+    'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
+    'IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID',
+    'IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID',
+  ]) {
+    assert.match(project, new RegExp(`Release:[\\s\\S]*PROVISIONING_PROFILE: \\$\\(${uuidEnv}\\)`))
+  }
+})
+
+test('iOS provisioning helper covers the app and extension bundle IDs', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-profiles', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /to\.iris\.drive\.ios/)
+  assert.match(script, /to\.iris\.drive\.ios\.FileProvider/)
+  assert.match(script, /to\.iris\.drive\.ios\.ShareExtension/)
+  assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
+  assert.match(script, /IRIS_DRIVE_IOS_PROFILES_ENV_PATH/)
+  assert.match(script, /IRIS_DRIVE_IOS_PROFILE_RECREATE/)
 })
 
 test('TestFlight helper creates a missing App Store Connect app record', async (t) => {
