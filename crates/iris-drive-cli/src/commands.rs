@@ -286,6 +286,11 @@ pub(crate) enum DevicesCmd {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Reject a pending device link request without authorizing it.
+    Reject {
+        /// Device pubkey or device-link approval URL.
+        request: String,
+    },
     /// Print the current authorized-device roster.
     List,
     /// Revoke an authorized device and rotate the drive content key.

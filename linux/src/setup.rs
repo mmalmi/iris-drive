@@ -12,7 +12,11 @@ pub(crate) fn render_setup(model: &AppRef) {
     }
 }
 
-pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_running: bool) {
+pub(crate) fn render_awaiting_approval(
+    model: &AppRef,
+    state: &NativeAppState,
+    sync_running: bool,
+) {
     clear_box(&model.ui.setup);
 
     let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -25,12 +29,20 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let account = account_json(json);
-    let owner = readonly_entry(find_string(account, &["owner_npub"]).unwrap_or("-"));
+    let account = account(state);
+    let owner = readonly_entry(
+        account
+            .map(|account| account.owner_pubkey.as_str())
+            .unwrap_or("-"),
+    );
     container.append(&field_title("Owner"));
     container.append(&owner);
 
-    let device = readonly_entry(find_string(account, &["device_npub"]).unwrap_or("-"));
+    let device = readonly_entry(
+        account
+            .map(|account| account.device_pubkey.as_str())
+            .unwrap_or("-"),
+    );
     container.append(&field_title("This device"));
     container.append(&device);
 
@@ -43,9 +55,9 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
 
     let copy = primary_button("Copy device ID");
     {
-        let device = find_string(account, &["device_npub"])
-            .unwrap_or("")
-            .to_string();
+        let device = account
+            .map(|account| account.device_pubkey.clone())
+            .unwrap_or_default();
         let notice = notice.clone();
         copy.connect_clicked(move |_| {
             if device.is_empty() {
@@ -72,7 +84,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, json: &Value, sync_runnin
     append_centered_setup(model, &container);
 }
 
-pub(crate) fn render_revoked_device(model: &AppRef, json: &Value) {
+pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     clear_box(&model.ui.setup);
 
     let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -91,12 +103,16 @@ pub(crate) fn render_revoked_device(model: &AppRef, json: &Value) {
     detail.set_xalign(0.0);
     container.append(&detail);
 
-    let account = account_json(json);
-    let owner_npub = find_string(account, &["owner_npub"]).unwrap_or("-");
+    let account = account(state);
+    let owner_npub = account
+        .map(|account| account.owner_pubkey.as_str())
+        .unwrap_or("-");
     container.append(&field_title("Owner"));
     container.append(&readonly_entry(owner_npub));
 
-    let device_npub = find_string(account, &["device_npub"]).unwrap_or("-");
+    let device_npub = account
+        .map(|account| account.device_pubkey.as_str())
+        .unwrap_or("-");
     container.append(&field_title("This device"));
     container.append(&readonly_entry(device_npub));
 
@@ -540,17 +556,33 @@ pub(crate) fn relink_device(owner: &str) -> Result<(), String> {
 }
 
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {
-    run_idrive(["revoke", device])
+    dispatch_desktop_action(NativeAppAction::RevokeDevice {
+        device_pubkey: device.to_string(),
+    })
+    .map(|_| ())
 }
 
 pub(crate) fn delete_device(device: &str) -> Result<(), String> {
     revoke_device(device)
 }
 
+pub(crate) fn reject_device(request: &str) -> Result<(), String> {
+    dispatch_desktop_action(NativeAppAction::RejectDevice {
+        request: request.to_string(),
+    })
+    .map(|_| ())
+}
+
 pub(crate) fn appoint_admin(device: &str) -> Result<(), String> {
-    run_idrive(["devices", "appoint-admin", device])
+    dispatch_desktop_action(NativeAppAction::AppointAdmin {
+        device_pubkey: device.to_string(),
+    })
+    .map(|_| ())
 }
 
 pub(crate) fn demote_admin(device: &str) -> Result<(), String> {
-    run_idrive(["devices", "demote-admin", device])
+    dispatch_desktop_action(NativeAppAction::DemoteAdmin {
+        device_pubkey: device.to_string(),
+    })
+    .map(|_| ())
 }

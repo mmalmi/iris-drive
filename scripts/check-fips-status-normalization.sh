@@ -51,7 +51,7 @@ require_absent crates/iris-drive-app-core/src/ffi.rs "fn native_fips_state_label
 require_absent crates/iris-drive-app-core/src/lib.rs "mod native_fips;"
 require_missing_file crates/iris-drive-app-core/src/native_fips.rs
 
-require_contains windows/IrisDriveModels.cs '"summary"'
+require_contains windows/IrisDriveModels.cs 'Object(ui, "fips")'
 require_contains windows/IrisDriveModels.cs '"visible_file_bytes"'
 require_contains windows/IrisDriveModels.cs '"connection_label"'
 require_contains windows/IrisDriveModels.cs '"state_label"'

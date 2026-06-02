@@ -1,120 +1,90 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-pub(crate) fn drive_mount_text(json: &Value) -> String {
-    mounted_dir(json)
+pub(crate) fn drive_mount_text(state: &NativeAppState) -> String {
+    mounted_dir(state)
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "Not mounted".to_string())
 }
 
-pub(crate) fn mounted_dir(json: &Value) -> Option<PathBuf> {
-    json.get("daemon")
-        .and_then(|daemon| daemon.get("mount"))
-        .and_then(|mount| mount.get("mountpoint"))
-        .and_then(Value::as_str)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
+pub(crate) fn mounted_dir(state: &NativeAppState) -> Option<PathBuf> {
+    (state.ui.setup_complete && !state.ui.revoked).then(default_drive_dir)
 }
 
-pub(crate) fn drive_name(json: &Value) -> String {
-    json.get("drives")
-        .and_then(Value::as_array)
-        .and_then(|drives| {
-            drives
-                .iter()
-                .find(|drive| drive.get("drive_id").and_then(Value::as_str) == Some("main"))
-                .or_else(|| drives.first())
-        })
-        .and_then(|drive| find_string(drive, &["display_name", "name"]))
+pub(crate) fn drive_name(state: &NativeAppState) -> String {
+    state
+        .ui
+        .roots
+        .first()
+        .map(|root| root.name.as_str())
+        .filter(|name| !name.is_empty())
         .unwrap_or("My Drive")
         .to_string()
 }
 
-pub(crate) fn snapshot_value(json: &Value) -> String {
-    snapshot_link(json)
+pub(crate) fn snapshot_value(state: &NativeAppState) -> String {
+    snapshot_link(state)
         .map(short_text)
         .unwrap_or_else(|| "-".to_string())
 }
 
-pub(crate) fn snapshot_link(json: &Value) -> Option<&str> {
-    let hashtree = json.get("hashtree").unwrap_or(&Value::Null);
-    find_string(hashtree, &["snapshot_url", "permalink_url"])
+pub(crate) fn snapshot_link(state: &NativeAppState) -> Option<&str> {
+    (!state.ui.snapshot_link.is_empty()).then_some(state.ui.snapshot_link.as_str())
 }
 
-pub(crate) fn account_json(json: &Value) -> &Value {
-    json.get("account").unwrap_or(&Value::Null)
+pub(crate) fn account(state: &NativeAppState) -> Option<&iris_drive_app_core::state::UiAccount> {
+    state.ui.account.as_ref()
 }
 
-pub(crate) fn summary_json(json: &Value) -> &Value {
-    json.get("summary").unwrap_or(&Value::Null)
+pub(crate) fn setup_label_value(state: &NativeAppState) -> &str {
+    if state.ui.setup_label.is_empty() {
+        "-"
+    } else {
+        &state.ui.setup_label
+    }
 }
 
-pub(crate) fn setup_label_value(json: &Value) -> &str {
-    find_string(summary_json(json), &["setup_label"]).unwrap_or("-")
+pub(crate) fn is_awaiting_link_approval(state: &NativeAppState) -> bool {
+    state.ui.awaiting_approval
 }
 
-pub(crate) fn is_awaiting_link_approval(json: &Value) -> bool {
-    find_bool(summary_json(json), &["awaiting_approval"]).unwrap_or(false)
+pub(crate) fn is_revoked(state: &NativeAppState) -> bool {
+    state.ui.revoked
 }
 
-pub(crate) fn is_revoked(json: &Value) -> bool {
-    find_bool(summary_json(json), &["revoked"]).unwrap_or(false)
+pub(crate) fn file_count_value(state: &NativeAppState) -> String {
+    state.ui.file_count.to_string()
 }
 
-pub(crate) fn file_count_value(json: &Value) -> String {
-    find_number(summary_json(json), &["file_count"])
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "0".to_string())
+pub(crate) fn storage_value(state: &NativeAppState) -> String {
+    format_bytes(state.ui.visible_file_bytes)
 }
 
-pub(crate) fn storage_value(json: &Value) -> String {
-    find_number(summary_json(json), &["visible_file_bytes"])
-        .map(format_bytes)
-        .unwrap_or_else(|| "0 B".to_string())
+pub(crate) fn device_count_value(state: &NativeAppState) -> String {
+    format!(
+        "{}/{}",
+        state.ui.online_device_count, state.ui.authorized_device_count
+    )
 }
 
-pub(crate) fn device_count_value(json: &Value) -> String {
-    let online = find_number(summary_json(json), &["online_device_count"]).unwrap_or(0);
-    let authorized = find_number(summary_json(json), &["authorized_device_count"]).unwrap_or(0);
-    format!("{online}/{authorized}")
+pub(crate) fn sidebar_online_value(state: &NativeAppState) -> String {
+    format!("{} online", device_count_value(state))
 }
 
-pub(crate) fn sidebar_online_value(json: &Value) -> String {
-    format!("{} online", device_count_value(json))
+pub(crate) fn primary_status_label_value(state: &NativeAppState) -> &str {
+    if state.ui.primary_status_label.is_empty() {
+        "Ready"
+    } else {
+        &state.ui.primary_status_label
+    }
 }
 
-pub(crate) fn primary_status_label_value(json: &Value) -> &str {
-    find_string(summary_json(json), &["primary_status_label"]).unwrap_or("Ready")
-}
-
-pub(crate) fn local_nhash_resolver_enabled(json: &Value) -> bool {
-    json.get("settings")
-        .and_then(|settings| find_bool(settings, &["local_nhash_resolver_enabled"]))
-        .or_else(|| {
-            json.get("hashtree")
-                .and_then(|hashtree| hashtree.get("local_gateway"))
-                .and_then(|gateway| find_bool(gateway, &["enabled"]))
-        })
-        .unwrap_or(true)
-}
-
-pub(crate) fn find_string<'a>(json: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter()
-        .find_map(|key| json.get(*key).and_then(Value::as_str))
-}
-
-pub(crate) fn find_number(json: &Value, keys: &[&str]) -> Option<u64> {
-    keys.iter()
-        .find_map(|key| json.get(*key).and_then(Value::as_u64))
-}
-
-pub(crate) fn find_bool(json: &Value, keys: &[&str]) -> Option<bool> {
-    keys.iter()
-        .find_map(|key| json.get(*key).and_then(Value::as_bool))
+pub(crate) fn local_nhash_resolver_enabled(_state: &NativeAppState) -> bool {
+    true
 }
 
 pub(crate) fn short_value(value: Option<&str>) -> String {
-    let Some(value) = value else {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
         return "-".to_string();
     };
     short_text(value)

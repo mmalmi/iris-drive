@@ -383,6 +383,64 @@ fn owner_approves_device_request_link() {
 }
 
 #[test]
+fn owner_rejects_device_request_link() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", owner_npub, "--label", "rejected-phone"],
+    );
+    let request_url = linked["device_link_request"]["url"].as_str().unwrap();
+    let linked_device = linked["device_npub"].as_str().unwrap();
+
+    {
+        let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
+        let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
+        let state = config.account.as_mut().unwrap();
+        let owner_hex = state.owner_pubkey.clone();
+        let link_secret = state.device_link_secret.clone();
+        let linked_hex = iris_drive_core::AppConfig::load_or_default(
+            iris_drive_core::paths::config_path_in(linked_dir.path()),
+        )
+        .unwrap()
+        .account
+        .unwrap()
+        .device_pubkey;
+        state
+            .record_inbound_device_link_request(
+                &owner_hex,
+                &linked_hex,
+                Some("rejected-phone".into()),
+                &link_secret,
+                42,
+            )
+            .unwrap();
+        config.save(&config_path).unwrap();
+    }
+
+    let rejected = run_json(owner_dir.path(), &["devices", "reject", request_url]);
+    assert_eq!(rejected["rejected"], true);
+    assert!(
+        rejected["inbound_device_link_requests"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let roster = run_json(owner_dir.path(), &["devices", "list"]);
+    assert!(
+        roster["app_keys"]["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|device| device["npub"].as_str() != Some(linked_device))
+    );
+}
+
+#[test]
 fn devices_group_covers_invite_request_approve_and_list_flow() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();

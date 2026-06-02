@@ -57,6 +57,7 @@ internal fun DevicesPanel(
     onCopyLinkInvite: () -> Unit,
     onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
+    onRejectDevice: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -100,21 +101,22 @@ internal fun DevicesPanel(
                 }
                 if (device.canAppointAdmin) {
                     TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
-                        Text("Admin")
+                        Text("Make admin")
                     }
                 }
                 if (device.canDemoteAdmin) {
                     TextButton(onClick = { onDemoteAdmin(device.pubkey) }) {
-                        Text("Member")
+                        Text("Remove admin")
                     }
                 }
                 if (device.canRevoke) {
-                    IconButton(onClick = { devicePendingDelete = device }) {
+                    TextButton(onClick = { devicePendingDelete = device }) {
                         Icon(
                             painterResource(R.drawable.ic_delete),
-                            contentDescription = "Delete ${device.displayLabel}",
+                            contentDescription = null,
                             tint = Danger,
                         )
+                        Text("Remove", color = Danger)
                     }
                 }
             }
@@ -134,6 +136,7 @@ internal fun DevicesPanel(
             onCopyLinkInvite = onCopyLinkInvite,
             onResetInvite = onResetInvite,
             onApproveDevice = onApproveDevice,
+            onRejectDevice = onRejectDevice,
             onDismiss = { showAddDevice = false },
             onAdded = {
                 request = ""
@@ -218,6 +221,7 @@ private fun AddDeviceDialog(
     onCopyLinkInvite: () -> Unit,
     onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
+    onRejectDevice: (String) -> Unit,
     onDismiss: () -> Unit,
     onAdded: () -> Unit,
 ) {
@@ -259,11 +263,19 @@ private fun AddDeviceDialog(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Button(
-                                onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
-                                enabled = canApprove,
-                            ) {
-                                Text("Add")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(
+                                    onClick = { onRejectDevice(inbound.requestLink) },
+                                    enabled = canApprove,
+                                ) {
+                                    Text("Reject", color = Danger)
+                                }
+                                Button(
+                                    onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
+                                    enabled = canApprove,
+                                ) {
+                                    Text("Add")
+                                }
                             }
                         }
                     }

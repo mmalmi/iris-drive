@@ -1167,20 +1167,20 @@ private struct PeerRow: View {
                                     Button {
                                         controller.demoteAdmin(peer.npub)
                                     } label: {
-                                        Label("Remove Admin", systemImage: "person.badge.minus")
+                                        Label("Remove admin", systemImage: "person.badge.minus")
                                     }
                                 }
                             } else {
                                 Button {
                                     controller.appointAdmin(peer.npub)
                                 } label: {
-                                    Label("Make Admin", systemImage: "person.badge.key")
+                                    Label("Make admin", systemImage: "person.badge.key")
                                 }
                             }
                             Button(role: .destructive) {
                                 showDeleteConfirmation = true
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                Label("Remove", systemImage: "trash")
                             }
                         }
                         .buttonStyle(.bordered)
@@ -1193,11 +1193,11 @@ private struct PeerRow: View {
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .confirmationDialog(
-            "Delete \(title)?",
+            "Remove \(title)?",
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 controller.deleteDevice(peer.npub)
             }
             Button("Cancel", role: .cancel) {}
@@ -1253,10 +1253,15 @@ private struct DeviceLinkRequestRow: View {
                     .truncationMode(.middle)
             }
             Spacer()
+            Button(role: .destructive) {
+                controller.rejectDevice(request.requestURL)
+            } label: {
+                Label("Reject", systemImage: "xmark")
+            }
             Button {
                 controller.approveDevice(request.requestURL, label: request.label ?? "")
             } label: {
-                Label("Approve", systemImage: "checkmark")
+                Label("Add", systemImage: "checkmark")
             }
         }
         .padding(12)

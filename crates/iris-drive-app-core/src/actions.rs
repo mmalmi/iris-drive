@@ -20,6 +20,9 @@ pub enum NativeAppAction {
         request: String,
         label: String,
     },
+    RejectDevice {
+        request: String,
+    },
     ResetInvite,
     #[serde(alias = "delete_device")]
     RevokeDevice {

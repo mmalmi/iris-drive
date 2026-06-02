@@ -83,6 +83,9 @@ class MainActivity : ComponentActivity() {
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
                 },
+                onRejectDevice = { request ->
+                    dispatch(NativeActions.rejectDevice(request))
+                },
                 onResetInvite = { dispatch(NativeActions.resetInvite()) },
                 onDeleteDevice = { devicePubkey ->
                     dispatch(NativeActions.deleteDevice(devicePubkey))

@@ -17,5 +17,7 @@
   <ItemGroup>
     <Content Include="IrisDrive.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="IrisDrive.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\target\debug\iris_drive_app_core.dll" Link="iris_drive_app_core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('..\target\debug\iris_drive_app_core.dll')" />
+    <Content Include="..\target\release\iris_drive_app_core.dll" Link="iris_drive_app_core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('..\target\release\iris_drive_app_core.dll')" />
   </ItemGroup>
 </Project>

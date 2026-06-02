@@ -26,14 +26,6 @@ private let irisDriveAssociatedHosts: Set<String> = [
     "git.iris.to",
 ]
 
-private struct IrisDriveLinkInputCLIClassification: Decodable {
-    let isComplete: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case isComplete = "is_complete"
-    }
-}
-
 @main
 struct IrisDriveMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -88,6 +80,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusFileDescriptor: CInt = -1
     private var externalStatusDirectoryDescriptor: CInt = -1
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
+    private lazy var desktopCore = IrisDriveDesktopCore(
+        dataDir: runtimePaths().configDirectory.path,
+        appVersion: appVersion
+    )
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "0.1.0"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if screenshotFixtureMode {
@@ -505,29 +506,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func resetInvite() {
-        let idrive = idriveExecutableURL()
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        runtimePathsForMenu = paths
-        updateStatus("Resetting invite")
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(
-                    idrive,
-                    arguments: ["devices", "reset-invite"],
-                    paths: paths
-                )
-                DispatchQueue.main.async {
-                    self.updateStatus("Invite reset")
-                    self.refreshStatus()
-                }
-            } catch {
-                NSLog("Iris Drive invite reset failed: \(error)")
-                self.updateStatus("Invite reset failed")
-                DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
-        }
+        dispatchNativeAction(
+            ["type": "reset_invite"],
+            progress: "Resetting invite",
+            success: "Invite reset"
+        )
     }
 
     func setLocalNhashResolver(_ enabled: Bool) {
@@ -606,26 +589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let idrive = idriveExecutableURL()
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        runtimePathsForMenu = paths
         DispatchQueue.global(qos: .utility).async {
-            let isComplete: Bool
-            do {
-                let data = try self.runIDrive(
-                    idrive,
-                    arguments: ["link-input", "validate", trimmed],
-                    paths: paths
-                )
-                let classification = try JSONDecoder().decode(
-                    IrisDriveLinkInputCLIClassification.self,
-                    from: data
-                )
-                isComplete = classification.isComplete
-            } catch {
-                NSLog("Iris Drive link input classification failed: \(error)")
-                isComplete = false
-            }
+            let isComplete = IrisDriveDesktopCore.validateLinkInput(trimmed)
             DispatchQueue.main.async {
                 completion(trimmed, isComplete)
             }
@@ -633,25 +598,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func logout() {
-        let idrive = idriveExecutableURL()
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
         stopSync()
-        updateStatus("Logging out")
-
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(idrive, arguments: ["logout"], paths: paths)
-                self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
-                self.updateStatus("Logged out")
-            } catch {
-                NSLog("Iris Drive logout failed: \(error)")
-                self.updateStatus("Logout failed")
-                DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
-        }
+        dispatchNativeAction(
+            ["type": "logout"],
+            progress: "Logging out",
+            success: "Logged out"
+        )
     }
 
     func approveDevice(_ device: String, label: String) {
@@ -660,36 +614,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Device key required")
             return
         }
-        var arguments = ["approve", device]
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !label.isEmpty {
-            arguments += ["--label", label]
-        }
+        dispatchNativeAction(
+            ["type": "approve_device", "request": device, "label": label],
+            progress: "Approving device",
+            success: "Device approved",
+            restartSyncAfterSuccess: true
+        )
+    }
 
-        let idrive = idriveExecutableURL()
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        runtimePathsForMenu = paths
-        updateStatus("Approving device")
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                DispatchQueue.main.async {
-                    self.updateStatus("Device approved")
-                    self.refreshStatus()
-                    if IrisDriveStatus.shared.daemonRunning {
-                        self.restartSync()
-                    } else {
-                        self.startSync()
-                    }
-                }
-            } catch {
-                NSLog("Iris Drive device approval failed: \(error)")
-                self.updateStatus("Approve failed")
-                DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
+    func rejectDevice(_ request: String) {
+        let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else {
+            updateStatus("Device request required")
+            return
         }
+        dispatchNativeAction(
+            ["type": "reject_device", "request": request],
+            progress: "Rejecting device",
+            success: "Device request rejected"
+        )
     }
 
     func appointAdmin(_ device: String) {
@@ -707,30 +651,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let idrive = idriveExecutableURL()
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        runtimePathsForMenu = paths
-        updateStatus("Deleting device")
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(idrive, arguments: ["revoke", device], paths: paths)
-                DispatchQueue.main.async {
-                    self.updateStatus("Device deleted")
-                    self.refreshStatus()
-                    if IrisDriveStatus.shared.daemonRunning {
-                        self.restartSync()
-                    } else {
-                        self.startSync()
-                    }
-                }
-            } catch {
-                NSLog("Iris Drive device delete failed: \(error)")
-                self.updateStatus("Delete failed")
-                DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
-        }
+        dispatchNativeAction(
+            ["type": "revoke_device", "device_pubkey": device],
+            progress: "Removing device",
+            success: "Device removed",
+            restartSyncAfterSuccess: true
+        )
     }
 
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
@@ -740,35 +666,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let command = makeAdmin ? "appoint-admin" : "demote-admin"
-        let idrive = idriveExecutableURL()
-        let paths = runtimePathsForMenu ?? runtimePaths()
-        runtimePathsForMenu = paths
-        updateStatus(makeAdmin ? "Making admin" : "Removing admin")
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(
-                    idrive,
-                    arguments: ["devices", command, device],
-                    paths: paths
-                )
-                DispatchQueue.main.async {
-                    self.updateStatus(makeAdmin ? "Device made admin" : "Admin removed")
-                    self.refreshStatus()
-                    if IrisDriveStatus.shared.daemonRunning {
-                        self.restartSync()
-                    } else {
-                        self.startSync()
-                    }
-                }
-            } catch {
-                NSLog("Iris Drive admin role update failed: \(error)")
-                self.updateStatus("Admin update failed")
-                DispatchQueue.main.async {
-                    NSSound.beep()
-                }
-            }
-        }
+        dispatchNativeAction(
+            [
+                "type": makeAdmin ? "appoint_admin" : "demote_admin",
+                "device_pubkey": device,
+            ],
+            progress: makeAdmin ? "Making admin" : "Removing admin",
+            success: makeAdmin ? "Device made admin" : "Admin removed",
+            restartSyncAfterSuccess: true
+        )
     }
 
     @objc func quitApp() {
@@ -1031,10 +937,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     withIntermediateDirectories: true
                 )
                 _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                let statusData = try self.runIDrive(idrive, arguments: ["status"], paths: paths)
-                let statusPayload = self.statusJSON(from: statusData)
-                self.applyStatusPayload(statusPayload)
-                let setupComplete = Self.statusPayloadSetupComplete(statusPayload)
+                let nativeState = try self.nativeStatePayload(from: self.desktopCore.refreshJson())
+                self.applyNativeStatePayload(nativeState)
+                let setupComplete = Self.nativeStateSetupComplete(nativeState)
                 NSLog(setupComplete ? "Iris Drive setup succeeded" : "Iris Drive setup awaiting approval")
                 if setupComplete {
                     self.prepareFileProviderRuntime(paths: paths, idrive: idrive)
@@ -1534,13 +1439,163 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
-    private static func statusPayloadSetupComplete(_ json: [String: Any]) -> Bool {
-        guard json["initialized"] as? Bool ?? false,
-              let summary = json["summary"] as? [String: Any]
+    private func nativeStatePayload(from json: String) throws -> [String: Any] {
+        guard let data = json.data(using: .utf8),
+              let state = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
+            throw NSError(
+                domain: "IrisDriveMac",
+                code: 30,
+                userInfo: [NSLocalizedDescriptionKey: "native app-core returned invalid JSON"]
+            )
+        }
+        if let error = state["error"] as? String, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw NSError(
+                domain: "IrisDriveMac",
+                code: 31,
+                userInfo: [NSLocalizedDescriptionKey: error]
+            )
+        }
+        return state
+    }
+
+    private static func nativeStateSetupComplete(_ state: [String: Any]) -> Bool {
+        guard let ui = state["ui"] as? [String: Any] else {
             return false
         }
-        return summary["setup_complete"] as? Bool ?? false
+        return ui["setup_complete"] as? Bool ?? false
+    }
+
+    private func applyNativeStateJson(_ json: String) throws {
+        applyNativeStatePayload(try nativeStatePayload(from: json))
+    }
+
+    private func applyNativeStatePayload(_ state: [String: Any]) {
+        let ui = state["ui"] as? [String: Any] ?? [:]
+        DispatchQueue.main.async {
+            let status = IrisDriveStatus.shared
+            let account = ui["account"] as? [String: Any]
+            let paths = ui["paths"] as? [String: Any] ?? [:]
+            status.initialized = account != nil
+            status.configDirectory =
+                paths["data_dir"] as? String
+                ?? self.runtimePathsForMenu?.configDirectory.path
+            status.blocksDirectory = paths["blocks_dir"] as? String
+
+            if let account {
+                status.ownerNpub = account["owner_pubkey"] as? String
+                status.deviceNpub = account["device_pubkey"] as? String
+                status.hasOwnerSigningAuthority =
+                    account["has_owner_signing_authority"] as? Bool ?? false
+                let invite = account["device_link_invite"] as? String ?? ""
+                status.deviceLinkInviteURL = invite.isEmpty ? nil : invite
+                status.inboundDeviceLinkRequests =
+                    (account["inbound_device_link_requests"] as? [[String: Any]] ?? [])
+                    .map(IrisDriveDeviceLinkRequestStatus.init(json:))
+            } else {
+                status.ownerNpub = nil
+                status.deviceNpub = nil
+                status.deviceLinkInviteURL = nil
+                status.inboundDeviceLinkRequests = []
+                status.hasOwnerSigningAuthority = false
+            }
+
+            let roots = ui["roots"] as? [[String: Any]] ?? []
+            if let primary = roots.first {
+                status.driveName = primary["name"] as? String ?? "My Drive"
+                status.workingDirectory = primary["local_path"] as? String
+            } else {
+                status.driveName = "My Drive"
+                status.workingDirectory = nil
+            }
+
+            status.snapshotURL = ui["snapshot_link"] as? String
+            status.filesIrisURL = ui["snapshot_link"] as? String
+            status.setupState = ui["setup_state"] as? String ?? "not_configured"
+            status.setupComplete = ui["setup_complete"] as? Bool ?? false
+            status.awaitingApproval = ui["awaiting_approval"] as? Bool ?? false
+            status.revoked = ui["revoked"] as? Bool ?? false
+            status.setupLabel = ui["setup_label"] as? String ?? "Not linked"
+            status.primaryStatus = ui["primary_status"] as? String ?? "not_setup"
+            status.primaryStatusLabel = ui["primary_status_label"] as? String ?? "Ready"
+            if let sync = ui["sync"] as? [String: Any] {
+                status.syncStatus = sync["status"] as? String ?? status.syncStatus
+                status.syncStatusLabel = sync["status_label"] as? String ?? status.syncStatusLabel
+            }
+            status.authorizedDeviceCount = Self.intValue(ui["authorized_device_count"]) ?? 0
+            status.onlineDeviceCount = Self.intValue(ui["online_device_count"]) ?? 0
+            status.fileCount = Self.intValue(ui["file_count"]) ?? 0
+            status.visibleFileBytes = Self.int64Value(ui["visible_file_bytes"]) ?? 0
+            status.relays = ui["relays"] as? [String] ?? []
+            status.relayStatuses =
+                (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)
+            status.backupTargets =
+                (ui["backups"] as? [[String: Any]] ?? []).map(IrisDriveBackupTarget.init)
+            status.fips = IrisDriveFipsStatus(json: ui["fips"] as? [String: Any] ?? [:])
+            status.peers =
+                (ui["devices"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)
+            status.lastUpload = nil
+
+            if status.setupComplete, let paths = self.runtimePathsForMenu {
+                self.prepareFileProviderRuntime(paths: paths, idrive: self.idriveExecutableURL())
+                self.ensureFileProviderDomainAfterStatusIfNeeded()
+            }
+            if status.revoked {
+                self.userRequestedSyncStop = true
+                self.daemonRestartWorkItem?.cancel()
+                self.daemonRestartWorkItem = nil
+                if self.daemon != nil {
+                    self.stopSync()
+                } else {
+                    self.setDaemonRunning(false)
+                }
+                self.updateStatus("Device removed")
+            }
+
+            self.updateLinkMenuState()
+            self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "native state changed")
+            irisDriveDebugLog("Iris Drive control panel updated from app-core")
+        }
+    }
+
+    private func dispatchNativeAction(
+        _ action: [String: Any],
+        progress: String,
+        success: String,
+        restartSyncAfterSuccess: Bool = false
+    ) {
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        updateStatus(progress)
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: action)
+                guard let actionJson = String(data: data, encoding: .utf8) else {
+                    throw NSError(
+                        domain: "IrisDriveMac",
+                        code: 32,
+                        userInfo: [NSLocalizedDescriptionKey: "native action JSON encoding failed"]
+                    )
+                }
+                try self.applyNativeStateJson(self.desktopCore.dispatchJson(actionJson))
+                DispatchQueue.main.async {
+                    self.updateStatus(success)
+                    if restartSyncAfterSuccess {
+                        if IrisDriveStatus.shared.daemonRunning {
+                            self.restartSync()
+                        } else {
+                            self.startSync()
+                        }
+                    }
+                }
+            } catch {
+                NSLog("Iris Drive native action failed: \(error)")
+                self.updateStatus("\(success) failed")
+                DispatchQueue.main.async {
+                    NSSound.beep()
+                }
+            }
+        }
     }
 
     private func applyStatusData(_ data: Data) {
@@ -1785,10 +1840,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             refreshExternalDaemonStatus(paths: paths)
             return
         }
-        let idrive = idriveExecutableURL()
         DispatchQueue.global(qos: .utility).async {
             do {
-                self.applyStatusData(try self.runIDrive(idrive, arguments: ["status"], paths: paths))
+                try self.applyNativeStateJson(self.desktopCore.refreshJson())
             } catch {
                 NSLog("Iris Drive status refresh failed: \(error)")
             }
@@ -2161,26 +2215,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let link = IrisDriveStatus.shared.snapshotLinkURL, !link.isEmpty {
             return link
         }
-        guard let paths = runtimePathsForMenu else {
+        guard runtimePathsForMenu != nil else {
             return nil
         }
         do {
-            let data = try runIDrive(idriveExecutableURL(), arguments: ["status"], paths: paths)
-            applyStatusData(data)
-            return snapshotLink(from: data)
+            let state = try nativeStatePayload(from: desktopCore.refreshJson())
+            applyNativeStatePayload(state)
+            let ui = state["ui"] as? [String: Any] ?? [:]
+            return ui["snapshot_link"] as? String
         } catch {
             NSLog("Iris Drive snapshot link refresh failed: \(error)")
             return nil
         }
-    }
-
-    private func snapshotLink(from data: Data) -> String? {
-        let json = statusJSON(from: data)
-        guard let hashtree = json["hashtree"] as? [String: Any] else {
-            return nil
-        }
-        return hashtree["snapshot_url"] as? String
-            ?? hashtree["permalink_url"] as? String
     }
 
     private static func intValue(_ value: Any?) -> Int? {

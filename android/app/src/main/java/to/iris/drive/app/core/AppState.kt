@@ -187,6 +187,12 @@ internal object NativeActions {
             .put("label", label)
             .toString()
 
+    fun rejectDevice(request: String): String =
+        JSONObject()
+            .put("type", "reject_device")
+            .put("request", request)
+            .toString()
+
     fun resetInvite(): String = JSONObject().put("type", "reset_invite").toString()
 
     fun revokeDevice(devicePubkey: String): String =

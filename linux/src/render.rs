@@ -1,112 +1,97 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-pub(crate) fn render_drives(list: &gtk::ListBox, json: &Value) {
+pub(crate) fn render_drives(list: &gtk::ListBox, state: &NativeAppState) {
     clear_list(list);
-    let Some(drives) = json.get("drives").and_then(Value::as_array) else {
-        list.append(&drive_row("main", &drive_mount_text(json), "-"));
-        return;
-    };
-    if drives.is_empty() {
-        list.append(&drive_row("main", &drive_mount_text(json), "-"));
+    if state.ui.roots.is_empty() {
+        list.append(&drive_row("main", &drive_mount_text(state), "-"));
         return;
     }
-    for drive in drives {
-        let name = find_string(drive, &["name", "drive_id"]).unwrap_or("main");
-        let path = mounted_dir(json)
+    for drive in &state.ui.roots {
+        let name = if drive.name.is_empty() {
+            "main"
+        } else {
+            &drive.name
+        };
+        let path = mounted_dir(state)
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "Not mounted".to_string());
-        let status = find_string(drive, &["status", "root_cid"])
-            .map(short_text)
-            .unwrap_or_else(|| "configured".to_string());
+        let status = if drive.status.is_empty() {
+            "configured".to_string()
+        } else {
+            short_text(&drive.status)
+        };
         list.append(&drive_row(name, &path, &status));
     }
 }
 
-pub(crate) fn render_peers(model: &AppRef, json: &Value) {
+pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
-    let Some(peers) = json.get("peers").and_then(Value::as_array) else {
-        list.append(&simple_row("No devices", ""));
-        return;
-    };
-    if peers.is_empty() {
+    if state.ui.devices.is_empty() {
         list.append(&simple_row("No devices", ""));
         return;
     }
-    for peer in peers {
-        let title = find_string(peer, &["display_label"]).unwrap_or("Device");
-        let device_npub = find_string(peer, &["device_npub"]).unwrap_or("");
-        let is_current_device = peer
-            .get("is_current_device")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    for peer in &state.ui.devices {
+        let title = if peer.display_label.is_empty() {
+            "Device"
+        } else {
+            &peer.display_label
+        };
+        let device_npub = peer.pubkey.as_str();
         let mut metadata = Vec::new();
-        if is_current_device {
+        if peer.is_current_device {
             metadata.push("this device".to_string());
             if !device_npub.is_empty() {
                 metadata.push(format!("Device ID: {device_npub}"));
             }
         }
-        metadata.push(
-            find_string(peer, &["role_label"])
-                .unwrap_or("Member")
-                .to_string(),
-        );
-        if let Some(sync_state) = find_string(peer, &["sync_state"]) {
-            metadata.push(sync_state.to_string());
+        metadata.push(if peer.role_label.is_empty() {
+            "Member".to_string()
+        } else {
+            peer.role_label.clone()
+        });
+        if !peer.state_label.is_empty() {
+            metadata.push(peer.state_label.clone());
         }
-        if let Some(last_sync) = peer.get("last_block_sync")
-            && let (Some(transport), Some(total)) = (
-                find_string(last_sync, &["transport"]),
-                find_number(last_sync, &["total_hashes"]),
-            )
-        {
-            let fetched = find_number(last_sync, &["fetched"]).unwrap_or(0);
-            metadata.push(format!("{transport} {fetched}/{total}"));
+        if !peer.detail.is_empty() {
+            metadata.push(peer.detail.clone());
         }
-        if let Some(root) = find_string(peer, &["root_cid"]) {
-            metadata.push(short_text(root));
-        }
-        if let Some(generation) = find_number(peer, &["dck_generation"]) {
-            metadata.push(format!("DCK {generation}"));
-        }
-        let fips_online = peer
-            .get("fips_online")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let state = find_string(peer, &["connection_label"]).unwrap_or("Offline");
+        let connection = if peer.connection_label.is_empty() {
+            "Offline"
+        } else {
+            &peer.connection_label
+        };
         list.append(&peer_row(
             model,
             title,
             &metadata.join(" | "),
-            &state,
-            fips_online,
+            connection,
+            peer.is_online,
             device_npub,
-            find_bool(peer, &["can_appoint_admin"]).unwrap_or(false),
-            find_bool(peer, &["can_demote_admin"]).unwrap_or(false),
-            find_bool(peer, &["can_revoke"]).unwrap_or(false),
+            peer.can_appoint_admin,
+            peer.can_demote_admin,
+            peer.can_revoke,
         ));
     }
 }
 
-pub(crate) fn render_backups(list: &gtk::ListBox, json: &Value) {
+pub(crate) fn render_backups(list: &gtk::ListBox, state: &NativeAppState) {
     clear_list(list);
-    let network = json.get("network").unwrap_or(&Value::Null);
-    if let Some(targets) = network.get("backup_targets").and_then(Value::as_array) {
-        for target in targets {
-            let title = find_string(target, &["title"]).unwrap_or("Backup");
-            let state = find_string(target, &["state"]).unwrap_or("");
-            let detail = find_string(target, &["detail"]).unwrap_or("");
-            let subtitle = if state.is_empty() {
-                detail.to_string()
-            } else if detail.is_empty() {
-                state.to_string()
-            } else {
-                format!("{state} | {detail}")
-            };
-            list.append(&simple_row(title, &subtitle));
-        }
+    for target in &state.ui.backups {
+        let title = if target.label.is_empty() {
+            "Backup"
+        } else {
+            &target.label
+        };
+        let subtitle = if target.state.is_empty() {
+            target.detail.clone()
+        } else if target.detail.is_empty() {
+            target.state.clone()
+        } else {
+            format!("{} | {}", target.state, target.detail)
+        };
+        list.append(&simple_row(title, &subtitle));
     }
     if list.first_child().is_none() {
         list.append(&simple_row("No backup targets", ""));
@@ -117,65 +102,77 @@ pub(crate) fn render_network(
     fips_list: &gtk::ListBox,
     relays_list: &gtk::ListBox,
     blossom_list: &gtk::ListBox,
-    json: &Value,
+    state: &NativeAppState,
 ) {
     clear_list(fips_list);
     clear_list(relays_list);
     clear_list(blossom_list);
-    let network = json.get("network").unwrap_or(&Value::Null);
-    render_fips_network(fips_list, network);
-    render_relay_statuses(relays_list, network);
+    render_fips_network(fips_list, &state.ui);
+    render_relay_statuses(relays_list, &state.ui);
 
-    if let Some(servers) = network.get("blossom_servers").and_then(Value::as_array) {
-        for server in servers.iter().filter_map(Value::as_str) {
-            blossom_list.append(&simple_row(server, ""));
-        }
-    }
     if blossom_list.first_child().is_none() {
         blossom_list.append(&simple_row("No Blossom servers", ""));
     }
 }
 
-pub(crate) fn render_fips_network(list: &gtk::ListBox, network: &Value) {
-    let fips = network.get("fips").unwrap_or(&Value::Null);
-    let state = find_string(fips, &["state_label"]).unwrap_or("Paused");
-    let roster = find_string(fips, &["roster_label"]).unwrap_or("0/0 online");
-    let other = find_number(fips, &["other_peer_count"])
-        .unwrap_or(0)
-        .to_string();
-    let direct = find_number(fips, &["direct_device_count"])
-        .unwrap_or(0)
-        .to_string();
-    list.append(&simple_row("State", &state));
-    list.append(&simple_row("Roster FIPS", &roster));
-    list.append(&simple_row("Other FIPS", &other));
-    list.append(&simple_row("Direct FIPS", &direct));
-    if let Some(endpoint) = find_string(fips, &["endpoint_npub"]).filter(|value| !value.is_empty())
-    {
-        list.append(&simple_row("Endpoint", endpoint));
+pub(crate) fn render_fips_network(list: &gtk::ListBox, ui: &UiState) {
+    let fips = &ui.fips;
+    let state = if fips.state_label.is_empty() {
+        "Paused"
+    } else {
+        &fips.state_label
+    };
+    let roster = if fips.roster_label.is_empty() {
+        "0/0 online"
+    } else {
+        &fips.roster_label
+    };
+    list.append(&simple_row("State", state));
+    list.append(&simple_row("Roster FIPS", roster));
+    list.append(&simple_row("Other FIPS", &fips.other_peer_count.to_string()));
+    list.append(&simple_row(
+        "Direct FIPS",
+        &fips.direct_device_count.to_string(),
+    ));
+    if !fips.endpoint_npub.is_empty() {
+        list.append(&simple_row("Endpoint", &fips.endpoint_npub));
     }
-    if let Some(scope) = find_string(fips, &["discovery_scope"]).filter(|value| !value.is_empty()) {
-        list.append(&simple_row("Scope", scope));
+    if !fips.discovery_scope.is_empty() {
+        list.append(&simple_row("Scope", &fips.discovery_scope));
     }
-    if let Some(peer_statuses) = fips.get("peer_statuses").and_then(Value::as_array) {
-        for peer in peer_statuses {
-            let npub = find_string(peer, &["npub"]).unwrap_or("peer");
-            let label = find_string(peer, &["connection_label"]).unwrap_or("Online");
-            list.append(&simple_row(&format!("Peer {}", short_text(npub)), &label));
-        }
+    for peer in &fips.peer_statuses {
+        let npub = if peer.npub.is_empty() {
+            "peer"
+        } else {
+            &peer.npub
+        };
+        let label = if peer.connection_label.is_empty() {
+            "Online"
+        } else {
+            &peer.connection_label
+        };
+        list.append(&simple_row(&format!("Peer {}", short_text(npub)), label));
     }
-    if let Some(error) = find_string(fips, &["error"]).filter(|value| !value.is_empty()) {
-        list.append(&simple_row("Error", error));
+    if !fips.error.is_empty() {
+        list.append(&simple_row("Error", &fips.error));
     }
 }
 
-fn render_relay_statuses(list: &gtk::ListBox, network: &Value) {
-    if let Some(statuses) = network.get("relay_statuses").and_then(Value::as_array) {
-        for status in statuses {
-            let relay = find_string(status, &["url"]).unwrap_or("relay");
-            let label = find_string(status, &["status_label", "status"]).unwrap_or("saved");
-            list.append(&simple_row(relay, label));
-        }
+fn render_relay_statuses(list: &gtk::ListBox, ui: &UiState) {
+    for status in &ui.relay_statuses {
+        let relay = if status.url.is_empty() {
+            "relay"
+        } else {
+            &status.url
+        };
+        let label = if !status.status_label.is_empty() {
+            &status.status_label
+        } else if !status.status.is_empty() {
+            &status.status
+        } else {
+            "saved"
+        };
+        list.append(&simple_row(relay, label));
     }
     if list.first_child().is_none() {
         list.append(&simple_row("No relays", ""));
@@ -301,7 +298,7 @@ pub(crate) fn peer_row(
     }
 
     if can_revoke {
-        let delete = icon_button("user-trash-symbolic", "Delete device");
+        let delete = icon_button("user-trash-symbolic", "Remove device");
         let model = Rc::clone(model);
         let device_npub = device_npub.to_string();
         let title = title.to_string();

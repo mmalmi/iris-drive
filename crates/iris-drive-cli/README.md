@@ -16,6 +16,7 @@ idrive devices invite
 idrive devices request <owner-npub-or-invite-url> --label "Laptop"
 idrive devices requests
 idrive devices approve <device-request-url-or-npub>
+idrive devices reject <device-request-url-or-npub>
 idrive devices revoke <device-npub>
 idrive backups add fs:/path/to/encrypted-backup --label "External disk"
 idrive backups sync

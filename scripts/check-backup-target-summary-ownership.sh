@@ -35,16 +35,17 @@ require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_sta
 require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_detail"
 require_absent crates/iris-drive-cli/src/status/backups.rs "fn backup_target_format_bytes"
 
-require_contains windows/IrisDriveModels.cs 'String(target, "title")'
-require_contains windows/IrisDriveModels.cs 'String(target, "detail")'
-require_contains windows/IrisDriveModels.cs 'String(target, "state")'
+require_contains windows/IrisDriveModels.cs 'String(backup, "label")'
+require_contains windows/IrisDriveModels.cs 'String(backup, "detail")'
+require_contains windows/IrisDriveModels.cs 'String(backup, "state")'
+require_absent windows/IrisDriveModels.cs 'String(target, "title")'
 require_absent windows/IrisDriveModels.cs 'Object(target, "last_sync")'
 require_absent windows/IrisDriveModels.cs 'Object(target, "last_check")'
 require_absent windows/IrisDriveModels.cs '"download_bytes_per_second"'
 
-require_contains linux/src/render.rs 'find_string(target, &["title"])'
-require_contains linux/src/render.rs 'find_string(target, &["detail"])'
-require_contains linux/src/render.rs 'find_string(target, &["state"])'
+require_contains linux/src/render.rs 'target.label'
+require_contains linux/src/render.rs 'target.detail'
+require_contains linux/src/render.rs 'target.state'
 require_absent linux/src/render.rs 'target.get("last_sync")'
 require_absent linux/src/render.rs 'target.get("last_check")'
 require_absent linux/src/render.rs '"download_bytes_per_second"'

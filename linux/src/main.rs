@@ -3,12 +3,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use serde_json::Value;
+use iris_drive_app_core::{NativeAppAction, NativeAppState, UiState};
 
 mod actions;
 mod daemon_control;

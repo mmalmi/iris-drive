@@ -2,13 +2,12 @@
 use super::*;
 
 pub(crate) fn start_daemon(model: &AppRef) {
-    let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
-    if is_revoked(&status) {
+    if desktop_state().is_ok_and(|state| is_revoked(&state)) {
         stop_daemon(model);
         model.ui.notice.set_text("Device removed");
         return;
     }
-    if ensure_daemon_running(model, &status) {
+    if ensure_daemon_running(model) {
         model.ui.notice.set_text("Sync is already on");
         return;
     }
@@ -21,8 +20,8 @@ pub(crate) fn restart_daemon(model: &AppRef) {
     refresh(model);
 }
 
-pub(crate) fn ensure_daemon_running(model: &AppRef, status: &Value) -> bool {
-    if daemon_is_running(model) || daemon_lock_is_running(status) {
+pub(crate) fn ensure_daemon_running(model: &AppRef) -> bool {
+    if daemon_is_running(model) || daemon_lock_is_running() {
         return true;
     }
 
@@ -72,16 +71,12 @@ pub(crate) fn daemon_is_running(model: &AppRef) -> bool {
     }
 }
 
-pub(crate) fn daemon_lock_is_running(status: &Value) -> bool {
-    daemon_lock_pid(status).is_some_and(process_is_running)
+pub(crate) fn daemon_lock_is_running() -> bool {
+    daemon_lock_pid().is_some_and(process_is_running)
 }
 
-pub(crate) fn daemon_lock_pid(status: &Value) -> Option<u32> {
-    let Some(config_dir) = status.get("config_dir").and_then(Value::as_str) else {
-        return None;
-    };
-    let Ok(contents) = std::fs::read_to_string(PathBuf::from(config_dir).join("daemon.lock"))
-    else {
+pub(crate) fn daemon_lock_pid() -> Option<u32> {
+    let Ok(contents) = std::fs::read_to_string(app_config_dir().join("daemon.lock")) else {
         return None;
     };
     contents.trim().parse::<u32>().ok()
@@ -232,8 +227,16 @@ pub(crate) fn write_close_to_tray_on_close(enabled: bool) {
 }
 
 pub(crate) fn stop_daemon(model: &AppRef) {
-    let status = run_idrive_json(["status"]).ok();
-    let lock_pid = status.as_ref().and_then(daemon_lock_pid);
+    let stopped = stop_daemon_processes(model);
+
+    if stopped {
+        model.ui.notice.set_text("Sync paused");
+    }
+    refresh(model);
+}
+
+pub(crate) fn stop_daemon_processes(model: &AppRef) -> bool {
+    let lock_pid = daemon_lock_pid();
     let mut stopped = false;
     let mut child_pid = None;
 
@@ -249,21 +252,35 @@ pub(crate) fn stop_daemon(model: &AppRef) {
         stopped |= terminate_process(pid);
     }
 
-    if stopped {
-        model.ui.notice.set_text("Sync paused");
-    }
-    refresh(model);
+    stopped
 }
 
-pub(crate) fn run_idrive_json<const N: usize>(args: [&str; N]) -> Result<Value, String> {
-    let output = Command::new(idrive_path())
-        .args(args)
-        .output()
-        .map_err(|error| format!("idrive failed to start: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+pub(crate) fn desktop_state() -> Result<NativeAppState, String> {
+    let state = desktop_core().refresh();
+    if state.error.trim().is_empty() {
+        Ok(state)
+    } else {
+        Err(state.error)
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid status JSON: {error}"))
+}
+
+pub(crate) fn dispatch_desktop_action(action: NativeAppAction) -> Result<NativeAppState, String> {
+    let state = desktop_core().dispatch(action);
+    if !state.error.trim().is_empty() {
+        return Err(state.error);
+    }
+    Ok(state)
+}
+
+fn desktop_core() -> Arc<iris_drive_app_core::FfiApp> {
+    static APP: OnceLock<Arc<iris_drive_app_core::FfiApp>> = OnceLock::new();
+    APP.get_or_init(|| {
+        iris_drive_app_core::FfiApp::new(
+            app_config_dir().display().to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        )
+    })
+    .clone()
 }
 
 pub(crate) fn run_idrive<const N: usize>(args: [&str; N]) -> Result<(), String> {

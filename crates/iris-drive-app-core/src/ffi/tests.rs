@@ -1,4 +1,4 @@
-use super::{FfiApp, normalize_pubkey};
+use super::{FfiApp, SentDeviceLinkRequest, device_link_request_send_due, normalize_pubkey};
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{
@@ -746,6 +746,104 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     assert!(approved.ui.devices.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
+}
+
+#[test]
+fn owner_can_reject_inbound_device_link_request() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let invite = owner.ui.account.unwrap().device_link_invite;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        owner_pubkey: invite,
+        device_label: "Phone".to_owned(),
+    });
+    let linked_device = linked.ui.account.unwrap().device_pubkey;
+    let linked_device_hex = normalize_pubkey(&linked_device).unwrap();
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.account.as_mut().unwrap();
+    let owner_hex = state.owner_pubkey.clone();
+    let link_secret = state.device_link_secret.clone();
+    state
+        .record_inbound_device_link_request(
+            &owner_hex,
+            &linked_device_hex,
+            Some("Phone".to_owned()),
+            &link_secret,
+            42,
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+
+    let refreshed = app.refresh();
+    let request = refreshed.ui.account.unwrap().inbound_device_link_requests[0]
+        .request_link
+        .clone();
+    let rejected = app.dispatch(NativeAppAction::RejectDevice { request });
+
+    assert!(rejected.error.is_empty(), "{}", rejected.error);
+    assert!(
+        rejected
+            .ui
+            .account
+            .unwrap()
+            .inbound_device_link_requests
+            .is_empty()
+    );
+    assert!(
+        rejected
+            .ui
+            .devices
+            .iter()
+            .all(|device| device.pubkey != linked_device)
+    );
+    let saved = AppConfig::load_or_default(&config_path).unwrap();
+    assert!(
+        saved
+            .account
+            .unwrap()
+            .inbound_device_link_requests
+            .is_empty()
+    );
+}
+
+#[test]
+fn device_link_request_retry_uses_startup_burst_before_steady_interval() {
+    let now = std::time::Instant::now();
+    assert!(device_link_request_send_due(None, now));
+
+    let first = SentDeviceLinkRequest {
+        last_sent: now,
+        attempts: 1,
+    };
+    assert!(!device_link_request_send_due(
+        Some(first),
+        now + std::time::Duration::from_millis(900)
+    ));
+    assert!(device_link_request_send_due(
+        Some(first),
+        now + std::time::Duration::from_secs(1)
+    ));
+
+    let steady = SentDeviceLinkRequest {
+        last_sent: now,
+        attempts: 5,
+    };
+    assert!(!device_link_request_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(9)
+    ));
+    assert!(device_link_request_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(10)
+    ));
 }
 
 fn write_native_fips_status_fixture(

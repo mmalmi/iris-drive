@@ -299,6 +299,19 @@ impl AccountState {
         Ok(changed)
     }
 
+    pub fn reject_inbound_device_link_request(
+        &mut self,
+        device_pubkey: &str,
+    ) -> Result<bool, AccountError> {
+        if !is_pubkey_hex(device_pubkey) {
+            return Err(AccountError::InvalidDevicePubkey(device_pubkey.to_string()));
+        }
+        let before = self.inbound_device_link_requests.len();
+        self.inbound_device_link_requests
+            .retain(|request| request.device_pubkey != device_pubkey);
+        Ok(before != self.inbound_device_link_requests.len())
+    }
+
     pub fn reset_device_link_secret(&mut self) -> bool {
         let previous = self.device_link_secret.clone();
         self.device_link_secret = default_device_link_secret();

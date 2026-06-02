@@ -521,6 +521,13 @@ final class IrisDriveMobileModel: ObservableObject {
         approveDeviceLabel = ""
     }
 
+    func rejectDevice(request: String) {
+        dispatch([
+            "type": "reject_device",
+            "request": request,
+        ])
+    }
+
     func resetInvite() {
         dispatch(["type": "reset_invite"])
     }

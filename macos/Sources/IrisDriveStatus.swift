@@ -64,11 +64,17 @@ struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
     let requestURL: String
 
     init(json: [String: Any]) {
-        deviceNpub = json["device_npub"] as? String ?? UUID().uuidString
+        deviceNpub =
+            json["device_npub"] as? String
+            ?? json["device_pubkey"] as? String
+            ?? UUID().uuidString
         id = deviceNpub
         label = json["label"] as? String
         requestedAt = (json["requested_at"] as? NSNumber)?.intValue
-        requestURL = json["url"] as? String ?? deviceNpub
+        requestURL =
+            json["url"] as? String
+            ?? json["request_link"] as? String
+            ?? deviceNpub
     }
 }
 
@@ -221,11 +227,15 @@ struct IrisDriveBackupTarget: Identifiable, Equatable {
     let error: String?
 
     init(json: [String: Any]) {
-        id = json["id"] as? String ?? json["target"] as? String ?? UUID().uuidString
+        id =
+            json["id"] as? String
+            ?? json["target"] as? String
+            ?? json["label"] as? String
+            ?? UUID().uuidString
         kind = json["kind"] as? String ?? "backup"
         target = json["target"] as? String ?? ""
         label = json["label"] as? String
-        title = json["title"] as? String ?? "Backup"
+        title = json["title"] as? String ?? label ?? "Backup"
         detail = json["detail"] as? String ?? target
         if let lastSync = json["last_sync"] as? [String: Any] {
             state = json["state"] as? String ?? lastSync["state"] as? String ?? "synced"
@@ -298,13 +308,22 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let dckGeneration: Int?
 
     init(json: [String: Any]) {
-        let pubkey = json["device_pubkey"] as? String ?? UUID().uuidString
+        let pubkey =
+            json["device_pubkey"] as? String
+            ?? json["pubkey"] as? String
+            ?? UUID().uuidString
         let labelValue = json["label"] as? String
         let isCurrentDeviceValue = json["is_current_device"] as? Bool ?? false
-        let authorizedValue = json["authorized"] as? Bool ?? false
-        let fipsOnlineValue = json["fips_online"] as? Bool ?? false
+        let stateValue = json["state"] as? String
+        let authorizedValue =
+            json["authorized"] as? Bool
+            ?? (stateValue == "authorized")
+        let fipsOnlineValue =
+            json["fips_online"] as? Bool
+            ?? json["is_online"] as? Bool
+            ?? false
         id = pubkey
-        npub = json["device_npub"] as? String ?? pubkey
+        npub = json["device_npub"] as? String ?? json["pubkey"] as? String ?? pubkey
         label = labelValue
         displayLabel = json["display_label"] as? String ?? ""
         role = json["role"] as? String ?? ""
@@ -312,7 +331,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
         isCurrentDevice = isCurrentDeviceValue
         authorized = authorizedValue
         fipsOnline = fipsOnlineValue
-        connectionState = json["connection_state"] as? String ?? ""
+        connectionState = json["connection_state"] as? String ?? stateValue ?? ""
         connectionLabel = json["connection_label"] as? String ?? ""
         hasRoot = json["has_root"] as? Bool ?? false
         rootCID = json["root_cid"] as? String

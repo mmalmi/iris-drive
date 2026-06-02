@@ -2,68 +2,68 @@
 use super::*;
 
 pub(crate) fn refresh(model: &AppRef) {
-    match run_idrive_json(["status"]) {
-        Ok(json) => {
-            let initialized = json
-                .get("initialized")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let revoked = initialized && is_revoked(&json);
-            let awaiting_link_approval = initialized && !revoked && is_awaiting_link_approval(&json);
-            let sync_running = initialized && !revoked && ensure_daemon_running(model, &json);
+    match desktop_state() {
+        Ok(state) => {
+            let initialized = state.ui.account.is_some();
+            let revoked = initialized && is_revoked(&state);
+            let awaiting_link_approval =
+                initialized && !revoked && is_awaiting_link_approval(&state);
+            let sync_running = initialized && !revoked && ensure_daemon_running(model);
             set_view_mode(model, initialized && !awaiting_link_approval && !revoked, sync_running);
             if !initialized {
                 render_setup(model);
                 return;
             }
             if revoked {
-                stop_daemon(model);
-                render_revoked_device(model, &json);
+                stop_daemon_processes(model);
+                render_revoked_device(model, &state);
                 return;
             }
             if awaiting_link_approval {
-                render_awaiting_approval(model, &json, sync_running);
+                render_awaiting_approval(model, &state, sync_running);
                 return;
             }
-            model.ui.drive_title.set_text(&drive_name(&json));
-            let primary_status_label = primary_status_label_value(&json);
+            model.ui.drive_title.set_text(&drive_name(&state));
+            let primary_status_label = primary_status_label_value(&state);
             model.ui.drive_message.set_text(primary_status_label);
             model.ui.status_pill.set_text(primary_status_label);
             model.ui.status.set_text(primary_status_label);
-            model.ui.folder.set_text(&drive_mount_text(&json));
-            let account = account_json(&json);
-            let owner_npub = find_string(account, &["owner_npub"]);
-            let device_npub = find_string(account, &["device_npub"]);
+            model.ui.folder.set_text(&drive_mount_text(&state));
+            let account = account(&state);
+            let owner_npub = account.map(|account| account.owner_pubkey.as_str());
+            let device_npub = account.map(|account| account.device_pubkey.as_str());
             model.ui.owner.set_text(&short_value(owner_npub));
             model.ui.device.set_text(&short_value(device_npub));
             model.ui.account_owner.set_text(owner_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
-            model.ui.account_authorization.set_text(setup_label_value(&json));
+            model.ui.account_authorization.set_text(setup_label_value(&state));
             model
                 .ui
                 .approve_box
-                .set_visible(find_bool(account, &["has_owner_signing_authority"]).unwrap_or(false));
-            model.ui.snapshot.set_text(&snapshot_value(&json));
-            model.ui.files.set_text(&file_count_value(&json));
-            model.ui.storage.set_text(&storage_value(&json));
-            model.ui.devices.set_text(&device_count_value(&json));
+                .set_visible(account.is_some_and(|account| {
+                    account.has_owner_signing_authority
+                }));
+            model.ui.snapshot.set_text(&snapshot_value(&state));
+            model.ui.files.set_text(&file_count_value(&state));
+            model.ui.storage.set_text(&storage_value(&state));
+            model.ui.devices.set_text(&device_count_value(&state));
             model
                 .ui
                 .sidebar_online
-                .set_text(&sidebar_online_value(&json));
+                .set_text(&sidebar_online_value(&state));
             model.settings_refreshing.set(true);
             model
                 .ui
                 .local_nhash_resolver
-                .set_active(local_nhash_resolver_enabled(&json));
+                .set_active(local_nhash_resolver_enabled(&state));
             model.settings_refreshing.set(false);
-            let has_snapshot = snapshot_link(&json).is_some();
+            let has_snapshot = snapshot_link(&state).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
-            render_drives(&model.ui.drives, &json);
-            render_peers(model, &json);
-            render_backups(&model.ui.backups, &json);
-            render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &json);
+            render_drives(&model.ui.drives, &state);
+            render_peers(model, &state);
+            render_backups(&model.ui.backups, &state);
+            render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &state);
         }
         Err(error) => {
             set_view_mode(model, true, daemon_is_running(model));

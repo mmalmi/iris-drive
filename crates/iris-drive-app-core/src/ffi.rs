@@ -69,12 +69,38 @@ const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(not(test))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
-#[cfg(not(test))]
 const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
+const DEVICE_LINK_REQUEST_STARTUP_RETRY_SECS: u64 = 1;
+const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 5;
 #[cfg(not(test))]
 const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(not(test))]
 const DEVICE_LINK_EXCHANGE_TICK_SECS: u64 = 1;
+
+#[derive(Debug, Clone, Copy)]
+struct SentDeviceLinkRequest {
+    last_sent: std::time::Instant,
+    attempts: u8,
+}
+
+fn device_link_request_send_due(
+    sent: Option<SentDeviceLinkRequest>,
+    now: std::time::Instant,
+) -> bool {
+    let Some(sent) = sent else {
+        return true;
+    };
+    now.duration_since(sent.last_sent)
+        >= std::time::Duration::from_secs(device_link_request_retry_secs(sent.attempts))
+}
+
+fn device_link_request_retry_secs(attempts: u8) -> u64 {
+    if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
+        DEVICE_LINK_REQUEST_STARTUP_RETRY_SECS
+    } else {
+        DEVICE_LINK_REQUEST_RETRY_SECS
+    }
+}
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LinkInputClassification {
@@ -217,6 +243,9 @@ impl NativeAppRuntime {
             NativeAppAction::Logout => self.logout(),
             NativeAppAction::ApproveDevice { request, label } => {
                 self.approve_device(&request, &label);
+            }
+            NativeAppAction::RejectDevice { request } => {
+                self.reject_device(&request);
             }
             NativeAppAction::ResetInvite => self.reset_invite(),
             NativeAppAction::RevokeDevice { device_pubkey } => {
@@ -419,6 +448,47 @@ impl NativeAppRuntime {
             return;
         }
         state.reset_device_link_secret();
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
+        }
+    }
+
+    fn reject_device(&mut self, request: &str) {
+        let request = request.trim();
+        if request.is_empty() {
+            "device request is required".clone_into(&mut self.state.error);
+            return;
+        }
+        let (owner_hex, device_hex, _) = match decode_device_approval_request(request) {
+            Ok(value) => value,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let Some(state) = config.account.as_mut() else {
+            "owner profile is required to reject devices".clone_into(&mut self.state.error);
+            return;
+        };
+        if !state.can_manage_devices() {
+            "owner profile is required to reject devices".clone_into(&mut self.state.error);
+            return;
+        }
+        if !owner_hex.is_empty() && state.owner_pubkey != owner_hex {
+            "device request is for a different owner".clone_into(&mut self.state.error);
+            return;
+        }
+        if let Err(error) = state.reject_inbound_device_link_request(&device_hex) {
+            self.state.error = format!("rejecting device: {error}");
+            return;
+        }
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -944,6 +1014,14 @@ async fn run_device_link_exchange_async(
         DEVICE_LINK_EXCHANGE_TICK_SECS,
     ));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let _ = drive_device_link_exchange_tick(
+        config_dir,
+        &sync,
+        &mut sent_requests,
+        &mut sent_rosters,
+        &acked_rosters,
+    )
+    .await?;
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
@@ -1000,7 +1078,7 @@ async fn run_device_link_exchange_async(
 async fn drive_device_link_exchange_tick(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
-    sent_requests: &mut BTreeMap<String, std::time::Instant>,
+    sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<bool, String> {
@@ -1030,7 +1108,7 @@ async fn drive_device_link_exchange_tick(
 async fn send_native_pending_device_link_request(
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::AccountState,
-    sent_requests: &mut BTreeMap<String, std::time::Instant>,
+    sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
 ) -> Result<(), String> {
     let Some(frame) = pending_device_link_request_frame(state) else {
         return Ok(());
@@ -1043,10 +1121,7 @@ async fn send_native_pending_device_link_request(
         pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
     );
     let now = std::time::Instant::now();
-    if sent_requests.get(&fingerprint).is_some_and(|last_sent| {
-        now.duration_since(*last_sent)
-            < std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
-    }) {
+    if !device_link_request_send_due(sent_requests.get(&fingerprint).copied(), now) {
         return Ok(());
     }
     let admin_npub = account_npub(&pending.admin_device_pubkey);
@@ -1057,7 +1132,16 @@ async fn send_native_pending_device_link_request(
         .await
     {
         Ok(()) => {
-            sent_requests.insert(fingerprint, now);
+            let attempts = sent_requests
+                .get(&fingerprint)
+                .map_or(1, |sent| sent.attempts.saturating_add(1));
+            sent_requests.insert(
+                fingerprint,
+                SentDeviceLinkRequest {
+                    last_sent: now,
+                    attempts,
+                },
+            );
             tracing::debug!(
                 admin_npub,
                 requested_at = frame.requested_at,

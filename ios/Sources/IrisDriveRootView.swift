@@ -508,6 +508,32 @@ private struct DevicesView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
+                            HStack {
+                                if device.canAppointAdmin {
+                                    Button {
+                                        model.appointAdmin(id: device.id)
+                                    } label: {
+                                        Label("Make Admin", systemImage: "person.badge.key")
+                                    }
+                                }
+                                if device.canDemoteAdmin {
+                                    Button {
+                                        model.demoteAdmin(id: device.id)
+                                    } label: {
+                                        Label("Remove Admin", systemImage: "person.badge.minus")
+                                    }
+                                }
+                                if device.canRevoke {
+                                    Button(role: .destructive) {
+                                        devicePendingDelete = device
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     } label: {
                         HStack {
                             Image(systemName: device.isOnline ? "checkmark.circle.fill" : "circle")
@@ -638,6 +664,11 @@ private struct AddDeviceSheet: View {
                                     model.approveDevice(request: request.requestLink, label: request.label)
                                 } label: {
                                     Label("Add", systemImage: "plus")
+                                }
+                                Button(role: .destructive) {
+                                    model.rejectDevice(request: request.requestLink)
+                                } label: {
+                                    Label("Reject", systemImage: "xmark")
                                 }
                             }
                         }

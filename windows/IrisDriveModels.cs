@@ -20,6 +20,8 @@ public sealed class IrisDriveStatusData
     public string PrimaryStatus { get; init; } = "not_setup";
     public string PrimaryStatusLabel { get; init; } = "Ready";
     public string? DeviceLinkRequestUrl { get; init; }
+    public IReadOnlyList<DeviceLinkRequestRow> DeviceLinkRequests { get; init; } =
+        Array.Empty<DeviceLinkRequestRow>();
     public int AuthorizedDeviceCount { get; init; }
     public int OnlineDeviceCount { get; init; }
     public string? ConfigDirectory { get; init; }
@@ -39,70 +41,63 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<RelayStatusRow> RelayStatuses { get; init; } =
         Array.Empty<RelayStatusRow>();
 
-    public static IrisDriveStatusData FromJson(JsonElement root)
+    public static IrisDriveStatusData FromNativeJson(string json)
     {
-        var account = Object(root, "account");
-        var deviceLinkRequest = account.HasValue
-            ? Object(account.Value, "device_link_request")
-            : null;
-        var hashtree = Object(root, "hashtree");
-        var network = Object(root, "network");
-        var summary = Object(root, "summary");
-        var mountPath = ExtractDrivePath(root);
-        var drives = DriveRows(root, mountPath);
+        using var document = JsonDocument.Parse(json);
+        return FromNativeJson(document.RootElement);
+    }
+
+    public static IrisDriveStatusData FromNativeJson(JsonElement root)
+    {
+        var error = String(root, "error");
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            throw new InvalidOperationException(error);
+        }
+
+        JsonElement ui = Object(root, "ui") ?? default;
+        var account = ui.ValueKind == JsonValueKind.Object ? Object(ui, "account") : null;
+        var paths = ui.ValueKind == JsonValueKind.Object ? Object(ui, "paths") : null;
+        var setupComplete = ui.ValueKind == JsonValueKind.Object && Bool(ui, "setup_complete");
 
         return new IrisDriveStatusData
         {
-            Initialized = Bool(root, "initialized"),
-            DriveName = ExtractDriveName(root),
-            OwnerNpub = account.HasValue ? String(account.Value, "owner_npub") : null,
-            DeviceNpub = account.HasValue ? String(account.Value, "device_npub") : null,
+            Initialized = account.HasValue,
+            DriveName = NativeDriveName(ui),
+            OwnerNpub = account.HasValue ? String(account.Value, "owner_pubkey") : null,
+            DeviceNpub = account.HasValue ? String(account.Value, "device_pubkey") : null,
             HasOwnerSigningAuthority =
                 account.HasValue && Bool(account.Value, "has_owner_signing_authority"),
             AuthorizationState =
                 account.HasValue ? String(account.Value, "authorization_state") : null,
-            SetupState = summary.HasValue ? String(summary.Value, "setup_state") ?? "not_configured" : "not_configured",
-            SetupLabel = summary.HasValue ? String(summary.Value, "setup_label") ?? "Not linked" : "Not linked",
-            SetupComplete = summary.HasValue && Bool(summary.Value, "setup_complete"),
-            AwaitingApproval = summary.HasValue && Bool(summary.Value, "awaiting_approval"),
-            Revoked = summary.HasValue && Bool(summary.Value, "revoked"),
-            PrimaryStatus = summary.HasValue ? String(summary.Value, "primary_status") ?? "not_setup" : "not_setup",
-            PrimaryStatusLabel = summary.HasValue ? String(summary.Value, "primary_status_label") ?? "Ready" : "Ready",
-            DeviceLinkRequestUrl = deviceLinkRequest.HasValue
-                ? String(deviceLinkRequest.Value, "url")
+            SetupState = String(ui, "setup_state") ?? "not_configured",
+            SetupLabel = String(ui, "setup_label") ?? "Not linked",
+            SetupComplete = setupComplete,
+            AwaitingApproval = Bool(ui, "awaiting_approval"),
+            Revoked = Bool(ui, "revoked"),
+            PrimaryStatus = String(ui, "primary_status") ?? "not_setup",
+            PrimaryStatusLabel = String(ui, "primary_status_label") ?? "Ready",
+            DeviceLinkRequestUrl = account.HasValue
+                ? EmptyToNull(String(account.Value, "device_link_request"))
                 : null,
-            AuthorizedDeviceCount = summary.HasValue
-                ? Int(summary.Value, "authorized_device_count")
-                : 0,
-            OnlineDeviceCount = summary.HasValue ? Int(summary.Value, "online_device_count") : 0,
-            ConfigDirectory = String(root, "config_dir"),
-            CurrentRootCid = hashtree.HasValue ? String(hashtree.Value, "current_root_cid") : null,
-            ProviderRefreshKey = summary.HasValue
-                ? String(summary.Value, "provider_refresh_key") ?? ""
-                : "",
-            SnapshotUrl = hashtree.HasValue
-                ? String(hashtree.Value, "snapshot_url") ?? String(hashtree.Value, "permalink_url")
-                : null,
-            FileCount = summary.HasValue ? Int(summary.Value, "file_count") : 0,
-            VisibleFileBytes = summary.HasValue
-                ? Long(summary.Value, "visible_file_bytes")
-                : 0,
-            LocalNhashResolverEnabled = ExtractLocalNhashResolverEnabled(root),
-            Drives = drives,
-            Peers = PeerRows(root),
-            BackupTargets = network.HasValue
-                ? BackupTargetRows(network.Value)
-                : Array.Empty<BackupTargetRow>(),
-            Relays = network.HasValue ? StringArray(network.Value, "relays") : Array.Empty<string>(),
-            BlossomServers = network.HasValue
-                ? StringArray(network.Value, "blossom_servers")
-                : Array.Empty<string>(),
-            Fips = network.HasValue
-                ? FipsDiagnostics.FromJson(Object(network.Value, "fips"))
-                : FipsDiagnostics.Empty,
-            RelayStatuses = network.HasValue
-                ? RelayStatusesFromJson(network.Value)
-                : Array.Empty<RelayStatusRow>(),
+            DeviceLinkRequests = account.HasValue
+                ? NativeDeviceLinkRequests(account.Value)
+                : Array.Empty<DeviceLinkRequestRow>(),
+            AuthorizedDeviceCount = Int(ui, "authorized_device_count"),
+            OnlineDeviceCount = Int(ui, "online_device_count"),
+            ConfigDirectory = paths.HasValue ? String(paths.Value, "data_dir") : null,
+            ProviderRefreshKey = String(ui, "provider_change_key") ?? "",
+            SnapshotUrl = EmptyToNull(String(ui, "snapshot_link")),
+            FileCount = Int(ui, "file_count"),
+            VisibleFileBytes = Long(ui, "visible_file_bytes"),
+            LocalNhashResolverEnabled = true,
+            Drives = NativeDriveRows(ui, setupComplete),
+            Peers = NativePeerRows(ui),
+            BackupTargets = NativeBackupRows(ui),
+            Relays = StringArray(ui, "relays"),
+            BlossomServers = Array.Empty<string>(),
+            Fips = FipsDiagnostics.FromJson(Object(ui, "fips")),
+            RelayStatuses = RelayStatusesFromJson(ui),
         };
     }
 
@@ -115,144 +110,145 @@ public sealed class IrisDriveStatusData
     public bool IsRevoked =>
         Initialized && Revoked;
 
-    private static string ExtractDriveName(JsonElement root)
+    private static string NativeDriveName(JsonElement ui)
     {
-        if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)
+        if (ui.ValueKind == JsonValueKind.Object &&
+            ui.TryGetProperty("roots", out var roots) &&
+            roots.ValueKind == JsonValueKind.Array)
         {
-            foreach (var drive in drives.EnumerateArray())
+            foreach (var root in roots.EnumerateArray())
             {
-                if (String(drive, "drive_id") == "main")
-                {
-                    return String(drive, "display_name") ?? String(drive, "name") ?? "My Drive";
-                }
-            }
-
-            foreach (var drive in drives.EnumerateArray())
-            {
-                return String(drive, "display_name") ?? String(drive, "name") ?? "My Drive";
+                return String(root, "name") ?? "My Drive";
             }
         }
 
         return "My Drive";
     }
 
-    private static string? ExtractDrivePath(JsonElement root)
-    {
-        var summary = Object(root, "summary");
-        return summary.HasValue && Bool(summary.Value, "setup_complete")
-            ? WindowsCloudFiles.SyncRootPath
-            : null;
-    }
-
-    private static bool ExtractLocalNhashResolverEnabled(JsonElement root)
-    {
-        if (Object(root, "settings") is { } settings &&
-            settings.TryGetProperty("local_nhash_resolver_enabled", out var enabled) &&
-            (enabled.ValueKind == JsonValueKind.True || enabled.ValueKind == JsonValueKind.False))
-        {
-            return enabled.GetBoolean();
-        }
-
-        if (Object(root, "hashtree") is { } hashtree &&
-            Object(hashtree, "local_gateway") is { } gateway &&
-            gateway.TryGetProperty("enabled", out var gatewayEnabled) &&
-            (gatewayEnabled.ValueKind == JsonValueKind.True ||
-                gatewayEnabled.ValueKind == JsonValueKind.False))
-        {
-            return gatewayEnabled.GetBoolean();
-        }
-
-        return true;
-    }
-
-    private static IReadOnlyList<DriveRow> DriveRows(JsonElement root, string? mountPath)
+    private static IReadOnlyList<DriveRow> NativeDriveRows(JsonElement ui, bool setupComplete)
     {
         var rows = new List<DriveRow>();
-        if (root.TryGetProperty("drives", out var drives) && drives.ValueKind == JsonValueKind.Array)
+        var fallbackPath = setupComplete ? WindowsCloudFiles.SyncRootPath : null;
+        if (ui.ValueKind == JsonValueKind.Object &&
+            ui.TryGetProperty("roots", out var roots) &&
+            roots.ValueKind == JsonValueKind.Array)
         {
-            foreach (var drive in drives.EnumerateArray())
+            foreach (var root in roots.EnumerateArray())
             {
-                var name = String(drive, "display_name") ?? String(drive, "name") ??
-                    String(drive, "drive_id") ?? "main";
-                var path = mountPath ?? "Not ready";
-                var state = ShortText(String(drive, "last_root_cid") ?? "configured");
-                rows.Add(new DriveRow(name, path, state));
+                rows.Add(new DriveRow(
+                    String(root, "name") ?? "main",
+                    String(root, "local_path") ?? fallbackPath ?? "Not ready",
+                    ShortText(String(root, "status") ?? "configured")));
             }
         }
 
         if (rows.Count == 0)
         {
-            rows.Add(new DriveRow("main", mountPath ?? "Not ready", "-"));
+            rows.Add(new DriveRow("main", fallbackPath ?? "Not ready", "-"));
         }
 
         return rows;
     }
 
-    private static IReadOnlyList<PeerRow> PeerRows(JsonElement root)
+    private static IReadOnlyList<DeviceLinkRequestRow> NativeDeviceLinkRequests(JsonElement account)
     {
+        if (!account.TryGetProperty("inbound_device_link_requests", out var requests) ||
+            requests.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<DeviceLinkRequestRow>();
+        }
+
+        var rows = new List<DeviceLinkRequestRow>();
+        foreach (var request in requests.EnumerateArray())
+        {
+            var device = String(request, "device_pubkey") ?? "";
+            rows.Add(new DeviceLinkRequestRow(
+                device,
+                String(request, "label") ?? "",
+                String(request, "request_link") ?? device));
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<PeerRow> NativePeerRows(JsonElement ui)
+    {
+        if (ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("devices", out var devices) ||
+            devices.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<PeerRow>();
+        }
+
         var rows = new List<PeerRow>();
-        if (!root.TryGetProperty("peers", out var peers) || peers.ValueKind != JsonValueKind.Array)
+        foreach (var device in devices.EnumerateArray())
         {
-            return rows;
-        }
+            var pubkey = String(device, "pubkey") ?? "";
+            var metadata = new List<string>();
+            foreach (var value in new[]
+            {
+                String(device, "role_label"),
+                String(device, "state_label"),
+                String(device, "detail"),
+            })
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    metadata.Add(value);
+                }
+            }
 
-        foreach (var peer in peers.EnumerateArray())
-        {
-            var deviceNpub = String(peer, "device_npub") ?? "";
-            var isCurrentDevice = Bool(peer, "is_current_device");
-            var role = String(peer, "role") ?? "member";
-            var title = String(peer, "display_label") ?? "";
-            var detail = String(peer, "detail") ?? "";
-            var isOnline = Bool(peer, "fips_online");
-            var state = String(peer, "connection_label") ?? "";
-            var canManagePeer = !string.IsNullOrWhiteSpace(deviceNpub);
+            var canManagePeer = !string.IsNullOrWhiteSpace(pubkey);
             rows.Add(new PeerRow(
-                deviceNpub,
-                title,
-                role,
-                detail,
-                state,
-                isOnline,
-                isCurrentDevice,
-                canManagePeer && Bool(peer, "can_revoke"),
-                canManagePeer && Bool(peer, "can_appoint_admin"),
-                canManagePeer && Bool(peer, "can_demote_admin")));
+                pubkey,
+                String(device, "display_label") ?? "",
+                String(device, "role") ?? "member",
+                string.Join(" | ", metadata),
+                String(device, "connection_label") ?? "",
+                Bool(device, "is_online"),
+                Bool(device, "is_current_device"),
+                canManagePeer && Bool(device, "can_revoke"),
+                canManagePeer && Bool(device, "can_appoint_admin"),
+                canManagePeer && Bool(device, "can_demote_admin")));
         }
 
         return rows;
     }
 
-    private static IReadOnlyList<BackupTargetRow> BackupTargetRows(JsonElement network)
+    private static IReadOnlyList<BackupTargetRow> NativeBackupRows(JsonElement ui)
     {
-        var rows = new List<BackupTargetRow>();
-        if (!network.TryGetProperty("backup_targets", out var targets) ||
-            targets.ValueKind != JsonValueKind.Array)
+        if (ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("backups", out var backups) ||
+            backups.ValueKind != JsonValueKind.Array)
         {
-            return rows;
+            return Array.Empty<BackupTargetRow>();
         }
 
-        foreach (var target in targets.EnumerateArray())
+        var rows = new List<BackupTargetRow>();
+        foreach (var backup in backups.EnumerateArray())
         {
-            var value = String(target, "target") ?? "";
-            var kind = String(target, "kind") ?? "backup";
-            var title = String(target, "title") ?? "Backup";
-            var detail = String(target, "detail") ?? value;
-            var state = String(target, "state") ?? "";
-
+            var title = String(backup, "label") ?? "Backup";
             rows.Add(new BackupTargetRow(
-                String(target, "id") ?? value,
-                kind,
-                title ?? "Backup",
-                detail,
-                state));
+                title,
+                "backup",
+                title,
+                String(backup, "detail") ?? "",
+                String(backup, "state") ?? ""));
         }
 
         return rows;
+    }
+
+    private static string? EmptyToNull(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static IReadOnlyList<string> StringArray(JsonElement root, string name)
     {
-        if (!root.TryGetProperty(name, out var array) || array.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var array) ||
+            array.ValueKind != JsonValueKind.Array)
         {
             return Array.Empty<string>();
         }
@@ -272,7 +268,8 @@ public sealed class IrisDriveStatusData
     private static IReadOnlyList<RelayStatusRow> RelayStatusesFromJson(JsonElement network)
     {
         var rows = new List<RelayStatusRow>();
-        if (!network.TryGetProperty("relay_statuses", out var statuses) ||
+        if (network.ValueKind != JsonValueKind.Object ||
+            !network.TryGetProperty("relay_statuses", out var statuses) ||
             statuses.ValueKind != JsonValueKind.Array)
         {
             return rows;
@@ -296,21 +293,26 @@ public sealed class IrisDriveStatusData
 
     private static JsonElement? Object(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Object
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.Object
             ? value
             : null;
     }
 
     private static string? String(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
     }
 
     private static int Int(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) &&
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
             value.ValueKind == JsonValueKind.Number &&
             value.TryGetInt32(out var result)
             ? result
@@ -319,7 +321,8 @@ public sealed class IrisDriveStatusData
 
     private static long Long(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) &&
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
             value.ValueKind == JsonValueKind.Number &&
             value.TryGetInt64(out var result)
             ? result
@@ -328,7 +331,8 @@ public sealed class IrisDriveStatusData
 
     private static bool Bool(JsonElement root, string name)
     {
-        return root.TryGetProperty(name, out var value) &&
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
             value.ValueKind == JsonValueKind.True;
     }
 
@@ -468,6 +472,11 @@ public sealed record RelayStatusRow(
     string Status,
     string StatusLabel,
     string Health);
+
+public sealed record DeviceLinkRequestRow(
+    string DeviceNpub,
+    string Label,
+    string RequestUrl);
 
 public sealed record PeerRow(
     string DeviceNpub,

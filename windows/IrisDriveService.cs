@@ -12,16 +12,23 @@ public sealed class IrisDriveService
 {
     private const string LocalMutationScanEnv = "IRIS_DRIVE_WINDOWS_CLOUD_SCAN_LOCAL_MUTATIONS";
     private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
+    private readonly IrisDriveNativeCore nativeCore;
+
+    public IrisDriveService()
+    {
+        nativeCore = new IrisDriveNativeCore(
+            DefaultConfigDirectory,
+            typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0");
+    }
 
     public string DefaultConfigDirectory =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "iris-drive");
 
-    public async Task<IrisDriveStatusData> StatusAsync()
+    public Task<IrisDriveStatusData> StatusAsync()
     {
-        using var document = await RunJsonAsync("status");
-        return IrisDriveStatusData.FromJson(document.RootElement);
+        return Task.FromResult(IrisDriveStatusData.FromNativeJson(nativeCore.RefreshJson()));
     }
 
     public Task CreateProfileAsync(string username, string profilePhotoPath)
@@ -60,16 +67,9 @@ public sealed class IrisDriveService
         return FinishSetupAsync(new[] { "link", owner.Trim() });
     }
 
-    public async Task<bool> IsCompleteLinkInputAsync(string input)
+    public Task<bool> IsCompleteLinkInputAsync(string input)
     {
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return false;
-        }
-
-        using var document = await RunJsonAsync("link-input", "validate", input.Trim());
-        return document.RootElement.TryGetProperty("is_complete", out var isComplete) &&
-            isComplete.ValueKind == JsonValueKind.True;
+        return Task.FromResult(IrisDriveNativeCore.IsCompleteLinkInput(input));
     }
 
     public Task RelinkDeviceAsync(string owner)
@@ -89,12 +89,34 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        await RunAsync(BuildLabelArgs(new[] { "approve", device.Trim() }, label));
+        await nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "approve_device",
+                ["request"] = device.Trim(),
+                ["label"] = label.Trim(),
+            });
+    }
+
+    public async Task RejectDeviceAsync(string request)
+    {
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            throw new InvalidOperationException("Device request is required.");
+        }
+
+        await nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "reject_device",
+                ["request"] = request.Trim(),
+            });
     }
 
     public Task ResetInviteAsync()
     {
-        return RunAsync("devices", "reset-invite");
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object> { ["type"] = "reset_invite" });
     }
 
     public Task RevokeDeviceAsync(string device)
@@ -109,7 +131,12 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return RunAsync("revoke", device.Trim());
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "revoke_device",
+                ["device_pubkey"] = device.Trim(),
+            });
     }
 
     public Task AppointAdminAsync(string device)
@@ -119,7 +146,12 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return RunAsync("devices", "appoint-admin", device.Trim());
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "appoint_admin",
+                ["device_pubkey"] = device.Trim(),
+            });
     }
 
     public Task DemoteAdminAsync(string device)
@@ -129,7 +161,12 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return RunAsync("devices", "demote-admin", device.Trim());
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "demote_admin",
+                ["device_pubkey"] = device.Trim(),
+            });
     }
 
     public Task AddRelayAsync(string relay)
@@ -139,12 +176,18 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return RunAsync("relays", "add", relay.Trim());
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_relay",
+                ["url"] = relay.Trim(),
+            });
     }
 
     public Task ResetRelaysAsync()
     {
-        return RunAsync("relays", "reset");
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object> { ["type"] = "reset_relays" });
     }
 
     public Task AddBackupTargetAsync(string target, string label)
@@ -177,7 +220,8 @@ public sealed class IrisDriveService
 
     public Task LogoutAsync()
     {
-        return RunAsync("logout");
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object> { ["type"] = "logout" });
     }
 
     public Process StartDaemonProcess()
@@ -295,29 +339,22 @@ public sealed class IrisDriveService
 
     public async Task<string> CurrentAccountValueAsync(string key)
     {
-        using var document = await RunJsonAsync("status");
-        if (!document.RootElement.TryGetProperty("account", out var account) ||
-            account.ValueKind != JsonValueKind.Object ||
-            !account.TryGetProperty(key, out var value) ||
-            value.ValueKind != JsonValueKind.String)
+        var status = await StatusAsync();
+        var value = key switch
         {
-            throw new InvalidOperationException("No account key available.");
-        }
+            "owner_npub" => status.OwnerNpub,
+            "device_npub" => status.DeviceNpub,
+            _ => null,
+        };
 
-        return value.GetString() ?? "";
+        return string.IsNullOrWhiteSpace(value)
+            ? throw new InvalidOperationException("No account key available.")
+            : value;
     }
 
     private async Task FinishSetupAsync(string[] arguments)
     {
         await RunAsync(arguments);
-    }
-
-    private static string[] BuildLabelArgs(string[] prefix, string label)
-    {
-        var trimmed = label.Trim();
-        return string.IsNullOrEmpty(trimmed)
-            ? prefix
-            : prefix.Concat(new[] { "--label", trimmed }).ToArray();
     }
 
     private async Task<JsonDocument> RunJsonAsync(params string[] arguments)

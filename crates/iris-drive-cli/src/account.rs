@@ -166,6 +166,36 @@ pub(crate) fn cmd_approve(
     Ok(())
 }
 
+pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    if !state.can_manage_devices() {
+        return Err(anyhow::anyhow!(
+            "this device is not an admin - only admin devices can reject device requests"
+        ));
+    }
+    let (device_hex, _) = resolve_device_approval_input(device, &state.owner_pubkey, None)
+        .context("parsing device rejection request")?;
+    let rejected = state
+        .reject_inbound_device_link_request(&device_hex)
+        .context("rejecting device request")?;
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "rejected": rejected,
+            "rejected_device_npub": account_npub(&device_hex),
+            "inbound_device_link_requests": inbound_device_link_requests_json(
+                config.account.as_ref().expect("account still present")
+            ),
+        })
+    );
+    Ok(())
+}
+
 pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<()> {
     let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;

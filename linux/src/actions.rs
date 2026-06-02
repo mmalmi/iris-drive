@@ -6,8 +6,8 @@ pub(crate) fn add_relay(model: &AppRef) {
     if relay.is_empty() {
         return;
     }
-    match run_idrive_owned(&["relays".to_string(), "add".to_string(), relay]) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::AddRelay { url: relay }) {
+        Ok(_) => {
             model.ui.relay_entry.set_text("");
             refresh(model);
         }
@@ -74,15 +74,15 @@ pub(crate) fn set_local_nhash_resolver(model: &AppRef, enabled: bool) {
 }
 
 pub(crate) fn reset_relays(model: &AppRef) {
-    match run_idrive(["relays", "reset"]) {
-        Ok(()) => refresh(model),
+    match dispatch_desktop_action(NativeAppAction::ResetRelays) {
+        Ok(_) => refresh(model),
         Err(error) => model.ui.notice.set_text(&error),
     }
 }
 
 pub(crate) fn reset_invite(model: &AppRef) {
-    match run_idrive(["devices", "reset-invite"]) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::ResetInvite) {
+        Ok(_) => {
             model.ui.notice.set_text("Invite reset");
             refresh(model);
         }
@@ -92,8 +92,8 @@ pub(crate) fn reset_invite(model: &AppRef) {
 
 pub(crate) fn logout(model: &AppRef) {
     stop_daemon(model);
-    match run_idrive(["logout"]) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::Logout) {
+        Ok(_) => {
             model.ui.notice.set_text("Logged out");
             refresh(model);
         }
@@ -122,6 +122,71 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
+
+    if let Ok(state) = desktop_state() {
+        if let Some(requests) = account(&state)
+            .map(|account| account.inbound_device_link_requests.as_slice())
+            .filter(|requests| !requests.is_empty())
+        {
+            let heading = gtk::Label::new(Some("Devices asking to join"));
+            heading.add_css_class("iris-row-title");
+            heading.set_xalign(0.0);
+            body.append(&heading);
+            for request in requests {
+                let request_url = request.request_link.clone();
+                let request_label = if request.label.is_empty() {
+                    "New device".to_string()
+                } else {
+                    request.label.clone()
+                };
+                let request_device = request.device_pubkey.clone();
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row.set_valign(gtk::Align::Center);
+                let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+                labels.set_hexpand(true);
+                let title = gtk::Label::new(Some(&request_label));
+                title.set_xalign(0.0);
+                title.add_css_class("iris-row-title");
+                labels.append(&title);
+                let subtitle = gtk::Label::new(Some(&request_device));
+                subtitle.set_xalign(0.0);
+                subtitle.add_css_class("iris-row-subtitle");
+                subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+                labels.append(&subtitle);
+                row.append(&labels);
+                let reject = pill_button("Reject");
+                reject.add_css_class("destructive-action");
+                let add_request = primary_button("Add");
+                {
+                    let model = Rc::clone(model);
+                    let request_url = request_url.clone();
+                    let dialog = dialog.clone();
+                    reject.connect_clicked(move |_| match reject_device(&request_url) {
+                        Ok(()) => {
+                            model.ui.notice.set_text("Device request rejected");
+                            refresh(&model);
+                            dialog.close();
+                        }
+                        Err(error) => model.ui.notice.set_text(&error),
+                    });
+                }
+                {
+                    let model = Rc::clone(model);
+                    let request_url = request_url.clone();
+                    let request_label = request_label.clone();
+                    let dialog = dialog.clone();
+                    add_request.connect_clicked(move |_| {
+                        if approve_device_values(&model, request_url.clone(), request_label.clone()) {
+                            dialog.close();
+                        }
+                    });
+                }
+                row.append(&reject);
+                row.append(&add_request);
+                body.append(&row);
+            }
+        }
+    }
 
     let help = gtk::Label::new(Some(
         "Paste the Device ID shown on the other device when you link it manually.",
@@ -182,15 +247,13 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
         return false;
     }
 
-    let mut args = vec!["approve".to_string(), device];
     let label = label.trim().to_string();
-    if !label.is_empty() {
-        args.push("--label".to_string());
-        args.push(label);
-    }
 
-    match run_idrive_owned(&args) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::ApproveDevice {
+        request: device,
+        label,
+    }) {
+        Ok(_) => {
             restart_daemon(model);
             model.ui.notice.set_text("Device approved");
             refresh(model);
@@ -206,7 +269,7 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Delete device")
+        .title("Remove device")
         .modal(true)
         .default_width(360)
         .build();
@@ -220,13 +283,13 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Delete device?"));
+    let title = gtk::Label::new(Some("Remove device?"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
 
     let message = gtk::Label::new(Some(&format!(
-        "Delete {label} from Iris Drive? This removes its access to future syncs."
+        "Remove {label} from Iris Drive? This removes its access to future syncs."
     )));
     message.add_css_class("iris-muted");
     message.set_xalign(0.0);
@@ -236,7 +299,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
     let cancel = pill_button("Cancel");
-    let delete = pill_button("Delete");
+    let delete = pill_button("Remove");
     delete.add_css_class("destructive-action");
     buttons.append(&cancel);
     buttons.append(&delete);
@@ -252,7 +315,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
         delete.connect_clicked(move |_| match delete_device(&device_npub) {
             Ok(()) => {
                 restart_daemon(&model);
-                model.ui.notice.set_text("Device deleted");
+                model.ui.notice.set_text("Device removed");
                 refresh(&model);
                 dialog.close();
             }
@@ -265,8 +328,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
 }
 
 pub(crate) fn open_drive_folder(model: &AppRef) {
-    let status = run_idrive_json(["status"]).unwrap_or(Value::Null);
-    if !ensure_daemon_running(model, &status) {
+    if !ensure_daemon_running(model) {
         model.ui.notice.set_text("Could not start sync");
         return;
     }
@@ -281,8 +343,8 @@ pub(crate) fn open_drive_folder(model: &AppRef) {
 pub(crate) fn wait_for_mounted_dir(timeout: Duration) -> Option<PathBuf> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
-        if let Ok(status) = run_idrive_json(["status"])
-            && let Some(folder) = mounted_dir(&status)
+        if let Ok(state) = desktop_state()
+            && let Some(folder) = mounted_dir(&state)
             && wait_for_path(&folder, Duration::from_millis(100))
         {
             return Some(folder);
@@ -346,16 +408,18 @@ pub(crate) fn open_snapshot_link(model: &AppRef) {
 }
 
 pub(crate) fn current_snapshot_link() -> Result<String, String> {
-    let json = run_idrive_json(["status"])?;
-    snapshot_link(&json)
+    let state = desktop_state()?;
+    snapshot_link(&state)
         .map(str::to_string)
         .ok_or_else(|| "No snapshot available".to_string())
 }
 
 pub(crate) fn current_account_value(key: &str) -> Result<String, String> {
-    let json = run_idrive_json(["status"])?;
-    let account = account_json(&json);
-    find_string(account, &[key])
-        .map(str::to_string)
-        .ok_or_else(|| "No account key available".to_string())
+    let state = desktop_state()?;
+    let account = account(&state).ok_or_else(|| "No account key available".to_string())?;
+    match key {
+        "owner_npub" => Ok(account.owner_pubkey.clone()),
+        "device_npub" => Ok(account.device_pubkey.clone()),
+        _ => Err("No account key available".to_string()),
+    }
 }

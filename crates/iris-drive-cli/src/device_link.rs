@@ -18,6 +18,7 @@ pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> 
         ),
         DevicesCmd::Requests => cmd_devices_requests(config_dir),
         DevicesCmd::Approve { request, label } => cmd_approve(config_dir, &request, label),
+        DevicesCmd::Reject { request } => cmd_reject(config_dir, &request),
         DevicesCmd::List => cmd_roster(config_dir),
         DevicesCmd::Revoke { device } => cmd_revoke(config_dir, &device),
         DevicesCmd::AppointAdmin { device } => cmd_appoint_admin(config_dir, &device),
