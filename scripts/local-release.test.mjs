@@ -389,6 +389,7 @@ test('local-release dry-run passes release versions to macOS and Android builder
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
   assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
+  assert.match(result.stdout, /--timestamp=http:\/\/timestamp\.apple\.com\/ts01/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
   assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
 })
