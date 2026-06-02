@@ -195,6 +195,7 @@ structure:
     ./scripts/check-linux-core-owned-status.sh
     ./scripts/check-macos-native-link-input.sh
     ./scripts/check-macos-normalized-status.sh
+    ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh
     ./scripts/check-relay-config-normalization.sh

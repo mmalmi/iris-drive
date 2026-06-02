@@ -4,12 +4,13 @@ import FileProvider
 import Security
 import SwiftUI
 
-private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
+let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 private let irisDriveDisplayName = "Iris Drive"
-private let irisDriveFileProviderDomainDisplayName = "My Drive"
+let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
+let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
@@ -180,8 +181,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         let paths = runtimePathsForMenu ?? runtimePaths()
-        guard localProfileExists(paths: paths), IrisDriveStatus.shared.setupComplete else {
+        guard localProfileExists(paths: paths) else {
             fileProviderDomainState = .unavailable
+            removeFileProviderDomainRegistration(
+                reason: "local profile missing",
+                runtime: currentFileProviderRuntimeConfig()
+            )
+            return
+        }
+        guard IrisDriveStatus.shared.setupComplete else {
+            fileProviderDomainState = .unavailable
+            return
+        }
+        ensureFileProviderDomain()
+    }
+
+    private func ensureFileProviderDomainAfterStatusIfNeeded() {
+        guard fileProviderIntegrationEnabled else { return }
+        guard IrisDriveStatus.shared.setupComplete else { return }
+        guard fileProviderDomainState != .registered
+            || !fileProviderRegistrationIdentityIsCurrent()
+        else {
             return
         }
         ensureFileProviderDomain()
@@ -1605,6 +1625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if status.setupComplete, let paths = self.runtimePathsForMenu {
                 self.prepareFileProviderRuntime(paths: paths, idrive: self.idriveExecutableURL())
+                self.ensureFileProviderDomainAfterStatusIfNeeded()
             }
             if status.revoked {
                 self.userRequestedSyncStop = true
@@ -1835,6 +1856,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Self.applyStatusSummary(summary, to: status)
             }
 
+            if status.setupComplete, let paths = self.runtimePathsForMenu {
+                self.prepareFileProviderRuntime(paths: paths, idrive: self.idriveExecutableURL())
+                self.ensureFileProviderDomainAfterStatusIfNeeded()
+            }
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
             self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "external status changed")
@@ -2177,32 +2202,7 @@ struct IrisDriveRuntimePaths {
     let configDirectory: URL
 }
 
-private struct FileProviderRuntimeConfig: Codable {
-    let configDirectory: String
-    let idriveExecutable: String?
-
-    var domainUserInfo: [String: String] {
-        var userInfo = ["config_dir": configDirectory]
-        if let idriveExecutable, !idriveExecutable.isEmpty {
-            userInfo["idrive_executable"] = idriveExecutable
-        }
-        return userInfo
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case configDirectory = "config_dir"
-        case idriveExecutable = "idrive_executable"
-    }
-}
-
-private enum FileProviderDomainState {
-    case unknown
-    case registered
-    case disabled
-    case unavailable
-}
-
-private func irisDriveDebugLog(_ message: String) {
+func irisDriveDebugLog(_ message: String) {
     NSLog("%@", message)
     if let data = (message + "\n").data(using: .utf8) {
         for directory in irisDriveDebugLogDirectories() {
@@ -2261,146 +2261,11 @@ private func irisDriveDebugLogDirectories() -> [URL] {
     return directories
 }
 
-private func ensureFileProviderDomainRegistered(
-    attempt: Int = 1,
-    runtime: FileProviderRuntimeConfig,
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    addFileProviderDomain(attempt: attempt, runtime: runtime, completion)
-}
-
-private func irisDriveFileProviderDomain(
-    runtime: FileProviderRuntimeConfig? = nil
-) -> NSFileProviderDomain {
-    let domain = NSFileProviderDomain(
-        identifier: irisDriveDomainIdentifier,
-        displayName: irisDriveFileProviderDomainDisplayName
-    )
-    if let runtime, #available(macOS 15.0, *) {
-        domain.userInfo = runtime.domainUserInfo
-    }
-    if currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode") {
-        domain.testingModes = [.alwaysEnabled]
-    }
-    return domain
-}
-
-private func resetFileProviderDomain(
-    reason: String,
-    runtime: FileProviderRuntimeConfig,
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    let domain = irisDriveFileProviderDomain(runtime: runtime)
-    irisDriveDebugLog("Iris Drive FileProvider domain reset: \(reason)")
-    let finish: (Error?) -> Void = { error in
-        if let error {
-            irisDriveDebugLog("Iris Drive FileProvider domain remove during reset failed: \(error)")
-        } else {
-            irisDriveDebugLog("Iris Drive FileProvider domain removed during reset")
-        }
-        ensureFileProviderDomainRegistered(runtime: runtime, completion)
-    }
-    if #available(macOS 13.0, *) {
-        NSFileProviderManager.remove(domain, mode: .removeAll) { _, error in
-            finish(error)
-        }
-        return
-    }
-    NSFileProviderManager.remove(domain) { error in
-        finish(error)
-    }
-}
-
-private func addFileProviderDomain(
-    attempt: Int,
-    runtime: FileProviderRuntimeConfig,
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    irisDriveDebugLog(
-        "Iris Drive FileProvider registration attempt \(attempt) " +
-        "config=\(runtime.configDirectory) idrive=\(runtime.idriveExecutable ?? "nil")"
-    )
-    let domain = irisDriveFileProviderDomain(runtime: runtime)
-
-    NSFileProviderManager.add(domain) { error in
-        if let error {
-            queryFileProviderDomainState { state in
-                if state == .registered || state == .disabled {
-                    irisDriveDebugLog(
-                        "Iris Drive FileProvider domain found after add error: \(error)"
-                    )
-                    completion(state)
-                    return
-                }
-
-                if attempt < 5 {
-                    let delay = Double(attempt)
-                    irisDriveDebugLog(
-                        "Iris Drive FileProvider registration attempt \(attempt) failed; retrying in \(delay)s: \(error)"
-                    )
-                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
-                        ensureFileProviderDomainRegistered(
-                            attempt: attempt + 1,
-                            runtime: runtime,
-                            completion
-                        )
-                    }
-                    return
-                }
-
-                irisDriveDebugLog("Iris Drive FileProvider registration failed: \(error)")
-                completion(.unavailable)
-            }
-        } else {
-            queryFileProviderDomainState { state in
-                if state == .registered || state == .disabled {
-                    completion(state)
-                } else {
-                    irisDriveDebugLog("Iris Drive FileProvider domain registered")
-                    completion(.registered)
-                }
-            }
-        }
-    }
-}
-
-private func queryFileProviderDomainState(
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
-        if let error {
-            irisDriveDebugLog("Iris Drive FileProvider domain query failed: \(error)")
-        }
-        guard let domain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier })
-        else {
-            completion(.unavailable)
-            return
-        }
-
-        irisDriveDebugLog(
-            "Iris Drive FileProvider domain state userEnabled=\(domain.userEnabled) " +
-            "hidden=\(domain.isHidden) disconnected=\(domain.isDisconnected)"
-        )
-        completion(domain.userEnabled ? .registered : .disabled)
-    }
-}
-
-private func shouldRepairFileProviderDomain(after error: Error) -> Bool {
-    let nsError = error as NSError
-    if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
-        return true
-    }
-    if nsError.domain == NSFileProviderErrorDomain && [-2001, -2014].contains(nsError.code) {
-        return true
-    }
-    return false
-}
-
-private func currentProcessEntitlementValue(_ name: String) -> Any? {
+func currentProcessEntitlementValue(_ name: String) -> Any? {
     IrisDriveCodeSigning.currentEntitlementValue(name)
 }
 
-private func currentProcessHasEntitlement(_ name: String) -> Bool {
+func currentProcessHasEntitlement(_ name: String) -> Bool {
     guard let value = currentProcessEntitlementValue(name) else {
         return false
     }
