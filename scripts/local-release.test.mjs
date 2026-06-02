@@ -494,6 +494,15 @@ test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
   assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
 })
 
+test('iOS build handles missing App Store Connect auth args under bash nounset', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /\$\{ASC_AUTH_ARGS\[@\]\+"\$\{ASC_AUTH_ARGS\[@\]\}"\}/)
+})
+
 test('TestFlight helper creates a missing App Store Connect app record', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
   const keyPath = join(root, 'AuthKey_TESTKEY123.p8')

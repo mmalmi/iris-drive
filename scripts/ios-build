@@ -211,7 +211,7 @@ run_ios_archive() {
     -destination "generic/platform=iOS" \
     -archivePath "$ARCHIVE_PATH" \
     -allowProvisioningUpdates \
-    "${ASC_AUTH_ARGS[@]}" \
+    ${ASC_AUTH_ARGS[@]+"${ASC_AUTH_ARGS[@]}"} \
     DEVELOPMENT_TEAM="$TEAM_ID" \
     MARKETING_VERSION="$version" \
     CURRENT_PROJECT_VERSION="$build" \
@@ -292,7 +292,7 @@ run_ios_export() {
     -exportPath "$EXPORT_DIR" \
     -exportOptionsPlist "$EXPORT_OPTIONS" \
     -allowProvisioningUpdates \
-    "${ASC_AUTH_ARGS[@]}"
+    ${ASC_AUTH_ARGS[@]+"${ASC_AUTH_ARGS[@]}"}
 }
 
 ipa_path() {
