@@ -10,6 +10,7 @@ private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
+private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let foregroundSyncIntervalNanoseconds: UInt64 = 5_000_000_000
 private let nativeBackgroundStackSize = 8 * 1024 * 1024
 #if DEBUG
@@ -56,6 +57,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var lastProviderSignalKey = ""
     private var currentProviderDirectoryPaths: [String] = []
     private var foregroundSyncTask: Task<Void, Never>?
+    private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
 
     init() {
@@ -136,6 +138,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func ensureFileProviderDomainIfProfileExists() {
         guard isSetupComplete else {
+            removeFileProviderDomain()
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
             return
@@ -152,6 +155,10 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         fileProviderStatus = "Registering Files provider"
         rebuildDerivedState()
+        if fileProviderDomainRemovalInFlight {
+            waitForFileProviderRemovalThenEnsure(completion: completion)
+            return
+        }
         let domain = irisDriveFileProviderDomain()
         NSFileProviderManager.add(domain) { [weak self] error in
             if error == nil {
@@ -171,10 +178,9 @@ final class IrisDriveMobileModel: ObservableObject {
                 let exists = existingDomain != nil
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    #if DEBUG
                     if let existingDomain,
-                       self.shouldRepairFileProviderDebugRegistration(existingDomain) {
-                        self.repairFileProviderDebugRegistration(
+                       self.shouldRepairFileProviderRegistration(existingDomain) {
+                        self.repairFileProviderRegistration(
                             existingDomain: existingDomain,
                             completion: completion
                         )
@@ -183,7 +189,6 @@ final class IrisDriveMobileModel: ObservableObject {
                     if exists {
                         self.markFileProviderRegistrationCurrent()
                     }
-                    #endif
                     self.fileProviderStatus = exists
                         ? "Files provider registered"
                         : "Files provider unavailable"
@@ -297,10 +302,30 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func removeFileProviderDomain() {
         let domain = irisDriveFileProviderDomain()
-        NSFileProviderManager.remove(domain) { _ in }
+        fileProviderDomainRemovalInFlight = true
+        NSFileProviderManager.remove(domain) { [weak self] _ in
+            Task { @MainActor in
+                self?.fileProviderDomainRemovalInFlight = false
+            }
+        }
+        defaults.removeObject(forKey: fileProviderRegistrationIdentityKey)
         #if DEBUG
         defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
         #endif
+    }
+
+    private func waitForFileProviderRemovalThenEnsure(completion: ((Bool) -> Void)?) {
+        Task { @MainActor [weak self] in
+            for _ in 0..<30 where self?.fileProviderDomainRemovalInFlight == true {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard let self else {
+                completion?(false)
+                return
+            }
+            self.fileProviderDomainRemovalInFlight = false
+            self.ensureFileProviderDomain(completion: completion)
+        }
     }
 
     private func irisDriveFileProviderDomain() -> NSFileProviderDomain {
@@ -315,21 +340,44 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func markFileProviderRegistrationCurrent() {
+        let identity = fileProviderRegistrationIdentity
+        if identity.isEmpty {
+            defaults.removeObject(forKey: fileProviderRegistrationIdentityKey)
+        } else {
+            defaults.set(identity, forKey: fileProviderRegistrationIdentityKey)
+        }
         #if DEBUG
         defaults.set(fileProviderDebugRegistrationVersion, forKey: fileProviderDebugRegistrationVersionKey)
         #endif
     }
 
-    #if DEBUG
-    private func shouldRepairFileProviderDebugRegistration(_ domain: NSFileProviderDomain) -> Bool {
-        if defaults.integer(forKey: fileProviderDebugRegistrationVersionKey)
-            < fileProviderDebugRegistrationVersion {
-            return true
+    private var fileProviderRegistrationIdentity: String {
+        guard isSetupComplete,
+              let account = lastState?.ui.account,
+              !account.ownerPubkey.isEmpty,
+              !account.devicePubkey.isEmpty
+        else {
+            return ""
         }
-        return !domain.testingModes.contains(.alwaysEnabled)
+        return "\(account.ownerPubkey):\(account.devicePubkey)"
     }
 
-    private func repairFileProviderDebugRegistration(
+    private func shouldRepairFileProviderRegistration(_ domain: NSFileProviderDomain) -> Bool {
+        let currentIdentity = fileProviderRegistrationIdentity
+        if currentIdentity.isEmpty {
+            return true
+        }
+        if defaults.string(forKey: fileProviderRegistrationIdentityKey) != currentIdentity {
+            return true
+        }
+        #if DEBUG
+        return shouldRepairFileProviderDebugRegistration(domain)
+        #else
+        return false
+        #endif
+    }
+
+    private func repairFileProviderRegistration(
         existingDomain: NSFileProviderDomain,
         completion: ((Bool) -> Void)?
     ) {
@@ -352,6 +400,7 @@ final class IrisDriveMobileModel: ObservableObject {
                         return
                     }
                     self.markFileProviderRegistrationCurrent()
+                    self.lastProviderSignalKey = ""
                     self.fileProviderStatus = "Files provider registered"
                     self.rebuildDerivedState()
                     self.signalFileProviderIfNeeded()
@@ -359,6 +408,15 @@ final class IrisDriveMobileModel: ObservableObject {
                 }
             }
         }
+    }
+
+    #if DEBUG
+    private func shouldRepairFileProviderDebugRegistration(_ domain: NSFileProviderDomain) -> Bool {
+        if defaults.integer(forKey: fileProviderDebugRegistrationVersionKey)
+            < fileProviderDebugRegistrationVersion {
+            return true
+        }
+        return !domain.testingModes.contains(.alwaysEnabled)
     }
     #endif
 
@@ -586,6 +644,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func resetLocalState() {
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
+        removeFileProviderDomain()
         lastState = nil
         restoreSecret = ""
         syncRunning = false
@@ -593,9 +652,6 @@ final class IrisDriveMobileModel: ObservableObject {
         statusDetail = "Waiting for this device to be linked."
         profileUsername = ""
         profilePhotoName = ""
-        #if DEBUG
-        defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
-        #endif
         persistLocalSettings()
         applyStateJson(nativeCore.refreshJson())
     }
