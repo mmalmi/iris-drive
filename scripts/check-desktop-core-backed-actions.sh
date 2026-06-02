@@ -33,6 +33,12 @@ require_contains macos/Sources/IrisDriveDesktopCore.swift "final class IrisDrive
 require_contains macos/Sources/IrisDriveMacApp.swift "desktopCore.refreshJson()"
 require_contains macos/Sources/IrisDriveMacApp.swift "applyNativeStatePayload"
 require_contains macos/Sources/IrisDriveControlPanel.swift "Reject"
+require_contains scripts/macos-dev-app.sh "cargo build -p iris-drive-app-core"
+require_contains scripts/macos-dev-app.sh "libiris_drive_app_core.a"
+require_contains scripts/local-release.mjs "iris-drive-app-core"
+require_contains scripts/local-release.mjs "libiris_drive_app_core.a"
+require_contains scripts/dev-vm-update-run.sh "iris-drive-app-core"
+require_contains scripts/dev-vm-update-run.sh "libiris_drive_app_core.a"
 require_absent macos/Shared/IrisDriveRuntimeSupport.swift "statusPayload"
 require_absent macos/Sources/IrisDriveMacApp.swift 'arguments: ["approve", device]'
 require_absent macos/Sources/IrisDriveMacApp.swift 'arguments: ["devices", command, device]'

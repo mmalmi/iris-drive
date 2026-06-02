@@ -357,6 +357,24 @@ impl SyncCluster {
         );
     }
 
+    async fn wait_for_file(&self, client: Client, path: &str, expected: &[u8], label: &str) {
+        let local_path = self.path(client).join(path);
+        let start = Instant::now();
+        while start.elapsed() < WAIT_TIMEOUT {
+            self.refresh_view(client).await;
+            if matches!(std::fs::read(&local_path), Ok(actual) if actual == expected) {
+                return;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        panic!(
+            "timed out waiting for {} file {path} during {label}; last_read={:?}\n{}",
+            client.label(),
+            std::fs::read(&local_path).map(|actual| format!("{} bytes", actual.len())),
+            self.debug_state_with_rerun_hint()
+        );
+    }
+
     fn assert_missing(&self, client: Client, path: &str) {
         assert!(
             !self.path(client).join(path).exists(),

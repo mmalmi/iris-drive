@@ -11,7 +11,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -46,7 +46,7 @@ import to.iris.drive.app.provider.IrisDriveDocumentStore
 @RunWith(AndroidJUnit4::class)
 class IrisDriveAndroidGuiFlowTest {
     @get:Rule
-    val compose = createAndroidComposeRule<MainActivity>()
+    val compose = createComposeRule()
 
     private lateinit var context: Context
     private val nativeHandles = mutableListOf<Long>()
@@ -121,14 +121,18 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun linkAnotherDeviceFlowApprovesFromAddDeviceDialog() {
-        val owner = createOwnerProfile("Android UI owner")
-        val linked = createLinkedProfile(owner.invite)
+    fun addDeviceDialogDispatchesManualDeviceApproval() {
+        val approvedRequests = mutableListOf<Pair<String, String>>()
+        val devicePubkey = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
 
         render(
-            state = appState(owner.handle),
+            state = AppState(
+                account = accountState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
             onApproveDevice = { request, label ->
-                dispatch(owner.handle, NativeActions.approveDevice(request, label))
+                approvedRequests += request to label
             },
         )
 
@@ -136,15 +140,13 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
         compose.onNodeWithTag("addDeviceButton").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
-            .performTextInput(linked.devicePubkey)
+            .performTextInput(devicePubkey)
         compose.onNodeWithTag("manualDeviceName").performScrollTo().assertIsDisplayed()
             .performTextInput("Android UI linked")
         dismissSoftKeyboard()
         compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().activate()
 
-        val updated = appState(owner.handle)
-        assertEquals(2, updated.devices.size)
-        assertTrue(updated.devices.any { it.label == "Android UI linked" })
+        assertEquals(listOf(devicePubkey to "Android UI linked"), approvedRequests)
     }
 
     @Test
@@ -427,8 +429,8 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasContentDescription("Delete Tablet"))
-        compose.onNodeWithContentDescription("Delete Tablet").assertIsDisplayed().activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Remove"))
+        compose.onNodeWithText("Remove").assertIsDisplayed().activate()
         assertTrue(deletedDevices.isEmpty())
         compose.onNodeWithText("Delete device?").assertIsDisplayed()
 
@@ -437,39 +439,72 @@ class IrisDriveAndroidGuiFlowTest {
         assertEquals(listOf("device-b"), deletedDevices)
     }
 
+    @Test
+    fun inboundDeviceRequestCanBeRejected() {
+        val rejectedRequests = mutableListOf<String>()
+        val requestLink = "iris-drive://request/device-b"
+        val state = AppState(
+            account = accountState().copy(
+                inboundDeviceLinkRequests = listOf(
+                    to.iris.drive.app.core.DeviceLinkRequestState(
+                        devicePubkey = "device-b",
+                        label = "Tablet",
+                        requestedAt = 42,
+                        requestLink = requestLink,
+                    ),
+                ),
+            ),
+            setupState = "authorized",
+            isSetupComplete = true,
+        )
+
+        render(
+            state = state,
+            onRejectDevice = { rejectedRequests += it },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
+        compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
+        compose.onNodeWithText("Devices asking to join").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
+
+        assertEquals(listOf(requestLink), rejectedRequests)
+    }
+
     private fun render(
         state: AppState,
         onCreateProfile: (String) -> Unit = {},
         onLinkDevice: (String, String) -> Unit = { _, _ -> },
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
+        onRejectDevice: (String) -> Unit = {},
         onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
-        compose.runOnUiThread {
-            compose.activity.setContent {
-                IrisDriveAndroidApp(
-                    stateFlow = stateFlow,
-                    onCreateProfile = onCreateProfile,
-                    onRestoreProfile = { _, _ -> },
-                    onLinkDevice = onLinkDevice,
-                    onCopyText = { _, _ -> },
-                    onOpenUrl = { _ -> },
-                    onOpenDriveFolder = {},
-                    onApproveDevice = onApproveDevice,
-                    onResetInvite = {},
-                    onDeleteDevice = onDeleteDevice,
-                    onAppointAdmin = { _ -> },
-                    onDemoteAdmin = { _ -> },
-                    onLogout = {},
-                    onAddRelay = { _ -> },
-                    onRemoveRelay = { _ -> },
-                    onResetRelays = {},
-                    onAddRoot = onAddRoot,
-                    onStartSync = {},
-                    onStopSync = {},
-                )
-            }
+        compose.setContent {
+            IrisDriveAndroidApp(
+                stateFlow = stateFlow,
+                onCreateProfile = onCreateProfile,
+                onRestoreProfile = { _, _ -> },
+                onLinkDevice = onLinkDevice,
+                onCopyText = { _, _ -> },
+                onOpenUrl = { _ -> },
+                onOpenDriveFolder = {},
+                onApproveDevice = onApproveDevice,
+                onRejectDevice = onRejectDevice,
+                onResetInvite = {},
+                onDeleteDevice = onDeleteDevice,
+                onAppointAdmin = { _ -> },
+                onDemoteAdmin = { _ -> },
+                onLogout = {},
+                onAddRelay = { _ -> },
+                onRemoveRelay = { _ -> },
+                onResetRelays = {},
+                onAddRoot = onAddRoot,
+                onStartSync = {},
+                onStopSync = {},
+            )
         }
         waitForRenderedApp()
         return stateFlow

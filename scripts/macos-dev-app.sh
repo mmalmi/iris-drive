@@ -303,6 +303,8 @@ register_fileprovider_plugin() {
 
 build_xcode_app() {
   local mode="$1"
+  local target_dir="$2"
+  local rust_lib_dir="$target_dir/debug"
   local auth_args=()
   local args=(
     -project "$PROJECT"
@@ -310,6 +312,8 @@ build_xcode_app() {
     -configuration "$CONFIGURATION"
     -derivedDataPath "$DERIVED_DATA"
     -destination "platform=macOS,arch=$HOST_ARCH"
+    "LIBRARY_SEARCH_PATHS=$rust_lib_dir"
+    "OTHER_LDFLAGS=$rust_lib_dir/libiris_drive_app_core.a"
   )
 
   if [[ -n "${IRIS_DRIVE_ASC_AUTH_KEY_PATH:-}" \
@@ -476,9 +480,11 @@ build_app() {
 
   log "Building idrive helper"
   cargo build -p idrive >&2
+  log "Building app-core library"
+  cargo build -p iris-drive-app-core >&2
   target_dir="$(resolve_target_dir)"
 
-  build_xcode_app "$mode"
+  build_xcode_app "$mode" "$target_dir"
   built_app_path="$(resolve_app_path)"
   if [[ -z "${built_app_path:-}" || ! -d "$built_app_path" ]]; then
     echo "Built macOS app not found. Build log: $BUILD_LOG" >&2

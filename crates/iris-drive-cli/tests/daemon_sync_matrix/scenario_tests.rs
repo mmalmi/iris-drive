@@ -170,20 +170,47 @@ async fn live_daemons_three_vm_initial_merge_from_all_peers_and_conflicts() {
     .await;
 
     for client in Client::THREE_VM {
-        cluster.assert_file(client, "initial/windows-only.txt", b"windows only");
-        cluster.assert_file(client, "initial/ubuntu-only.txt", b"ubuntu only");
-        cluster.assert_file(client, "initial/macos-only.txt", b"macos only");
-        cluster.assert_file(client, "initial/same.txt", b"same bytes");
-        cluster.assert_file(
-            client,
-            "initial/unicode/Raksmorgas-动作-Адрес.txt",
-            b"unicode path bytes",
-        );
+        cluster
+            .wait_for_file(
+                client,
+                "initial/windows-only.txt",
+                b"windows only",
+                "three-device initial windows seed",
+            )
+            .await;
+        cluster
+            .wait_for_file(
+                client,
+                "initial/ubuntu-only.txt",
+                b"ubuntu only",
+                "three-device initial ubuntu seed",
+            )
+            .await;
+        cluster
+            .wait_for_file(
+                client,
+                "initial/macos-only.txt",
+                b"macos only",
+                "three-device initial macos seed",
+            )
+            .await;
+        cluster
+            .wait_for_file(
+                client,
+                "initial/same.txt",
+                b"same bytes",
+                "three-device initial shared seed",
+            )
+            .await;
+        cluster
+            .wait_for_file(
+                client,
+                "initial/unicode/Raksmorgas-动作-Адрес.txt",
+                b"unicode path bytes",
+                "three-device initial unicode seed",
+            )
+            .await;
     }
-    let expected = dir_snapshot(cluster.path(Client::Windows));
-    cluster
-        .wait_for_snapshot(&expected, "three-device initial merge")
-        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

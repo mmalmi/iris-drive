@@ -336,6 +336,14 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     env,
     dryRun,
   })
+  run(
+    'cargo',
+    ['build', '--release', '-p', 'iris-drive-app-core', '--target', 'aarch64-apple-darwin'],
+    {
+      env,
+      dryRun,
+    },
+  )
   packageUnixCliTarball({
     binaryPath: join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'idrive'),
     targetTriple: 'aarch64-apple-darwin',
@@ -348,6 +356,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   }
   const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
   const releaseVersion = releaseVersionInfo(tag)
+  const rustLibDir = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release')
   run(
     'xcodebuild',
     [
@@ -360,6 +369,8 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       '-derivedDataPath',
       derivedData,
       'CODE_SIGNING_ALLOWED=NO',
+      `LIBRARY_SEARCH_PATHS=${rustLibDir}`,
+      `OTHER_LDFLAGS=${join(rustLibDir, 'libiris_drive_app_core.a')}`,
       `MARKETING_VERSION=${releaseVersion.version}`,
       `CURRENT_PROJECT_VERSION=${releaseVersion.build}`,
       'build',

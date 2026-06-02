@@ -1432,13 +1432,13 @@ with_macos_keychain_only() {
 }
 
 xcodebuild_macos_app() {
-  local iris_repo="$1"
-  local args=(
-    xcodebuild
-    -project macos/IrisDriveMac.xcodeproj
-    -scheme IrisDriveMac
-    -configuration Debug
-    -derivedDataPath macos/.build/DerivedData
+  local iris_repo="$1" rust_lib_dir
+  ensure_build_space "$iris_repo" "macOS app-core build"; log "building macOS app-core library"
+  (cd "$iris_repo" && cargo_dev_build -p iris-drive-app-core)
+  rust_lib_dir="$(cd "$iris_repo" && cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/debug"
+  local args=(xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData
+    "LIBRARY_SEARCH_PATHS=$rust_lib_dir"
+    "OTHER_LDFLAGS=$rust_lib_dir/libiris_drive_app_core.a"
   )
 
   if macos_fileprovider_required; then
