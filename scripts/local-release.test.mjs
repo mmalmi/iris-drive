@@ -503,6 +503,18 @@ test('iOS build handles missing App Store Connect auth args under bash nounset',
   assert.match(script, /\$\{ASC_AUTH_ARGS\[@\]\+"\$\{ASC_AUTH_ARGS\[@\]\}"\}/)
 })
 
+test('iOS build uses the shared App Store Connect auth defaults', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /IRIS_DRIVE_ASC_ROOT/)
+  assert.match(script, /private_keys/)
+  assert.match(script, /AuthKey_\*\.p8/)
+  assert.match(script, /issuer\.txt/)
+})
+
 test('TestFlight helper creates a missing App Store Connect app record', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
   const keyPath = join(root, 'AuthKey_TESTKEY123.p8')

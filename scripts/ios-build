@@ -107,16 +107,51 @@ require_var() {
   fi
 }
 
+asc_issuer_id() {
+  local explicit issuer_file
+  explicit="${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-${IRIS_DRIVE_ASC_ISSUER_ID:-}}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return
+  fi
+  issuer_file="$(asc_root)/issuer.txt"
+  if [[ -f "$issuer_file" ]]; then
+    head -n 1 "$issuer_file" | tr -d '[:space:]'
+  fi
+}
+
+asc_root() {
+  printf '%s' "${IRIS_DRIVE_ASC_ROOT:-$HOME/.appstoreconnect}"
+}
+
+asc_default_key_path() {
+  local key_dir
+  key_dir="$(asc_root)/private_keys"
+  [[ -d "$key_dir" ]] || return 0
+  find "$key_dir" -maxdepth 1 -type f -name 'AuthKey_*.p8' -print | sort | head -n 1
+}
+
 asc_key_path() {
-  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_PATH:-${IRIS_DRIVE_ASC_KEY_PATH:-}}"
+  local explicit
+  explicit="${IRIS_DRIVE_ASC_AUTH_KEY_PATH:-${IRIS_DRIVE_ASC_KEY_PATH:-}}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return
+  fi
+  asc_default_key_path
 }
 
 asc_key_id() {
-  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ID:-${IRIS_DRIVE_ASC_KEY_ID:-}}"
-}
-
-asc_issuer_id() {
-  printf '%s' "${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-${IRIS_DRIVE_ASC_ISSUER_ID:-}}"
+  local explicit key_path key_file
+  explicit="${IRIS_DRIVE_ASC_AUTH_KEY_ID:-${IRIS_DRIVE_ASC_KEY_ID:-}}"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return
+  fi
+  key_path="$(asc_key_path)"
+  key_file="${key_path##*/}"
+  key_file="${key_file#AuthKey_}"
+  printf '%s' "${key_file%.p8}"
 }
 
 load_asc_auth_args() {
