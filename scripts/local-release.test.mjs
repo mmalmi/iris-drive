@@ -392,6 +392,7 @@ test('local-release dry-run passes release versions to macOS and Android builder
   assert.match(result.stdout, /--timestamp/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
   assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
+  assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
 })
 
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {

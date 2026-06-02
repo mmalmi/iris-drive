@@ -630,6 +630,7 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
       join(repoRoot, 'tools', 'run-android'),
       `-PirisDriveVersionName=${releaseVersion.version}`,
       `-PirisDriveVersionCode=${releaseVersion.build}`,
+      'clean',
       ':app:assembleRelease',
       ':app:bundleRelease',
     ],
