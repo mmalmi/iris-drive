@@ -185,6 +185,27 @@ function run(command, args, {
   return capture ? result.stdout.trim() : ''
 }
 
+function runCodesign(args, { dryRun = false, env = process.env } = {}) {
+  if (dryRun) {
+    run('codesign', args, { dryRun, env })
+    return
+  }
+  const attempts = Number.parseInt(String(env.IRIS_DRIVE_MACOS_CODESIGN_ATTEMPTS ?? '5'), 10)
+  const maxAttempts = Number.isFinite(attempts) && attempts > 0 ? attempts : 5
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      run('codesign', args, { env })
+      return
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error
+      }
+      console.error(`codesign failed; retrying in 5s (attempt ${attempt}/${maxAttempts})...`)
+      spawnSync('sleep', ['5'], { stdio: 'inherit' })
+    }
+  }
+}
+
 function commandExists(command) {
   const result =
     process.platform === 'win32'
@@ -416,8 +437,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     }
   }
   const timestampArgs = macosCodesignTimestampArgs(env)
-  run(
-    'codesign',
+  runCodesign(
     [
       '--force',
       ...timestampArgs,
@@ -425,19 +445,17 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       identity,
       join(appPath, 'Contents', 'MacOS', 'idrive'),
     ],
-    {
-      dryRun,
-    },
+    { dryRun, env },
   )
   if (!dryRun && existsSync(appexPath)) {
-    run('codesign', [
+    runCodesign([
       '--force',
       ...timestampArgs,
       '--sign',
       identity,
       join(appexPath, 'Contents', 'MacOS', 'idrive'),
-    ])
-    run('codesign', [
+    ], { env })
+    runCodesign([
       '--force',
       ...timestampArgs,
       '--sign',
@@ -445,14 +463,11 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       '--entitlements',
       appexEntitlements,
       appexPath,
-    ])
+    ], { env })
   }
-  run(
-    'codesign',
+  runCodesign(
     ['--force', ...timestampArgs, '--sign', identity, '--entitlements', appEntitlements, appPath],
-    {
-      dryRun,
-    },
+    { dryRun, env },
   )
   run('codesign', ['--verify', '--deep', '--strict', appPath], { dryRun })
 
