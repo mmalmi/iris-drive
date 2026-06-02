@@ -319,8 +319,9 @@ function macosTeamIdentifier(identity, env, dryRun) {
   return match?.[1] ?? ''
 }
 
-function macosCodesignTimestampArg(env) {
-  return `--timestamp=${String(env.IRIS_DRIVE_MACOS_TIMESTAMP_URL ?? 'http://timestamp.apple.com/ts01').trim()}`
+function macosCodesignTimestampArgs(env) {
+  const url = String(env.IRIS_DRIVE_MACOS_TIMESTAMP_URL ?? '').trim()
+  return [url ? `--timestamp=${url}` : '--timestamp']
 }
 
 function prepareMacosEntitlements(sourcePath, outputPath, teamId, dryRun) {
@@ -414,10 +415,16 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       chmodSync(join(appexPath, 'Contents', 'MacOS', 'idrive'), 0o755)
     }
   }
-  const timestampArg = macosCodesignTimestampArg(env)
+  const timestampArgs = macosCodesignTimestampArgs(env)
   run(
     'codesign',
-    ['--force', timestampArg, '--sign', identity, join(appPath, 'Contents', 'MacOS', 'idrive')],
+    [
+      '--force',
+      ...timestampArgs,
+      '--sign',
+      identity,
+      join(appPath, 'Contents', 'MacOS', 'idrive'),
+    ],
     {
       dryRun,
     },
@@ -425,14 +432,14 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   if (!dryRun && existsSync(appexPath)) {
     run('codesign', [
       '--force',
-      timestampArg,
+      ...timestampArgs,
       '--sign',
       identity,
       join(appexPath, 'Contents', 'MacOS', 'idrive'),
     ])
     run('codesign', [
       '--force',
-      timestampArg,
+      ...timestampArgs,
       '--sign',
       identity,
       '--entitlements',
@@ -442,7 +449,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   }
   run(
     'codesign',
-    ['--force', timestampArg, '--sign', identity, '--entitlements', appEntitlements, appPath],
+    ['--force', ...timestampArgs, '--sign', identity, '--entitlements', appEntitlements, appPath],
     {
       dryRun,
     },
