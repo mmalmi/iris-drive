@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 
 namespace IrisDrive.WindowsShell;
@@ -60,6 +61,7 @@ public sealed class IrisDriveStatusData
         var paths = ui.ValueKind == JsonValueKind.Object ? Object(ui, "paths") : null;
         var setupComplete = ui.ValueKind == JsonValueKind.Object && Bool(ui, "setup_complete");
 
+        var backupTargets = NativeBackupRows(ui);
         return new IrisDriveStatusData
         {
             Initialized = account.HasValue,
@@ -93,9 +95,13 @@ public sealed class IrisDriveStatusData
             LocalNhashResolverEnabled = true,
             Drives = NativeDriveRows(ui, setupComplete),
             Peers = NativePeerRows(ui),
-            BackupTargets = NativeBackupRows(ui),
+            BackupTargets = backupTargets,
             Relays = StringArray(ui, "relays"),
-            BlossomServers = Array.Empty<string>(),
+            BlossomServers = backupTargets
+                .Where(target => target.Kind == "blossom")
+                .Select(target => target.Target)
+                .Where(target => !string.IsNullOrWhiteSpace(target))
+                .ToArray(),
             Fips = FipsDiagnostics.FromJson(Object(ui, "fips")),
             RelayStatuses = RelayStatusesFromJson(ui),
         };
@@ -229,8 +235,9 @@ public sealed class IrisDriveStatusData
         {
             var title = String(backup, "label") ?? "Backup";
             rows.Add(new BackupTargetRow(
-                title,
-                "backup",
+                String(backup, "id") ?? title,
+                String(backup, "kind") ?? "backup",
+                String(backup, "target") ?? "",
                 title,
                 String(backup, "detail") ?? "",
                 String(backup, "state") ?? ""));
@@ -353,6 +360,7 @@ public sealed record DriveRow(string Name, string Path, string State);
 public sealed record BackupTargetRow(
     string Id,
     string Kind,
+    string Target,
     string Title,
     string Subtitle,
     string State);

@@ -29,6 +29,7 @@ use thiserror::Error;
 
 use crate::app_keys::{AppKeysSnapshot, DeviceEntry};
 use crate::config::DeviceRootRef;
+use crate::device_link_transport::DeviceLinkRequestFrame;
 use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for owner-signed `AppKeys`.
@@ -36,6 +37,9 @@ pub const KIND_APP_KEYS: u16 = 30078;
 
 /// NIP-78 parameterized-replaceable kind for device-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30078;
+
+/// NIP-78 parameterized-replaceable kind for device-signed join requests.
+pub const KIND_DEVICE_LINK_REQUEST: u16 = 30078;
 
 /// Legacy transition kind accepted by readers but no longer published.
 pub const KIND_LEGACY_DRIVE_ROOT: u16 = 30079;
@@ -49,6 +53,11 @@ pub const D_TAG_APP_KEYS: &str = "iris-drive/app-keys";
 #[must_use]
 pub fn app_keys_d_tag(owner_pubkey_hex: &str) -> String {
     format!("iris-drive/{owner_pubkey_hex}/app-keys")
+}
+
+#[must_use]
+pub fn device_link_request_d_tag(owner_pubkey_hex: &str) -> String {
+    format!("iris-drive/{owner_pubkey_hex}/device-link-request")
 }
 
 #[must_use]
@@ -71,6 +80,14 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
         && event
             .identifier()
             .is_some_and(|d_tag| parse_drive_root_d_tag(d_tag).is_ok())
+}
+
+#[must_use]
+pub fn is_device_link_request_event_coordinate(event: &Event) -> bool {
+    event.kind.as_u16() == KIND_DEVICE_LINK_REQUEST
+        && event
+            .identifier()
+            .is_some_and(|d_tag| parse_device_link_request_d_tag(d_tag).is_ok())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +122,13 @@ pub enum WireError {
     MissingRootHash,
     #[error("drive-root key is not available for this device")]
     RootKeyUnavailable,
+    #[error("device-link d-tag owner {d_tag_owner} does not match request owner {frame_owner}")]
+    DeviceLinkOwnerMismatch {
+        d_tag_owner: String,
+        frame_owner: String,
+    },
+    #[error("device-link event signer {signer} does not match request device {device}")]
+    DeviceLinkSignerMismatch { signer: String, device: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -239,6 +263,82 @@ fn parse_app_keys_d_tag(d_tag: &str) -> Result<String, WireError> {
     }
     PublicKey::from_hex(account).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     Ok(account.to_string())
+}
+
+/// Build a signed device-link request event. Signed by the requesting device;
+/// the owner-scoped d-tag routes the request to admins for that account.
+pub fn build_device_link_request_event(
+    device_keys: &Keys,
+    frame: &DeviceLinkRequestFrame,
+) -> Result<Event, WireError> {
+    PublicKey::from_hex(&frame.owner_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    PublicKey::from_hex(&frame.device_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    let content_json =
+        serde_json::to_string(frame).map_err(|e| WireError::BadContent(e.to_string()))?;
+    let builder = EventBuilder::new(
+        Kind::from(KIND_DEVICE_LINK_REQUEST),
+        content_json,
+        [Tag::identifier(device_link_request_d_tag(
+            &frame.owner_pubkey,
+        ))],
+    );
+    builder
+        .to_event(device_keys)
+        .map_err(|e| WireError::Event(e.to_string()))
+}
+
+/// Parse + verify a signed device-link request event.
+pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkRequestFrame, WireError> {
+    let kind = event.kind.as_u16();
+    if kind != KIND_DEVICE_LINK_REQUEST {
+        return Err(WireError::WrongKind {
+            expected: KIND_DEVICE_LINK_REQUEST,
+            got: kind,
+        });
+    }
+    let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
+    let d_tag_owner = parse_device_link_request_d_tag(d_tag)?;
+    event
+        .verify()
+        .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
+    let frame: DeviceLinkRequestFrame =
+        serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
+    PublicKey::from_hex(&frame.owner_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    PublicKey::from_hex(&frame.device_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    if d_tag_owner != frame.owner_pubkey {
+        return Err(WireError::DeviceLinkOwnerMismatch {
+            d_tag_owner,
+            frame_owner: frame.owner_pubkey,
+        });
+    }
+    let signer = event.pubkey.to_hex();
+    if signer != frame.device_pubkey {
+        return Err(WireError::DeviceLinkSignerMismatch {
+            signer,
+            device: frame.device_pubkey,
+        });
+    }
+    Ok(frame)
+}
+
+fn parse_device_link_request_d_tag(d_tag: &str) -> Result<String, WireError> {
+    let rest = d_tag
+        .strip_prefix("iris-drive/")
+        .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
+    let owner = rest.strip_suffix("/device-link-request").ok_or_else(|| {
+        WireError::DTagMalformed(format!("no /device-link-request suffix: {d_tag}"))
+    })?;
+    if owner.is_empty() {
+        return Err(WireError::DTagMalformed(format!(
+            "empty device-link owner: {d_tag}"
+        )));
+    }
+    PublicKey::from_hex(owner).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    Ok(owner.to_string())
 }
 
 /// Compute the d-tag for a drive-root event.
@@ -534,467 +634,4 @@ fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use nostr_sdk::JsonUtil;
-    use std::collections::BTreeMap;
-
-    fn fake_snapshot(owner_pubkey: &str) -> AppKeysSnapshot {
-        AppKeysSnapshot {
-            owner_pubkey: owner_pubkey.to_string(),
-            signed_by_pubkey: Some(owner_pubkey.to_string()),
-            created_at: 1_700_000_000,
-            devices: vec![DeviceEntry::admin(
-                "ab".repeat(32),
-                1_699_000_000,
-                Some("Mac mini".into()),
-            )],
-            dck_generation: 5,
-            wrapped_dck: BTreeMap::from([("ab".repeat(32), "base64ciphertext".into())]),
-        }
-    }
-
-    fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
-        event.tags.iter().find_map(|tag| {
-            let fields = tag.as_slice();
-            if fields.first().is_some_and(|name| name == tag_name) {
-                fields.get(1).cloned()
-            } else {
-                None
-            }
-        })
-    }
-
-    #[test]
-    fn app_keys_event_roundtrip() {
-        let account = Keys::generate();
-        let admin = Keys::generate();
-        let snap = fake_snapshot(&account.public_key().to_hex());
-        let event = build_app_keys_event(&admin, &snap).unwrap();
-        let parsed = parse_app_keys_event(&event).unwrap();
-        let account_hex = account.public_key().to_hex();
-        let admin_hex = admin.public_key().to_hex();
-
-        // owner_pubkey is the stable account id; signer is the admin event author.
-        assert_eq!(parsed.owner_pubkey, account_hex);
-        assert_eq!(parsed.signed_by_pubkey.as_deref(), Some(admin_hex.as_str()));
-        let expected_d_tag = app_keys_d_tag(&parsed.owner_pubkey);
-        assert_eq!(event.identifier(), Some(expected_d_tag.as_str()));
-        // The snapshot's created_at IS the event's created_at — round-trip stable.
-        assert_eq!(parsed.created_at, snap.created_at);
-        assert_eq!(parsed.devices, snap.devices);
-        assert_eq!(parsed.dck_generation, snap.dck_generation);
-        assert_eq!(parsed.wrapped_dck, snap.wrapped_dck);
-    }
-
-    #[test]
-    fn event_author_attributes_to_actual_signer() {
-        let account = Keys::generate();
-        let snap = fake_snapshot(&account.public_key().to_hex());
-        let signer = Keys::generate();
-        let event = build_app_keys_event(&signer, &snap).unwrap();
-        let parsed = parse_app_keys_event(&event).unwrap();
-        assert_eq!(parsed.owner_pubkey, account.public_key().to_hex());
-        let signer_hex = signer.public_key().to_hex();
-        assert_eq!(
-            parsed.signed_by_pubkey.as_deref(),
-            Some(signer_hex.as_str())
-        );
-    }
-
-    #[test]
-    fn app_keys_event_wrong_kind_rejected() {
-        let owner = Keys::generate();
-        let other_kind_event = EventBuilder::new(
-            Kind::from(1u16),
-            "{}".to_string(),
-            [Tag::identifier(D_TAG_APP_KEYS)],
-        )
-        .to_event(&owner)
-        .unwrap();
-        match parse_app_keys_event(&other_kind_event) {
-            Err(WireError::WrongKind { expected, got }) => {
-                assert_eq!(expected, KIND_APP_KEYS);
-                assert_eq!(got, 1);
-            }
-            other => panic!("expected WrongKind, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn app_keys_event_missing_d_tag_rejected() {
-        let owner = Keys::generate();
-        let snap = fake_snapshot(&owner.public_key().to_hex());
-        let content = serde_json::to_string(&AppKeysWireContent {
-            owner_pubkey: Some(snap.owner_pubkey.clone()),
-            devices: snap.devices.clone(),
-            dck_generation: snap.dck_generation,
-            wrapped_dck: snap.wrapped_dck.clone(),
-        })
-        .unwrap();
-        let event = EventBuilder::new(Kind::from(KIND_APP_KEYS), content, [])
-            .to_event(&owner)
-            .unwrap();
-        match parse_app_keys_event(&event) {
-            Err(WireError::MissingDTag) => {}
-            other => panic!("expected MissingDTag, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn drive_root_event_roundtrip() {
-        let device = Keys::generate();
-        let owner = Keys::generate();
-        let owner_hex = owner.public_key().to_hex();
-        let authorized_devices = vec![device.public_key().to_hex()];
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
-            // Set an explicit published_at so roundtrip is stable.
-            1_700_000_000,
-            7,
-        );
-        let event = build_drive_root_event(&device, &owner_hex, "main", &root, &authorized_devices)
-            .unwrap();
-        assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
-        let (device_pk, parsed_owner, drive_id, parsed_root) =
-            parse_drive_root_event_for_device(&event, &device).unwrap();
-        assert_eq!(device_pk, device.public_key().to_hex());
-        assert_eq!(parsed_owner, owner_hex);
-        assert_eq!(drive_id, "main");
-        assert_eq!(parsed_root.root_cid, root.root_cid);
-        assert_eq!(parsed_root.dck_generation, root.dck_generation);
-        assert_eq!(parsed_root.published_at, root.published_at);
-    }
-
-    #[test]
-    fn drive_root_event_roundtrip_preserves_causal_fields() {
-        let device = Keys::generate();
-        let owner = Keys::generate();
-        let owner_hex = owner.public_key().to_hex();
-        let parent = RootParent {
-            device_id: device.public_key().to_hex(),
-            device_seq: 2,
-            root_cid: Cid::encrypted([0x20; 32], [0x21; 32]).to_string(),
-        };
-        let observed_device = Keys::generate().public_key().to_hex();
-        let observed = BTreeMap::from([(
-            observed_device.clone(),
-            RootObservation {
-                device_seq: 9,
-                root_cid: Cid::encrypted([0x30; 32], [0x31; 32]).to_string(),
-            },
-        )]);
-        let root = DeviceRootRef {
-            root_cid: Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
-            published_at: 1_700_000_000,
-            dck_generation: 7,
-            device_seq: 3,
-            parents: vec![parent.clone()],
-            observed: observed.clone(),
-            local_only: false,
-        };
-
-        let event = build_drive_root_event(
-            &device,
-            &owner_hex,
-            "main",
-            &root,
-            &[device.public_key().to_hex(), observed_device],
-        )
-        .unwrap();
-        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-        assert_eq!(parsed_root.device_seq, 3);
-        assert_eq!(parsed_root.parents, vec![parent]);
-        assert_eq!(parsed_root.observed, observed);
-    }
-
-    #[test]
-    fn drive_root_event_does_not_publish_root_key_in_cleartext() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root_key = [0x44; 32];
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x33; 32], root_key).to_string(),
-            1_700_000_000,
-            1,
-        );
-
-        let event = build_drive_root_event(
-            &device,
-            &owner,
-            "main",
-            &root,
-            &[device.public_key().to_hex()],
-        )
-        .unwrap();
-
-        assert!(!event.content.contains(&root.root_cid));
-        assert!(!event.content.contains(&hex::encode(root_key)));
-        assert!(parse_drive_root_event(&event).is_err());
-
-        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-        assert_eq!(parsed_root.root_cid, root.root_cid);
-    }
-
-    #[test]
-    fn legacy_drive_root_kind_still_parses() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root_key = [0x44; 32];
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x33; 32], root_key).to_string(),
-            1_700_000_000,
-            1,
-        );
-        let root_cid = Cid::parse(&root.root_cid).unwrap();
-        let root_key_hex = hex::encode(root_cid.key.unwrap());
-        let ciphertext = nip44::encrypt(
-            device.secret_key(),
-            &device.public_key(),
-            root_key_hex,
-            Nip44Version::V2,
-        )
-        .unwrap();
-        let content = DriveRootWireContent {
-            root_cid: None,
-            root_hash: Some(to_hex(&root_cid.hash)),
-            root_key_wraps: BTreeMap::from([(device.public_key().to_hex(), ciphertext)]),
-            dck_generation: 1,
-            device_seq: 0,
-            parents: Vec::new(),
-            observed: BTreeMap::new(),
-        };
-        let event = EventBuilder::new(
-            Kind::from(KIND_LEGACY_DRIVE_ROOT),
-            serde_json::to_string(&content).unwrap(),
-            [Tag::identifier(drive_root_d_tag(&owner, "main"))],
-        )
-        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
-        .to_event(&device)
-        .unwrap();
-
-        let (_, parsed_owner, drive_id, parsed_root) =
-            parse_drive_root_event_for_device(&event, &device).unwrap();
-
-        assert_eq!(parsed_owner, owner);
-        assert_eq!(drive_id, "main");
-        assert_eq!(parsed_root.root_cid, root.root_cid);
-    }
-
-    #[test]
-    fn drive_root_coordinate_does_not_match_other_30078_records() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let owner_hex = owner.public_key().to_hex();
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x33; 32], [0x44; 32]).to_string(),
-            1_700_000_000,
-            1,
-        );
-
-        let drive_event = build_drive_root_event(
-            &device,
-            &owner_hex,
-            "main",
-            &root,
-            &[device.public_key().to_hex()],
-        )
-        .unwrap();
-        assert!(is_drive_root_event_coordinate(&drive_event));
-
-        let files_event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
-        assert!(!is_drive_root_event_coordinate(&files_event));
-
-        let app_keys_event = build_app_keys_event(&owner, &fake_snapshot(&owner_hex)).unwrap();
-        assert!(!is_drive_root_event_coordinate(&app_keys_event));
-    }
-
-    #[test]
-    fn private_hashtree_root_event_is_files_app_compatible() {
-        let owner = Keys::generate();
-        let root_key = [0x44; 32];
-        let root_hash = [0x33; 32];
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted(root_hash, root_key).to_string(),
-            1_700_000_000,
-            1,
-        );
-
-        let event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
-        assert_eq!(event.kind.as_u16(), 30078);
-        assert_eq!(event.pubkey, owner.public_key());
-        assert_eq!(event.identifier(), Some("main"));
-        assert_eq!(event.content, "");
-        assert_eq!(tag_value(&event, "l").as_deref(), Some("hashtree"));
-        assert_eq!(tag_value(&event, "hash"), Some(hex::encode(root_hash)));
-        assert!(tag_value(&event, "key").is_none());
-        assert!(!event.as_json().contains(&hex::encode(root_key)));
-
-        let parsed = hashtree_nostr::parse_verified_hashtree_root_event(&event)
-            .unwrap()
-            .unwrap();
-        let resolved = hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, &owner).unwrap();
-        assert_eq!(parsed.event.pubkey, owner.public_key().to_hex());
-        assert_eq!(parsed.tree_name, "main");
-        assert_eq!(resolved.to_string(), root.root_cid);
-    }
-
-    #[test]
-    fn drive_root_event_builder_rejects_unencrypted_root() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
-
-        assert!(
-            build_drive_root_event(
-                &device,
-                &owner,
-                "main",
-                &root,
-                &[device.public_key().to_hex()]
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn drive_root_event_builder_always_wraps_for_signing_device() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
-            1_700_000_000,
-            1,
-        );
-
-        let event = build_drive_root_event(&device, &owner, "main", &root, &[]).unwrap();
-        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-        assert_eq!(parsed_root.root_cid, root.root_cid);
-    }
-
-    #[test]
-    fn drive_root_event_with_zero_published_at_uses_wall_clock() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
-            0, // caller has not stamped; use wall-clock time
-            1,
-        );
-        let event = build_drive_root_event(
-            &device,
-            &owner,
-            "main",
-            &root,
-            &[device.public_key().to_hex()],
-        )
-        .unwrap();
-        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-        // Should be roughly now, not 0.
-        assert!(parsed_root.published_at > 1_500_000_000);
-    }
-
-    #[test]
-    fn drive_root_publish_event_advances_past_stored_root_timestamp() {
-        let device = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef::legacy(
-            Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
-            1_700_000_000,
-            1,
-        );
-
-        let event = build_drive_root_publish_event(
-            &device,
-            &owner,
-            "main",
-            &root,
-            &[device.public_key().to_hex()],
-        )
-        .unwrap();
-        let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-
-        assert!(parsed_root.published_at > root.published_at);
-    }
-
-    #[test]
-    fn drive_root_d_tag_format() {
-        let owner = "aa".repeat(32);
-        let tag = drive_root_d_tag(&owner, "main");
-        assert_eq!(tag, format!("iris-drive/{owner}/main/root"));
-    }
-
-    #[test]
-    fn drive_root_d_tag_parse_round_trip() {
-        let owner = "bb".repeat(32);
-        let drive_id = "shared-photos";
-        let tag = drive_root_d_tag(&owner, drive_id);
-        let (parsed_owner, parsed_drive) = parse_drive_root_d_tag(&tag).unwrap();
-        assert_eq!(parsed_owner, owner);
-        assert_eq!(parsed_drive, drive_id);
-    }
-
-    #[test]
-    fn drive_root_d_tag_malformed_rejected() {
-        for bad in &[
-            "wrong-prefix/abc/main/root",
-            "iris-drive/abc/main",
-            "iris-drive//main/root",
-            "iris-drive/abc//root",
-            "iris-drive/abc",
-        ] {
-            assert!(parse_drive_root_d_tag(bad).is_err(), "should reject {bad}");
-        }
-    }
-
-    #[test]
-    fn drive_root_event_wrong_kind_rejected() {
-        let device = Keys::generate();
-        let other = EventBuilder::new(
-            Kind::from(1u16),
-            "{}".to_string(),
-            [Tag::identifier(drive_root_d_tag(
-                &device.public_key().to_hex(),
-                "main",
-            ))],
-        )
-        .to_event(&device)
-        .unwrap();
-        assert!(matches!(
-            parse_drive_root_event(&other),
-            Err(WireError::WrongKind { .. })
-        ));
-    }
-
-    #[test]
-    fn drive_root_event_attributes_to_device_signer() {
-        // Important property: even if two devices publish for the same
-        // owner+drive, the event's author is the device pubkey, so the
-        // merge engine can attribute each root to the right device.
-        let device_a = Keys::generate();
-        let device_b = Keys::generate();
-        let owner = Keys::generate().public_key().to_hex();
-        let root = DeviceRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
-        let ev_a = build_drive_root_event(
-            &device_a,
-            &owner,
-            "main",
-            &root,
-            &[device_a.public_key().to_hex()],
-        )
-        .unwrap();
-        let ev_b = build_drive_root_event(
-            &device_b,
-            &owner,
-            "main",
-            &root,
-            &[device_b.public_key().to_hex()],
-        )
-        .unwrap();
-        let (pk_a, _, _, _) = parse_drive_root_event_for_device(&ev_a, &device_a).unwrap();
-        let (pk_b, _, _, _) = parse_drive_root_event_for_device(&ev_b, &device_b).unwrap();
-        assert_eq!(pk_a, device_a.public_key().to_hex());
-        assert_eq!(pk_b, device_b.public_key().to_hex());
-        assert_ne!(pk_a, pk_b);
-    }
-}
+mod tests;

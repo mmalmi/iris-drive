@@ -373,17 +373,41 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
+pub(crate) const DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+pub(crate) const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
 pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
-pub(crate) const DEVICE_LINK_TICK_SECS: u64 = 1;
+pub(crate) const DEVICE_LINK_TICK_MILLIS: u64 = 250;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SentDeviceLinkRequest {
+    last_sent: std::time::Instant,
+    attempts: u8,
+}
+
+fn device_link_request_send_due(
+    sent: Option<SentDeviceLinkRequest>,
+    now: std::time::Instant,
+) -> bool {
+    let Some(sent) = sent else {
+        return true;
+    };
+    now.duration_since(sent.last_sent) >= device_link_request_retry_interval(sent.attempts)
+}
+
+fn device_link_request_retry_interval(attempts: u8) -> std::time::Duration {
+    if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
+        std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
+    } else {
+        std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
+    }
+}
 
 pub(crate) async fn send_pending_device_link_request(
     config_dir: &Path,
+    client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
-    sent_cache: &mut BTreeMap<String, std::time::Instant>,
+    sent_cache: &mut BTreeMap<String, SentDeviceLinkRequest>,
 ) -> Result<Option<Value>> {
-    let Some(sync) = fips_blocks else {
-        return Ok(None);
-    };
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(state) = config.account.as_ref() else {
         return Ok(None);
@@ -403,23 +427,47 @@ pub(crate) async fn send_pending_device_link_request(
         pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
     );
     let now = std::time::Instant::now();
-    if sent_cache.get(&fingerprint).is_some_and(|last_sent| {
-        now.duration_since(*last_sent)
-            < std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
-    }) {
+    if !device_link_request_send_due(sent_cache.get(&fingerprint).copied(), now) {
         return Ok(None);
     }
 
-    sync.refresh_authorized_peers(&config).await;
     let Some(frame) =
         iris_drive_core::device_link_transport::pending_device_link_request_frame(state)
     else {
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
-    sync.send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes.clone())
-        .await?;
-    sent_cache.insert(fingerprint, now);
+    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    let relay_event_id =
+        iris_drive_core::relay_sync::publish_device_link_request(client, device.keys(), &frame)
+            .await?;
+    let mut fips_sent = false;
+    let mut fips_error = None;
+    if let Some(sync) = fips_blocks {
+        sync.refresh_authorized_peers(&config).await;
+        match sync
+            .send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes.clone())
+            .await
+        {
+            Ok(()) => {
+                fips_sent = true;
+            }
+            Err(error) => {
+                fips_error = Some(error.to_string());
+            }
+        }
+    }
+    let attempts = sent_cache
+        .get(&fingerprint)
+        .map_or(1, |sent| sent.attempts.saturating_add(1));
+    sent_cache.insert(
+        fingerprint,
+        SentDeviceLinkRequest {
+            last_sent: now,
+            attempts,
+        },
+    );
 
     Ok(Some(json!({
         "event": "device_link_request_sent",
@@ -428,6 +476,10 @@ pub(crate) async fn send_pending_device_link_request(
         "device_npub": account_npub(&state.device_pubkey),
         "requested_at": pending.requested_at,
         "sent_bytes": bytes.len(),
+        "relay_event_id": relay_event_id.to_hex(),
+        "sent_over_relay": true,
+        "sent_over_fips": fips_sent,
+        "fips_error": fips_error,
     })))
 }
 

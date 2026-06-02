@@ -2,7 +2,8 @@ use super::*;
 use crate::account::{Account, DeviceAuthorizationState};
 use crate::config::Drive;
 use crate::nostr_events::{
-    build_app_keys_event, build_drive_root_event, build_private_hashtree_root_event,
+    build_app_keys_event, build_device_link_request_event, build_drive_root_event,
+    build_private_hashtree_root_event, device_link_request_d_tag,
 };
 use hashtree_core::Cid;
 use tempfile::tempdir;
@@ -149,6 +150,68 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     assert!(linked_roster.contains(&linked_pubkey));
     assert!(linked_roster.contains(&third_device));
     assert!(linked_state.outbound_device_link_request.is_none());
+}
+
+#[test]
+fn subscription_filters_match_device_link_requests_for_owner() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let owner_hex = owner.public_key().to_hex();
+    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+        schema: 1,
+        owner_pubkey: owner_hex.clone(),
+        device_pubkey: device.public_key().to_hex(),
+        link_secret: "join-secret".to_string(),
+        label: Some("phone".to_string()),
+        requested_at: 123,
+        url: "iris-drive://device-link?device=example".to_string(),
+    };
+    let event = build_device_link_request_event(&device, &frame).unwrap();
+
+    assert_eq!(
+        event.identifier(),
+        Some(device_link_request_d_tag(&owner_hex).as_str())
+    );
+    assert!(
+        subscription_filters(&owner_hex, "main")
+            .iter()
+            .any(|filter| filter.match_event(&event))
+    );
+}
+
+#[test]
+fn apply_device_link_request_event_records_admin_inbound_request() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let linked = Account::link(
+        linked_dir.path(),
+        admin.state.owner_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+        schema: 1,
+        owner_pubkey: admin.state.owner_pubkey.clone(),
+        device_pubkey: linked.state.device_pubkey.clone(),
+        link_secret: admin.state.device_link_secret.clone(),
+        label: Some("phone".to_string()),
+        requested_at: 123,
+        url: "iris-drive://device-link?device=example".to_string(),
+    };
+    let event = build_device_link_request_event(linked.device.keys(), &frame).unwrap();
+    let mut cfg = AppConfig {
+        account: Some(admin.state.clone()),
+        ..AppConfig::default()
+    };
+
+    let outcome = apply_remote_device_link_request_event(&mut cfg, &event).unwrap();
+
+    assert_eq!(outcome, DeviceLinkRequestApply::Recorded);
+    let inbound = &cfg.account.as_ref().unwrap().inbound_device_link_requests;
+    assert_eq!(inbound.len(), 1);
+    assert_eq!(inbound[0].device_pubkey, linked.state.device_pubkey);
+    assert_eq!(inbound[0].label.as_deref(), Some("phone"));
 }
 
 #[test]

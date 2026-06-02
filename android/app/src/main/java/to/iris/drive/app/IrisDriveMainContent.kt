@@ -66,6 +66,12 @@ internal fun AuthenticatedContent(
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
+    onAddBackupTarget: (String, String) -> Unit,
+    onRemoveBackupTarget: (String) -> Unit,
+    onAddBlossomServer: (String) -> Unit,
+    onRemoveBlossomServer: (String) -> Unit,
+    onSyncBackups: (String) -> Unit,
+    onCheckBackups: (String) -> Unit,
 ) {
     when (selectedTab) {
         MainTab.MyDrive -> DriveContent(
@@ -92,6 +98,12 @@ internal fun AuthenticatedContent(
         MainTab.Backups -> BackupsContent(
             padding = padding,
             state = state,
+            onAddBackupTarget = onAddBackupTarget,
+            onRemoveBackupTarget = onRemoveBackupTarget,
+            onAddBlossomServer = onAddBlossomServer,
+            onRemoveBlossomServer = onRemoveBlossomServer,
+            onSyncBackups = onSyncBackups,
+            onCheckBackups = onCheckBackups,
         )
         MainTab.Settings -> SettingsContent(
             padding = padding,
@@ -197,6 +209,12 @@ private fun DevicesContent(
 private fun BackupsContent(
     padding: PaddingValues,
     state: AppState,
+    onAddBackupTarget: (String, String) -> Unit,
+    onRemoveBackupTarget: (String) -> Unit,
+    onAddBlossomServer: (String) -> Unit,
+    onRemoveBlossomServer: (String) -> Unit,
+    onSyncBackups: (String) -> Unit,
+    onCheckBackups: (String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -210,7 +228,15 @@ private fun BackupsContent(
             item { Notice(state.error) }
         }
         item {
-            BackupsPanel(backups = state.backups)
+            BackupsPanel(
+                backups = state.backups,
+                onAddBackupTarget = onAddBackupTarget,
+                onRemoveBackupTarget = onRemoveBackupTarget,
+                onAddBlossomServer = onAddBlossomServer,
+                onRemoveBlossomServer = onRemoveBlossomServer,
+                onSyncBackups = onSyncBackups,
+                onCheckBackups = onCheckBackups,
+            )
         }
     }
 }
@@ -372,8 +398,74 @@ private fun ProviderPanel(
 }
 
 @Composable
-private fun BackupsPanel(backups: List<BackupState>) {
+private fun BackupsPanel(
+    backups: List<BackupState>,
+    onAddBackupTarget: (String, String) -> Unit,
+    onRemoveBackupTarget: (String) -> Unit,
+    onAddBlossomServer: (String) -> Unit,
+    onRemoveBlossomServer: (String) -> Unit,
+    onSyncBackups: (String) -> Unit,
+    onCheckBackups: (String) -> Unit,
+) {
+    var backupInput by remember { mutableStateOf("") }
+    var backupLabel by remember { mutableStateOf("") }
+    var blossomInput by remember { mutableStateOf("") }
+
     CardSection(title = "Backups", trailing = "${backups.size}") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { onSyncBackups("") },
+                enabled = backups.isNotEmpty(),
+            ) {
+                Text("Sync Now")
+            }
+            OutlinedButton(
+                onClick = { onCheckBackups("") },
+                enabled = backups.isNotEmpty(),
+            ) {
+                Text("Check All")
+            }
+        }
+        OutlinedTextField(
+            value = backupInput,
+            onValueChange = { backupInput = it },
+            label = { Text("Destination") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = backupLabel,
+            onValueChange = { backupLabel = it },
+            label = { Text("Name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                onAddBackupTarget(backupInput, backupLabel)
+                backupInput = ""
+                backupLabel = ""
+            },
+            enabled = backupInput.isNotBlank(),
+        ) {
+            Text("Add Backup")
+        }
+        OutlinedTextField(
+            value = blossomInput,
+            onValueChange = { blossomInput = it },
+            label = { Text("Blossom endpoint") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                onAddBlossomServer(blossomInput)
+                blossomInput = ""
+            },
+            enabled = blossomInput.isNotBlank(),
+        ) {
+            Text("Add Blossom")
+        }
         if (backups.isEmpty()) {
             Text("No Blossom remotes configured", color = Muted)
         }
@@ -381,6 +473,19 @@ private fun BackupsPanel(backups: List<BackupState>) {
             Text(backup.label, fontWeight = FontWeight.SemiBold)
             Text(backup.state, color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(backup.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onCheckBackups(backup.target) }) {
+                    Text("Check")
+                }
+                TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
+                    Text("Remove backup")
+                }
+                if (backup.kind == "blossom") {
+                    TextButton(onClick = { onRemoveBlossomServer(backup.target) }) {
+                        Text("Remove Blossom")
+                    }
+                }
+            }
         }
     }
 }

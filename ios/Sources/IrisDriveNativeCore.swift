@@ -483,9 +483,25 @@ struct NativeDevice: Codable {
 }
 
 struct NativeBackup: Codable {
+    var id: String
+    var kind: String
+    var target: String
     var label: String
+    var configuredLabel: String
     var state: String
     var detail: String
+    var enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case target
+        case label
+        case configuredLabel = "configured_label"
+        case state
+        case detail
+        case enabled
+    }
 }
 
 struct NativeRelayStatus: Codable {

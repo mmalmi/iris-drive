@@ -76,7 +76,8 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     }
 }
 
-pub(crate) fn render_backups(list: &gtk::ListBox, state: &NativeAppState) {
+pub(crate) fn render_backups(model: &AppRef, state: &NativeAppState) {
+    let list = &model.ui.backups;
     clear_list(list);
     for target in &state.ui.backups {
         let title = if target.label.is_empty() {
@@ -91,11 +92,49 @@ pub(crate) fn render_backups(list: &gtk::ListBox, state: &NativeAppState) {
         } else {
             format!("{} | {}", target.state, target.detail)
         };
-        list.append(&simple_row(title, &subtitle));
+        list.append(&backup_row(model, title, &subtitle, &target.target));
     }
     if list.first_child().is_none() {
         list.append(&simple_row("No backup targets", ""));
     }
+}
+
+fn backup_row(model: &AppRef, title: &str, subtitle: &str, target: &str) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.set_selectable(false);
+    let outer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    outer.set_margin_top(10);
+    outer.set_margin_bottom(10);
+    outer.set_margin_start(12);
+    outer.set_margin_end(12);
+
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    text.set_hexpand(true);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.set_xalign(0.0);
+    title_label.add_css_class("iris-row-title");
+    let subtitle_label = gtk::Label::new(Some(subtitle));
+    subtitle_label.set_xalign(0.0);
+    subtitle_label.add_css_class("iris-row-subtitle");
+    subtitle_label.set_wrap(true);
+    text.append(&title_label);
+    text.append(&subtitle_label);
+    outer.append(&text);
+
+    let check = icon_button("emblem-default-symbolic", "Check");
+    let target_for_check = target.to_string();
+    let check_model = model.clone();
+    check.connect_clicked(move |_| check_backup_target(&check_model, target_for_check.clone()));
+    outer.append(&check);
+
+    let remove = icon_button("user-trash-symbolic", "Remove backup");
+    let target_for_remove = target.to_string();
+    let remove_model = model.clone();
+    remove.connect_clicked(move |_| remove_backup_target(&remove_model, target_for_remove.clone()));
+    outer.append(&remove);
+
+    row.set_child(Some(&outer));
+    row
 }
 
 pub(crate) fn render_network(
@@ -109,9 +148,18 @@ pub(crate) fn render_network(
     clear_list(blossom_list);
     render_fips_network(fips_list, &state.ui);
     render_relay_statuses(relays_list, &state.ui);
+    render_blossom_endpoints(blossom_list, &state.ui);
 
     if blossom_list.first_child().is_none() {
         blossom_list.append(&simple_row("No Blossom servers", ""));
+    }
+}
+
+fn render_blossom_endpoints(list: &gtk::ListBox, ui: &UiState) {
+    for target in &ui.backups {
+        if target.kind == "blossom" {
+            list.append(&simple_row(&target.label, &target.target));
+        }
     }
 }
 

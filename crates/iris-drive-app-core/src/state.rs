@@ -76,9 +76,14 @@ pub struct UiDevice {
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiBackup {
+    pub id: String,
+    pub kind: String,
+    pub target: String,
     pub label: String,
+    pub configured_label: String,
     pub state: String,
     pub detail: String,
+    pub enabled: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

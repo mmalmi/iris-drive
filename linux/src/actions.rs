@@ -20,15 +20,10 @@ pub(crate) fn add_backup_target(model: &AppRef) {
     if target.is_empty() {
         return;
     }
-    let mut args = vec!["backups".to_string(), "add".to_string(), target];
     let label = model.ui.backup_label_entry.text().trim().to_string();
-    if !label.is_empty() {
-        args.push("--label".to_string());
-        args.push(label);
-    }
 
-    match run_idrive_owned(&args) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::AddBackupTarget { target, label }) {
+        Ok(_) => {
             model.ui.backup_entry.set_text("");
             model.ui.backup_label_entry.set_text("");
             refresh(model);
@@ -38,8 +33,10 @@ pub(crate) fn add_backup_target(model: &AppRef) {
 }
 
 pub(crate) fn sync_backups(model: &AppRef) {
-    match run_idrive(["backups", "sync"]) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::SyncBackups {
+        target: String::new(),
+    }) {
+        Ok(_) => {
             model.ui.notice.set_text("Backups synced");
             refresh(model);
         }
@@ -47,9 +44,28 @@ pub(crate) fn sync_backups(model: &AppRef) {
     }
 }
 
+pub(crate) fn remove_backup_target(model: &AppRef, target: String) {
+    match dispatch_desktop_action(NativeAppAction::RemoveBackupTarget { target }) {
+        Ok(_) => refresh(model),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn check_backup_target(model: &AppRef, target: String) {
+    match dispatch_desktop_action(NativeAppAction::CheckBackups { target }) {
+        Ok(_) => {
+            model.ui.notice.set_text("Backup checked");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn check_backups(model: &AppRef) {
-    match run_idrive(["backups", "check"]) {
-        Ok(()) => {
+    match dispatch_desktop_action(NativeAppAction::CheckBackups {
+        target: String::new(),
+    }) {
+        Ok(_) => {
             model.ui.notice.set_text("Backups checked");
             refresh(model);
         }

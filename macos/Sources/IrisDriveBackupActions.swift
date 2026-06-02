@@ -5,21 +5,77 @@ extension AppDelegate {
     func addBackupTarget(_ value: String, label: String) {
         let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else { return }
-        var arguments = ["backups", "add", target]
-        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !label.isEmpty {
-            arguments += ["--label", label]
-        }
-        mutateBackupConfig(arguments: arguments, progress: "Adding backup", success: "Backup added")
+        dispatchNativeAction(
+            [
+                "type": "add_backup_target",
+                "target": target,
+                "label": label.trimmingCharacters(in: .whitespacesAndNewlines),
+            ],
+            progress: "Adding backup",
+            success: "Backup added"
+        )
+    }
+
+    func removeBackupTarget(_ target: IrisDriveBackupTarget) {
+        removeBackupTarget(target.target)
+    }
+
+    func removeBackupTarget(_ target: String) {
+        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        dispatchNativeAction(
+            [
+                "type": "remove_backup_target",
+                "target": target,
+            ],
+            progress: "Removing backup",
+            success: "Backup removed"
+        )
+    }
+
+    func addBlossomServer(_ value: String) {
+        let url = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return }
+        dispatchNativeAction(
+            [
+                "type": "add_blossom_server",
+                "url": url,
+            ],
+            progress: "Adding Blossom",
+            success: "Blossom added"
+        )
+    }
+
+    func removeBlossomServer(_ value: String) {
+        let url = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return }
+        dispatchNativeAction(
+            [
+                "type": "remove_blossom_server",
+                "url": url,
+            ],
+            progress: "Removing Blossom",
+            success: "Blossom removed"
+        )
     }
 
     func syncBackups() {
-        mutateBackupConfig(arguments: ["backups", "sync"], progress: "Syncing backups", success: "Backups synced")
+        dispatchNativeAction(
+            [
+                "type": "sync_backups",
+                "target": "",
+            ],
+            progress: "Syncing backups",
+            success: "Backups synced"
+        )
     }
 
     func checkBackups(completion: (() -> Void)? = nil) {
-        mutateBackupConfig(
-            arguments: ["backups", "check"],
+        dispatchNativeAction(
+            [
+                "type": "check_backups",
+                "target": "",
+            ],
             progress: "Checking backups",
             success: "Backups checked",
             completion: completion
@@ -32,43 +88,14 @@ extension AppDelegate {
             completion?()
             return
         }
-        mutateBackupConfig(
-            arguments: ["backups", "check", "--target", target.target],
+        dispatchNativeAction(
+            [
+                "type": "check_backups",
+                "target": target.target,
+            ],
             progress: "Checking backup",
             success: "Backup checked",
             completion: completion
         )
-    }
-
-    private func mutateBackupConfig(
-        arguments: [String],
-        progress: String,
-        success: String,
-        completion: (() -> Void)? = nil
-    ) {
-        guard let paths = runtimePathsForMenu else {
-            NSSound.beep()
-            completion?()
-            return
-        }
-        let idrive = idriveExecutableURL()
-        updateStatus(progress)
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                _ = try self.runIDrive(idrive, arguments: arguments, paths: paths)
-                DispatchQueue.main.async {
-                    self.updateStatus(success)
-                    self.refreshStatus()
-                    completion?()
-                }
-            } catch {
-                NSLog("Iris Drive backup update failed: \(error)")
-                DispatchQueue.main.async {
-                    self.updateStatus("Backup failed")
-                    NSSound.beep()
-                    completion?()
-                }
-            }
-        }
     }
 }

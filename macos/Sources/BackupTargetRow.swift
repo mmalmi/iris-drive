@@ -3,6 +3,7 @@ import SwiftUI
 struct BackupTargetRow: View {
     let target: IrisDriveBackupTarget
     let onCheck: (@escaping () -> Void) -> Void
+    let onRemove: () -> Void
     @State private var expanded = false
     @State private var checking = false
 
@@ -49,6 +50,12 @@ struct BackupTargetRow: View {
                 }
                 .disabled(checking)
                 .help("Check \(target.target)")
+                Button(role: .destructive) {
+                    onRemove()
+                } label: {
+                    Label("Remove backup", systemImage: "trash")
+                }
+                .help("Remove \(target.target)")
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)

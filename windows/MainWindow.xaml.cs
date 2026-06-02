@@ -274,8 +274,63 @@ public partial class MainWindow : Window
 
         foreach (var target in status.BackupTargets)
         {
-            BackupsList.Items.Add(Row(target.Title, target.Subtitle, target.State));
+            BackupsList.Items.Add(BackupListRow(target));
         }
+    }
+
+    private Border BackupListRow(BackupTargetRow target)
+    {
+        var titleBlock = new TextBlock
+        {
+            Text = target.Title,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var subtitleBlock = new TextBlock
+        {
+            Text = target.Subtitle,
+            Foreground = WpfBrushes.Gray,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var stateBlock = new TextBlock
+        {
+            Text = target.State,
+            Foreground = WpfBrushes.Gray,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+
+        var text = new StackPanel { Orientation = WpfOrientation.Vertical };
+        text.Children.Add(titleBlock);
+        text.Children.Add(subtitleBlock);
+
+        var check = new WpfButton { Content = "Check", Tag = target.Target, Margin = new Thickness(0, 0, 6, 0) };
+        check.Click += CheckBackupTarget_Click;
+        var remove = new WpfButton { Content = "Remove backup", Tag = target.Target };
+        remove.Click += RemoveBackupTarget_Click;
+
+        var actions = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+        actions.Children.Add(stateBlock);
+        actions.Children.Add(check);
+        actions.Children.Add(remove);
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(text, 0);
+        Grid.SetColumn(actions, 1);
+        grid.Children.Add(text);
+        grid.Children.Add(actions);
+
+        return new Border
+        {
+            Padding = new Thickness(12, 9, 12, 9),
+            Child = grid,
+        };
     }
 
     private Border PeerListRow(PeerRow peer)
@@ -812,6 +867,44 @@ public partial class MainWindow : Window
         {
             await service.CheckBackupsAsync();
             NoticeText.Text = "Backups checked";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void CheckBackupTarget_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as WpfButton)?.Tag is not string target)
+        {
+            return;
+        }
+
+        try
+        {
+            await service.CheckBackupsAsync(target);
+            NoticeText.Text = "Backup checked";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void RemoveBackupTarget_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as WpfButton)?.Tag is not string target)
+        {
+            return;
+        }
+
+        try
+        {
+            await service.RemoveBackupTargetAsync(target);
+            NoticeText.Text = "Backup removed";
             await RefreshAsync();
         }
         catch (Exception error)

@@ -5,10 +5,17 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use anyhow::Context;
 #[cfg(not(test))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hashtree_core::{Cid, NHashData, nhash_encode_full};
+use iris_drive_core::backup_ops::{
+    add_backup_target as core_add_backup_target, add_blossom_server as core_add_blossom_server,
+    check_backups as core_check_backups, default_backup_check_sample_size,
+    effective_backup_targets, remove_backup_target as core_remove_backup_target,
+    remove_blossom_server as core_remove_blossom_server, sync_backups as core_sync_backups,
+};
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(not(test))]
@@ -70,12 +77,12 @@ const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(not(test))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
-const DEVICE_LINK_REQUEST_STARTUP_RETRY_SECS: u64 = 1;
-const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 5;
+const DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
 #[cfg(not(test))]
 const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(not(test))]
-const DEVICE_LINK_EXCHANGE_TICK_SECS: u64 = 1;
+const DEVICE_LINK_EXCHANGE_TICK_MILLIS: u64 = 250;
 
 #[derive(Debug, Clone, Copy)]
 struct SentDeviceLinkRequest {
@@ -90,15 +97,14 @@ fn device_link_request_send_due(
     let Some(sent) = sent else {
         return true;
     };
-    now.duration_since(sent.last_sent)
-        >= std::time::Duration::from_secs(device_link_request_retry_secs(sent.attempts))
+    now.duration_since(sent.last_sent) >= device_link_request_retry_interval(sent.attempts)
 }
 
-fn device_link_request_retry_secs(attempts: u8) -> u64 {
+fn device_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
-        DEVICE_LINK_REQUEST_STARTUP_RETRY_SECS
+        std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
-        DEVICE_LINK_REQUEST_RETRY_SECS
+        std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
     }
 }
 
@@ -260,6 +266,24 @@ impl NativeAppRuntime {
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
             NativeAppAction::ResetRelays => self.reset_relays(),
+            NativeAppAction::AddBackupTarget { target, label } => {
+                self.add_backup_target(&target, &label);
+            }
+            NativeAppAction::RemoveBackupTarget { target } => {
+                self.remove_backup_target(&target);
+            }
+            NativeAppAction::AddBlossomServer { url } => {
+                self.add_blossom_server(&url);
+            }
+            NativeAppAction::RemoveBlossomServer { url } => {
+                self.remove_blossom_server(&url);
+            }
+            NativeAppAction::SyncBackups { target } => {
+                self.sync_backups(&target);
+            }
+            NativeAppAction::CheckBackups { target } => {
+                self.check_backups(&target);
+            }
             NativeAppAction::StartSync | NativeAppAction::RestartSync => self.start_sync(),
             NativeAppAction::StopSync => self.set_sync_running(false),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
@@ -654,6 +678,59 @@ impl NativeAppRuntime {
         }
     }
 
+    fn add_backup_target(&mut self, target: &str, label: &str) {
+        if let Err(error) =
+            core_add_backup_target(Path::new(&self.data_dir), target, label_option(label))
+        {
+            self.state.error = format!("adding backup target: {error:#}");
+        }
+    }
+
+    fn remove_backup_target(&mut self, target: &str) {
+        if let Err(error) = core_remove_backup_target(Path::new(&self.data_dir), target) {
+            self.state.error = format!("removing backup target: {error:#}");
+        }
+    }
+
+    fn add_blossom_server(&mut self, url: &str) {
+        if let Err(error) = core_add_blossom_server(Path::new(&self.data_dir), url) {
+            self.state.error = format!("adding Blossom endpoint: {error:#}");
+        }
+    }
+
+    fn remove_blossom_server(&mut self, url: &str) {
+        if let Err(error) = core_remove_blossom_server(Path::new(&self.data_dir), url) {
+            self.state.error = format!("removing Blossom endpoint: {error:#}");
+        }
+    }
+
+    fn sync_backups(&mut self, target: &str) {
+        let data_dir = self.data_dir.clone();
+        let target = label_option(target);
+        match block_on_backup_operation(async move {
+            core_sync_backups(Path::new(&data_dir), target.as_deref()).await
+        }) {
+            Ok(_) => {}
+            Err(error) => self.state.error = format!("syncing backups: {error:#}"),
+        }
+    }
+
+    fn check_backups(&mut self, target: &str) {
+        let data_dir = self.data_dir.clone();
+        let target = label_option(target);
+        match block_on_backup_operation(async move {
+            core_check_backups(
+                Path::new(&data_dir),
+                target.as_deref(),
+                default_backup_check_sample_size(),
+            )
+            .await
+        }) {
+            Ok(_) => {}
+            Err(error) => self.state.error = format!("checking backups: {error:#}"),
+        }
+    }
+
     fn initialized(&self) -> bool {
         key_path_in(Path::new(&self.data_dir)).exists()
             && self
@@ -996,6 +1073,30 @@ async fn run_device_link_exchange_async(
 
     let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
         .map_err(|error| format!("loading device key: {error}"))?;
+    let relays = if startup_config.relays.is_empty() {
+        default_relays()
+    } else {
+        normalized_config_relays(&startup_config.relays)
+            .map_err(|error| format!("normalizing relays: {error}"))?
+    };
+    let owner_pubkey = startup_config
+        .account
+        .as_ref()
+        .expect("account checked above")
+        .owner_pubkey
+        .clone();
+    let relay_filters = iris_drive_core::relay_sync::subscription_filters(
+        &owner_pubkey,
+        iris_drive_core::PRIMARY_DRIVE_ID,
+    );
+    let relay_client = iris_drive_core::relay_sync::connect(&relays)
+        .await
+        .map_err(|error| format!("connecting device-link relays: {error}"))?;
+    relay_client
+        .subscribe(relay_filters, None)
+        .await
+        .map_err(|error| format!("subscribing device-link relays: {error}"))?;
+    let mut relay_notifications = relay_client.notifications();
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
@@ -1010,12 +1111,14 @@ async fn run_device_link_exchange_async(
     let mut sent_rosters = BTreeMap::new();
     let mut acked_rosters = BTreeSet::new();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
-    let mut tick = tokio::time::interval(std::time::Duration::from_secs(
-        DEVICE_LINK_EXCHANGE_TICK_SECS,
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(
+        DEVICE_LINK_EXCHANGE_TICK_MILLIS,
     ));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let _ = drive_device_link_exchange_tick(
         config_dir,
+        &relay_client,
+        device.keys(),
         &sync,
         &mut sent_requests,
         &mut sent_rosters,
@@ -1031,6 +1134,8 @@ async fn run_device_link_exchange_async(
                 }
                 let _ = drive_device_link_exchange_tick(
                     config_dir,
+                    &relay_client,
+                    device.keys(),
                     &sync,
                     &mut sent_requests,
                     &mut sent_rosters,
@@ -1069,14 +1174,34 @@ async fn run_device_link_exchange_async(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
+            notification = relay_notifications.recv() => {
+                match notification {
+                    Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
+                        if let Err(error) = handle_native_device_link_request_event(config_dir, &event) {
+                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native device-link relay request failed");
+                        }
+                    }
+                    Ok(nostr_sdk::RelayPoolNotification::Shutdown) => {
+                        tracing::warn!("native device-link relay notifications shut down");
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "native device-link relay receiver lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
         }
     }
+    let _ = relay_client.disconnect().await;
     Ok(())
 }
 
 #[cfg(not(test))]
 async fn drive_device_link_exchange_tick(
     config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
+    device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
@@ -1089,7 +1214,8 @@ async fn drive_device_link_exchange_tick(
     };
 
     sync.refresh_authorized_peers(&config).await;
-    send_native_pending_device_link_request(sync, state, sent_requests).await?;
+    send_native_pending_device_link_request(relay_client, device_keys, sync, state, sent_requests)
+        .await?;
     send_native_authorized_device_link_rosters(
         config_dir,
         sync,
@@ -1106,6 +1232,8 @@ async fn drive_device_link_exchange_tick(
 
 #[cfg(not(test))]
 async fn send_native_pending_device_link_request(
+    relay_client: &nostr_sdk::Client,
+    device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::AccountState,
     sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
@@ -1127,31 +1255,37 @@ async fn send_native_pending_device_link_request(
     let admin_npub = account_npub(&pending.admin_device_pubkey);
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link request: {error}"))?;
+    let relay_event_id =
+        iris_drive_core::relay_sync::publish_device_link_request(relay_client, device_keys, &frame)
+            .await
+            .map_err(|error| format!("publishing device link request relay event: {error}"))?;
+    let attempts = sent_requests
+        .get(&fingerprint)
+        .map_or(1, |sent| sent.attempts.saturating_add(1));
+    sent_requests.insert(
+        fingerprint,
+        SentDeviceLinkRequest {
+            last_sent: now,
+            attempts,
+        },
+    );
     match sync
         .send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes)
         .await
     {
         Ok(()) => {
-            let attempts = sent_requests
-                .get(&fingerprint)
-                .map_or(1, |sent| sent.attempts.saturating_add(1));
-            sent_requests.insert(
-                fingerprint,
-                SentDeviceLinkRequest {
-                    last_sent: now,
-                    attempts,
-                },
-            );
             tracing::debug!(
                 admin_npub,
+                relay_event_id = %relay_event_id.to_hex(),
                 requested_at = frame.requested_at,
-                "sent native device-link request over FIPS"
+                "sent native device-link request over relay and FIPS"
             );
         }
         Err(error) => tracing::warn!(
             admin_npub,
+            relay_event_id = %relay_event_id.to_hex(),
             error = %error,
-            "sending native device-link request over FIPS failed"
+            "sent native device-link request over relay, FIPS send failed"
         ),
     }
     Ok(())
@@ -1320,6 +1454,35 @@ fn handle_native_device_link_request(
             device_npub = account_npub(&device_hex),
             requested_at = frame.requested_at,
             "received native device-link request over FIPS"
+        );
+    }
+    Ok(true)
+}
+
+#[cfg(not(test))]
+fn handle_native_device_link_request_event(
+    config_dir: &Path,
+    event: &nostr_sdk::Event,
+) -> Result<bool, String> {
+    if !iris_drive_core::nostr_events::is_device_link_request_event_coordinate(event) {
+        return Ok(false);
+    }
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let outcome =
+        iris_drive_core::relay_sync::apply_remote_device_link_request_event(&mut config, event)
+            .map_err(|error| format!("applying device link request relay event: {error}"))?;
+    if matches!(
+        outcome,
+        iris_drive_core::relay_sync::DeviceLinkRequestApply::Recorded
+    ) {
+        config
+            .save(config_path_in(config_dir))
+            .map_err(|error| format!("saving config: {error}"))?;
+        tracing::debug!(
+            event_id = %event.id.to_hex(),
+            device_npub = account_npub(&event.pubkey.to_hex()),
+            "received native device-link request over relay"
         );
     }
     Ok(true)
@@ -1792,16 +1955,18 @@ fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
         .collect()
 }
 
+fn block_on_backup_operation<T>(
+    future: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building backup runtime")?;
+    runtime.block_on(future)
+}
+
 fn backup_ui_rows_for_config(config: &AppConfig) -> Vec<UiBackup> {
-    let mut targets = config.backup_targets.clone();
-    for server in &config.blossom_servers {
-        let Some(target) = blossom_backup_target(server) else {
-            continue;
-        };
-        if !targets.iter().any(|existing| existing.id == target.id) {
-            targets.push(target);
-        }
-    }
+    let targets = effective_backup_targets(config);
 
     if targets.is_empty() {
         return default_backups();
@@ -1813,9 +1978,14 @@ fn backup_ui_rows_for_config(config: &AppConfig) -> Vec<UiBackup> {
 fn ui_backup_from_target(target: &BackupTarget) -> UiBackup {
     let summary = backup_target_summary(target);
     UiBackup {
+        id: summary.id,
+        kind: summary.kind,
+        target: summary.target,
         label: summary.title,
+        configured_label: summary.label.unwrap_or_default(),
         state: summary.state,
         detail: summary.detail,
+        enabled: summary.enabled,
     }
 }
 
@@ -2342,6 +2512,8 @@ fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
     Some(format!("https://drive.iris.to/#/{nhash}"))
 }
 
+#[cfg(test)]
+mod backup_tests;
 #[cfg(test)]
 mod provider_tests;
 #[cfg(test)]

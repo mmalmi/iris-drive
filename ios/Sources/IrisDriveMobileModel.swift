@@ -31,6 +31,9 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var profilePhotoName = ""
     @Published var relay = defaultRelay
     @Published var relayInput = ""
+    @Published var backupTargetInput = ""
+    @Published var backupLabelInput = ""
+    @Published var blossomEndpointInput = ""
     @Published var relays = defaultRelays
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var syncOverCellular = false
@@ -649,6 +652,62 @@ final class IrisDriveMobileModel: ObservableObject {
         persistLocalSettings()
     }
 
+    func addBackupTarget() {
+        let target = backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        dispatch([
+            "type": "add_backup_target",
+            "target": target,
+            "label": backupLabelInput,
+        ])
+        backupTargetInput = ""
+        backupLabelInput = ""
+    }
+
+    func removeBackupTarget(_ target: String) {
+        dispatch([
+            "type": "remove_backup_target",
+            "target": target,
+        ])
+    }
+
+    func addBlossomServer() {
+        let url = blossomEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return }
+        dispatch([
+            "type": "add_blossom_server",
+            "url": url,
+        ])
+        blossomEndpointInput = ""
+    }
+
+    func removeBlossomServer(_ url: String) {
+        dispatch([
+            "type": "remove_blossom_server",
+            "url": url,
+        ])
+    }
+
+    func syncBackups(_ target: String = "") {
+        guard isSetupComplete else { return }
+        Task {
+            await dispatchInBackground([
+                "type": "sync_backups",
+                "target": target,
+            ], invalidatePendingState: true)
+        }
+    }
+
+    func checkBackups(_ target: String = "") {
+        guard isSetupComplete else { return }
+        Task {
+            await dispatchInBackground([
+                "type": "check_backups",
+                "target": target,
+            ], invalidatePendingState: true)
+        }
+    }
+
     func resetLocalState() {
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
         removeFileProviderDomain()
@@ -810,9 +869,14 @@ final class IrisDriveMobileModel: ObservableObject {
         signalFileProviderIfNeeded()
         backups = state.ui.backups.map { backup in
             IrisDriveBackup(
+                id: backup.id,
+                kind: backup.kind,
+                target: backup.target,
                 label: backup.label,
+                configuredLabel: backup.configuredLabel,
                 state: backup.state,
-                detail: backup.detail
+                detail: backup.detail,
+                enabled: backup.enabled
             )
         }
         roots = state.ui.roots.map { root in

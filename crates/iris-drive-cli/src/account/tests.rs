@@ -264,3 +264,35 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
 
     assert!(acked.contains(&device_link_roster_fingerprint(&joiner_pubkey, app_keys)));
 }
+
+#[test]
+fn device_link_request_retry_uses_startup_burst_before_steady_interval() {
+    let now = std::time::Instant::now();
+    assert!(device_link_request_send_due(None, now));
+
+    let first = SentDeviceLinkRequest {
+        last_sent: now,
+        attempts: 1,
+    };
+    assert!(!device_link_request_send_due(
+        Some(first),
+        now + std::time::Duration::from_millis(249)
+    ));
+    assert!(device_link_request_send_due(
+        Some(first),
+        now + std::time::Duration::from_millis(250)
+    ));
+
+    let steady = SentDeviceLinkRequest {
+        last_sent: now,
+        attempts: 40,
+    };
+    assert!(!device_link_request_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(9)
+    ));
+    assert!(device_link_request_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(10)
+    ));
+}

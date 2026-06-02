@@ -130,6 +130,12 @@ internal fun IrisDriveAndroidApp(
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
     onResetRelays: () -> Unit,
+    onAddBackupTarget: (String, String) -> Unit,
+    onRemoveBackupTarget: (String) -> Unit,
+    onAddBlossomServer: (String) -> Unit,
+    onRemoveBlossomServer: (String) -> Unit,
+    onSyncBackups: (String) -> Unit,
+    onCheckBackups: (String) -> Unit,
     onAddRoot: (String, String) -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
@@ -217,6 +223,12 @@ internal fun IrisDriveAndroidApp(
                     onAddRelay = onAddRelay,
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,
+                    onAddBackupTarget = onAddBackupTarget,
+                    onRemoveBackupTarget = onRemoveBackupTarget,
+                    onAddBlossomServer = onAddBlossomServer,
+                    onRemoveBlossomServer = onRemoveBlossomServer,
+                    onSyncBackups = onSyncBackups,
+                    onCheckBackups = onCheckBackups,
                 )
             }
         }

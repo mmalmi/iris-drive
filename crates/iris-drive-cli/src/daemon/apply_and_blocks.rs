@@ -9,7 +9,22 @@ pub(crate) async fn apply_one_event(
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
-    if iris_drive_core::nostr_events::is_app_keys_event_coordinate(event) {
+    if iris_drive_core::nostr_events::is_device_link_request_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_device_link_request_event(&mut config, event)?;
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "device_link_request",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+            }),
+        );
+        if matches!(outcome, relay_sync::DeviceLinkRequestApply::Recorded) {
+            config.save(config_path_in(config_dir))?;
+        }
+        return Ok(());
+    } else if iris_drive_core::nostr_events::is_app_keys_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_app_keys_event(&mut config, event)?;
         println!(
             "{}",

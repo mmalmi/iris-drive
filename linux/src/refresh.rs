@@ -62,7 +62,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
             render_drives(&model.ui.drives, &state);
             render_peers(model, &state);
-            render_backups(&model.ui.backups, &state);
+            render_backups(model, &state);
             render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &state);
         }
         Err(error) => {

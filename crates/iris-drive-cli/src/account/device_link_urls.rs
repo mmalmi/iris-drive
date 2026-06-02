@@ -111,6 +111,7 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
             .outbound_device_link_request
             .as_ref()
             .map(|request| request.requested_at),
+        "sent_over_relay": state.outbound_device_link_request.is_some(),
         "sent_over_fips": state.outbound_device_link_request.is_some(),
     })
 }

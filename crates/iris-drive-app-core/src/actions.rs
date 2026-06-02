@@ -41,6 +41,25 @@ pub enum NativeAppAction {
         url: String,
     },
     ResetRelays,
+    AddBackupTarget {
+        target: String,
+        label: String,
+    },
+    RemoveBackupTarget {
+        target: String,
+    },
+    AddBlossomServer {
+        url: String,
+    },
+    RemoveBlossomServer {
+        url: String,
+    },
+    SyncBackups {
+        target: String,
+    },
+    CheckBackups {
+        target: String,
+    },
     StartSync,
     StopSync,
     RestartSync,

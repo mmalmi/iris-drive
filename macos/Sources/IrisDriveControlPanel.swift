@@ -677,9 +677,15 @@ struct IrisDriveControlPanel: View {
                 emptyState("No backups yet")
             } else {
                 ForEach(status.backupTargets) { target in
-                    BackupTargetRow(target: target) { completion in
-                        controller.checkBackupTarget(target, completion: completion)
-                    }
+                    BackupTargetRow(
+                        target: target,
+                        onCheck: { completion in
+                            controller.checkBackupTarget(target, completion: completion)
+                        },
+                        onRemove: {
+                            controller.removeBackupTarget(target)
+                        }
+                    )
                 }
             }
         }

@@ -1558,11 +1558,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func dispatchNativeAction(
+    func dispatchNativeAction(
         _ action: [String: Any],
         progress: String,
         success: String,
-        restartSyncAfterSuccess: Bool = false
+        restartSyncAfterSuccess: Bool = false,
+        completion: (() -> Void)? = nil
     ) {
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
@@ -1587,12 +1588,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             self.startSync()
                         }
                     }
+                    completion?()
                 }
             } catch {
                 NSLog("Iris Drive native action failed: \(error)")
                 self.updateStatus("\(success) failed")
                 DispatchQueue.main.async {
                     NSSound.beep()
+                    completion?()
                 }
             }
         }

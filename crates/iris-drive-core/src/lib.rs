@@ -1,5 +1,6 @@
 pub mod account;
 pub mod app_keys;
+pub mod backup_ops;
 pub mod backup_summary;
 pub mod block_sync;
 pub mod blossom_sync;

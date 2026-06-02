@@ -24,10 +24,14 @@ struct IrisDriveDeviceLinkRequest: Identifiable, Equatable {
 }
 
 struct IrisDriveBackup: Identifiable, Equatable {
-    var id: String { detail }
+    var id: String
+    var kind: String
+    var target: String
     var label: String
+    var configuredLabel: String
     var state: String
     var detail: String
+    var enabled: Bool
 }
 
 struct IrisDriveRelayStatus: Identifiable, Equatable {

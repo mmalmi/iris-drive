@@ -22,10 +22,11 @@ use crate::AppKeysSnapshot;
 use crate::app_keys::{AppKeysEventRecord, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef};
 use crate::nostr_events::{
-    KIND_APP_KEYS, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag,
-    build_app_keys_event, build_drive_root_publish_event, build_private_hashtree_root_event,
-    drive_root_d_tag, parse_app_keys_event, parse_drive_root_event,
-    parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    KIND_APP_KEYS, KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT,
+    KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag, build_app_keys_event, build_device_link_request_event,
+    build_drive_root_publish_event, build_private_hashtree_root_event, device_link_request_d_tag,
+    drive_root_d_tag, parse_app_keys_event, parse_device_link_request_event,
+    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 
 #[derive(Debug, Error)]
@@ -42,6 +43,8 @@ pub enum RelayError {
     InvalidPubkey(String),
     #[error("hashtree root: {0}")]
     HashtreeRoot(String),
+    #[error("account: {0}")]
+    Account(#[from] crate::account::AccountError),
 }
 
 /// Result of applying a remote `AppKeys` event.
@@ -92,6 +95,55 @@ pub fn apply_remote_app_keys_event(
     };
     let decision = account.apply_signed_app_keys(snapshot, record);
     Ok(AppKeysApply::Applied(decision))
+}
+
+/// Result of applying a device-link request sent over relay metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceLinkRequestApply {
+    /// The event is addressed to another account.
+    NotOurOwner,
+    /// This install is not an admin device and cannot approve devices.
+    NotAdmin,
+    /// The event did not carry this admin's current invite secret.
+    InvalidSecret,
+    /// The request was already represented locally.
+    Current,
+    /// The inbound request queue changed.
+    Recorded,
+}
+
+/// Apply a signed device-link request delivered by relay.
+pub fn apply_remote_device_link_request_event(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<DeviceLinkRequestApply, RelayError> {
+    let frame = parse_device_link_request_event(event)?;
+    let Some(account) = config.account.as_mut() else {
+        return Err(RelayError::NoAccount);
+    };
+    if frame.owner_pubkey != account.owner_pubkey {
+        return Ok(DeviceLinkRequestApply::NotOurOwner);
+    }
+    if !account.can_manage_devices() {
+        return Ok(DeviceLinkRequestApply::NotAdmin);
+    }
+    let expected_secret = account.device_link_secret.trim();
+    if !expected_secret.is_empty() && frame.link_secret.trim() != expected_secret {
+        return Ok(DeviceLinkRequestApply::InvalidSecret);
+    }
+
+    let changed = account.record_inbound_device_link_request(
+        &frame.owner_pubkey,
+        &frame.device_pubkey,
+        frame.label,
+        &frame.link_secret,
+        frame.requested_at,
+    )?;
+    if changed {
+        Ok(DeviceLinkRequestApply::Recorded)
+    } else {
+        Ok(DeviceLinkRequestApply::Current)
+    }
 }
 
 /// Apply a signed roster delivered over device-link/FIPS.
@@ -368,6 +420,20 @@ pub async fn publish_app_keys(
     Ok(*output.id())
 }
 
+/// Publish a signed device-link request from the requesting device.
+pub async fn publish_device_link_request(
+    client: &Client,
+    device_keys: &Keys,
+    frame: &crate::device_link_transport::DeviceLinkRequestFrame,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let event = build_device_link_request_event(device_keys, frame)?;
+    let output = client
+        .send_event(event)
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(*output.id())
+}
+
 /// Publish a signed drive-root event for this device's current root.
 pub async fn publish_drive_root(
     client: &Client,
@@ -483,6 +549,14 @@ pub async fn fetch_latest_files_root(
 #[must_use]
 pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filter> {
     let mut filters = Vec::new();
+    filters.push(
+        Filter::new()
+            .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
+            .custom_tag(
+                SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+                [device_link_request_d_tag(owner_pubkey_hex)],
+            ),
+    );
     let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
     filters.push(
         Filter::new()

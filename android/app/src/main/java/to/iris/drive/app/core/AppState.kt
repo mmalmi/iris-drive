@@ -98,9 +98,14 @@ internal data class DeviceState(
 )
 
 internal data class BackupState(
+    val id: String,
+    val kind: String,
+    val target: String,
     val label: String,
+    val configuredLabel: String,
     val state: String,
     val detail: String,
+    val enabled: Boolean,
 )
 
 internal data class RelayStatus(
@@ -232,6 +237,43 @@ internal object NativeActions {
             .toString()
 
     fun resetRelays(): String = JSONObject().put("type", "reset_relays").toString()
+
+    fun addBackupTarget(target: String, label: String): String =
+        JSONObject()
+            .put("type", "add_backup_target")
+            .put("target", target)
+            .put("label", label)
+            .toString()
+
+    fun removeBackupTarget(target: String): String =
+        JSONObject()
+            .put("type", "remove_backup_target")
+            .put("target", target)
+            .toString()
+
+    fun addBlossomServer(url: String): String =
+        JSONObject()
+            .put("type", "add_blossom_server")
+            .put("url", url)
+            .toString()
+
+    fun removeBlossomServer(url: String): String =
+        JSONObject()
+            .put("type", "remove_blossom_server")
+            .put("url", url)
+            .toString()
+
+    fun syncBackups(target: String = ""): String =
+        JSONObject()
+            .put("type", "sync_backups")
+            .put("target", target)
+            .toString()
+
+    fun checkBackups(target: String = ""): String =
+        JSONObject()
+            .put("type", "check_backups")
+            .put("target", target)
+            .toString()
 
     fun startSync(): String = JSONObject().put("type", "start_sync").toString()
 
@@ -370,9 +412,14 @@ private fun JSONArray?.toBackups(): List<BackupState> {
             val item = optJSONObject(index) ?: continue
             add(
                 BackupState(
+                    id = item.optString("id"),
+                    kind = item.optString("kind"),
+                    target = item.optString("target"),
                     label = item.optString("label"),
+                    configuredLabel = item.optString("configured_label"),
                     state = item.optString("state"),
                     detail = item.optString("detail"),
+                    enabled = item.optBoolean("enabled", true),
                 ),
             )
         }

@@ -739,13 +739,75 @@ private struct BackupsView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
     var body: some View {
-        List {
-            Section {
+        Form {
+            Section("Actions") {
+                Button {
+                    model.syncBackups()
+                } label: {
+                    Label("Sync Now", systemImage: "arrow.up.circle")
+                }
+                .disabled(model.backups.isEmpty)
+                Button {
+                    model.checkBackups()
+                } label: {
+                    Label("Check All", systemImage: "checkmark.shield")
+                }
+                .disabled(model.backups.isEmpty)
+            }
+
+            Section("Add Backup") {
+                TextField("Destination", text: $model.backupTargetInput)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.addBackupTarget() }
+                TextField("Name", text: $model.backupLabelInput)
+                    .onSubmit { model.addBackupTarget() }
+                Button {
+                    model.addBackupTarget()
+                } label: {
+                    Label("Add Backup", systemImage: "plus")
+                }
+                .disabled(model.backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Section("Blossom") {
+                TextField("Endpoint URL", text: $model.blossomEndpointInput)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.addBlossomServer() }
+                Button {
+                    model.addBlossomServer()
+                } label: {
+                    Label("Add Blossom", systemImage: "plus")
+                }
+                .disabled(model.blossomEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Section("Targets") {
                 ForEach(model.backups) { backup in
                     DisclosureGroup {
                         Text(backup.detail)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        Button {
+                            model.checkBackups(backup.target)
+                        } label: {
+                            Label("Check", systemImage: "checkmark.shield")
+                        }
+                        Button(role: .destructive) {
+                            model.removeBackupTarget(backup.target)
+                        } label: {
+                            Label("Remove backup", systemImage: "trash")
+                        }
+                        if backup.kind == "blossom" {
+                            Button(role: .destructive) {
+                                model.removeBlossomServer(backup.target)
+                            } label: {
+                                Label("Remove Blossom", systemImage: "xmark.circle")
+                            }
+                        }
                     } label: {
                         VStack(alignment: .leading) {
                             Text(backup.label)

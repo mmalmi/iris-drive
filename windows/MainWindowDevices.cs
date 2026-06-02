@@ -7,7 +7,9 @@ using System.Windows.Media;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfButton = System.Windows.Controls.Button;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
+using WpfMessageBox = System.Windows.MessageBox;
 using WpfOrientation = System.Windows.Controls.Orientation;
+using WpfPanel = System.Windows.Controls.Panel;
 using WpfTextBox = System.Windows.Controls.TextBox;
 
 namespace IrisDrive.WindowsShell;
@@ -155,7 +157,7 @@ public partial class MainWindow
     }
 
     private void AddDeviceRequestRow(
-        Panel body,
+        WpfPanel body,
         TextBlock notice,
         DeviceLinkRequestRow request,
         Action closeDialog)
@@ -271,7 +273,7 @@ public partial class MainWindow
             return;
         }
 
-        if (MessageBox.Show(
+        if (WpfMessageBox.Show(
                 this,
                 $"Remove this device from Iris Drive?\n\n{deviceNpub}",
                 "Remove device",

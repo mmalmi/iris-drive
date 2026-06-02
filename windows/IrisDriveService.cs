@@ -197,20 +197,78 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        var trimmedLabel = label.Trim();
-        return string.IsNullOrEmpty(trimmedLabel)
-            ? RunAsync("backups", "add", target.Trim())
-            : RunAsync("backups", "add", target.Trim(), "--label", trimmedLabel);
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_backup_target",
+                ["target"] = target.Trim(),
+                ["label"] = label.Trim(),
+            });
+    }
+
+    public Task RemoveBackupTargetAsync(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return Task.CompletedTask;
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "remove_backup_target",
+                ["target"] = target.Trim(),
+            });
+    }
+
+    public Task AddBlossomServerAsync(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return Task.CompletedTask;
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_blossom_server",
+                ["url"] = url.Trim(),
+            });
+    }
+
+    public Task RemoveBlossomServerAsync(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return Task.CompletedTask;
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "remove_blossom_server",
+                ["url"] = url.Trim(),
+            });
     }
 
     public Task SyncBackupsAsync()
     {
-        return RunAsync("backups", "sync");
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "sync_backups",
+                ["target"] = "",
+            });
     }
 
-    public Task CheckBackupsAsync()
+    public Task CheckBackupsAsync(string target = "")
     {
-        return RunAsync("backups", "check");
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "check_backups",
+                ["target"] = target.Trim(),
+            });
     }
 
     public Task SetNhashResolverAsync(bool enabled)

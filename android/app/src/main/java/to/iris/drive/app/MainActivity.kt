@@ -103,6 +103,24 @@ class MainActivity : ComponentActivity() {
                 onAddRelay = { url -> dispatch(NativeActions.addRelay(url)) },
                 onRemoveRelay = { url -> dispatch(NativeActions.removeRelay(url)) },
                 onResetRelays = { dispatch(NativeActions.resetRelays()) },
+                onAddBackupTarget = { target, label ->
+                    dispatch(NativeActions.addBackupTarget(target, label))
+                },
+                onRemoveBackupTarget = { target ->
+                    dispatch(NativeActions.removeBackupTarget(target))
+                },
+                onAddBlossomServer = { url ->
+                    dispatch(NativeActions.addBlossomServer(url))
+                },
+                onRemoveBlossomServer = { url ->
+                    dispatch(NativeActions.removeBlossomServer(url))
+                },
+                onSyncBackups = { target ->
+                    dispatch(NativeActions.syncBackups(target))
+                },
+                onCheckBackups = { target ->
+                    dispatch(NativeActions.checkBackups(target))
+                },
                 onAddRoot = { name, path -> dispatch(NativeActions.addRoot(name, path)) },
                 onStartSync = {
                     if (needsNotificationPermission()) {
