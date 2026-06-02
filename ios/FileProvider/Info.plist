@@ -28,6 +28,8 @@
     <true/>
     <key>NSExtensionFileProviderDownloadPipelineDepth</key>
     <integer>4</integer>
+    <key>NSExtensionFileProviderDocumentGroup</key>
+    <string>group.to.iris.drive</string>
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.fileprovider-nonui</string>
     <key>NSExtensionPrincipalClass</key>

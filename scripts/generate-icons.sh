@@ -21,6 +21,26 @@ render_png() {
   rsvg-convert -w "$size" -h "$size" "$SVG" -o "$output"
 }
 
+render_ios_app_icon_png() {
+  local size="$1"
+  local output="$2"
+  local tmp
+
+  tmp="$(mktemp)"
+  {
+    cat <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#080214"/>
+EOF
+    sed '1d;$d' "$SVG"
+    cat <<'EOF'
+</svg>
+EOF
+  } >"$tmp"
+  rsvg-convert -w "$size" -h "$size" "$tmp" -o "$output"
+  rm -f "$tmp"
+}
+
 render_android_launcher_png() {
   local size="$1"
   local output="$2"
@@ -188,21 +208,21 @@ generate_ios_icons() {
 
   local appicon_set
   for appicon_set in "${appicon_sets[@]}"; do
-    render_png 20 "$appicon_set/icon_20x20.png"
-    render_png 40 "$appicon_set/icon_20x20@2x.png"
-    render_png 60 "$appicon_set/icon_20x20@3x.png"
-    render_png 29 "$appicon_set/icon_29x29.png"
-    render_png 58 "$appicon_set/icon_29x29@2x.png"
-    render_png 87 "$appicon_set/icon_29x29@3x.png"
-    render_png 40 "$appicon_set/icon_40x40.png"
-    render_png 80 "$appicon_set/icon_40x40@2x.png"
-    render_png 120 "$appicon_set/icon_40x40@3x.png"
-    render_png 120 "$appicon_set/icon_60x60@2x.png"
-    render_png 180 "$appicon_set/icon_60x60@3x.png"
-    render_png 76 "$appicon_set/icon_76x76.png"
-    render_png 152 "$appicon_set/icon_76x76@2x.png"
-    render_png 167 "$appicon_set/icon_83.5x83.5@2x.png"
-    render_png 1024 "$appicon_set/icon_1024x1024.png"
+    render_ios_app_icon_png 20 "$appicon_set/icon_20x20.png"
+    render_ios_app_icon_png 40 "$appicon_set/icon_20x20@2x.png"
+    render_ios_app_icon_png 60 "$appicon_set/icon_20x20@3x.png"
+    render_ios_app_icon_png 29 "$appicon_set/icon_29x29.png"
+    render_ios_app_icon_png 58 "$appicon_set/icon_29x29@2x.png"
+    render_ios_app_icon_png 87 "$appicon_set/icon_29x29@3x.png"
+    render_ios_app_icon_png 40 "$appicon_set/icon_40x40.png"
+    render_ios_app_icon_png 80 "$appicon_set/icon_40x40@2x.png"
+    render_ios_app_icon_png 120 "$appicon_set/icon_40x40@3x.png"
+    render_ios_app_icon_png 120 "$appicon_set/icon_60x60@2x.png"
+    render_ios_app_icon_png 180 "$appicon_set/icon_60x60@3x.png"
+    render_ios_app_icon_png 76 "$appicon_set/icon_76x76.png"
+    render_ios_app_icon_png 152 "$appicon_set/icon_76x76@2x.png"
+    render_ios_app_icon_png 167 "$appicon_set/icon_83.5x83.5@2x.png"
+    render_ios_app_icon_png 1024 "$appicon_set/icon_1024x1024.png"
     echo "generated iOS app icons in $appicon_set"
   done
 }

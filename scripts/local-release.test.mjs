@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -641,6 +641,34 @@ test('TestFlight helper explains App Store Connect app creation permission failu
   assert.match(result.stderr, /SKU: to\.iris\.drive\.ios/)
 })
 
+test('iOS FileProvider declares the required App Store document group', () => {
+  const plist = readFileSync(
+    fileURLToPath(new URL('../ios/FileProvider/Info.plist', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(
+    plist,
+    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>group\.to\.iris\.drive<\/string>/,
+  )
+})
+
+test('iOS app icons have no alpha channel', () => {
+  const appIconSet = fileURLToPath(
+    new URL('../ios/Resources/Assets.xcassets/AppIcon.appiconset/', import.meta.url),
+  )
+  const contents = JSON.parse(readFileSync(join(appIconSet, 'Contents.json'), 'utf8'))
+  const icons = contents.images.filter((image) => image.filename)
+
+  assert.ok(
+    icons.some((image) => image.size === '1024x1024'),
+    'AppIcon.appiconset must declare a 1024x1024 marketing icon',
+  )
+  for (const icon of icons) {
+    assert.equal(pngHasAlpha(join(appIconSet, icon.filename)), false, `${icon.filename} must be opaque`)
+  }
+})
+
 function writeJson(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
   response.end(JSON.stringify(body))
@@ -666,4 +694,23 @@ function spawnForTest(command, args, options) {
     })
     child.on('close', (status) => resolve({ status, stdout, stderr }))
   })
+}
+
+function pngHasAlpha(path) {
+  const bytes = readFileSync(path)
+  assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${path} is not a PNG`)
+  const colorType = bytes[25]
+  if (colorType === 4 || colorType === 6) {
+    return true
+  }
+  let offset = 8
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const type = bytes.subarray(offset + 4, offset + 8).toString('ascii')
+    if (type === 'tRNS') {
+      return true
+    }
+    offset += 12 + length
+  }
+  return false
 }
