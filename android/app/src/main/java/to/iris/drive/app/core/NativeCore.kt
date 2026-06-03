@@ -17,6 +17,7 @@ internal object NativeCore {
     external fun qrMatrixJson(text: String): String
     external fun classifyLinkInputJson(text: String): String
     external fun validateLinkInputJson(text: String): String
+    external fun exportRecoverySecretJson(dataDir: String): String
     external fun providerListJson(dataDir: String): String
     external fun providerReadJson(dataDir: String, path: String, outputPath: String): String
     external fun providerWriteJson(dataDir: String, path: String, sourcePath: String): String

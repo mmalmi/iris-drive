@@ -22,6 +22,8 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use nostr_sdk::{Keys, SecretKey};
 use thiserror::Error;
 
+use crate::recovery_phrase::secret_input_to_nsec;
+
 #[derive(Debug, Error)]
 pub enum IdentityError {
     #[error("io: {0}")]
@@ -135,17 +137,9 @@ impl OwnerKey {
 pub type Identity = DeviceIdentity;
 
 fn parse_secret_key(raw: &str) -> Result<SecretKey, IdentityError> {
-    if raw.starts_with("nsec1") {
-        return SecretKey::from_bech32(raw)
-            .map_err(|e| IdentityError::InvalidKey(format!("bech32: {e}")));
-    }
-    if raw.len() == 64 && raw.chars().all(|c| c.is_ascii_hexdigit()) {
-        return SecretKey::from_hex(raw)
-            .map_err(|e| IdentityError::InvalidKey(format!("hex: {e}")));
-    }
-    Err(IdentityError::InvalidKey(
-        "expected nsec1... or 64-char hex".into(),
-    ))
+    let nsec =
+        secret_input_to_nsec(raw).map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+    SecretKey::from_bech32(&nsec).map_err(|e| IdentityError::InvalidKey(format!("bech32: {e}")))
 }
 
 #[cfg(unix)]
@@ -244,6 +238,19 @@ mod tests {
         let hex = "aa".repeat(32);
         let owner = OwnerKey::from_secret(&hex, &path).unwrap();
         assert_eq!(owner.keys().secret_key().to_secret_hex(), hex);
+    }
+
+    #[test]
+    fn from_secret_accepts_24_word_recovery_phrase() {
+        let dir = tempdir().unwrap();
+        let original = OwnerKey::generate(dir.path().join("original"));
+        let phrase =
+            crate::recovery_phrase::secret_to_recovery_phrase(original.keys().secret_key())
+                .unwrap();
+
+        let recovered = OwnerKey::from_secret(&phrase, dir.path().join("restored")).unwrap();
+
+        assert_eq!(original.pubkey_hex(), recovered.pubkey_hex());
     }
 
     #[test]

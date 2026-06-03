@@ -21,6 +21,9 @@ private func irisDriveAppDispatchJson(
 @_silgen_name("iris_drive_validate_link_input_json")
 private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_export_recovery_secret_json")
+private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_string_free")
 private func irisDriveStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
@@ -59,6 +62,18 @@ final class IrisDriveDesktopCore {
             return false
         }
         return payload["is_complete"] as? Bool ?? false
+    }
+
+    static func exportRecoverySecret(dataDir: String) -> [String: Any] {
+        let json = dataDir.withCString { pointer in
+            takeString(irisDriveExportRecoverySecretJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return ["error": "native recovery export returned invalid JSON"]
+        }
+        return payload
     }
 
     private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

@@ -108,6 +108,40 @@ fn profile_actions_populate_mobile_parity_state() {
 }
 
 #[test]
+fn recovery_phrase_export_restores_same_profile_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Pixel".to_owned(),
+    });
+    let created_account = created.ui.account.as_ref().expect("account exists");
+    assert!(created_account.can_export_recovery_phrase);
+
+    let export = super::export_recovery_secret(dir.path().display().to_string());
+    assert!(export.error.is_empty(), "{}", export.error);
+    assert!(export.can_export);
+    assert_eq!(export.words.len(), 24);
+    assert_eq!(export.recovery_phrase.split_whitespace().count(), 24);
+    assert!(export.secret_key.starts_with("nsec1"));
+
+    let restored_dir = tempfile::tempdir().unwrap();
+    let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
+    let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
+        secret: export.recovery_phrase,
+        device_label: "Restored".to_owned(),
+    });
+
+    assert!(restored.error.is_empty(), "{}", restored.error);
+    let restored_account = restored.ui.account.expect("restored account exists");
+    assert_eq!(restored_account.owner_pubkey, created_account.owner_pubkey);
+    assert_eq!(
+        restored_account.device_pubkey,
+        created_account.device_pubkey
+    );
+    assert!(restored_account.can_export_recovery_phrase);
+}
+
+#[test]
 fn relay_actions_normalize_and_dedupe_urls() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

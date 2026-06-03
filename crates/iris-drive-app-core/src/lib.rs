@@ -6,7 +6,10 @@ mod provider_metadata;
 pub mod state;
 
 pub use actions::NativeAppAction;
-pub use ffi::{FfiApp, LinkInputClassification, classify_link_input, validate_link_input};
+pub use ffi::{
+    FfiApp, LinkInputClassification, RecoverySecretExport, classify_link_input,
+    export_recovery_secret, validate_link_input,
+};
 pub use state::{NativeAppState, UiState};
 
 uniffi::setup_scaffolding!();

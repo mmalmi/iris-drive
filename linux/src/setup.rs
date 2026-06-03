@@ -7,16 +7,14 @@ pub(crate) fn render_setup(model: &AppRef) {
         SetupScreen::Welcome => render_setup_welcome(model),
         SetupScreen::Create => render_create_profile(model),
         SetupScreen::CreatePhoto => render_create_profile_photo(model),
-        SetupScreen::Restore => render_restore_profile(model),
+        SetupScreen::RestoreOptions => render_restore_options(model),
+        SetupScreen::RestorePhrase => render_restore_phrase_profile(model),
+        SetupScreen::RestoreSecretKey => render_restore_secret_key_profile(model),
         SetupScreen::Link => render_link_device(model),
     }
 }
 
-pub(crate) fn render_awaiting_approval(
-    model: &AppRef,
-    state: &NativeAppState,
-    sync_running: bool,
-) {
+pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, sync_running: bool) {
     clear_box(&model.ui.setup);
 
     let container = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -188,10 +186,12 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     {
         let model = Rc::clone(model);
         back.connect_clicked(move |_| {
-            let target = if *model.setup_screen.borrow() == SetupScreen::CreatePhoto {
-                SetupScreen::Create
-            } else {
-                SetupScreen::Welcome
+            let target = match *model.setup_screen.borrow() {
+                SetupScreen::CreatePhoto => SetupScreen::Create,
+                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey | SetupScreen::Link => {
+                    SetupScreen::RestoreOptions
+                }
+                _ => SetupScreen::Welcome,
             };
             *model.setup_screen.borrow_mut() = target;
             render_setup(&model);
@@ -237,7 +237,7 @@ pub(crate) fn render_setup_welcome(model: &AppRef) {
     {
         let model = Rc::clone(model);
         restore.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::Restore;
+            *model.setup_screen.borrow_mut() = SetupScreen::RestoreOptions;
             render_setup(&model);
         });
     }
@@ -366,15 +366,120 @@ pub(crate) fn render_create_profile_photo(model: &AppRef) {
     append_centered_setup(model, &container);
 }
 
-pub(crate) fn render_restore_profile(model: &AppRef) {
-    let container = setup_container(model, "Sign in");
-    let nsec = setup_entry("Secret key");
+pub(crate) fn render_restore_options(model: &AppRef) {
+    let container = setup_container(model, "Restore");
+
+    let link = welcome_button("Link device", "computer-symbolic", false);
+    {
+        let model = Rc::clone(model);
+        link.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::Link;
+            render_setup(&model);
+        });
+    }
+    container.append(&link);
+
+    let phrase = welcome_button(
+        "Restore from recovery phrase",
+        "dialog-password-symbolic",
+        false,
+    );
+    {
+        let model = Rc::clone(model);
+        phrase.connect_clicked(move |_| {
+            model.setup_recovery_word_index.set(0);
+            *model.setup_recovery_words.borrow_mut() = vec![String::new(); 24];
+            *model.setup_screen.borrow_mut() = SetupScreen::RestorePhrase;
+            render_setup(&model);
+        });
+    }
+    container.append(&phrase);
+
+    let secret = welcome_button("Restore from secret key", "dialog-password-symbolic", false);
+    {
+        let model = Rc::clone(model);
+        secret.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::RestoreSecretKey;
+            render_setup(&model);
+        });
+    }
+    container.append(&secret);
+
+    append_centered_setup(model, &container);
+}
+
+pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
+    let container = setup_container(model, "Recovery phrase");
+    clamp_recovery_word_index(model);
+    let word_index = model.setup_recovery_word_index.get();
+
+    container.append(&field_title(&format!("Word {} of 24", word_index + 1)));
+    let word = setup_entry(&format!("Word {}", word_index + 1));
+    word.set_text(&current_recovery_word(model));
+    container.append(&word);
+
+    let notice = setup_notice();
+    let paste = pill_button("Paste from clipboard");
+    {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
+        paste.connect_clicked(move |_| paste_recovery_phrase_from_clipboard(&model, &notice));
+    }
+    container.append(&paste);
+
+    let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let back = pill_button("Back");
+    back.set_sensitive(word_index > 0);
+    {
+        let model = Rc::clone(model);
+        back.connect_clicked(move |_| {
+            let next_index = model.setup_recovery_word_index.get().saturating_sub(1);
+            model.setup_recovery_word_index.set(next_index);
+            render_setup(&model);
+        });
+    }
+    nav.append(&back);
+
+    let submit = primary_button(if word_index == 23 { "Restore" } else { "Next" });
+    submit.set_sensitive(can_advance_recovery_word(model));
+    {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
+        submit.connect_clicked(move |button| {
+            advance_or_restore_recovery_phrase(&model, &notice, button)
+        });
+    }
+    nav.append(&submit);
+    container.append(&nav);
+
+    {
+        let model = Rc::clone(model);
+        let submit = submit.clone();
+        word.connect_changed(move |entry| {
+            apply_recovery_word_input(&model, entry.text().as_str());
+            submit.set_sensitive(can_advance_recovery_word(&model));
+        });
+    }
+    {
+        let submit = submit.clone();
+        word.connect_activate(move |_| submit.emit_clicked());
+    }
+
+    container.append(&notice);
+    append_centered_setup(model, &container);
+
+    word.grab_focus();
+}
+
+pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
+    let container = setup_container(model, "Secret key");
+    let nsec = setup_entry("nsec1... or hex secret key");
     nsec.set_visibility(false);
     nsec.set_input_purpose(gtk::InputPurpose::Password);
     container.append(&nsec);
 
     let notice = setup_notice();
-    let submit = primary_button("Sign in");
+    let submit = primary_button("Restore");
     {
         let model = Rc::clone(model);
         let nsec = nsec.clone();
@@ -403,23 +508,6 @@ pub(crate) fn render_restore_profile(model: &AppRef) {
         nsec.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
-
-    let link = pill_button("Link this device");
-    link.set_width_request(340);
-    let link_content = adw::ButtonContent::builder()
-        .icon_name("computer-symbolic")
-        .label("Link this device")
-        .build();
-    link.set_child(Some(&link_content));
-    {
-        let model = Rc::clone(model);
-        link.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::Link;
-            render_setup(&model);
-        });
-    }
-    container.append(&link);
-
     container.append(&notice);
     append_centered_setup(model, &container);
 
@@ -497,6 +585,118 @@ fn link_owner_input_is_complete(value: &str) -> bool {
     iris_drive_app_core::validate_link_input(value.to_string()).is_complete
 }
 
+fn clamp_recovery_word_index(model: &AppRef) {
+    if model.setup_recovery_word_index.get() >= 24 {
+        model.setup_recovery_word_index.set(23);
+    }
+}
+
+fn current_recovery_word(model: &AppRef) -> String {
+    let words = model.setup_recovery_words.borrow();
+    words
+        .get(model.setup_recovery_word_index.get().min(23))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn apply_recovery_word_input(model: &AppRef, input: &str) {
+    let parts = input
+        .split_whitespace()
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>();
+    let word_index = model.setup_recovery_word_index.get().min(23);
+    let mut words = model.setup_recovery_words.borrow_mut();
+    if words.len() != 24 {
+        words.resize(24, String::new());
+    }
+    if parts.len() <= 1 {
+        words[word_index] = input.trim().to_lowercase();
+        return;
+    }
+    for (offset, word) in parts.iter().enumerate() {
+        let target = word_index + offset;
+        if target < words.len() {
+            words[target] = word.clone();
+        }
+    }
+    drop(words);
+    model
+        .setup_recovery_word_index
+        .set((word_index + parts.len() - 1).min(23));
+}
+
+fn can_advance_recovery_word(model: &AppRef) -> bool {
+    let words = model.setup_recovery_words.borrow();
+    let word_index = model.setup_recovery_word_index.get().min(23);
+    if word_index == 23 {
+        words.iter().take(24).all(|word| !word.trim().is_empty())
+    } else {
+        words
+            .get(word_index)
+            .is_some_and(|word| !word.trim().is_empty())
+    }
+}
+
+fn setup_recovery_phrase(model: &AppRef) -> String {
+    model
+        .setup_recovery_words
+        .borrow()
+        .iter()
+        .take(24)
+        .map(|word| word.trim().to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn advance_or_restore_recovery_phrase(model: &AppRef, notice: &gtk::Label, button: &gtk::Button) {
+    let word_index = model.setup_recovery_word_index.get().min(23);
+    if word_index < 23 {
+        if can_advance_recovery_word(model) {
+            model.setup_recovery_word_index.set(word_index + 1);
+            render_setup(model);
+        }
+        return;
+    }
+    if !can_advance_recovery_word(model) {
+        notice.set_text("All 24 words are required.");
+        return;
+    }
+
+    button.set_sensitive(false);
+    match restore_profile(&setup_recovery_phrase(model)) {
+        Ok(()) => {
+            model.setup_recovery_words.borrow_mut().fill(String::new());
+            model.setup_recovery_word_index.set(0);
+            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+            refresh(model);
+        }
+        Err(error) => {
+            notice.set_text(&error);
+            button.set_sensitive(true);
+        }
+    }
+}
+
+fn paste_recovery_phrase_from_clipboard(model: &AppRef, notice: &gtk::Label) {
+    let Some(display) = gtk::gdk::Display::default() else {
+        notice.set_text("Clipboard unavailable");
+        return;
+    };
+    let clipboard = display.clipboard();
+    let model = Rc::clone(model);
+    let notice = notice.clone();
+    glib::MainContext::default().spawn_local(async move {
+        match clipboard.read_text_future().await {
+            Ok(Some(text)) if !text.trim().is_empty() => {
+                apply_recovery_word_input(&model, text.as_str());
+                render_setup(&model);
+            }
+            Ok(_) => notice.set_text("Clipboard is empty"),
+            Err(error) => notice.set_text(&format!("Clipboard unavailable: {error}")),
+        }
+    });
+}
+
 pub(crate) fn append_centered_setup(model: &AppRef, child: &gtk::Box) {
     let top = gtk::Box::new(gtk::Orientation::Vertical, 0);
     top.set_vexpand(true);
@@ -548,11 +748,7 @@ pub(crate) fn link_device(owner: &str) -> Result<(), String> {
 }
 
 pub(crate) fn relink_device(owner: &str) -> Result<(), String> {
-    run_idrive_owned(&[
-        "link".to_string(),
-        owner.to_string(),
-        "--force".to_string(),
-    ])
+    run_idrive_owned(&["link".to_string(), owner.to_string(), "--force".to_string()])
 }
 
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {

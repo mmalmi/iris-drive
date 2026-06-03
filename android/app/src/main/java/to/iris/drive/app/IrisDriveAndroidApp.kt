@@ -1,5 +1,6 @@
 package to.iris.drive.app
 
+import android.content.ClipboardManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.core.RecoverySecretExport
 
 private val ProviderRoot: String
     get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
@@ -96,9 +99,52 @@ private enum class SetupRoute {
     Welcome,
     CreateProfile,
     CreatePhoto,
-    SignIn,
+    RestoreOptions,
+    RestoreRecoveryPhrase,
+    RestoreSecretKey,
     LinkDevice,
 }
+
+internal data class RecoveryWordsInputResult(
+    val words: List<String>,
+    val index: Int,
+)
+
+internal fun fillRecoveryWords(
+    words: List<String>,
+    startIndex: Int,
+    input: String,
+): RecoveryWordsInputResult {
+    val normalizedWords = MutableList(24) { index -> words.getOrElse(index) { "" } }
+    val normalizedParts = input
+        .trim()
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
+        .map { it.lowercase() }
+    if (normalizedParts.size <= 1) {
+        return RecoveryWordsInputResult(
+            words = normalizedWords.also { current ->
+                current[startIndex.coerceIn(0, 23)] = input.trim().lowercase()
+            },
+            index = startIndex.coerceIn(0, 23),
+        )
+    }
+    val next = normalizedWords
+    val boundedStart = startIndex.coerceIn(0, 23)
+    normalizedParts.forEachIndexed { offset, word ->
+        val target = boundedStart + offset
+        if (target <= 23) {
+            next[target] = word
+        }
+    }
+    return RecoveryWordsInputResult(
+        words = next,
+        index = (boundedStart + normalizedParts.size - 1).coerceAtMost(23),
+    )
+}
+
+internal fun recoveryPhraseFromWords(words: List<String>): String =
+    words.take(24).joinToString(" ") { it.trim().lowercase() }
 
 internal enum class MainTab(
     val label: String,
@@ -118,6 +164,7 @@ internal fun IrisDriveAndroidApp(
     onRestoreProfile: (String, String) -> Unit,
     onLinkDevice: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
+    onExportRecoverySecret: () -> RecoverySecretExport,
     onOpenUrl: (String) -> Unit,
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
@@ -209,6 +256,8 @@ internal fun IrisDriveAndroidApp(
                     onStopSync = onStopSync,
                     onCopyOwnerKey = { onCopyText("Owner key", activeAccount.ownerPubkey) },
                     onCopyDeviceKey = { onCopyText("Device key", activeAccount.devicePubkey) },
+                    onCopyText = onCopyText,
+                    onExportRecoverySecret = onExportRecoverySecret,
                     onCopyLinkInvite = { onCopyText("Invite link", activeAccount.deviceLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
@@ -414,10 +463,13 @@ private fun SetupContent(
     var createUsername by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf("") }
     var restoreSecret by remember { mutableStateOf("") }
+    var recoveryWords by remember { mutableStateOf(List(24) { "" }) }
+    var recoveryWordIndex by remember { mutableStateOf(0) }
     var linkOwner by remember { mutableStateOf("") }
     var submittedLinkOwner by remember { mutableStateOf("") }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
     var showLinkScanner by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val linkOwnerIsComplete = remember(linkOwner) {
         NativeCore.isCompleteLinkInput(linkOwner)
     }
@@ -475,7 +527,7 @@ private fun SetupContent(
                     )
                     SetupSecondaryButton(
                         text = "Sign in",
-                        onClick = { route = SetupRoute.SignIn },
+                        onClick = { route = SetupRoute.RestoreOptions },
                         testTag = "welcomeSignIn",
                     )
                 }
@@ -530,12 +582,104 @@ private fun SetupContent(
                         icon = true,
                     )
                 }
-                SetupRoute.SignIn -> {
-                    SetupFormHeader(title = "Sign in", onBack = { route = SetupRoute.Welcome })
+                SetupRoute.RestoreOptions -> {
+                    SetupFormHeader(title = "Restore", onBack = { route = SetupRoute.Welcome })
+                    SetupSecondaryButton(
+                        text = "Link device",
+                        onClick = { route = SetupRoute.LinkDevice },
+                        testTag = "openLinkDevice",
+                    )
+                    SetupSecondaryButton(
+                        text = "Restore from recovery phrase",
+                        onClick = { route = SetupRoute.RestoreRecoveryPhrase },
+                        testTag = "openRecoveryPhrase",
+                    )
+                    SetupSecondaryButton(
+                        text = "Restore from secret key",
+                        onClick = { route = SetupRoute.RestoreSecretKey },
+                        testTag = "openSecretKey",
+                    )
+                }
+                SetupRoute.RestoreRecoveryPhrase -> {
+                    SetupFormHeader(title = "Recovery phrase", onBack = { route = SetupRoute.RestoreOptions })
+                    val currentWord = recoveryWords.getOrElse(recoveryWordIndex) { "" }
+                    val allWordsFilled = recoveryWords.all { it.isNotBlank() }
+                    OutlinedTextField(
+                        value = currentWord,
+                        onValueChange = { input ->
+                            val result = fillRecoveryWords(recoveryWords, recoveryWordIndex, input)
+                            recoveryWords = result.words
+                            recoveryWordIndex = result.index
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("recoveryWordInput"),
+                        singleLine = true,
+                        label = { Text("Word ${recoveryWordIndex + 1}") },
+                        keyboardOptions = KeyboardOptions(imeAction = if (recoveryWordIndex == 23) ImeAction.Done else ImeAction.Next),
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                if (currentWord.isNotBlank()) {
+                                    recoveryWordIndex = (recoveryWordIndex + 1).coerceAtMost(23)
+                                }
+                            },
+                            onDone = {
+                                if (allWordsFilled) {
+                                    onRestoreProfile(recoveryPhraseFromWords(recoveryWords))
+                                }
+                            },
+                        ),
+                    )
+                    SetupSecondaryButton(
+                        text = "Paste from clipboard",
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            val clipboardText = clipboard?.primaryClip
+                                ?.takeIf { it.itemCount > 0 }
+                                ?.getItemAt(0)
+                                ?.coerceToText(context)
+                                ?.toString()
+                                .orEmpty()
+                            val result = fillRecoveryWords(
+                                recoveryWords,
+                                recoveryWordIndex,
+                                clipboardText,
+                            )
+                            recoveryWords = result.words
+                            recoveryWordIndex = result.index
+                        },
+                        testTag = "pasteRecoveryPhrase",
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { recoveryWordIndex = (recoveryWordIndex - 1).coerceAtLeast(0) },
+                            enabled = recoveryWordIndex > 0,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Back")
+                        }
+                        Button(
+                            onClick = {
+                                if (recoveryWordIndex == 23) {
+                                    onRestoreProfile(recoveryPhraseFromWords(recoveryWords))
+                                } else {
+                                    recoveryWordIndex = (recoveryWordIndex + 1).coerceAtMost(23)
+                                }
+                            },
+                            enabled = if (recoveryWordIndex == 23) allWordsFilled else currentWord.isNotBlank(),
+                            modifier = Modifier.weight(1f).testTag(
+                                if (recoveryWordIndex == 23) "restoreRecoveryPhraseSubmit" else "restoreRecoveryPhraseNext",
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(if (recoveryWordIndex == 23) "Restore" else "Next")
+                        }
+                    }
+                }
+                SetupRoute.RestoreSecretKey -> {
+                    SetupFormHeader(title = "Secret key", onBack = { route = SetupRoute.RestoreOptions })
                     OutlinedTextField(
                         value = restoreSecret,
                         onValueChange = { restoreSecret = it },
-                        modifier = Modifier.fillMaxWidth().testTag("restoreSecret"),
+                        modifier = Modifier.fillMaxWidth().testTag("restoreSecretKeyInput"),
                         singleLine = true,
                         label = { Text("Secret key") },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -548,18 +692,14 @@ private fun SetupContent(
                         ),
                     )
                     SetupPrimaryButton(
-                        text = "Sign in",
+                        text = "Restore",
                         onClick = { onRestoreProfile(restoreSecret) },
                         enabled = restoreSecret.isNotBlank(),
-                    )
-                    SetupSecondaryButton(
-                        text = "Link this device",
-                        onClick = { route = SetupRoute.LinkDevice },
-                        testTag = "openLinkDevice",
+                        testTag = "restoreSecretKeySubmit",
                     )
                 }
                 SetupRoute.LinkDevice -> {
-                    SetupFormHeader(title = "Link this device", onBack = { route = SetupRoute.Welcome })
+                    SetupFormHeader(title = "Link device", onBack = { route = SetupRoute.RestoreOptions })
                     OutlinedTextField(
                         value = linkOwner,
                         onValueChange = {

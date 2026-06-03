@@ -45,6 +45,7 @@ pub mod nostr_events;
 pub mod paths;
 pub mod projection;
 pub mod provider;
+pub mod recovery_phrase;
 pub mod relay_config;
 pub mod relay_status;
 pub mod relay_sync;

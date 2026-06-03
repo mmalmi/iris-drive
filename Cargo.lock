@@ -3325,6 +3325,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bip39",
  "dirs 6.0.0",
  "futures",
  "hashtree-blossom",

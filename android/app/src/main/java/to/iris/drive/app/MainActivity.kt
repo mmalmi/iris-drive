@@ -28,6 +28,7 @@ import java.io.File
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.core.recoverySecretExportFromJson
 import to.iris.drive.app.sync.BackgroundSyncPolicy
 import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
@@ -80,6 +81,11 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onCopyText = ::copyToClipboard,
+                onExportRecoverySecret = {
+                    recoverySecretExportFromJson(
+                        NativeCore.exportRecoverySecretJson(filesDir.absolutePath),
+                    )
+                },
                 onOpenUrl = ::openUrl,
                 onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->

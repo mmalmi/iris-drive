@@ -67,9 +67,18 @@ internal data class AccountState(
     val deviceLabel: String,
     val authorizationState: String,
     val hasOwnerSigningAuthority: Boolean,
+    val canExportRecoveryPhrase: Boolean = false,
     val deviceLinkRequest: String,
     val deviceLinkInvite: String,
     val inboundDeviceLinkRequests: List<DeviceLinkRequestState>,
+)
+
+internal data class RecoverySecretExport(
+    val canExport: Boolean = false,
+    val recoveryPhrase: String = "",
+    val words: List<String> = emptyList(),
+    val secretKey: String = "",
+    val error: String = "",
 )
 
 internal data class DeviceLinkRequestState(
@@ -302,10 +311,34 @@ private fun JSONObject.toAccount(): AccountState =
         deviceLabel = optString("device_label"),
         authorizationState = optString("authorization_state"),
         hasOwnerSigningAuthority = optBoolean("has_owner_signing_authority"),
+        canExportRecoveryPhrase = optBoolean("can_export_recovery_phrase"),
         deviceLinkRequest = optString("device_link_request"),
         deviceLinkInvite = optString("device_link_invite"),
         inboundDeviceLinkRequests = optJSONArray("inbound_device_link_requests").toDeviceLinkRequests(),
     )
+
+internal fun recoverySecretExportFromJson(text: String): RecoverySecretExport =
+    runCatching {
+        val json = JSONObject(text)
+        RecoverySecretExport(
+            canExport = json.optBoolean("can_export"),
+            recoveryPhrase = json.optString("recovery_phrase"),
+            words = json.optJSONArray("words").toStringList(),
+            secretKey = json.optString("secret_key"),
+            error = json.optString("error"),
+        )
+    }.getOrElse { error ->
+        RecoverySecretExport(error = "invalid recovery export JSON: ${error.message}")
+    }
+
+private fun JSONArray?.toStringList(): List<String> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            optString(index).takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+}
 
 private fun JSONArray?.toDeviceLinkRequests(): List<DeviceLinkRequestState> {
     if (this == null) return emptyList()

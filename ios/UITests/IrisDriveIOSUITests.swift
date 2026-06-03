@@ -17,9 +17,11 @@ final class IrisDriveIOSUITests: XCTestCase {
         app.terminate()
         app.launch()
         app.buttons["welcomeSignIn"].tap()
-        XCTAssertTrue(app.navigationBars["Sign in"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Restore"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
         app.buttons["openLinkDevice"].tap()
-        XCTAssertTrue(app.navigationBars["Link this device"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Link device"].waitForExistence(timeout: 5))
     }
 
     func testLinkThisDeviceFromWelcome() throws {

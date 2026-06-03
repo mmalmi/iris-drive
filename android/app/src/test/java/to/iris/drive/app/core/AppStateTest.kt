@@ -108,6 +108,41 @@ class AppStateTest {
     }
 
     @Test
+    fun recoveryExportAndCapabilityAreParsedFromNativeJson() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "account": {
+                  "owner_pubkey": "owner",
+                  "device_pubkey": "owner",
+                  "can_export_recovery_phrase": true
+                }
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+        val export = recoverySecretExportFromJson(
+            """
+            {
+              "can_export": true,
+              "recovery_phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+              "words": ["abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "art"],
+              "secret_key": "nsec1test"
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(state.account?.canExportRecoveryPhrase == true)
+        assertTrue(export.canExport)
+        assertEquals(24, export.words.size)
+        assertEquals("abandon", export.words.first())
+        assertEquals("art", export.words.last())
+        assertEquals("nsec1test", export.secretKey)
+    }
+
+    @Test
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
             account = AccountState(

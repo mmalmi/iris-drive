@@ -30,6 +30,9 @@ private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> Uns
 @_silgen_name("iris_drive_validate_link_input_json")
 private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_export_recovery_secret_json")
+private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_list_json")
 private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -130,7 +133,25 @@ final class IrisDriveNativeCore {
         return matrix
     }
 
+    static func exportRecoverySecret(dataDir: String) -> NativeRecoverySecretExport {
+        let json = dataDir.withCString { pointer in
+            takeString(irisDriveExportRecoverySecretJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeRecoverySecretExport.self, from: data)
+        else {
+            return NativeRecoverySecretExport(error: "native recovery export returned invalid JSON")
+        }
+        return value
+    }
+
     private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+        guard let pointer else { return #"{"error":"native app returned null"}"# }
+        defer { irisDriveStringFree(pointer) }
+        return String(cString: pointer)
+    }
+
+    private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         guard let pointer else { return #"{"error":"native app returned null"}"# }
         defer { irisDriveStringFree(pointer) }
         return String(cString: pointer)
@@ -410,6 +431,7 @@ struct NativeAccount: Codable {
     var deviceLabel: String
     var authorizationState: String
     var hasOwnerSigningAuthority: Bool
+    var canExportRecoveryPhrase: Bool
     var deviceLinkRequest: String
     var deviceLinkInvite: String
     var inboundDeviceLinkRequests: [NativeDeviceLinkRequest]
@@ -420,9 +442,26 @@ struct NativeAccount: Codable {
         case deviceLabel = "device_label"
         case authorizationState = "authorization_state"
         case hasOwnerSigningAuthority = "has_owner_signing_authority"
+        case canExportRecoveryPhrase = "can_export_recovery_phrase"
         case deviceLinkRequest = "device_link_request"
         case deviceLinkInvite = "device_link_invite"
         case inboundDeviceLinkRequests = "inbound_device_link_requests"
+    }
+}
+
+struct NativeRecoverySecretExport: Codable {
+    var canExport: Bool = false
+    var recoveryPhrase: String = ""
+    var words: [String] = []
+    var secretKey: String = ""
+    var error: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case canExport = "can_export"
+        case recoveryPhrase = "recovery_phrase"
+        case words
+        case secretKey = "secret_key"
+        case error
     }
 }
 

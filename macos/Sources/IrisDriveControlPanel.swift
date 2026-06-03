@@ -57,7 +57,9 @@ private enum IrisDriveSetupMode {
     case welcome
     case create
     case createPhoto
-    case restore
+    case restoreOptions
+    case restorePhrase
+    case restoreSecretKey
     case link
 }
 
@@ -84,6 +86,8 @@ struct IrisDriveControlPanel: View {
     @State private var setupUsername = ""
     @State private var setupPhotoPath = ""
     @State private var setupSecret = ""
+    @State private var setupRecoveryWords = Array(repeating: "", count: 24)
+    @State private var setupRecoveryWordIndex = 0
     @State private var setupOwner = ""
     @State var submittedSetupOwner = ""
     @State private var setupOwnerLinkInputIsComplete = false
@@ -94,6 +98,8 @@ struct IrisDriveControlPanel: View {
     @State private var showAddBackup = false
     @State private var checkingAllBackups = false
     @State private var showLogoutConfirmation = false
+    @State private var recoveryExport: [String: Any]?
+    @State private var recoveryExportWordIndex = 0
 
     var body: some View {
         Group {
@@ -222,7 +228,7 @@ struct IrisDriveControlPanel: View {
                 .accessibilityLabel("Create profile")
                 .buttonStyle(.borderedProminent)
                 Button {
-                    setupMode = .restore
+                    setupMode = .restoreOptions
                 } label: {
                     setupButtonLabel("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
@@ -278,26 +284,69 @@ struct IrisDriveControlPanel: View {
                     )
                 }
             }
-        case .restore:
-            setupForm(title: "Sign in") {
+        case .restoreOptions:
+            setupForm(title: "Restore") {
+                Button {
+                    setupMode = .link
+                } label: {
+                    setupButtonLabel("Link device", systemImage: "desktopcomputer")
+                }
+                .accessibilityLabel("Link device")
+                .buttonStyle(.bordered)
+                Button {
+                    setupMode = .restorePhrase
+                } label: {
+                    setupButtonLabel("Restore from recovery phrase", systemImage: "text.badge.checkmark")
+                }
+                .accessibilityLabel("Restore from recovery phrase")
+                .buttonStyle(.bordered)
+                Button {
+                    setupMode = .restoreSecretKey
+                } label: {
+                    setupButtonLabel("Restore from secret key", systemImage: "key")
+                }
+                .accessibilityLabel("Restore from secret key")
+                .buttonStyle(.bordered)
+            }
+        case .restorePhrase:
+            setupForm(title: "Recovery phrase", backTarget: .restoreOptions) {
+                TextField("Word \(setupRecoveryWordIndex + 1)", text: recoveryWordBinding)
+                    .onSubmit {
+                        advanceOrRestoreRecoveryPhrase()
+                    }
+                Button {
+                    applyRecoveryWordInput(NSPasteboard.general.string(forType: .string) ?? "")
+                } label: {
+                    setupButtonLabel("Paste from Clipboard", systemImage: "doc.on.clipboard")
+                }
+                .buttonStyle(.bordered)
+                HStack(spacing: 8) {
+                    Button {
+                        setupRecoveryWordIndex = max(0, setupRecoveryWordIndex - 1)
+                    } label: {
+                        setupButtonLabel("Back", systemImage: "chevron.left")
+                    }
+                    .disabled(setupRecoveryWordIndex == 0)
+                    .buttonStyle(.bordered)
+                    setupSubmit(setupRecoveryWordIndex == 23 ? "Restore" : "Next") {
+                        advanceOrRestoreRecoveryPhrase()
+                    }
+                    .disabled(setupRecoveryWordIndex == 23 ? !allRecoveryWordsFilled : currentRecoveryWord.isEmpty)
+                }
+            }
+        case .restoreSecretKey:
+            setupForm(title: "Secret key", backTarget: .restoreOptions) {
                 SecureField("Secret key", text: $setupSecret)
                     .onSubmit {
                         controller.restoreProfile(secretKey: setupSecret)
                     }
-                setupSubmit("Sign in") {
+                setupSubmit("Restore") {
                     controller.restoreProfile(secretKey: setupSecret)
                 }
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button {
-                    setupMode = .link
-                } label: {
-                    setupButtonLabel("Link this device", systemImage: "desktopcomputer")
-                }
-                .accessibilityLabel("Link this device")
-                .buttonStyle(.bordered)
             }
         case .link:
-            setupForm(title: "Link this device") {
+            setupForm(title: "Link device", backTarget: .restoreOptions) {
                 TextField("Owner public key or invite link", text: $setupOwner)
                     .accessibilityLabel("Owner public key or invite link")
                     .onSubmit {
@@ -347,6 +396,54 @@ struct IrisDriveControlPanel: View {
 
     private var profilePhotoName: String {
         URL(fileURLWithPath: setupPhotoPath).lastPathComponent
+    }
+
+    private var recoveryWordBinding: Binding<String> {
+        Binding(
+            get: { setupRecoveryWords[setupRecoveryWordIndex] },
+            set: { applyRecoveryWordInput($0) }
+        )
+    }
+
+    private var currentRecoveryWord: String {
+        setupRecoveryWords[setupRecoveryWordIndex]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var allRecoveryWordsFilled: Bool {
+        setupRecoveryWords.allSatisfy {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var setupRecoveryPhrase: String {
+        setupRecoveryWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .joined(separator: " ")
+    }
+
+    private func advanceOrRestoreRecoveryPhrase() {
+        if setupRecoveryWordIndex == 23 {
+            guard allRecoveryWordsFilled else { return }
+            controller.restoreProfile(secretKey: setupRecoveryPhrase)
+        } else if !currentRecoveryWord.isEmpty {
+            setupRecoveryWordIndex = min(23, setupRecoveryWordIndex + 1)
+        }
+    }
+
+    private func applyRecoveryWordInput(_ value: String) {
+        let words = value
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { String($0).lowercased() }
+        if words.count <= 1 {
+            setupRecoveryWords[setupRecoveryWordIndex] =
+                value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return
+        }
+        for (offset, word) in words.enumerated() where setupRecoveryWordIndex + offset < setupRecoveryWords.count {
+            setupRecoveryWords[setupRecoveryWordIndex + offset] = word
+        }
+        setupRecoveryWordIndex = min(23, setupRecoveryWordIndex + words.count - 1)
     }
 
     private var setupStatusMessage: String? {
@@ -751,6 +848,14 @@ struct IrisDriveControlPanel: View {
                 AccountKeyRow(title: "This device", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
+                if status.canExportRecoveryPhrase {
+                    Button {
+                        recoveryExport = controller.exportRecoverySecret()
+                        recoveryExportWordIndex = 0
+                    } label: {
+                        Label("Recovery Phrase", systemImage: "text.badge.checkmark")
+                    }
+                }
                 Button(role: .destructive) {
                     showLogoutConfirmation = true
                 } label: {
@@ -795,6 +900,19 @@ struct IrisDriveControlPanel: View {
                 controller.logout()
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { recoveryExport != nil },
+                set: { presented in
+                    if !presented { recoveryExport = nil }
+                }
+            )
+        ) {
+            MacRecoveryPhraseView(
+                payload: recoveryExport ?? [:],
+                wordIndex: $recoveryExportWordIndex
+            )
         }
     }
 
@@ -1014,6 +1132,92 @@ private struct AccountKeyRow: View {
             }
             .disabled((value ?? "").isEmpty)
         }
+    }
+}
+
+private struct MacRecoveryPhraseView: View {
+    let payload: [String: Any]
+    @Binding var wordIndex: Int
+    @Environment(\.dismiss) private var dismiss
+
+    private var error: String {
+        payload["error"] as? String ?? ""
+    }
+
+    private var words: [String] {
+        payload["words"] as? [String] ?? []
+    }
+
+    private var phrase: String {
+        payload["recovery_phrase"] as? String ?? ""
+    }
+
+    private var secretKey: String {
+        payload["secret_key"] as? String ?? ""
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Recovery phrase")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Close")
+            }
+
+            if !error.isEmpty {
+                Text(error)
+                    .foregroundStyle(.secondary)
+            } else if words.count == 24 {
+                Text("Word \(wordIndex + 1) of 24")
+                    .foregroundStyle(.secondary)
+                Text(words[wordIndex])
+                    .font(.largeTitle.monospaced().weight(.bold))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+                HStack {
+                    Button {
+                        wordIndex = max(0, wordIndex - 1)
+                    } label: {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .disabled(wordIndex == 0)
+                    Spacer()
+                    Button {
+                        wordIndex = min(23, wordIndex + 1)
+                    } label: {
+                        Label("Next", systemImage: "chevron.right")
+                    }
+                    .disabled(wordIndex == 23)
+                }
+                HStack {
+                    Button {
+                        copy(phrase)
+                    } label: {
+                        Label("Copy recovery phrase", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        copy(secretKey)
+                    } label: {
+                        Label("Copy secret key", systemImage: "key")
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+
+    private func copy(_ value: String) {
+        guard !value.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 }
 

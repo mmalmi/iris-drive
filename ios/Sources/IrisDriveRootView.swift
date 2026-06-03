@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 private enum MainTab: Hashable {
     case drive
@@ -168,7 +169,9 @@ private struct AwaitingApprovalSetupView: View {
 private enum SetupRoute: Hashable {
     case create
     case photo(String)
-    case signIn
+    case restoreOptions
+    case restorePhrase
+    case restoreSecretKey
     case link
 }
 
@@ -200,7 +203,7 @@ private struct SetupWelcomeView: View {
                     }
                     .accessibilityIdentifier("welcomeCreateProfile")
                     Button {
-                        path.append(.signIn)
+                        path.append(.restoreOptions)
                     } label: {
                         Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                     }
@@ -219,10 +222,16 @@ private struct SetupWelcomeView: View {
                     }
                 case .photo(let username):
                     ProfilePhotoSetupView(model: model, username: username)
-                case .signIn:
-                    SignInSetupView(model: model) {
-                        path.append(.link)
-                    }
+                case .restoreOptions:
+                    RestoreOptionsSetupView(
+                        openLinkDevice: { path.append(.link) },
+                        openRecoveryPhrase: { path.append(.restorePhrase) },
+                        openSecretKey: { path.append(.restoreSecretKey) }
+                    )
+                case .restorePhrase:
+                    RestoreRecoveryPhraseSetupView(model: model)
+                case .restoreSecretKey:
+                    RestoreSecretKeySetupView(model: model)
                 case .link:
                     LinkDeviceSetupView(model: model)
                 }
@@ -301,30 +310,153 @@ private struct ProfilePhotoSetupView: View {
     }
 }
 
-private struct SignInSetupView: View {
-    @ObservedObject var model: IrisDriveMobileModel
+private struct RestoreOptionsSetupView: View {
     let openLinkDevice: () -> Void
+    let openRecoveryPhrase: () -> Void
+    let openSecretKey: () -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                Button(action: openLinkDevice) {
+                    Label("Link device", systemImage: "link")
+                }
+                .accessibilityIdentifier("openLinkDevice")
+                Button(action: openRecoveryPhrase) {
+                    Label("Restore from recovery phrase", systemImage: "text.badge.checkmark")
+                }
+                .accessibilityIdentifier("openRecoveryPhrase")
+                Button(action: openSecretKey) {
+                    Label("Restore from secret key", systemImage: "key")
+                }
+                .accessibilityIdentifier("openSecretKey")
+            }
+        }
+        .navigationTitle("Restore")
+        .toolbar(.visible, for: .navigationBar)
+    }
+}
+
+private struct RestoreRecoveryPhraseSetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var words = Array(repeating: "", count: 24)
+    @State private var index = 0
+    @FocusState private var wordFieldFocused: Bool
+
+    private var currentWord: Binding<String> {
+        Binding(
+            get: { words[index] },
+            set: { value in
+                applyInput(value)
+            }
+        )
+    }
+
+    private var phrase: String {
+        words
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .joined(separator: " ")
+    }
+
+    private var currentWordIsFilled: Bool {
+        !words[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var allWordsAreFilled: Bool {
+        words.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var body: some View {
+        Form {
+            Section("Word \(index + 1) of 24") {
+                TextField("Word \(index + 1)", text: currentWord)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($wordFieldFocused)
+                    .submitLabel(index == 23 ? .done : .next)
+                    .accessibilityIdentifier("recoveryWordInput")
+                    .onSubmit { advanceOrRestore() }
+
+                Button {
+                    applyInput(UIPasteboard.general.string ?? "")
+                } label: {
+                    Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
+                }
+                .accessibilityIdentifier("pasteRecoveryPhrase")
+
+                HStack {
+                    Button {
+                        index = max(0, index - 1)
+                    } label: {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .disabled(index == 0)
+
+                    Spacer()
+
+                    Button {
+                        advanceOrRestore()
+                    } label: {
+                        Label(index == 23 ? "Restore" : "Next", systemImage: index == 23 ? "checkmark" : "chevron.right")
+                    }
+                    .disabled(index == 23 ? !allWordsAreFilled : !currentWordIsFilled)
+                    .accessibilityIdentifier(index == 23 ? "restoreRecoveryPhraseSubmit" : "restoreRecoveryPhraseNext")
+                }
+            }
+        }
+        .navigationTitle("Recovery phrase")
+        .toolbar(.visible, for: .navigationBar)
+        .onAppear { wordFieldFocused = true }
+    }
+
+    private func advanceOrRestore() {
+        if index == 23 {
+            guard allWordsAreFilled else { return }
+            model.restoreProfile(secret: phrase)
+        } else if currentWordIsFilled {
+            index += 1
+            wordFieldFocused = true
+        }
+    }
+
+    private func applyInput(_ value: String) {
+        let parts = value
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { String($0).lowercased() }
+        if parts.count <= 1 {
+            words[index] = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return
+        }
+        for (offset, word) in parts.enumerated() where index + offset < words.count {
+            words[index + offset] = word
+        }
+        index = min(words.count - 1, index + parts.count - 1)
+    }
+}
+
+private struct RestoreSecretKeySetupView: View {
+    @ObservedObject var model: IrisDriveMobileModel
 
     var body: some View {
         Form {
             Section {
                 SecureField("Secret key", text: $model.restoreSecret)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                     .onSubmit {
                         model.restoreProfile()
                     }
+                    .accessibilityIdentifier("restoreSecretKeyInput")
                 Button {
                     model.restoreProfile()
                 } label: {
-                    Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
+                    Label("Restore", systemImage: "key")
                 }
                 .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button(action: openLinkDevice) {
-                    Label("Link this device", systemImage: "link")
-                }
-                .accessibilityIdentifier("openLinkDevice")
+                .accessibilityIdentifier("restoreSecretKeySubmit")
             }
         }
-        .navigationTitle("Sign in")
+        .navigationTitle("Secret key")
         .toolbar(.visible, for: .navigationBar)
     }
 }
@@ -823,6 +955,72 @@ private struct BackupsView: View {
     }
 }
 
+private struct RecoveryPhraseExportView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var export = NativeRecoverySecretExport()
+    @State private var index = 0
+    @State private var copied = false
+
+    private var currentWord: String {
+        guard export.words.indices.contains(index) else { return "" }
+        return export.words[index]
+    }
+
+    var body: some View {
+        Form {
+            if !export.error.isEmpty {
+                Section {
+                    Text(export.error)
+                        .foregroundStyle(.secondary)
+                }
+            } else if export.words.count == 24 {
+                Section("Word \(index + 1) of 24") {
+                    Text(currentWord)
+                        .font(.title.monospaced().bold())
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 16)
+                        .accessibilityIdentifier("recoveryPhraseWord")
+                    HStack {
+                        Button {
+                            index = max(0, index - 1)
+                        } label: {
+                            Label("Back", systemImage: "chevron.left")
+                        }
+                        .disabled(index == 0)
+
+                        Spacer()
+
+                        Button {
+                            index = min(23, index + 1)
+                        } label: {
+                            Label("Next", systemImage: "chevron.right")
+                        }
+                        .disabled(index == 23)
+                    }
+                }
+                Section {
+                    Button {
+                        UIPasteboard.general.string = export.recoveryPhrase
+                        copied = true
+                    } label: {
+                        Label(copied ? "Copied" : "Copy recovery phrase", systemImage: "doc.on.doc")
+                    }
+                    .accessibilityIdentifier("copyRecoveryPhrase")
+                    Button {
+                        UIPasteboard.general.string = export.secretKey
+                    } label: {
+                        Label("Copy secret key", systemImage: "key")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Recovery phrase")
+        .task {
+            export = model.exportRecoverySecret()
+        }
+    }
+}
+
 private struct SettingsView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var showingLogoutConfirmation = false
@@ -844,13 +1042,14 @@ private struct SettingsView: View {
                 } label: {
                     Label("Copy device key", systemImage: "doc.on.doc")
                 }
-                SecureField("Restore secret", text: $model.restoreSecret)
-                Button {
-                    model.restoreProfile()
-                } label: {
-                    Label("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
+                if model.canExportRecoveryPhrase {
+                    NavigationLink {
+                        RecoveryPhraseExportView(model: model)
+                    } label: {
+                        Label("Recovery phrase", systemImage: "text.badge.checkmark")
+                    }
+                    .accessibilityIdentifier("openRecoveryPhraseExport")
                 }
-                .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(role: .destructive) {
                     showingLogoutConfirmation = true
                 } label: {

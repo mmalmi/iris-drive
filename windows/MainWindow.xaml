@@ -73,14 +73,70 @@
           </Button>
         </StackPanel>
 
-        <StackPanel x:Name="RestorePanel" Visibility="Collapsed">
+        <StackPanel x:Name="RestoreOptionsPanel" Visibility="Collapsed">
           <Button Style="{StaticResource SetupBackButton}" Click="ShowWelcome_Click" HorizontalAlignment="Left">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
               <TextBlock Text="Back" />
             </StackPanel>
           </Button>
-          <TextBlock Text="Sign in" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Restore" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <Button Style="{StaticResource SetupButton}" Click="ShowLink_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE977;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Link device" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowRecoveryPhrase_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from recovery phrase" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowSecretKey_Click">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from secret key" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="RecoveryPhrasePanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowRestore_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Recovery phrase" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock x:Name="RecoveryWordLabel" Text="Word 1 of 24" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RecoveryWordBox" Tag="word" MinHeight="34" Margin="0,0,0,12" TextChanged="RecoveryWordBox_TextChanged" KeyDown="RecoveryWordBox_KeyDown" />
+          <Button Style="{StaticResource SetupButton}" Click="RecoveryPaste_Click" Margin="0,0,0,12">
+            <TextBlock Text="Paste from clipboard" HorizontalAlignment="Center" />
+          </Button>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="8" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button x:Name="RecoveryBackButton" Grid.Column="0" Style="{StaticResource SetupButton}" Click="RecoveryBack_Click">
+              <TextBlock Text="Back" HorizontalAlignment="Center" />
+            </Button>
+            <Button x:Name="RecoveryNextButton" Grid.Column="2" Style="{StaticResource SetupPrimaryButton}" Click="RecoveryNext_Click">
+              <TextBlock x:Name="RecoveryNextText" Text="Next" HorizontalAlignment="Center" />
+            </Button>
+          </Grid>
+        </StackPanel>
+
+        <StackPanel x:Name="RestorePanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowRestore_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Secret key" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Secret key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <Grid Margin="0,0,0,10">
             <PasswordBox x:Name="RestoreSecretBox" PasswordChanged="RestoreSecretBox_PasswordChanged" KeyDown="RestoreSecretBox_KeyDown" />
@@ -92,24 +148,18 @@
                        IsHitTestVisible="False" />
           </Grid>
           <Button x:Name="RestoreSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="RestoreSubmit_Click" Margin="0,0,0,10">
-            <TextBlock Text="Sign in" HorizontalAlignment="Center" />
-          </Button>
-          <Button Style="{StaticResource SetupButton}" Click="ShowLink_Click">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-              <TextBlock Text="&#xE977;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
-              <TextBlock Text="Link this device" />
-            </StackPanel>
+            <TextBlock Text="Restore" HorizontalAlignment="Center" />
           </Button>
         </StackPanel>
 
         <StackPanel x:Name="LinkPanel" Visibility="Collapsed">
-          <Button Style="{StaticResource SetupBackButton}" Click="ShowWelcome_Click" HorizontalAlignment="Left">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowRestore_Click" HorizontalAlignment="Left">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
               <TextBlock Text="Back" />
             </StackPanel>
           </Button>
-          <TextBlock Text="Link this device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Link device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="Owner public key or invite link" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="LinkOwnerBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkOwnerBox_TextChanged" KeyDown="LinkOwnerBox_KeyDown" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="LinkSubmit_Click">
@@ -412,6 +462,12 @@
               <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
               <CheckBox x:Name="CloseToTrayCheckBox" Content="Tray on close" Checked="CloseToTray_Changed" Unchecked="CloseToTray_Changed" />
               <CheckBox x:Name="LocalNhashResolverCheckBox" Content="nhash.iris.localhost resolver" Margin="0,8,0,0" Checked="LocalNhashResolver_Changed" Unchecked="LocalNhashResolver_Changed" />
+              <Button x:Name="RecoveryPhraseButton" Click="RecoveryPhrase_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Recovery phrase" />
+                </StackPanel>
+              </Button>
               <Button Click="Logout_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE8BB;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />

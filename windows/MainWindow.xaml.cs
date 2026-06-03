@@ -37,6 +37,9 @@ public partial class MainWindow : Window
     private bool refreshing;
     private bool quitRequested;
     private string submittedLinkOwner = "";
+    private readonly string[] recoveryWords = new string[24];
+    private int recoveryWordIndex;
+    private bool updatingRecoveryWordBox;
     private bool settingsUpdating;
     private Forms.NotifyIcon? trayIcon;
 
@@ -195,6 +198,8 @@ public partial class MainWindow : Window
         OwnerValue.Text = status.OwnerNpub ?? "-";
         DeviceValue.Text = status.DeviceNpub ?? "-";
         AuthValue.Text = status.SetupLabel;
+        RecoveryPhraseButton.Visibility =
+            status.CanExportRecoveryPhrase ? Visibility.Visible : Visibility.Collapsed;
         ApprovePanel.Visibility =
             status.HasOwnerSigningAuthority ? Visibility.Visible : Visibility.Collapsed;
 
@@ -772,6 +777,110 @@ public partial class MainWindow : Window
         CopyText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
+    private void RecoveryPhrase_Click(object sender, RoutedEventArgs e)
+    {
+        var dataDir = currentStatus?.ConfigDirectory;
+        var export = IrisDriveNativeCore.ExportRecoverySecret(dataDir ?? "");
+        ShowRecoveryPhraseDialog(export);
+    }
+
+    private void ShowRecoveryPhraseDialog(RecoverySecretExport export)
+    {
+        var wordIndex = 0;
+        var wordTitle = new TextBlock
+        {
+            Text = "Recovery phrase",
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var wordLabel = new TextBlock
+        {
+            Text = "Word 1 of 24",
+            Style = (Style)FindResource("FieldName"),
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        var wordValue = new TextBlock
+        {
+            Text = export.Words.Count == 24 ? export.Words[0] : export.Error,
+            FontSize = 32,
+            FontWeight = FontWeights.Bold,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 8, 0, 16),
+        };
+        var back = new WpfButton { Content = "Back", MinWidth = 92 };
+        var next = new WpfButton { Content = export.Words.Count == 24 ? "Next" : "Done", MinWidth = 92 };
+        var copyPhrase = new WpfButton { Content = "Copy recovery phrase", MinWidth = 148 };
+        var copyKey = new WpfButton { Content = "Copy key", MinWidth = 92 };
+
+        void RenderWord()
+        {
+            wordLabel.Text = $"Word {wordIndex + 1} of 24";
+            wordValue.Text = export.Words.Count == 24 ? export.Words[wordIndex] : export.Error;
+            back.IsEnabled = wordIndex > 0;
+            next.Content = wordIndex == 23 || export.Words.Count != 24 ? "Done" : "Next";
+            copyPhrase.IsEnabled = !string.IsNullOrWhiteSpace(export.RecoveryPhrase);
+            copyKey.IsEnabled = !string.IsNullOrWhiteSpace(export.SecretKey);
+        }
+
+        var buttons = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+        buttons.Children.Add(back);
+        buttons.Children.Add(next);
+
+        var copyButtons = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        copyButtons.Children.Add(copyPhrase);
+        copyButtons.Children.Add(copyKey);
+
+        var body = new StackPanel { Margin = new Thickness(20) };
+        body.Children.Add(wordTitle);
+        body.Children.Add(wordLabel);
+        body.Children.Add(wordValue);
+        body.Children.Add(copyButtons);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "Recovery phrase",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            ResizeMode = ResizeMode.NoResize,
+            Content = body,
+        };
+
+        back.Click += (_, _) =>
+        {
+            wordIndex = Math.Max(0, wordIndex - 1);
+            RenderWord();
+        };
+        next.Click += (_, _) =>
+        {
+            if (wordIndex >= 23 || export.Words.Count != 24)
+            {
+                dialog.Close();
+            }
+            else
+            {
+                wordIndex += 1;
+                RenderWord();
+            }
+        };
+        copyPhrase.Click += (_, _) => CopyText(export.RecoveryPhrase, "Recovery phrase copied");
+        copyKey.Click += (_, _) => CopyText(export.SecretKey, "Secret key copied");
+
+        RenderWord();
+        dialog.ShowDialog();
+    }
+
     private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
         CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
@@ -1040,6 +1149,96 @@ public partial class MainWindow : Window
             : Visibility.Collapsed;
     }
 
+    private async void RecoveryNext_Click(object sender, RoutedEventArgs e)
+    {
+        if (recoveryWordIndex >= 23)
+        {
+            await RunSetupAsync(() => service.RestoreProfileAsync(
+                string.Join(" ", recoveryWords.Select(word => word.Trim().ToLowerInvariant()))));
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(recoveryWords[recoveryWordIndex]))
+        {
+            recoveryWordIndex = Math.Min(23, recoveryWordIndex + 1);
+            UpdateRecoveryPhrasePanel();
+            RecoveryWordBox.Focus();
+        }
+    }
+
+    private void RecoveryBack_Click(object sender, RoutedEventArgs e)
+    {
+        recoveryWordIndex = Math.Max(0, recoveryWordIndex - 1);
+        UpdateRecoveryPhrasePanel();
+        RecoveryWordBox.Focus();
+    }
+
+    private void RecoveryWordBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+        e.Handled = true;
+        RecoveryNext_Click(sender, e);
+    }
+
+    private void RecoveryPaste_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyRecoveryWordInput(WpfClipboard.ContainsText() ? WpfClipboard.GetText() : "");
+        UpdateRecoveryPhrasePanel();
+        RecoveryWordBox.Focus();
+    }
+
+    private void RecoveryWordBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (updatingRecoveryWordBox)
+        {
+            return;
+        }
+        ApplyRecoveryWordInput(RecoveryWordBox.Text);
+        UpdateRecoveryPhrasePanel();
+    }
+
+    private void ApplyRecoveryWordInput(string input)
+    {
+        var parts = input
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(word => word.ToLowerInvariant())
+            .ToArray();
+        if (parts.Length <= 1)
+        {
+            recoveryWords[recoveryWordIndex] = input.Trim().ToLowerInvariant();
+            return;
+        }
+
+        for (var offset = 0; offset < parts.Length && recoveryWordIndex + offset < recoveryWords.Length; offset++)
+        {
+            recoveryWords[recoveryWordIndex + offset] = parts[offset];
+        }
+        recoveryWordIndex = Math.Min(23, recoveryWordIndex + parts.Length - 1);
+    }
+
+    private bool CanAdvanceRecoveryWord() =>
+        recoveryWordIndex == 23
+            ? recoveryWords.All(word => !string.IsNullOrWhiteSpace(word))
+            : !string.IsNullOrWhiteSpace(recoveryWords[recoveryWordIndex]);
+
+    private void UpdateRecoveryPhrasePanel(bool updateTextBox = true)
+    {
+        RecoveryWordLabel.Text = $"Word {recoveryWordIndex + 1} of 24";
+        RecoveryBackButton.IsEnabled = recoveryWordIndex > 0;
+        RecoveryNextText.Text = recoveryWordIndex == 23 ? "Restore" : "Next";
+        RecoveryNextButton.IsEnabled = CanAdvanceRecoveryWord();
+        if (updateTextBox)
+        {
+            updatingRecoveryWordBox = true;
+            RecoveryWordBox.Text = recoveryWords[recoveryWordIndex];
+            RecoveryWordBox.CaretIndex = RecoveryWordBox.Text.Length;
+            updatingRecoveryWordBox = false;
+        }
+    }
+
     private async Task RunSetupAsync(Func<Task> operation)
     {
         SetSetupEnabled(false);
@@ -1065,6 +1264,7 @@ public partial class MainWindow : Window
         CreateSubmitButton.IsEnabled = enabled;
         CreatePhotoSubmitButton.IsEnabled = enabled;
         RestoreSubmitButton.IsEnabled = enabled;
+        RecoveryNextButton.IsEnabled = enabled && CanAdvanceRecoveryWord();
         LinkSubmitButton.IsEnabled = enabled;
     }
 
@@ -1079,14 +1279,29 @@ public partial class MainWindow : Window
 
     private void ShowRestore_Click(object sender, RoutedEventArgs e)
     {
-        ShowSetupPanel(RestorePanel);
-        RestoreSecretBox.Focus();
+        ShowSetupPanel(RestoreOptionsPanel);
     }
 
     private void ShowLink_Click(object sender, RoutedEventArgs e)
     {
         ShowSetupPanel(LinkPanel);
         LinkOwnerBox.Focus();
+    }
+
+    private void ShowRecoveryPhrase_Click(object sender, RoutedEventArgs e)
+    {
+        recoveryWordIndex = 0;
+        Array.Fill(recoveryWords, "");
+        RecoveryWordBox.Text = "";
+        UpdateRecoveryPhrasePanel();
+        ShowSetupPanel(RecoveryPhrasePanel);
+        RecoveryWordBox.Focus();
+    }
+
+    private void ShowSecretKey_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSetupPanel(RestorePanel);
+        RestoreSecretBox.Focus();
     }
 
     private void ShowWelcome_Click(object sender, RoutedEventArgs e)
@@ -1104,6 +1319,8 @@ public partial class MainWindow : Window
         WelcomePanel.Visibility = Visibility.Collapsed;
         CreatePanel.Visibility = Visibility.Collapsed;
         CreatePhotoPanel.Visibility = Visibility.Collapsed;
+        RestoreOptionsPanel.Visibility = Visibility.Collapsed;
+        RecoveryPhrasePanel.Visibility = Visibility.Collapsed;
         RestorePanel.Visibility = Visibility.Collapsed;
         LinkPanel.Visibility = Visibility.Collapsed;
         AwaitingPanel.Visibility = Visibility.Collapsed;

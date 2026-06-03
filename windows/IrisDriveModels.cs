@@ -12,6 +12,7 @@ public sealed class IrisDriveStatusData
     public string? OwnerNpub { get; init; }
     public string? DeviceNpub { get; init; }
     public bool HasOwnerSigningAuthority { get; init; }
+    public bool CanExportRecoveryPhrase { get; init; }
     public string? AuthorizationState { get; init; }
     public string SetupState { get; init; } = "not_configured";
     public string SetupLabel { get; init; } = "Not linked";
@@ -70,6 +71,8 @@ public sealed class IrisDriveStatusData
             DeviceNpub = account.HasValue ? String(account.Value, "device_pubkey") : null,
             HasOwnerSigningAuthority =
                 account.HasValue && Bool(account.Value, "has_owner_signing_authority"),
+            CanExportRecoveryPhrase =
+                account.HasValue && Bool(account.Value, "can_export_recovery_phrase"),
             AuthorizationState =
                 account.HasValue ? String(account.Value, "authorization_state") : null,
             SetupState = String(ui, "setup_state") ?? "not_configured",
@@ -480,6 +483,65 @@ public sealed record RelayStatusRow(
     string Status,
     string StatusLabel,
     string Health);
+
+public sealed record RecoverySecretExport(
+    bool CanExport,
+    string RecoveryPhrase,
+    IReadOnlyList<string> Words,
+    string SecretKey,
+    string Error)
+{
+    public static RecoverySecretExport FromJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new RecoverySecretExport(
+            Bool(root, "can_export"),
+            String(root, "recovery_phrase") ?? "",
+            StringArray(root, "words"),
+            String(root, "secret_key") ?? "",
+            String(root, "error") ?? "");
+    }
+
+    private static string? String(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var value) ||
+            value.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return value.GetString();
+    }
+
+    private static bool Bool(JsonElement root, string name) =>
+        root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(name, out var value) &&
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+        value.GetBoolean();
+
+    private static IReadOnlyList<string> StringArray(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        var items = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                items.Add(item.GetString() ?? "");
+            }
+        }
+
+        return items;
+    }
+}
 
 public sealed record DeviceLinkRequestRow(
     string DeviceNpub,

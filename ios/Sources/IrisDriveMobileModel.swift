@@ -146,6 +146,10 @@ final class IrisDriveMobileModel: ObservableObject {
         lastState?.ui.account?.hasOwnerSigningAuthority ?? false
     }
 
+    var canExportRecoveryPhrase: Bool {
+        lastState?.ui.account?.canExportRecoveryPhrase ?? false
+    }
+
     func ensureFileProviderDomainIfProfileExists() {
         guard isSetupComplete else {
             removeFileProviderDomain()
@@ -494,11 +498,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func restoreProfile() {
-        guard !restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
         let secret = restoreSecret
         restoreSecret = ""
+        restoreProfile(secret: secret)
+    }
+
+    func restoreProfile(secret: String) {
+        guard !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
         profileUsername = ""
         profilePhotoName = ""
         dispatch([
@@ -509,6 +517,10 @@ final class IrisDriveMobileModel: ObservableObject {
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
         scheduleBackgroundSyncIfNeeded()
+    }
+
+    func exportRecoverySecret() -> NativeRecoverySecretExport {
+        IrisDriveNativeCore.exportRecoverySecret(dataDir: sharedContainerPath)
     }
 
     func linkDevice() {

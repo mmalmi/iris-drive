@@ -48,6 +48,17 @@ public sealed class IrisDriveNativeCore : IDisposable
             isComplete.ValueKind == JsonValueKind.True;
     }
 
+    public static RecoverySecretExport ExportRecoverySecret(string dataDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return new RecoverySecretExport(false, "", Array.Empty<string>(), "", "profile is required");
+        }
+
+        return RecoverySecretExport.FromJson(
+            TakeString(iris_drive_export_recovery_secret_json(dataDirectory)));
+    }
+
     public void Dispose()
     {
         if (handle != IntPtr.Zero)
@@ -93,6 +104,10 @@ public sealed class IrisDriveNativeCore : IDisposable
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr iris_drive_validate_link_input_json(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_export_recovery_secret_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern void iris_drive_string_free(IntPtr value);

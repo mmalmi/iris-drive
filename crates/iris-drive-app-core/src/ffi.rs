@@ -37,7 +37,9 @@ use iris_drive_core::fips_status::{
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
-use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
+use iris_drive_core::{
+    Account, AppConfig, BackupTarget, DeviceAuthorizationState, DeviceIdentity, Drive,
+};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
@@ -64,6 +66,22 @@ use crate::state::{
     NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus,
     UiFipsStatus, UiPaths, UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
 };
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverySecretExport {
+    pub can_export: bool,
+    pub recovery_phrase: String,
+    pub words: Vec<String>,
+    pub secret_key: String,
+    pub error: String,
+}
+
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn export_recovery_secret(data_dir: String) -> RecoverySecretExport {
+    export_recovery_secret_value(&data_dir)
+}
 
 #[cfg(target_os = "android")]
 #[path = "ffi_android_test_support.rs"]
@@ -872,6 +890,7 @@ impl NativeAppRuntime {
             device_label: account.device_label.clone().unwrap_or_default(),
             authorization_state: authorization_state_key(account.authorization_state).to_owned(),
             has_owner_signing_authority: account.has_owner_signing_authority,
+            can_export_recovery_phrase: account.owner_pubkey == account.device_pubkey,
             device_link_request: device_link_request_url(&account),
             device_link_invite: device_link_invite_url(&account),
             inbound_device_link_requests: inbound_device_link_requests(&account),
@@ -1917,6 +1936,65 @@ fn paths_for(data_dir: &str) -> UiPaths {
         data_dir: data_dir.to_owned(),
         config_path: path_join(data_dir, "config.toml"),
         blocks_dir: path_join(data_dir, "blocks"),
+    }
+}
+
+fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
+    let config_dir = Path::new(data_dir);
+    let config = match AppConfig::load_or_default(config_path_in(config_dir)) {
+        Ok(config) => config,
+        Err(error) => {
+            return RecoverySecretExport {
+                error: format!("loading config: {error}"),
+                ..RecoverySecretExport::default()
+            };
+        }
+    };
+    let Some(account) = config.account else {
+        return RecoverySecretExport {
+            error: "profile is required".to_owned(),
+            ..RecoverySecretExport::default()
+        };
+    };
+    if account.owner_pubkey != account.device_pubkey {
+        return RecoverySecretExport {
+            error: "recovery phrase is available on the profile identity device".to_owned(),
+            ..RecoverySecretExport::default()
+        };
+    }
+    let device = match DeviceIdentity::load(key_path_in(config_dir)) {
+        Ok(device) => device,
+        Err(error) => {
+            return RecoverySecretExport {
+                error: format!("loading device key: {error}"),
+                ..RecoverySecretExport::default()
+            };
+        }
+    };
+    if device.pubkey_hex() != account.device_pubkey {
+        return RecoverySecretExport {
+            error: "device key does not match profile".to_owned(),
+            ..RecoverySecretExport::default()
+        };
+    }
+    let phrase = match iris_drive_core::recovery_phrase::secret_to_recovery_phrase(
+        device.keys().secret_key(),
+    ) {
+        Ok(phrase) => phrase,
+        Err(error) => {
+            return RecoverySecretExport {
+                error: format!("exporting recovery phrase: {error}"),
+                ..RecoverySecretExport::default()
+            };
+        }
+    };
+    let secret_key = device.keys().secret_key().to_bech32().unwrap_or_default();
+    RecoverySecretExport {
+        can_export: true,
+        words: phrase.split_whitespace().map(ToOwned::to_owned).collect(),
+        recovery_phrase: phrase,
+        secret_key,
+        error: String::new(),
     }
 }
 

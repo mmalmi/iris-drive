@@ -17,6 +17,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var deviceLinkInviteURL: String?
     @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
     @Published var hasOwnerSigningAuthority = false
+    @Published var canExportRecoveryPhrase = false
     @Published var setupState = "not_configured"
     @Published var setupComplete = false
     @Published var awaitingApproval = false

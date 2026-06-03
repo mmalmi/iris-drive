@@ -41,6 +41,7 @@ pub struct UiAccount {
     pub device_label: String,
     pub authorization_state: String,
     pub has_owner_signing_authority: bool,
+    pub can_export_recovery_phrase: bool,
     pub device_link_request: String,
     pub device_link_invite: String,
     pub inbound_device_link_requests: Vec<UiDeviceLinkRequest>,

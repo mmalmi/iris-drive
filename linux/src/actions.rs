@@ -192,7 +192,8 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
                     let request_label = request_label.clone();
                     let dialog = dialog.clone();
                     add_request.connect_clicked(move |_| {
-                        if approve_device_values(&model, request_url.clone(), request_label.clone()) {
+                        if approve_device_values(&model, request_url.clone(), request_label.clone())
+                        {
                             dialog.close();
                         }
                     });
@@ -414,6 +415,123 @@ pub(crate) fn copy_text(model: &AppRef, value: &str, message: &str) {
     } else {
         model.ui.notice.set_text("Clipboard unavailable");
     }
+}
+
+pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
+    let export =
+        iris_drive_app_core::export_recovery_secret(app_config_dir().display().to_string());
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Recovery phrase")
+        .modal(true)
+        .default_width(420)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Recovery phrase"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    if !export.error.trim().is_empty() {
+        let error = gtk::Label::new(Some(&export.error));
+        error.add_css_class("iris-muted");
+        error.set_xalign(0.0);
+        error.set_wrap(true);
+        body.append(&error);
+    } else {
+        let word_index = Rc::new(Cell::new(0_usize));
+        let word_label = gtk::Label::new(Some("Word 1 of 24"));
+        word_label.add_css_class("iris-field-name");
+        word_label.set_xalign(0.0);
+        body.append(&word_label);
+
+        let word_value = gtk::Label::new(Some(export.words.first().map_or("", String::as_str)));
+        word_value.add_css_class("title-1");
+        word_value.set_halign(gtk::Align::Center);
+        word_value.set_margin_top(4);
+        word_value.set_margin_bottom(10);
+        body.append(&word_value);
+
+        let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        nav.set_halign(gtk::Align::End);
+        let back = pill_button("Back");
+        let next = primary_button("Next");
+        nav.append(&back);
+        nav.append(&next);
+        body.append(&nav);
+
+        let copy_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let copy_phrase = pill_button("Copy recovery phrase");
+        let copy_key = pill_button("Copy secret key");
+        copy_buttons.append(&copy_phrase);
+        copy_buttons.append(&copy_key);
+        body.append(&copy_buttons);
+
+        let update = {
+            let export = export.clone();
+            let word_index = Rc::clone(&word_index);
+            let word_label = word_label.clone();
+            let word_value = word_value.clone();
+            let back = back.clone();
+            let next = next.clone();
+            move || {
+                let index = word_index.get().min(23);
+                word_label.set_text(&format!("Word {} of 24", index + 1));
+                word_value.set_text(export.words.get(index).map_or("", String::as_str));
+                back.set_sensitive(index > 0);
+                next.set_label(if index == 23 { "Done" } else { "Next" });
+            }
+        };
+        update();
+
+        {
+            let word_index = Rc::clone(&word_index);
+            let update = update.clone();
+            back.connect_clicked(move |_| {
+                word_index.set(word_index.get().saturating_sub(1));
+                update();
+            });
+        }
+        {
+            let dialog = dialog.clone();
+            let word_index = Rc::clone(&word_index);
+            let update = update.clone();
+            next.connect_clicked(move |_| {
+                if word_index.get() >= 23 {
+                    dialog.close();
+                } else {
+                    word_index.set((word_index.get() + 1).min(23));
+                    update();
+                }
+            });
+        }
+        {
+            let model = Rc::clone(model);
+            let phrase = export.recovery_phrase.clone();
+            copy_phrase.connect_clicked(move |_| {
+                copy_text(&model, &phrase, "Recovery phrase copied");
+            });
+        }
+        {
+            let model = Rc::clone(model);
+            let secret_key = export.secret_key.clone();
+            copy_key.connect_clicked(move |_| {
+                copy_text(&model, &secret_key, "Secret key copied");
+            });
+        }
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
 }
 
 pub(crate) fn open_snapshot_link(model: &AppRef) {

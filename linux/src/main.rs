@@ -71,6 +71,7 @@ struct Ui {
     blossom: gtk::ListBox,
     tray_on_close: gtk::CheckButton,
     local_nhash_resolver: gtk::CheckButton,
+    recovery_phrase_button: gtk::Button,
     logout_button: gtk::Button,
     relay_entry: gtk::Entry,
     backup_entry: gtk::Entry,
@@ -89,6 +90,8 @@ struct AppModel {
     daemon: RefCell<Option<Child>>,
     setup_screen: RefCell<SetupScreen>,
     setup_username: RefCell<String>,
+    setup_recovery_words: RefCell<Vec<String>>,
+    setup_recovery_word_index: Cell<usize>,
     tray: RefCell<Option<TrayServiceHandle>>,
     tray_available: Cell<bool>,
     settings_refreshing: Cell<bool>,
@@ -110,7 +113,9 @@ enum SetupScreen {
     Welcome,
     Create,
     CreatePhoto,
-    Restore,
+    RestoreOptions,
+    RestorePhrase,
+    RestoreSecretKey,
     Link,
 }
 

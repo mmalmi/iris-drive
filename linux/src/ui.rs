@@ -172,11 +172,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     approve_box.set_hexpand(true);
     let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
-    let reset_invite_button = action_button(
-        "view-refresh-symbolic",
-        "Reset invite",
-        "Reset invite",
-    );
+    let reset_invite_button =
+        action_button("view-refresh-symbolic", "Reset invite", "Reset invite");
     approve_box.append(&approve_device_button);
     approve_box.append(&reset_invite_button);
     peers_page.append(&approve_box);
@@ -250,6 +247,12 @@ pub(crate) fn build_ui(app: &adw::Application) {
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
     settings_page.append(&local_nhash_resolver);
+    let recovery_phrase_button = action_button(
+        "dialog-password-symbolic",
+        "Recovery phrase",
+        "Recovery phrase",
+    );
+    settings_page.append(&recovery_phrase_button);
     let logout_button = action_button("system-log-out-symbolic", "Log Out", "Log out");
     logout_button.add_css_class("destructive-action");
     settings_page.append(&logout_button);
@@ -350,6 +353,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             blossom,
             tray_on_close,
             local_nhash_resolver,
+            recovery_phrase_button,
             logout_button,
             relay_entry,
             backup_entry,
@@ -364,6 +368,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
         daemon: RefCell::new(None),
         setup_screen: RefCell::new(SetupScreen::Welcome),
         setup_username: RefCell::new(String::new()),
+        setup_recovery_words: RefCell::new(vec![String::new(); 24]),
+        setup_recovery_word_index: Cell::new(0),
         tray: RefCell::new(None),
         tray_available: Cell::new(false),
         settings_refreshing: Cell::new(false),
@@ -457,6 +463,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
             }
             set_local_nhash_resolver(&model, button.is_active());
         });
+    }
+    {
+        let button = model.ui.recovery_phrase_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| show_recovery_phrase_dialog(&model));
     }
     {
         let button = model.ui.logout_button.clone();

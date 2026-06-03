@@ -9,7 +9,11 @@ pub(crate) fn refresh(model: &AppRef) {
             let awaiting_link_approval =
                 initialized && !revoked && is_awaiting_link_approval(&state);
             let sync_running = initialized && !revoked && ensure_daemon_running(model);
-            set_view_mode(model, initialized && !awaiting_link_approval && !revoked, sync_running);
+            set_view_mode(
+                model,
+                initialized && !awaiting_link_approval && !revoked,
+                sync_running,
+            );
             if !initialized {
                 render_setup(model);
                 return;
@@ -36,13 +40,14 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.device.set_text(&short_value(device_npub));
             model.ui.account_owner.set_text(owner_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
-            model.ui.account_authorization.set_text(setup_label_value(&state));
+            model
+                .ui
+                .account_authorization
+                .set_text(setup_label_value(&state));
             model
                 .ui
                 .approve_box
-                .set_visible(account.is_some_and(|account| {
-                    account.has_owner_signing_authority
-                }));
+                .set_visible(account.is_some_and(|account| account.has_owner_signing_authority));
             model.ui.snapshot.set_text(&snapshot_value(&state));
             model.ui.files.set_text(&file_count_value(&state));
             model.ui.storage.set_text(&storage_value(&state));
@@ -57,6 +62,10 @@ pub(crate) fn refresh(model: &AppRef) {
                 .local_nhash_resolver
                 .set_active(local_nhash_resolver_enabled(&state));
             model.settings_refreshing.set(false);
+            model
+                .ui
+                .recovery_phrase_button
+                .set_visible(account.is_some_and(|account| account.can_export_recovery_phrase));
             let has_snapshot = snapshot_link(&state).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
@@ -88,6 +97,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.sidebar_online.set_text("0/0 online");
             model.ui.copy_snapshot_button.set_sensitive(false);
             model.ui.open_snapshot_button.set_sensitive(false);
+            model.ui.recovery_phrase_button.set_visible(false);
             model.ui.notice.set_text(&error);
             clear_list(&model.ui.drives);
             clear_list(&model.ui.peers);
@@ -107,12 +117,18 @@ pub(crate) fn set_view_mode(model: &AppRef, initialized: bool, sync_running: boo
     model.ui.folder_button.set_visible(initialized);
     model.ui.copy_snapshot_button.set_visible(initialized);
     model.ui.open_snapshot_button.set_visible(initialized);
-    model.ui.start_button.set_visible(initialized && !sync_running);
+    model
+        .ui
+        .start_button
+        .set_visible(initialized && !sync_running);
     model
         .ui
         .start_button
         .set_sensitive(initialized && !sync_running);
-    model.ui.stop_button.set_visible(initialized && sync_running);
+    model
+        .ui
+        .stop_button
+        .set_visible(initialized && sync_running);
     model
         .ui
         .stop_button

@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
+import to.iris.drive.app.core.RecoverySecretExport
 
 @Composable
 internal fun AuthenticatedContent(
@@ -52,6 +53,8 @@ internal fun AuthenticatedContent(
     onStopSync: () -> Unit,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onExportRecoverySecret: () -> RecoverySecretExport,
     onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
@@ -110,6 +113,8 @@ internal fun AuthenticatedContent(
             state = state,
             onCopyOwnerKey = onCopyOwnerKey,
             onCopyDeviceKey = onCopyDeviceKey,
+            onCopyText = onCopyText,
+            onExportRecoverySecret = onExportRecoverySecret,
             onLogout = onLogout,
             onAddRelay = onAddRelay,
             onRemoveRelay = onRemoveRelay,
@@ -247,6 +252,8 @@ private fun SettingsContent(
     state: AppState,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onExportRecoverySecret: () -> RecoverySecretExport,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -268,6 +275,8 @@ private fun SettingsContent(
                 state = state,
                 onCopyOwnerKey = onCopyOwnerKey,
                 onCopyDeviceKey = onCopyDeviceKey,
+                onCopyText = onCopyText,
+                onExportRecoverySecret = onExportRecoverySecret,
                 onLogout = onLogout,
                 onAddRelay = onAddRelay,
                 onRemoveRelay = onRemoveRelay,
@@ -495,6 +504,8 @@ private fun SettingsPanel(
     state: AppState,
     onCopyOwnerKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onExportRecoverySecret: () -> RecoverySecretExport,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -502,6 +513,8 @@ private fun SettingsPanel(
 ) {
     var relayInput by remember { mutableStateOf("") }
     var confirmLogout by remember { mutableStateOf(false) }
+    var recoveryExport by remember { mutableStateOf<RecoverySecretExport?>(null) }
+    var recoveryWordIndex by remember { mutableStateOf(0) }
     val account = state.account
 
     if (confirmLogout) {
@@ -524,6 +537,16 @@ private fun SettingsPanel(
                     Text("Cancel")
                 }
             },
+        )
+    }
+
+    recoveryExport?.let { export ->
+        RecoveryPhraseDialog(
+            export = export,
+            wordIndex = recoveryWordIndex,
+            onWordIndexChange = { recoveryWordIndex = it },
+            onCopyText = onCopyText,
+            onDismiss = { recoveryExport = null },
         )
     }
 
@@ -579,12 +602,93 @@ private fun SettingsPanel(
                 Text("Copy device key")
             }
         }
+        if (account?.canExportRecoveryPhrase == true) {
+            OutlinedButton(
+                onClick = {
+                    recoveryExport = onExportRecoverySecret()
+                    recoveryWordIndex = 0
+                },
+                modifier = Modifier.testTag("openRecoveryPhraseExport"),
+            ) {
+                Text("Recovery phrase")
+            }
+        }
         OutlinedButton(onClick = { confirmLogout = true }) {
             Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)
             Spacer(Modifier.size(8.dp))
             Text("Log out", color = Danger)
         }
     }
+}
+
+@Composable
+private fun RecoveryPhraseDialog(
+    export: RecoverySecretExport,
+    wordIndex: Int,
+    onWordIndexChange: (Int) -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Recovery phrase") },
+        text = {
+            if (export.error.isNotBlank()) {
+                Text(export.error, color = Muted)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Word ${wordIndex + 1} of 24", color = Muted)
+                    Text(
+                        export.words.getOrNull(wordIndex).orEmpty(),
+                        color = Ink,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.testTag("recoveryPhraseWord"),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { onCopyText("Recovery phrase", export.recoveryPhrase) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Copy recovery phrase")
+                        }
+                        OutlinedButton(
+                            onClick = { onCopyText("Secret key", export.secretKey) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Copy key")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (wordIndex >= 23 || export.error.isNotBlank()) {
+                        onDismiss()
+                    } else {
+                        onWordIndexChange(wordIndex + 1)
+                    }
+                },
+            ) {
+                Text(if (wordIndex >= 23 || export.error.isNotBlank()) "Done" else "Next")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    if (wordIndex == 0) {
+                        onDismiss()
+                    } else {
+                        onWordIndexChange(wordIndex - 1)
+                    }
+                },
+            ) {
+                Text(if (wordIndex == 0) "Close" else "Back")
+            }
+        },
+    )
 }
 
 @Composable

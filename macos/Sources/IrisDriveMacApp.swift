@@ -570,6 +570,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         finishSetup(arguments: args)
     }
 
+    func exportRecoverySecret() -> [String: Any] {
+        guard let paths = runtimePathsForMenu else {
+            return ["error": "runtime paths are not ready"]
+        }
+        return IrisDriveDesktopCore.exportRecoverySecret(
+            dataDir: paths.configDirectory.path
+        )
+    }
+
     func linkDevice(owner: String) {
         let owner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else {
@@ -1487,6 +1496,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceNpub = account["device_pubkey"] as? String
                 status.hasOwnerSigningAuthority =
                     account["has_owner_signing_authority"] as? Bool ?? false
+                status.canExportRecoveryPhrase =
+                    account["can_export_recovery_phrase"] as? Bool ?? false
                 let invite = account["device_link_invite"] as? String ?? ""
                 status.deviceLinkInviteURL = invite.isEmpty ? nil : invite
                 status.inboundDeviceLinkRequests =
@@ -1498,6 +1509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceLinkInviteURL = nil
                 status.inboundDeviceLinkRequests = []
                 status.hasOwnerSigningAuthority = false
+                status.canExportRecoveryPhrase = false
             }
 
             let roots = ui["roots"] as? [[String: Any]] ?? []
@@ -1616,6 +1628,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceNpub = account["device_npub"] as? String
                 status.hasOwnerSigningAuthority =
                     account["has_owner_signing_authority"] as? Bool ?? false
+                status.canExportRecoveryPhrase =
+                    account["can_export_recovery_phrase"] as? Bool
+                    ?? (status.ownerNpub == status.deviceNpub && status.ownerNpub != nil)
                 status.deviceLinkInviteURL =
                     (account["device_link_invite"] as? [String: Any])?["url"] as? String
                 status.inboundDeviceLinkRequests =
@@ -1627,6 +1642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.deviceLinkInviteURL = nil
                 status.inboundDeviceLinkRequests = []
                 status.hasOwnerSigningAuthority = false
+                status.canExportRecoveryPhrase = false
             }
 
             if let drives = json["drives"] as? [[String: Any]],

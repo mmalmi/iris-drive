@@ -23,7 +23,7 @@ use crate::{
     ffi::native_provider_rename_json,
     ffi::native_provider_resolve_path_json,
     ffi::native_provider_write_json,
-    ffi::{classify_link_input, validate_link_input},
+    ffi::{classify_link_input, export_recovery_secret, validate_link_input},
 };
 
 pub struct IrisDriveAppHandle {
@@ -122,6 +122,11 @@ pub extern "C" fn iris_drive_classify_link_input_json(text: *const c_char) -> *m
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_validate_link_input_json(text: *const c_char) -> *mut c_char {
     json_string(&validate_link_input(c_string_lossy(text)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_export_recovery_secret_json(data_dir: *const c_char) -> *mut c_char {
+    json_string(&export_recovery_secret(c_string_lossy(data_dir)))
 }
 
 #[unsafe(no_mangle)]
@@ -368,6 +373,17 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_validateLinkInputJ
 ) -> jstring {
     let text = jni_string_lossy(&mut env, &text);
     jni_json_string(env, &validate_link_input(text))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_exportRecoverySecretJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    jni_json_string(env, &export_recovery_secret(data_dir))
 }
 
 #[cfg(target_os = "android")]
