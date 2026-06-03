@@ -10,10 +10,22 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import to.iris.drive.app.MainActivity
 import to.iris.drive.app.R
 
 class IrisDriveSyncService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var syncLoop: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
@@ -21,6 +33,7 @@ class IrisDriveSyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            IrisDriveBackgroundSync.pause(applicationContext)
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
@@ -29,10 +42,38 @@ class IrisDriveSyncService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        startSyncLoop()
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        syncLoop?.cancel()
+        syncLoop = null
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun startSyncLoop() {
+        if (syncLoop?.isActive == true) return
+        syncLoop = serviceScope.launch {
+            NativeSyncSession(applicationContext).use { session ->
+                while (isActive) {
+                    val state = session.runBackgroundSyncOnce()
+                    IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+                    if (!BackgroundSyncPolicy.shouldSchedule(state)) {
+                        withContext(Dispatchers.Main) {
+                            stopForegroundCompat()
+                            stopSelf()
+                        }
+                        return@launch
+                    }
+                    delay(FOREGROUND_SYNC_INTERVAL_MS)
+                }
+            }
+        }
+    }
 
     private fun startForegroundCompat(): Boolean {
         val notification = buildNotification()
@@ -109,5 +150,6 @@ class IrisDriveSyncService : Service() {
         const val ACTION_STOP = "to.iris.drive.action.STOP_SYNC"
         private const val CHANNEL_ID = "iris-drive-sync"
         private const val NOTIFICATION_ID = 17321
+        private const val FOREGROUND_SYNC_INTERVAL_MS = 60_000L
     }
 }

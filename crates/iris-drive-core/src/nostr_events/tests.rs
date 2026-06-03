@@ -1,4 +1,3 @@
-
 use super::*;
 use nostr_sdk::JsonUtil;
 use std::collections::BTreeMap;

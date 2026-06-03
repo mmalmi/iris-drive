@@ -1,3 +1,4 @@
+import BackgroundTasks
 import FileProvider
 import Foundation
 import SwiftUI
@@ -17,6 +18,8 @@ private let nativeBackgroundStackSize = 8 * 1024 * 1024
 private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
 #endif
+
+enum IrisDriveBackgroundSyncTask { static let identifier = "to.iris.drive.ios.background-sync" }
 
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {
@@ -133,6 +136,10 @@ final class IrisDriveMobileModel: ObservableObject {
 
     var isRevoked: Bool {
         lastState?.ui.revoked ?? false
+    }
+
+    private var shouldRunBackgroundSync: Bool {
+        syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
     var hasOwnerAuthority: Bool {
@@ -429,6 +436,22 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomainIfProfileExists()
     }
 
+    func scheduleBackgroundSyncIfNeeded() {
+        guard shouldRunBackgroundSync else { return cancelBackgroundSync() }
+        let request = BGAppRefreshTaskRequest(identifier: IrisDriveBackgroundSyncTask.identifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: IrisDriveBackgroundSyncTask.identifier)
+        do { try BGTaskScheduler.shared.submit(request) }
+        catch { NSLog("Iris Drive background sync scheduling failed: \(error)") }
+    }
+
+    func cancelBackgroundSync() { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: IrisDriveBackgroundSyncTask.identifier) }
+
+    func performBackgroundSyncTask() async {
+        await syncOnceIfRunning()
+        scheduleBackgroundSyncIfNeeded()
+    }
+
     func startForegroundSyncLoop() {
         guard foregroundSyncTask == nil else { return }
         foregroundSyncTask = Task { @MainActor [weak self] in
@@ -450,8 +473,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func syncOnceIfRunning() async {
-        guard isSetupComplete else { return }
-        if syncRunning {
+        guard syncRunning, isSetupComplete || isAwaitingApproval else { return }
+        if isSetupComplete {
             await dispatchInBackground(["type": "restart_sync"])
         } else {
             await refreshInBackground()
@@ -467,6 +490,7 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
+        scheduleBackgroundSyncIfNeeded()
     }
 
     func restoreProfile() {
@@ -484,6 +508,7 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
+        scheduleBackgroundSyncIfNeeded()
     }
 
     func linkDevice() {
@@ -503,6 +528,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 invalidatePendingState: true
             )
             self.ensureFileProviderDomainIfProfileExists()
+            self.scheduleBackgroundSyncIfNeeded()
         }
     }
 
@@ -561,6 +587,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func logout() {
+        cancelBackgroundSync()
         stopSync()
         dispatch(["type": "logout"])
         restoreSecret = ""
@@ -583,15 +610,18 @@ final class IrisDriveMobileModel: ObservableObject {
     func startSync() {
         guard isSetupComplete else { return }
         dispatch(["type": "start_sync"])
+        scheduleBackgroundSyncIfNeeded()
     }
 
     func stopSync() {
         dispatch(["type": "stop_sync"])
+        cancelBackgroundSync()
     }
 
     func restartSync() {
         guard isSetupComplete else { return }
         dispatch(["type": "restart_sync"])
+        scheduleBackgroundSyncIfNeeded()
     }
 
     func copyOwnerKey() {
@@ -709,6 +739,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func resetLocalState() {
+        cancelBackgroundSync()
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
         removeFileProviderDomain()
         lastState = nil

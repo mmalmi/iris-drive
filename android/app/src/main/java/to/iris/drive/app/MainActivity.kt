@@ -28,6 +28,8 @@ import java.io.File
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.sync.BackgroundSyncPolicy
+import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
 
 class MainActivity : ComponentActivity() {
@@ -55,7 +57,7 @@ class MainActivity : ComponentActivity() {
                     ActivityResultContracts.RequestPermission(),
                 ) { granted ->
                     if (granted) {
-                        dispatch(NativeActions.startSync())
+                        dispatch(NativeActions.startSync(), ::autoStartSyncIfNeeded)
                         startSyncService()
                     }
                 }
@@ -97,6 +99,7 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.demoteAdmin(devicePubkey))
                 },
                 onLogout = {
+                    IrisDriveBackgroundSync.cancel(applicationContext)
                     stopSyncService()
                     dispatch(NativeActions.logout())
                 },
@@ -126,12 +129,14 @@ class MainActivity : ComponentActivity() {
                     if (needsNotificationPermission()) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
-                        dispatch(NativeActions.startSync())
+                        dispatch(NativeActions.startSync(), ::autoStartSyncIfNeeded)
                         startSyncService()
                     }
                 },
                 onStopSync = {
-                    dispatch(NativeActions.stopSync())
+                    dispatch(NativeActions.stopSync()) { state ->
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+                    }
                     stopSyncService()
                 },
             )
@@ -164,6 +169,7 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
+                IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
                 onState?.invoke(state)
             }
         }
@@ -177,6 +183,7 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 stateFlow.value = state
                 writeDebugState()
+                IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
                 onState?.invoke(state)
             }
         }
@@ -184,10 +191,12 @@ class MainActivity : ComponentActivity() {
 
     private fun autoStartSyncIfNeeded(state: AppState) {
         if (state.isRevoked) {
+            IrisDriveBackgroundSync.cancel(applicationContext)
             stopSyncService()
             return
         }
-        if (state.sync.running && (state.isSetupComplete || state.isAwaitingApproval)) {
+        if (BackgroundSyncPolicy.shouldSchedule(state)) {
+            IrisDriveBackgroundSync.schedule(applicationContext)
             startSyncService()
         }
     }

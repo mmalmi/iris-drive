@@ -33,6 +33,20 @@
   <string>public.app-category.productivity</string>
   <key>NSCameraUsageDescription</key>
   <string>Scan Iris Drive invite QR codes.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Find and connect directly to nearby Iris Drive devices on your local network.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_fips._udp</string>
+  </array>
+  <key>BGTaskSchedulerPermittedIdentifiers</key>
+  <array>
+    <string>to.iris.drive.ios.background-sync</string>
+  </array>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>fetch</string>
+  </array>
   <key>UIApplicationSupportsIndirectInputEvents</key>
   <true/>
   <key>UILaunchScreen</key>
