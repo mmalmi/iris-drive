@@ -155,7 +155,7 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         .context("loading device key")?;
     let event = iris_drive_core::nostr_events::build_drive_root_event(
         device.keys(),
-        &state.owner_pubkey,
+        &state.root_scope_id(),
         &drive.drive_id,
         root_ref,
         &authorized_device_pubkeys(&state),

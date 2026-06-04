@@ -9,8 +9,8 @@
 //!   wrapped_dck }`. The event's `created_at` doubles as the snapshot's
 //!   `created_at`. The legacy d-tag `"iris-drive/app-keys"` is still parsed.
 //!
-//! - **`KIND_DRIVE_ROOT = 30078`** — device-signed drive-root reference.
-//!   d-tag: `"iris-drive/<owner_pubkey_hex>/<drive_id>/root"`.
+//! - **`KIND_DRIVE_ROOT = 30078`** — AppKey-signed drive-root reference.
+//!   d-tag: `"iris-drive/<profile_or_share_id>/<drive_id>/root"`.
 //!   Pubkey = device pubkey. Content = JSON root hash/key-wrap metadata,
 //!   DCK generation, and optional causal fields. The event's `created_at`
 //!   doubles as `DeviceRootRef::published_at`.
@@ -343,8 +343,8 @@ fn parse_device_link_request_d_tag(d_tag: &str) -> Result<String, WireError> {
 
 /// Compute the d-tag for a drive-root event.
 #[must_use]
-pub fn drive_root_d_tag(owner_pubkey_hex: &str, drive_id: &str) -> String {
-    format!("iris-drive/{owner_pubkey_hex}/{drive_id}/root")
+pub fn drive_root_d_tag(root_scope_id: &str, drive_id: &str) -> String {
+    format!("iris-drive/{root_scope_id}/{drive_id}/root")
 }
 
 /// Build a signed drive-root event. Signed by the **device key**;
@@ -357,14 +357,14 @@ pub fn drive_root_d_tag(owner_pubkey_hex: &str, drive_id: &str) -> String {
 /// even when the root CID is unchanged.
 pub fn build_drive_root_event(
     device_keys: &Keys,
-    owner_pubkey_hex: &str,
+    root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
 ) -> Result<Event, WireError> {
     build_drive_root_event_at(
         device_keys,
-        owner_pubkey_hex,
+        root_scope_id,
         drive_id,
         root,
         authorized_device_pubkeys,
@@ -380,7 +380,7 @@ pub fn build_drive_root_event(
 /// never receives its root-key wrap.
 pub fn build_drive_root_publish_event(
     device_keys: &Keys,
-    owner_pubkey_hex: &str,
+    root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
@@ -393,7 +393,7 @@ pub fn build_drive_root_publish_event(
     let ts = unix_now_secs().max(stored_ts.saturating_add(1));
     build_drive_root_event_at(
         device_keys,
-        owner_pubkey_hex,
+        root_scope_id,
         drive_id,
         root,
         authorized_device_pubkeys,
@@ -417,7 +417,7 @@ fn unix_now_secs() -> u64 {
 
 fn build_drive_root_event_at(
     device_keys: &Keys,
-    owner_pubkey_hex: &str,
+    root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
@@ -459,7 +459,7 @@ fn build_drive_root_event_at(
     };
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
-    let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    let d_tag = drive_root_d_tag(root_scope_id, drive_id);
     let builder = EventBuilder::new(
         Kind::from(KIND_DRIVE_ROOT),
         content_json,
@@ -495,7 +495,7 @@ pub fn build_private_hashtree_root_event(
 }
 
 /// Parse + verify a drive-root event. Returns
-/// `(device_pubkey_hex, owner_pubkey_hex, drive_id, DeviceRootRef)`.
+/// `(device_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
 /// The device pubkey is the event's author; the owner pubkey and
 /// drive id are extracted from the d-tag.
 pub fn parse_drive_root_event(
@@ -561,8 +561,6 @@ fn parse_drive_root_event_parts(
     }
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
     let (owner_pubkey_hex, drive_id) = parse_drive_root_d_tag(d_tag)?;
-    // Sanity-check the owner pubkey is well-formed before trusting it.
-    PublicKey::from_hex(&owner_pubkey_hex).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
@@ -613,7 +611,7 @@ fn root_cid_from_wire_content(
 }
 
 fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
-    // expected: iris-drive/<owner_pubkey>/<drive_id>/root
+    // expected: iris-drive/<profile_or_share_id>/<drive_id>/root
     let rest = d_tag
         .strip_prefix("iris-drive/")
         .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;

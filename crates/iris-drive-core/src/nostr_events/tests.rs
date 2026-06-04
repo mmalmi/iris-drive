@@ -1,4 +1,5 @@
 use super::*;
+use crate::iris_profile::IrisProfileId;
 use nostr_sdk::JsonUtil;
 use std::collections::BTreeMap;
 
@@ -107,8 +108,7 @@ fn app_keys_event_missing_d_tag_rejected() {
 #[test]
 fn drive_root_event_roundtrip() {
     let device = Keys::generate();
-    let owner = Keys::generate();
-    let owner_hex = owner.public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let authorized_devices = vec![device.public_key().to_hex()];
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
@@ -116,13 +116,13 @@ fn drive_root_event_roundtrip() {
         1_700_000_000,
         7,
     );
-    let event =
-        build_drive_root_event(&device, &owner_hex, "main", &root, &authorized_devices).unwrap();
+    let event = build_drive_root_event(&device, &root_scope_id, "main", &root, &authorized_devices)
+        .unwrap();
     assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
     let (device_pk, parsed_owner, drive_id, parsed_root) =
         parse_drive_root_event_for_device(&event, &device).unwrap();
     assert_eq!(device_pk, device.public_key().to_hex());
-    assert_eq!(parsed_owner, owner_hex);
+    assert_eq!(parsed_owner, root_scope_id);
     assert_eq!(drive_id, "main");
     assert_eq!(parsed_root.root_cid, root.root_cid);
     assert_eq!(parsed_root.dck_generation, root.dck_generation);
@@ -431,14 +431,14 @@ fn drive_root_publish_event_advances_past_stored_root_timestamp() {
 
 #[test]
 fn drive_root_d_tag_format() {
-    let owner = "aa".repeat(32);
-    let tag = drive_root_d_tag(&owner, "main");
-    assert_eq!(tag, format!("iris-drive/{owner}/main/root"));
+    let scope = IrisProfileId::new_v4().to_string();
+    let tag = drive_root_d_tag(&scope, "main");
+    assert_eq!(tag, format!("iris-drive/{scope}/main/root"));
 }
 
 #[test]
 fn drive_root_d_tag_parse_round_trip() {
-    let owner = "bb".repeat(32);
+    let owner = IrisProfileId::new_v4().to_string();
     let drive_id = "shared-photos";
     let tag = drive_root_d_tag(&owner, drive_id);
     let (parsed_owner, parsed_drive) = parse_drive_root_d_tag(&tag).unwrap();

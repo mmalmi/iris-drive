@@ -89,9 +89,10 @@ pub async fn sync_once_with_fips(
         .as_ref()
         .map(authorized_device_pubkeys)
         .unwrap_or_default();
+    let root_scope_id = state.root_scope_id();
     let drive_root_events = relay_sync::fetch_drive_roots(
         &client,
-        &state.owner_pubkey,
+        &root_scope_id,
         PRIMARY_DRIVE_ID,
         &authorized_devices,
         timeout,

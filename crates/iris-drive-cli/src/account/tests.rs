@@ -120,8 +120,10 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
 
     let frame = DeviceLinkRosterFrame {
         schema: 1,
+        profile_id: admin.state.profile_id,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
+        profile_roster_ops: admin.state.profile_roster_ops.clone(),
         app_keys: admin.state.app_keys.clone().unwrap(),
         app_keys_event_id: roster_event.id.to_hex(),
         app_keys_event_json: roster_event.as_json(),
@@ -174,6 +176,13 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
             .unwrap()
     );
     let saved = AppConfig::load_or_default(config_path_in(joiner_dir.path())).unwrap();
+    assert_eq!(
+        saved
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .owner_pubkey,
+        admin.state.profile_id.to_string()
+    );
     let state = saved.account.unwrap();
     assert_eq!(
         state.authorization_state,
@@ -193,8 +202,10 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     .unwrap();
     let updated_frame = DeviceLinkRosterFrame {
         schema: 1,
+        profile_id: admin.state.profile_id,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
+        profile_roster_ops: admin.state.profile_roster_ops.clone(),
         app_keys: admin.state.app_keys.clone().unwrap(),
         app_keys_event_id: updated_roster_event.id.to_hex(),
         app_keys_event_json: updated_roster_event.as_json(),

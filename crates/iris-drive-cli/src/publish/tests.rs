@@ -37,6 +37,30 @@ fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
 }
 
 #[test]
+fn direct_root_republish_includes_cached_remote_events() {
+    let mut exchange = DirectRootExchange::default();
+    let local = DirectRootEvent {
+        key: "drive-root:local:main:1:local-root".to_string(),
+        event_id: "local-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"local\"}".to_string(),
+    };
+    let remote = DirectRootEvent {
+        key: "drive-root:remote:main:7:remote-root".to_string(),
+        event_id: "remote-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"remote\"}".to_string(),
+    };
+
+    exchange.cache_event(remote.clone());
+    let events = exchange.events_for_publish(vec![local.clone()]);
+
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().any(|event| event.event_id == local.event_id));
+    assert!(events.iter().any(|event| event.event_id == remote.event_id));
+}
+
+#[test]
 fn direct_root_peer_churn_does_not_clear_republish_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:7:root";

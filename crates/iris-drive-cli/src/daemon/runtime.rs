@@ -50,8 +50,12 @@ pub(crate) fn cmd_daemon(
         ));
     }
     let relays = pick_relays(&config, relay_override);
-    let filters =
-        relay_sync::subscription_filters(&state.owner_pubkey, iris_drive_core::PRIMARY_DRIVE_ID);
+    let root_scope_id = state.root_scope_id();
+    let filters = relay_sync::subscription_filters(
+        &state.owner_pubkey,
+        &root_scope_id,
+        iris_drive_core::PRIMARY_DRIVE_ID,
+    );
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }

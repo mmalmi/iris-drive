@@ -142,10 +142,15 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     assert!(v["drives"][0].get("working_dir").is_none());
     assert_eq!(v["hashtree"]["current_root_cid"], root_cid);
     assert_eq!(v["hashtree"]["current_root_private"], true);
-    let owner_npub = v["account"]["owner_npub"].as_str().unwrap();
+    let drive_scope = v["drives"][0]["owner_pubkey"].as_str().unwrap();
+    assert!(
+        drive_scope
+            .parse::<iris_drive_core::IrisProfileId>()
+            .is_ok()
+    );
     assert_eq!(
         v["hashtree"]["drive_iris_to_url"],
-        format!("https://drive.iris.to/#/{owner_npub}/main")
+        format!("https://drive.iris.to/#/{drive_scope}/main")
     );
     assert_eq!(
         v["hashtree"]["files_iris_to_url"],

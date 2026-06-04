@@ -965,8 +965,20 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
         ..AppConfig::default()
     };
     linked_config.upsert_drive(iris_drive_core::Drive::primary(&owner.state.owner_pubkey));
-    iris_drive_core::relay_sync::apply_device_link_roster_event(
+    let first_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: owner.state.profile_id,
+        owner_pubkey: owner.state.owner_pubkey.clone(),
+        admin_device_pubkey: owner.state.device_pubkey.clone(),
+        profile_roster_ops: owner.state.profile_roster_ops.clone(),
+        app_keys: owner.state.app_keys.clone().unwrap(),
+        app_keys_event_id: first_roster_event.id.to_hex(),
+        app_keys_event_json: first_roster_event.as_json(),
+        sent_at: 456,
+    };
+    iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut linked_config,
+        &first_frame,
         &first_roster_event,
         &owner.state.device_pubkey,
     )

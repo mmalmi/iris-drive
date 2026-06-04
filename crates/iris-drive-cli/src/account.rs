@@ -97,7 +97,7 @@ pub(crate) fn finish_account_init(
         config.user_profile = user_profile;
     }
     if config.drive(PRIMARY_DRIVE_ID).is_none() {
-        config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+        config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     }
     config.save(config_path_in(config_dir))?;
     println!(
@@ -531,8 +531,10 @@ pub(crate) async fn send_authorized_device_link_rosters(
     let (event_id, event_json) = signed_roster_event_for_state(config_dir, state, app_keys)?;
     let frame = DeviceLinkRosterFrame {
         schema: 1,
+        profile_id: state.profile_id,
         owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
+        profile_roster_ops: state.profile_roster_ops.clone(),
         app_keys: app_keys.clone(),
         app_keys_event_id: event_id.clone(),
         app_keys_event_json: event_json,
@@ -714,8 +716,9 @@ async fn handle_device_link_roster_app_message(
         return Ok(true);
     }
 
-    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_event(
+    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
+        &frame,
         &roster_event,
         &admin_device_hex,
     )

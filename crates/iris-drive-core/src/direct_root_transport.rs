@@ -36,6 +36,7 @@ pub struct DirectRootEvent {
 
 #[derive(Default)]
 pub struct DirectRootExchange {
+    cached_events: BTreeMap<String, DirectRootEvent>,
     published_keys: BTreeMap<String, Instant>,
     seen_keys: BTreeSet<String>,
     subscribed_streams: BTreeSet<String>,
@@ -55,10 +56,13 @@ impl DirectRootExchange {
         let Some(state) = config.account.as_ref() else {
             return Ok(());
         };
-        self.subscribe_owner_stream(&state.owner_pubkey, sync).await;
-        let stream = direct_root_mesh_stream(&state.owner_pubkey);
-        let events = build_current_direct_root_events(config_dir, &config, state)
-            .map_err(|error| format!("{error:#}"))?;
+        let root_scope_id = state.root_scope_id();
+        self.subscribe_owner_stream(&root_scope_id, sync).await;
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let events = self.events_for_publish(
+            build_current_direct_root_events(config_dir, &config, state)
+                .map_err(|error| format!("{error:#}"))?,
+        );
         let now = Instant::now();
         for event in events {
             if !self.should_publish_key(&event.key, now) {
@@ -146,9 +150,11 @@ impl DirectRootExchange {
         if event.id.to_hex() != frame.event_id {
             return Err("direct-root event id mismatch".to_owned());
         }
+        let direct_event = direct_root_event(frame.key.clone(), &event);
         self.remember_seen_key(frame.key.clone());
         match apply_direct_root_event(config_dir, &event, Some(sync)).await {
             Ok(changed) => {
+                self.cache_event(direct_event);
                 if changed {
                     self.announce_current_state(config_dir, sync).await?;
                 }
@@ -215,6 +221,39 @@ impl DirectRootExchange {
         }
     }
 
+    fn cache_event(&mut self, event: DirectRootEvent) {
+        self.remember_seen_key(event.key.clone());
+        self.cached_events.insert(event.key.clone(), event);
+        while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(key) = self.cached_events.keys().next().cloned() else {
+                break;
+            };
+            self.cached_events.remove(&key);
+            self.published_keys.remove(&key);
+        }
+    }
+
+    fn event_for_publish(&self, event: DirectRootEvent) -> DirectRootEvent {
+        self.cached_events.get(&event.key).cloned().unwrap_or(event)
+    }
+
+    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
+        let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
+        let mut keys = BTreeSet::new();
+        for event in local_events {
+            let event = self.event_for_publish(event);
+            keys.insert(event.key.clone());
+            events.push(event);
+        }
+        events.extend(
+            self.cached_events
+                .values()
+                .filter(|event| !keys.contains(&event.key))
+                .cloned(),
+        );
+        events
+    }
+
     fn prune_published_keys(&mut self) {
         while self.published_keys.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
             let Some(oldest) = self.published_keys.keys().next().cloned() else {
@@ -260,7 +299,7 @@ pub fn build_current_direct_root_events(
         let authorized_devices = authorized_device_pubkeys(state);
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
-            &state.owner_pubkey,
+            &state.root_scope_id(),
             &drive.drive_id,
             root,
             &authorized_devices,

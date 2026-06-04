@@ -12,15 +12,16 @@
 //!   `Client` for actual relay I/O. Tested manually against real relays;
 //!   the wire/apply layers below them are what we cover automatically.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
-use crate::AppKeysSnapshot;
-use crate::app_keys::{AppKeysEventRecord, ApplyDecision};
-use crate::config::{AppConfig, DeviceRootRef};
+use crate::account::app_keys_from_profile_roster;
+use crate::app_keys::{AppKeysEventRecord, ApplyDecision, apply_snapshot};
+use crate::config::{AppConfig, DeviceRootRef, Drive};
+use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
     KIND_APP_KEYS, KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT,
     KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag, build_app_keys_event, build_device_link_request_event,
@@ -28,6 +29,7 @@ use crate::nostr_events::{
     drive_root_d_tag, parse_app_keys_event, parse_device_link_request_event,
     parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
+use crate::{AppKeysSnapshot, SignedIrisProfileRosterOp};
 
 #[derive(Debug, Error)]
 pub enum RelayError {
@@ -45,6 +47,10 @@ pub enum RelayError {
     HashtreeRoot(String),
     #[error("account: {0}")]
     Account(#[from] crate::account::AccountError),
+    #[error("iris profile: {0}")]
+    IrisProfile(#[from] crate::iris_profile::IrisProfileError),
+    #[error("device-link roster: {0}")]
+    DeviceLinkRoster(String),
 }
 
 /// Result of applying a remote `AppKeys` event.
@@ -152,6 +158,94 @@ pub fn apply_remote_device_link_request_event(
 /// explicitly requested approval from. Once it has a current roster, it must
 /// continue accepting newer rosters signed by a current admin so it learns
 /// about devices approved after itself.
+pub fn apply_device_link_roster_frame(
+    config: &mut AppConfig,
+    frame: &DeviceLinkRosterFrame,
+    event: &Event,
+    admin_device_pubkey: &str,
+) -> Result<DeviceLinkRosterApply, RelayError> {
+    if frame.schema != 1 {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+    let snapshot = parse_app_keys_event(event)?;
+    let signer_pubkey = event.pubkey.to_hex();
+    let event_id = event.id.to_hex();
+    let Some(account) = config.account.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if frame.app_keys != snapshot
+        || frame.app_keys_event_id != event_id
+        || frame.owner_pubkey != snapshot.owner_pubkey
+        || frame.admin_device_pubkey != admin_device_pubkey
+        || snapshot.owner_pubkey != account.owner_pubkey
+        || signer_pubkey != admin_device_pubkey
+        || !snapshot.is_admin(admin_device_pubkey)
+    {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+    if !account.profile_roster_ops.is_empty() && account.profile_id != frame.profile_id {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+
+    let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
+    let projected_snapshot =
+        app_keys_from_profile_roster(&snapshot.owner_pubkey, frame.profile_id, &incoming_ops)
+            .ok_or_else(|| {
+                RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into())
+            })?;
+    if projected_snapshot != snapshot {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+
+    let has_current_roster = account.app_keys.is_some() || !account.profile_roster_ops.is_empty();
+    let pending_from_admin = account
+        .outbound_device_link_request
+        .as_ref()
+        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_pubkey);
+    if !has_current_roster && !pending_from_admin {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+    if pending_from_admin && !snapshot.contains(&account.device_pubkey) {
+        return Ok(DeviceLinkRosterApply::Ignored);
+    }
+
+    if account.app_keys.as_ref() == Some(&snapshot)
+        && account.profile_id == frame.profile_id
+        && same_profile_ops(&account.profile_roster_ops, &incoming_ops)
+    {
+        return Ok(DeviceLinkRosterApply::Current);
+    }
+
+    let mut current = account.app_keys.clone();
+    let decision = apply_snapshot(&mut current, snapshot.clone());
+    if decision == ApplyDecision::Rejected {
+        return Ok(DeviceLinkRosterApply::Applied(decision));
+    }
+
+    let record = AppKeysEventRecord {
+        event_id,
+        signer_pubkey,
+        event_json: event.as_json(),
+    };
+    let root_scope_id = {
+        let Some(account) = config.account.as_mut() else {
+            return Err(RelayError::NoAccount);
+        };
+        account.profile_roster_ops = if account.profile_id == frame.profile_id {
+            merge_profile_roster_ops(&account.profile_roster_ops, &incoming_ops)
+        } else {
+            incoming_ops
+        };
+        account.profile_id = frame.profile_id;
+        account.app_keys = Some(snapshot);
+        account.app_keys_event = Some(record);
+        account.recompute_authorization();
+        account.root_scope_id()
+    };
+    sync_primary_drive_scope(config, root_scope_id);
+    Ok(DeviceLinkRosterApply::Applied(decision))
+}
+
 pub fn apply_device_link_roster_event(
     config: &mut AppConfig,
     event: &Event,
@@ -190,6 +284,65 @@ pub fn apply_device_link_roster_event(
         AppKeysApply::NotOurOwner | AppKeysApply::UnauthorizedSigner => {
             Ok(DeviceLinkRosterApply::Ignored)
         }
+    }
+}
+
+fn verified_profile_roster_ops(
+    profile_id: crate::IrisProfileId,
+    ops: &[SignedIrisProfileRosterOp],
+) -> Result<Vec<SignedIrisProfileRosterOp>, RelayError> {
+    let mut by_id = BTreeMap::new();
+    for op in ops {
+        let event = Event::from_json(&op.event_json).map_err(|error| {
+            RelayError::DeviceLinkRoster(format!("parsing profile roster op event: {error}"))
+        })?;
+        let parsed = crate::parse_iris_profile_roster_op_event(&event)?;
+        if parsed.content.profile_id != profile_id {
+            return Err(RelayError::DeviceLinkRoster(format!(
+                "profile roster op {} belongs to {}, expected {profile_id}",
+                parsed.op_id, parsed.content.profile_id
+            )));
+        }
+        by_id.insert(parsed.op_id.clone(), parsed);
+    }
+    Ok(by_id.into_values().collect())
+}
+
+fn same_profile_ops(
+    left: &[SignedIrisProfileRosterOp],
+    right: &[SignedIrisProfileRosterOp],
+) -> bool {
+    let left_ids = left
+        .iter()
+        .map(|op| op.op_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let right_ids = right
+        .iter()
+        .map(|op| op.op_id.as_str())
+        .collect::<BTreeSet<_>>();
+    left_ids == right_ids
+}
+
+fn merge_profile_roster_ops(
+    current: &[SignedIrisProfileRosterOp],
+    incoming: &[SignedIrisProfileRosterOp],
+) -> Vec<SignedIrisProfileRosterOp> {
+    let mut by_id = BTreeMap::new();
+    for op in current.iter().chain(incoming.iter()) {
+        by_id.insert(op.op_id.clone(), op.clone());
+    }
+    by_id.into_values().collect()
+}
+
+fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
+    if let Some(drive) = config
+        .drives
+        .iter_mut()
+        .find(|drive| drive.drive_id == crate::daemon::PRIMARY_DRIVE_ID)
+    {
+        drive.owner_pubkey = root_scope_id;
+    } else {
+        config.upsert_drive(Drive::primary(root_scope_id));
     }
 }
 
@@ -260,7 +413,7 @@ pub fn apply_remote_drive_root_event(
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if preview.owner_pubkey_hex != account.owner_pubkey {
+    if preview.owner_pubkey_hex != account.root_scope_id() {
         return Ok(DriveRootApply::NotOurOwner);
     }
     let authorized: BTreeSet<&str> = account
@@ -438,14 +591,14 @@ pub async fn publish_device_link_request(
 pub async fn publish_drive_root(
     client: &Client,
     device_keys: &Keys,
-    owner_pubkey_hex: &str,
+    root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
     authorized_device_pubkeys: &[String],
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_drive_root_publish_event(
         device_keys,
-        owner_pubkey_hex,
+        root_scope_id,
         drive_id,
         root,
         authorized_device_pubkeys,
@@ -547,7 +700,11 @@ pub async fn fetch_latest_files_root(
 /// doesn't need to re-subscribe every time the roster changes — newly
 /// approved devices' events flow in automatically.
 #[must_use]
-pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filter> {
+pub fn subscription_filters(
+    owner_pubkey_hex: &str,
+    root_scope_id: &str,
+    drive_id: &str,
+) -> Vec<Filter> {
     let mut filters = Vec::new();
     filters.push(
         Filter::new()
@@ -557,7 +714,7 @@ pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filte
                 [device_link_request_d_tag(owner_pubkey_hex)],
             ),
     );
-    let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    let d_tag = drive_root_d_tag(root_scope_id, drive_id);
     filters.push(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
@@ -591,7 +748,7 @@ pub fn subscription_filters(owner_pubkey_hex: &str, drive_id: &str) -> Vec<Filte
 /// device (one event per device).
 pub async fn fetch_drive_roots(
     client: &Client,
-    owner_pubkey_hex: &str,
+    root_scope_id: &str,
     drive_id: &str,
     authorized_devices: &[String],
     timeout: Duration,
@@ -604,7 +761,7 @@ pub async fn fetch_drive_roots(
         authors
             .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
     }
-    let d_tag = drive_root_d_tag(owner_pubkey_hex, drive_id);
+    let d_tag = drive_root_d_tag(root_scope_id, drive_id);
     let new_filter = Filter::new()
         .authors(authors)
         .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))

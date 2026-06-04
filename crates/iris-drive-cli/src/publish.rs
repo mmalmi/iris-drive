@@ -425,7 +425,7 @@ pub(crate) async fn publish_current_state(
         match relay_publish_with_timeout(relay_sync::publish_drive_root(
             client,
             device.keys(),
-            &state.owner_pubkey,
+            &state.root_scope_id(),
             &drive.drive_id,
             &root,
             &authorized_device_pubkeys(state),

@@ -1,6 +1,8 @@
 use super::*;
 use crate::account::{Account, DeviceAuthorizationState};
 use crate::config::Drive;
+use crate::device_link_transport::DeviceLinkRosterFrame;
+use crate::iris_profile::IrisProfileId;
 use crate::nostr_events::{
     build_app_keys_event, build_device_link_request_event, build_drive_root_event,
     build_private_hashtree_root_event, device_link_request_d_tag,
@@ -121,8 +123,24 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     };
     cfg.upsert_drive(Drive::primary(admin.state.owner_pubkey.clone()));
 
-    let initial =
-        apply_device_link_roster_event(&mut cfg, &first_event, &admin.state.device_pubkey).unwrap();
+    let first_frame = DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: admin.state.profile_id,
+        owner_pubkey: admin.state.owner_pubkey.clone(),
+        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        profile_roster_ops: admin.state.profile_roster_ops.clone(),
+        app_keys: admin.state.app_keys.clone().unwrap(),
+        app_keys_event_id: first_event.id.to_hex(),
+        app_keys_event_json: first_event.as_json(),
+        sent_at: 456,
+    };
+    let initial = apply_device_link_roster_frame(
+        &mut cfg,
+        &first_frame,
+        &first_event,
+        &admin.state.device_pubkey,
+    )
+    .unwrap();
     assert!(matches!(
         initial,
         DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
@@ -130,6 +148,14 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     assert_eq!(
         cfg.account.as_ref().unwrap().authorization_state,
         DeviceAuthorizationState::Authorized
+    );
+    assert_eq!(
+        cfg.account.as_ref().unwrap().profile_id,
+        admin.state.profile_id
+    );
+    assert_eq!(
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        admin.state.profile_id.to_string()
     );
 
     let third_device = Keys::generate().public_key().to_hex();
@@ -139,8 +165,24 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     let newer_event =
         build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
 
-    let update =
-        apply_device_link_roster_event(&mut cfg, &newer_event, &admin.state.device_pubkey).unwrap();
+    let newer_frame = DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: admin.state.profile_id,
+        owner_pubkey: admin.state.owner_pubkey.clone(),
+        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        profile_roster_ops: admin.state.profile_roster_ops.clone(),
+        app_keys: admin.state.app_keys.clone().unwrap(),
+        app_keys_event_id: newer_event.id.to_hex(),
+        app_keys_event_json: newer_event.as_json(),
+        sent_at: 789,
+    };
+    let update = apply_device_link_roster_frame(
+        &mut cfg,
+        &newer_frame,
+        &newer_event,
+        &admin.state.device_pubkey,
+    )
+    .unwrap();
     assert!(matches!(
         update,
         DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
@@ -173,7 +215,7 @@ fn subscription_filters_match_device_link_requests_for_owner() {
         Some(device_link_request_d_tag(&owner_hex).as_str())
     );
     assert!(
-        subscription_filters(&owner_hex, "main")
+        subscription_filters(&owner_hex, &IrisProfileId::new_v4().to_string(), "main")
             .iter()
             .any(|filter| filter.match_event(&event))
     );
@@ -229,7 +271,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
     let root = encrypted_root(0xab, 0, 1);
     let event = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
@@ -264,6 +306,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
     )
     .unwrap();
     let mut linked_state = linked.state.clone();
+    linked_state.profile_id = owner_acct.state.profile_id;
     linked_state.app_keys = owner_acct.state.app_keys.clone();
 
     let mut cfg = AppConfig {
@@ -275,7 +318,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
     let root = encrypted_root(0xac, 0, 1);
     let event = build_drive_root_event(
         &device_b,
-        &owner_acct.state.owner_pubkey,
+        &owner_acct.state.root_scope_id(),
         "main",
         &root,
         &[owner_acct.state.device_pubkey.clone(), device_b_hex],
@@ -390,7 +433,7 @@ fn apply_drive_root_event_from_unauthorized_device_ignored() {
     let stranger = Keys::generate(); // not in roster
 
     let root = encrypted_root(0xee, 0, 99);
-    let owner_hex = cfg.account.as_ref().unwrap().owner_pubkey.clone();
+    let owner_hex = cfg.account.as_ref().unwrap().root_scope_id();
     let recipient = cfg.account.as_ref().unwrap().device_pubkey.clone();
     let outcome = {
         let event =
@@ -405,7 +448,7 @@ fn apply_drive_root_event_from_unauthorized_device_ignored() {
 fn apply_drive_root_event_for_foreign_owner_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
-    let other_owner = Keys::generate().public_key().to_hex();
+    let other_owner = IrisProfileId::new_v4().to_string();
     let device_key = Keys::generate();
     let root = encrypted_root(0xf0, 0, 1);
     let event = build_drive_root_event(
@@ -431,7 +474,7 @@ fn apply_drive_root_event_for_unknown_drive_ignored() {
     let root = encrypted_root(0x44, 0, 1);
     let event = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "nonexistent",
         &root,
         &[acct.state.device_pubkey.clone(), device_b_hex],
@@ -454,7 +497,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     let root_1 = encrypted_root(0x11, 0, 1);
     let event_1 = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root_1,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
@@ -510,7 +553,7 @@ fn apply_drive_root_event_ignores_same_legacy_root_with_newer_timestamp() {
     let mut root = encrypted_root(0x13, 100, 1);
     let event_1 = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
@@ -524,7 +567,7 @@ fn apply_drive_root_event_ignores_same_legacy_root_with_newer_timestamp() {
     root.published_at = 200;
     let republished = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
@@ -557,7 +600,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     let root_1 = causal_encrypted_root(0x21, 300, 1, 1);
     let event_1 = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root_1,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
@@ -571,7 +614,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     let root_2 = causal_encrypted_root(0x22, 100, 1, 2);
     let event_2 = build_drive_root_event(
         &device_b,
-        &acct.state.owner_pubkey,
+        &acct.state.root_scope_id(),
         "main",
         &root_2,
         &[acct.state.device_pubkey.clone(), device_b_hex.clone()],

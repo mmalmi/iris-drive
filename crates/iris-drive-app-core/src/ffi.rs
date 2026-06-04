@@ -780,7 +780,7 @@ impl NativeAppRuntime {
         let mut config = self.load_config()?;
         config.account = Some(account.state.clone());
         if config.drive(iris_drive_core::PRIMARY_DRIVE_ID).is_none() {
-            config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+            config.upsert_drive(Drive::primary(account.state.root_scope_id()));
         }
         config
             .save(config_path_in(Path::new(&self.data_dir)))
@@ -1098,14 +1098,15 @@ async fn run_device_link_exchange_async(
         normalized_config_relays(&startup_config.relays)
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
-    let owner_pubkey = startup_config
+    let account_state = startup_config
         .account
         .as_ref()
-        .expect("account checked above")
-        .owner_pubkey
-        .clone();
+        .expect("account checked above");
+    let owner_pubkey = account_state.owner_pubkey.clone();
+    let root_scope_id = account_state.root_scope_id();
     let relay_filters = iris_drive_core::relay_sync::subscription_filters(
         &owner_pubkey,
+        &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );
     let relay_client = iris_drive_core::relay_sync::connect(&relays)
@@ -1352,8 +1353,10 @@ async fn send_native_authorized_device_link_rosters(
     let (event_id, event_json) = signed_roster_event_for_native_state(config_dir, state, app_keys)?;
     let frame = DeviceLinkRosterFrame {
         schema: 1,
+        profile_id: state.profile_id,
         owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
+        profile_roster_ops: state.profile_roster_ops.clone(),
         app_keys: app_keys.clone(),
         app_keys_event_id: event_id,
         app_keys_event_json: event_json,
@@ -1554,8 +1557,9 @@ async fn handle_native_device_link_roster(
         return Ok(true);
     }
 
-    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_event(
+    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
+        &frame,
         &roster_event,
         &admin_device_hex,
     )

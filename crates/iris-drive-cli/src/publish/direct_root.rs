@@ -50,10 +50,10 @@ impl DirectRootExchange {
         let Some(sync) = fips_blocks else {
             return Ok(());
         };
-        self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
-            .await;
-        let stream = direct_root_mesh_stream(&state.owner_pubkey);
-        let events = build_current_sync_events(config_dir, config, state).await?;
+        let root_scope_id = state.root_scope_id();
+        self.subscribe_owner_stream(&root_scope_id, Some(sync)).await;
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let events = self.events_for_publish(build_current_sync_events(config_dir, config, state).await?);
         let now = std::time::Instant::now();
         for event in events {
             let event = self.event_for_publish(event);
@@ -121,6 +121,7 @@ impl DirectRootExchange {
         if event.id.to_hex() != frame.event_id {
             return Err(anyhow::anyhow!("direct root event id mismatch"));
         }
+        let direct_event = direct_root_event(frame.key.clone(), &event)?;
         self.seen_keys.insert(frame.key.clone());
         if let Err(error) = apply_one_event(
             client,
@@ -134,6 +135,7 @@ impl DirectRootExchange {
             self.seen_keys.remove(&frame.key);
             return Err(error);
         }
+        self.cache_event(direct_event);
         let config = AppConfig::load_or_default(config_path_in(config_dir))?;
         if let Some(state) = config.account.as_ref() {
             self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
@@ -155,7 +157,7 @@ impl DirectRootExchange {
             return;
         };
         if let Some(state) = config.account.as_ref() {
-            self.subscribe_owner_stream(&state.owner_pubkey, Some(sync))
+            self.subscribe_owner_stream(&state.root_scope_id(), Some(sync))
                 .await;
         }
     }
@@ -256,6 +258,23 @@ impl DirectRootExchange {
         self.cached_events.get(&event.key).cloned().unwrap_or(event)
     }
 
+    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
+        let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
+        let mut keys = BTreeSet::new();
+        for event in local_events {
+            let event = self.event_for_publish(event);
+            keys.insert(event.key.clone());
+            events.push(event);
+        }
+        events.extend(
+            self.cached_events
+                .values()
+                .filter(|event| !keys.contains(&event.key))
+                .cloned(),
+        );
+        events
+    }
+
     fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
         if self.published_keys.get(key).is_some_and(|last| {
             now.duration_since(*last)
@@ -336,7 +355,7 @@ pub(crate) async fn build_current_sync_events(
             .context("loading device key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_event(
             device.keys(),
-            &state.owner_pubkey,
+            &state.root_scope_id(),
             &drive.drive_id,
             &root,
             &authorized_devices,

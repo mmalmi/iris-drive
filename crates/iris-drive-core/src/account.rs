@@ -12,7 +12,7 @@
 //! 3. **Link** — paste/scan an account/admin invite. Generate a fresh
 //!    device key and wait in `AwaitingApproval` until an admin accepts it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -153,47 +153,17 @@ impl AccountState {
     }
 
     #[must_use]
+    pub fn root_scope_id(&self) -> String {
+        self.profile_id.to_string()
+    }
+
+    #[must_use]
     pub fn app_keys_from_profile(&self) -> Option<AppKeysSnapshot> {
-        let projection = self.profile_projection();
-        let key_epoch = projection.key_epochs.values().next_back()?;
-        let app_key_pubkeys: std::collections::BTreeSet<_> =
-            projection.active_app_key_pubkeys().into_iter().collect();
-        if app_key_pubkeys.is_empty() {
-            return None;
-        }
-        let mut devices = projection
-            .active_facets
-            .values()
-            .filter(|facet| facet.is_app_key())
-            .map(|facet| {
-                let role = if facet.capabilities.can_admin_profile {
-                    DeviceRole::Admin
-                } else {
-                    DeviceRole::Member
-                };
-                DeviceEntry {
-                    pubkey: facet.pubkey.clone(),
-                    added_at: facet.added_at,
-                    label: facet.label.clone(),
-                    role,
-                }
-            })
-            .collect::<Vec<_>>();
-        devices.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
-        let wrapped_dck = key_epoch
-            .wrapped_dck
-            .iter()
-            .filter(|(pubkey, _)| app_key_pubkeys.contains(*pubkey))
-            .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
-            .collect();
-        Some(AppKeysSnapshot {
-            owner_pubkey: self.owner_pubkey.clone(),
-            signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
-            created_at: key_epoch.created_at,
-            devices,
-            dck_generation: key_epoch.epoch,
-            wrapped_dck,
-        })
+        app_keys_from_profile_roster(
+            &self.owner_pubkey,
+            self.profile_id,
+            &self.profile_roster_ops,
+        )
     }
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
@@ -422,6 +392,61 @@ impl AccountState {
         self.inbound_device_link_requests.clear();
         had_requests || self.device_link_secret != previous
     }
+}
+
+#[must_use]
+pub fn app_keys_from_profile_roster(
+    owner_pubkey: &str,
+    profile_id: IrisProfileId,
+    profile_roster_ops: &[SignedIrisProfileRosterOp],
+) -> Option<AppKeysSnapshot> {
+    let projection = project_iris_profile_roster(profile_id, profile_roster_ops.iter().cloned());
+    app_keys_from_profile_projection(owner_pubkey, &projection)
+}
+
+#[must_use]
+pub fn app_keys_from_profile_projection(
+    owner_pubkey: &str,
+    projection: &IrisProfileRosterProjection,
+) -> Option<AppKeysSnapshot> {
+    let key_epoch = projection.key_epochs.values().next_back()?;
+    let app_key_pubkeys: BTreeSet<_> = projection.active_app_key_pubkeys().into_iter().collect();
+    if app_key_pubkeys.is_empty() {
+        return None;
+    }
+    let mut devices = projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.is_app_key())
+        .map(|facet| {
+            let role = if facet.capabilities.can_admin_profile {
+                DeviceRole::Admin
+            } else {
+                DeviceRole::Member
+            };
+            DeviceEntry {
+                pubkey: facet.pubkey.clone(),
+                added_at: facet.added_at,
+                label: facet.label.clone(),
+                role,
+            }
+        })
+        .collect::<Vec<_>>();
+    devices.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
+    let wrapped_dck = key_epoch
+        .wrapped_dck
+        .iter()
+        .filter(|(pubkey, _)| app_key_pubkeys.contains(*pubkey))
+        .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
+        .collect();
+    Some(AppKeysSnapshot {
+        owner_pubkey: owner_pubkey.to_string(),
+        signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
+        created_at: key_epoch.created_at,
+        devices,
+        dck_generation: key_epoch.epoch,
+        wrapped_dck,
+    })
 }
 
 /// In-memory account: persisted state + the keypairs it references.

@@ -2,7 +2,7 @@ use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
 
-use crate::{AccountState, DeviceAuthorizationState};
+use crate::{AccountState, DeviceAuthorizationState, IrisProfileId, SignedIrisProfileRosterOp};
 
 pub const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
 pub const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
@@ -24,8 +24,10 @@ pub struct DeviceLinkRequestFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeviceLinkRosterFrame {
     pub schema: u32,
+    pub profile_id: IrisProfileId,
     pub owner_pubkey: String,
     pub admin_device_pubkey: String,
+    pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
     pub app_keys: crate::AppKeysSnapshot,
     #[serde(default)]
     pub app_keys_event_id: String,

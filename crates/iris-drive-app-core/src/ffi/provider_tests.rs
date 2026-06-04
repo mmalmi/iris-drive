@@ -6,6 +6,34 @@ use iris_drive_core::paths::config_path_in;
 use nostr_sdk::JsonUtil;
 use std::path::Path;
 
+fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();
+    let owner_state = owner_config.account.as_ref().unwrap();
+    let app_keys_event =
+        nostr_sdk::Event::from_json(&owner_state.app_keys_event.as_ref().unwrap().event_json)
+            .unwrap();
+    let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: owner_state.profile_id,
+        owner_pubkey: owner_state.owner_pubkey.clone(),
+        admin_device_pubkey: owner_state.device_pubkey.clone(),
+        profile_roster_ops: owner_state.profile_roster_ops.clone(),
+        app_keys: owner_state.app_keys.clone().unwrap(),
+        app_keys_event_id: app_keys_event.id.to_hex(),
+        app_keys_event_json: app_keys_event.as_json(),
+        sent_at: 123,
+    };
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
+    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+        &mut linked_config,
+        &roster_frame,
+        &app_keys_event,
+        &owner_state.device_pubkey,
+    )
+    .unwrap();
+    linked_config.save(config_path_in(linked_dir)).unwrap();
+}
+
 #[test]
 fn import_file_action_writes_shared_file_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
@@ -210,24 +238,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     });
     assert!(approved.error.is_empty(), "{}", approved.error);
 
-    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    let app_keys_event = nostr_sdk::Event::from_json(
-        &owner_config
-            .account
-            .as_ref()
-            .unwrap()
-            .app_keys_event
-            .as_ref()
-            .unwrap()
-            .event_json,
-    )
-    .unwrap();
-    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut linked_config, &app_keys_event)
-        .unwrap();
-    linked_config
-        .save(config_path_in(linked_dir.path()))
-        .unwrap();
+    apply_owner_profile_roster_to_linked_config(owner_dir.path(), linked_dir.path());
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_account_state = owner_config.account.as_ref().unwrap();
@@ -250,7 +261,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         .collect::<Vec<_>>();
     let drive_root_event = iris_drive_core::nostr_events::build_drive_root_event(
         owner.device.keys(),
-        &owner_account_state.owner_pubkey,
+        &owner_account_state.root_scope_id(),
         iris_drive_core::PRIMARY_DRIVE_ID,
         root,
         &authorized,

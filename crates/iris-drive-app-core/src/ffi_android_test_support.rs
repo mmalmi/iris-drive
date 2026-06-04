@@ -66,7 +66,7 @@ fn native_apply_owner_snapshot_for_test(
         .collect::<Vec<_>>();
     let drive_root_event = iris_drive_core::nostr_events::build_drive_root_event(
         owner.device.keys(),
-        &owner_account_state.owner_pubkey,
+        &owner_account_state.root_scope_id(),
         iris_drive_core::PRIMARY_DRIVE_ID,
         root,
         &authorized,
