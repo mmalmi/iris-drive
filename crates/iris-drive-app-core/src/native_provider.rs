@@ -490,6 +490,8 @@ pub(crate) fn native_sync_status_label(
         "synced"
     } else if report.drive_root_events_applied > 0 || report.files_root_event_outcome == "applied" {
         "root synced"
+    } else if report.profile_roster_ops_applied > 0 {
+        "profile synced"
     } else {
         "up to date"
     }

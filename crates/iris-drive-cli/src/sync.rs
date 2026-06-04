@@ -25,6 +25,8 @@ pub(crate) fn cmd_sync(
                 "relays": report.relays,
                 "blossom_servers": report.blossom_servers,
                 "app_keys_event_applied": report.app_keys_event_applied,
+                "profile_roster_ops_seen": report.profile_roster_ops_seen,
+                "profile_roster_ops_applied": report.profile_roster_ops_applied,
                 "drive_root_events_seen": report.drive_root_events_seen,
                 "drive_root_events_applied": report.drive_root_events_applied,
                 "drive_root_events_skipped": report.drive_root_events_skipped,

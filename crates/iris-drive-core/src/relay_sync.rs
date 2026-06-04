@@ -29,7 +29,10 @@ use crate::nostr_events::{
     drive_root_d_tag, parse_app_keys_event, parse_device_link_request_event,
     parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
-use crate::{AppKeysSnapshot, SignedIrisProfileRosterOp};
+use crate::{
+    AppKeysSnapshot, IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
+    parse_iris_profile_roster_op_event,
+};
 
 #[derive(Debug, Error)]
 pub enum RelayError {
@@ -74,6 +77,17 @@ pub enum DeviceLinkRosterApply {
     Current,
     /// The event was accepted by the `AppKeys` timeline rules.
     Applied(ApplyDecision),
+}
+
+/// Result of merging a signed `IrisProfile` roster op from relay/direct sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrisProfileRosterOpApply {
+    /// The op belongs to another profile.
+    NotOurProfile,
+    /// This op id is already present locally.
+    Current,
+    /// The verified op was unioned into the local profile log.
+    Applied,
 }
 
 /// Apply a remote `AppKeys` event to `config`. The event may be signed by any
@@ -244,6 +258,44 @@ pub fn apply_device_link_roster_frame(
     };
     sync_primary_drive_scope(config, root_scope_id);
     Ok(DeviceLinkRosterApply::Applied(decision))
+}
+
+/// Apply a signed `IrisProfile` roster-op event to the local profile log.
+///
+/// The op log stores same-profile, signature-valid ops even when the current
+/// projection rejects them. That keeps out-of-order delivery mergeable: once a
+/// missing parent/add op arrives, deterministic projection can accept the
+/// previously rejected op without needing the network to resend it.
+pub fn apply_remote_iris_profile_roster_op_event(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<IrisProfileRosterOpApply, RelayError> {
+    let op = parse_iris_profile_roster_op_event(event)?;
+    let Some(account) = config.account.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if op.content.profile_id != account.profile_id {
+        return Ok(IrisProfileRosterOpApply::NotOurProfile);
+    }
+    if account
+        .profile_roster_ops
+        .iter()
+        .any(|current| current.op_id == op.op_id)
+    {
+        return Ok(IrisProfileRosterOpApply::Current);
+    }
+
+    let root_scope_id = {
+        let Some(account) = config.account.as_mut() else {
+            return Err(RelayError::NoAccount);
+        };
+        account.profile_roster_ops = merge_profile_roster_ops(&account.profile_roster_ops, &[op]);
+        account.sync_app_keys_from_profile();
+        account.recompute_authorization();
+        account.root_scope_id()
+    };
+    sync_primary_drive_scope(config, root_scope_id);
+    Ok(IrisProfileRosterOpApply::Applied)
 }
 
 pub fn apply_device_link_roster_event(
@@ -587,6 +639,31 @@ pub async fn publish_device_link_request(
     Ok(*output.id())
 }
 
+/// Publish the signed `IrisProfile` roster op log.
+pub async fn publish_iris_profile_roster_ops(
+    client: &Client,
+    ops: &[SignedIrisProfileRosterOp],
+) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
+    let mut event_ids = Vec::with_capacity(ops.len());
+    for op in ops {
+        let event = Event::from_json(&op.event_json)
+            .map_err(|e| RelayError::Client(format!("profile roster op JSON: {e}")))?;
+        let parsed = parse_iris_profile_roster_op_event(&event)?;
+        if parsed.op_id != op.op_id {
+            return Err(RelayError::Client(format!(
+                "profile roster op id mismatch: stored {}, parsed {}",
+                op.op_id, parsed.op_id
+            )));
+        }
+        let output = client
+            .send_event(event)
+            .await
+            .map_err(|e| RelayError::Client(e.to_string()))?;
+        event_ids.push(*output.id());
+    }
+    Ok(event_ids)
+}
+
 /// Publish a signed drive-root event for this device's current root.
 pub async fn publish_drive_root(
     client: &Client,
@@ -626,8 +703,9 @@ pub async fn publish_files_root(
 }
 
 /// Fetch the latest `AppKeys` event for `owner_pubkey_hex` across all
-/// connected relays. Kept for compatibility experiments; production CLI
-/// paths do not publish or fetch rosters over relays.
+/// connected relays. Kept for compatibility experiments; production sync
+/// publishes and fetches `IrisProfile` roster ops instead of legacy
+/// `AppKeys` snapshots.
 pub async fn fetch_latest_app_keys(
     client: &Client,
     owner_pubkey_hex: &str,
@@ -689,9 +767,32 @@ pub async fn fetch_latest_files_root(
     Ok(latest)
 }
 
-/// Build the relay filter set covering drive-root events for a single
-/// account's primary drive. `AppKeys` rosters are intentionally excluded from
-/// relays; they travel over direct/FIPS channels.
+/// Fetch all visible `IrisProfile` roster ops for a profile.
+pub async fn fetch_iris_profile_roster_ops(
+    client: &Client,
+    profile_id: IrisProfileId,
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    let events = client
+        .get_events_of(
+            vec![iris_profile_roster_op_filter(profile_id)],
+            nostr_sdk::EventSource::relays(Some(timeout)),
+        )
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(events
+        .into_iter()
+        .filter(|event| {
+            parse_iris_profile_roster_op_event(event)
+                .is_ok_and(|op| op.content.profile_id == profile_id)
+        })
+        .collect())
+}
+
+/// Build the relay filter set covering profile roster ops and drive-root
+/// events for a single profile's primary drive. Legacy `AppKeys` snapshots are
+/// intentionally excluded from relays; `IrisProfile` roster ops are the relay
+/// roster format.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
 /// the d-tag `iris-drive/<owner>/<drive>/root` already pins the drive,
@@ -706,6 +807,9 @@ pub fn subscription_filters(
     drive_id: &str,
 ) -> Vec<Filter> {
     let mut filters = Vec::new();
+    if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
+        filters.push(iris_profile_roster_op_filter(profile_id));
+    }
     filters.push(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
@@ -741,6 +845,15 @@ pub fn subscription_filters(
         );
     }
     filters
+}
+
+fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
+    Filter::new()
+        .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::I),
+            [profile_id.to_string()],
+        )
 }
 
 /// Fetch drive-root events from any of `authorized_devices` for

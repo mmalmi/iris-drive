@@ -38,6 +38,20 @@ pub(crate) async fn apply_one_event(
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
+    } else if iris_drive_core::is_iris_profile_roster_op_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "iris_profile_roster_op",
+                "event_id": event.id.to_hex(),
+                "author": account_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+            }),
+        );
+        if let Some(sync) = fips_blocks.as_deref() {
+            sync.refresh_authorized_peers(&config).await;
+        }
     } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
         let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
             .context("loading device key")?;

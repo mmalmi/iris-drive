@@ -2,7 +2,10 @@ use super::*;
 use crate::account::{Account, DeviceAuthorizationState};
 use crate::config::Drive;
 use crate::device_link_transport::DeviceLinkRosterFrame;
-use crate::iris_profile::IrisProfileId;
+use crate::iris_profile::{
+    IrisProfileCapabilities, IrisProfileFacet, IrisProfileId, IrisProfileRosterOp,
+    build_iris_profile_roster_op_event,
+};
 use crate::nostr_events::{
     build_app_keys_event, build_device_link_request_event, build_drive_root_event,
     build_private_hashtree_root_event, device_link_request_d_tag,
@@ -16,8 +19,12 @@ fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Account) {
         account: Some(acct.state.clone()),
         ..AppConfig::default()
     };
-    cfg.upsert_drive(Drive::primary(acct.state.owner_pubkey.clone()));
+    cfg.upsert_drive(Drive::primary(acct.state.root_scope_id()));
     (cfg, acct)
+}
+
+fn profile_event(op: &crate::SignedIrisProfileRosterOp) -> Event {
+    Event::from_json(&op.event_json).unwrap()
 }
 
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> DeviceRootRef {
@@ -219,6 +226,133 @@ fn subscription_filters_match_device_link_requests_for_owner() {
             .iter()
             .any(|filter| filter.match_event(&event))
     );
+}
+
+#[test]
+fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
+    let dir = tempdir().unwrap();
+    let (cfg, acct) = config_with_owner_account(dir.path());
+    let profile_op = profile_event(&acct.state.profile_roster_ops[0]);
+
+    assert!(
+        subscription_filters(
+            &acct.state.owner_pubkey,
+            &acct.state.root_scope_id(),
+            crate::PRIMARY_DRIVE_ID,
+        )
+        .iter()
+        .any(|filter| filter.match_event(&profile_op))
+    );
+    let profile_id = cfg.account.as_ref().unwrap().profile_id.to_string();
+    assert_eq!(
+        profile_op.get_tag_content(nostr_sdk::TagKind::from("i")),
+        Some(profile_id.as_str())
+    );
+}
+
+#[test]
+fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
+    let dir = tempdir().unwrap();
+    let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+    let initial_op_ids = cfg
+        .account
+        .as_ref()
+        .unwrap()
+        .profile_roster_ops
+        .iter()
+        .map(|op| op.op_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let new_app = Keys::generate().public_key().to_hex();
+    acct.approve_device(&new_app, Some("web app".to_string()))
+        .unwrap();
+    for op in acct
+        .state
+        .profile_roster_ops
+        .iter()
+        .filter(|op| !initial_op_ids.contains(&op.op_id))
+    {
+        let outcome = apply_remote_iris_profile_roster_op_event(&mut cfg, &profile_event(op))
+            .expect("profile op applies");
+        assert_ne!(outcome, IrisProfileRosterOpApply::NotOurProfile);
+    }
+
+    let state = cfg.account.as_ref().unwrap();
+    assert_eq!(
+        state.profile_roster_ops.len(),
+        acct.state.profile_roster_ops.len()
+    );
+    assert!(state.app_keys.as_ref().unwrap().contains(&new_app));
+    assert_eq!(
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        state.profile_id.to_string()
+    );
+}
+
+#[test]
+fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
+    let dir = tempdir().unwrap();
+    let (mut cfg, acct) = config_with_owner_account(dir.path());
+    let profile_id = acct.state.profile_id;
+    let new_app = Keys::generate().public_key().to_hex();
+    let latest = acct
+        .state
+        .profile_roster_ops
+        .iter()
+        .map(|op| op.content.created_at)
+        .max()
+        .unwrap();
+    let add_event = build_iris_profile_roster_op_event(
+        acct.device.keys(),
+        profile_id,
+        Vec::new(),
+        None,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                new_app.clone(),
+                latest + 1,
+                Some("tablet".to_string()),
+                IrisProfileCapabilities::app_admin(),
+            ),
+        },
+        latest + 1,
+    )
+    .unwrap();
+    let set_event = build_iris_profile_roster_op_event(
+        acct.device.keys(),
+        profile_id,
+        Vec::new(),
+        None,
+        IrisProfileRosterOp::SetCapabilities {
+            pubkey: new_app.clone(),
+            capabilities: IrisProfileCapabilities::app_writer(),
+        },
+        latest + 2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        apply_remote_iris_profile_roster_op_event(&mut cfg, &set_event).unwrap(),
+        IrisProfileRosterOpApply::Applied
+    );
+    assert!(
+        !cfg.account
+            .as_ref()
+            .unwrap()
+            .profile_projection()
+            .active_facets
+            .contains_key(&new_app)
+    );
+
+    assert_eq!(
+        apply_remote_iris_profile_roster_op_event(&mut cfg, &add_event).unwrap(),
+        IrisProfileRosterOpApply::Applied
+    );
+    let projection = cfg.account.as_ref().unwrap().profile_projection();
+    let facet = projection.active_facets.get(&new_app).unwrap();
+    assert!(facet.capabilities.can_write_roots);
+    assert!(!facet.capabilities.can_admin_profile);
+    assert!(projection.rejected_op_ids.is_empty());
 }
 
 #[test]

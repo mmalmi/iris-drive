@@ -97,6 +97,33 @@ fn direct_root_republishes_after_short_native_cadence() {
 }
 
 #[test]
+fn direct_root_publish_includes_profile_roster_ops() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let events = runtime
+        .block_on(build_current_sync_events(
+            config_dir.path(),
+            &config,
+            &account.state,
+        ))
+        .unwrap();
+
+    assert!(events.iter().any(|event| {
+        event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
+            && event.key.starts_with("profile-op:")
+    }));
+}
+
+#[test]
 fn unchanged_mount_visible_root_is_not_publishable() {
     let root = Cid::encrypted([0x11; 32], [0x22; 32]);
     let other = Cid::encrypted([0x33; 32], [0x44; 32]);

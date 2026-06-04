@@ -41,6 +41,8 @@ pub(crate) fn cmd_publish(
                 "blossom_servers": config.blossom_servers,
                 "published_app_keys": report.published_app_keys,
                 "app_keys_publish_error": report.app_keys_publish_error,
+                "published_profile_roster_ops": report.published_profile_roster_ops,
+                "profile_roster_publish_error": report.profile_roster_publish_error,
                 "published_drive_root": report.published_drive_root,
                 "drive_root_publish_error": report.drive_root_publish_error,
                 "published_files_root": report.published_files_root,
@@ -66,6 +68,8 @@ pub(crate) fn cmd_publish(
 pub(crate) struct PublishStateReport {
     published_app_keys: bool,
     app_keys_publish_error: Option<String>,
+    published_profile_roster_ops: usize,
+    profile_roster_publish_error: Option<String>,
     published_drive_root: bool,
     drive_root_publish_error: Option<String>,
     published_files_root: bool,
@@ -256,6 +260,8 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
     json!({
         "published_app_keys": report.published_app_keys,
         "app_keys_publish_error": report.app_keys_publish_error,
+        "published_profile_roster_ops": report.published_profile_roster_ops,
+        "profile_roster_publish_error": report.profile_roster_publish_error,
         "published_drive_root": report.published_drive_root,
         "drive_root_publish_error": report.drive_root_publish_error,
         "published_files_root": report.published_files_root,
@@ -406,6 +412,18 @@ pub(crate) async fn publish_current_state(
     use iris_drive_core::relay_sync;
 
     let mut report = PublishStateReport::default();
+    if !state.profile_roster_ops.is_empty() {
+        match relay_publish_with_timeout(relay_sync::publish_iris_profile_roster_ops(
+            client,
+            &state.profile_roster_ops,
+        ))
+        .await
+        {
+            Ok(event_ids) => report.published_profile_roster_ops = event_ids.len(),
+            Err(error) => report.profile_roster_publish_error = Some(error),
+        }
+    }
+
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
@@ -485,6 +503,8 @@ pub(crate) fn spawn_initial_publish(
                         "event": "initial_publish",
                         "published_app_keys": report.published_app_keys,
                         "app_keys_publish_error": report.app_keys_publish_error,
+                        "published_profile_roster_ops": report.published_profile_roster_ops,
+                        "profile_roster_publish_error": report.profile_roster_publish_error,
                         "published_drive_root": report.published_drive_root,
                         "drive_root_publish_error": report.drive_root_publish_error,
                         "published_files_root": report.published_files_root,

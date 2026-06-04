@@ -324,6 +324,15 @@ pub(crate) async fn build_current_sync_events(
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
+    for op in &state.profile_roster_ops {
+        let event =
+            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
+        events.push(direct_root_event(
+            format!("profile-op:{}:{}", state.profile_id, op.op_id),
+            &event,
+        )?);
+    }
+
     if state.can_manage_devices()
         && let Some(snap) = state.app_keys.as_ref()
     {

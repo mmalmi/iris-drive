@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
-use nostr_sdk::{Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, Tag};
+use nostr_sdk::{
+    Alphabet, Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, SingleLetterTag, Tag, TagKind,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -396,10 +398,10 @@ pub fn build_iris_profile_roster_op_event(
     EventBuilder::new(
         Kind::from(KIND_IRIS_PROFILE_ROSTER_OP),
         content_json,
-        [Tag::identifier(iris_profile_roster_op_d_tag(
-            profile_id,
-            &client_nonce,
-        ))],
+        [
+            Tag::identifier(iris_profile_roster_op_d_tag(profile_id, &client_nonce)),
+            Tag::custom(iris_profile_tag_kind(), [profile_id.to_string()]),
+        ],
     )
     .custom_created_at(nostr_sdk::Timestamp::from(ts))
     .to_event(signer_keys)
@@ -409,6 +411,19 @@ pub fn build_iris_profile_roster_op_event(
 #[must_use]
 pub fn iris_profile_roster_op_d_tag(profile_id: IrisProfileId, client_nonce: &str) -> String {
     format!("iris-profile/{profile_id}/roster-op/{client_nonce}")
+}
+
+#[must_use]
+pub fn iris_profile_tag_kind() -> TagKind<'static> {
+    TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::I))
+}
+
+#[must_use]
+pub fn is_iris_profile_roster_op_event_coordinate(event: &Event) -> bool {
+    event.kind.as_u16() == KIND_IRIS_PROFILE_ROSTER_OP
+        && event
+            .identifier()
+            .is_some_and(|d_tag| parse_iris_profile_roster_op_d_tag(d_tag).is_ok())
 }
 
 pub fn parse_iris_profile_roster_op_event(

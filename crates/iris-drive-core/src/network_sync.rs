@@ -31,6 +31,8 @@ pub struct NetworkSyncReport {
     pub relays: Vec<String>,
     pub blossom_servers: Vec<String>,
     pub app_keys_event_applied: String,
+    pub profile_roster_ops_seen: usize,
+    pub profile_roster_ops_applied: usize,
     pub drive_root_events_seen: usize,
     pub drive_root_events_applied: usize,
     pub drive_root_events_skipped: usize,
@@ -83,6 +85,21 @@ pub async fn sync_once_with_fips(
         files_root_event_outcome: "none".to_string(),
         ..NetworkSyncReport::default()
     };
+
+    let profile_events =
+        relay_sync::fetch_iris_profile_roster_ops(&client, state.profile_id, timeout)
+            .await
+            .context("fetching IrisProfile roster ops")?;
+    report.profile_roster_ops_seen = profile_events.len();
+    for event in &profile_events {
+        if matches!(
+            relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)
+                .context("applying IrisProfile roster op")?,
+            relay_sync::IrisProfileRosterOpApply::Applied
+        ) {
+            report.profile_roster_ops_applied += 1;
+        }
+    }
 
     let authorized_devices = config
         .account

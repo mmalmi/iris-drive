@@ -121,8 +121,8 @@ See the platform READMEs for focused instructions:
 
 - Creates, restores, links, approves, revokes, and lists Nostr-backed Iris Drive
   devices through the CLI and desktop control panels.
-- Maintains open Nostr subscriptions for account roster and mutable drive-root
-  events while the iris-drive daemon is running.
+- Maintains open Nostr subscriptions for IrisProfile roster ops and mutable
+  drive-root events while the iris-drive daemon is running.
 - Imports local source trees into the persistent htree block store and exposes a
   merged virtual primary drive view through native provider bridges.
 - Replicates blocks directly over hashtree-over-[FIPS] between authorized
@@ -164,17 +164,18 @@ product detail above; keep agent/operator reference material here.
 
 ### Config Model
 
-`idrive init` creates a fresh owner key and device key. `idrive restore` imports
-an owner key onto a new device, and `idrive link` creates a secondary device
-that waits for owner/admin approval.
+`idrive init` creates an IrisProfile, a fresh per-install AppKey, and a
+12-word recovery phrase. `idrive restore` creates a fresh AppKey for the
+restored install, and `idrive link` creates a fresh AppKey that waits for
+admin approval.
 
 By default, CLI config lives under the OS config directory with the
 `iris-drive` suffix. Set `IRIS_DRIVE_CONFIG_DIR` or pass `--config-dir` for
 isolated development and tests. Important files live under that directory:
 
 - `config.toml`: app config, relays, drives, roster, backup targets
-- `key`: this device's signing key
-- `owner_key`: owner signing key, only on create/restore/admin-capable installs
+- `key`: this app install's AppKey signing key
+- `owner_key`: recovery-derived key material for local recovery/decrypt support
 - `blocks/`: Iris Drive htree block store
 - `Hashtree/`: embedded hashtree daemon runtime state
 

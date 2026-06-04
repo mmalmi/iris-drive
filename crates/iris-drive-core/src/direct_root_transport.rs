@@ -270,6 +270,14 @@ pub fn build_current_direct_root_events(
     state: &AccountState,
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
+    for op in &state.profile_roster_ops {
+        let event =
+            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
+        events.push(direct_root_event(
+            format!("profile-op:{}:{}", state.profile_id, op.op_id),
+            &event,
+        ));
+    }
     if state.can_manage_devices()
         && let Some(snapshot) = state.app_keys.as_ref()
     {
@@ -345,6 +353,19 @@ pub async fn apply_direct_root_event(
             outcome,
             crate::relay_sync::AppKeysApply::Applied(decision)
                 if decision != crate::ApplyDecision::Rejected
+        );
+        config.save(config_path_in(config_dir))?;
+        if let Some(sync) = sync {
+            sync.refresh_authorized_peers(&config).await;
+        }
+        return Ok(changed);
+    }
+    if crate::is_iris_profile_roster_op_event_coordinate(event) {
+        let outcome =
+            crate::relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
+        let changed = matches!(
+            outcome,
+            crate::relay_sync::IrisProfileRosterOpApply::Applied
         );
         config.save(config_path_in(config_dir))?;
         if let Some(sync) = sync {

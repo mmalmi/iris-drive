@@ -200,7 +200,7 @@ fn bootstrap_first_launch_with(config_dir: &Path) -> Result<()> {
             Account::create(config_dir, Some("Mac".into())).context("generating account keys")?;
         config.account = Some(account.state.clone());
         if config.drive(PRIMARY_DRIVE_ID).is_none() {
-            config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+            config.upsert_drive(Drive::primary(account.state.root_scope_id()));
         }
     }
 

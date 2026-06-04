@@ -325,7 +325,7 @@ fn provider_commands_operate_on_virtual_root() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn relay_publish_does_not_send_roster_events() {
+async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
     let relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn().await;
 
@@ -355,6 +355,12 @@ async fn relay_publish_does_not_send_roster_events() {
         &["publish", "--relay", &relay.url, "--timeout", "2"],
     );
     assert_eq!(publish_a["published_app_keys"], false);
+    assert!(
+        publish_a["published_profile_roster_ops"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
     assert_eq!(publish_a["published_drive_root"], true);
     assert!(
         publish_a["blossom_upload"]["uploaded"]
@@ -368,6 +374,7 @@ async fn relay_publish_does_not_send_roster_events() {
         &["sync", "--relay", &relay.url, "--timeout", "2"],
     );
     assert_eq!(sync_b["app_keys_event_applied"], "none");
+    assert_eq!(sync_b["profile_roster_ops_applied"], 0);
     assert_eq!(sync_b["drive_root_events_applied"], 0);
     assert_list_paths(cfg_b.path(), &[]);
 }
