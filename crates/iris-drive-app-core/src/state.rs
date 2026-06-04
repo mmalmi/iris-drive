@@ -35,13 +35,26 @@ pub struct UiSyncRoot {
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct UiAccount {
     pub profile_id: String,
     pub owner_pubkey: String,
     pub device_pubkey: String,
+    pub current_app_key_pubkey: String,
+    pub current_app_key_npub: String,
+    pub current_app_key_label: String,
     pub device_label: String,
     pub authorization_state: String,
     pub has_owner_signing_authority: bool,
+    pub can_admin_profile: bool,
+    pub can_write_roots: bool,
+    pub active_app_key_count: u64,
+    pub profile_roster_op_count: u64,
+    pub current_key_epoch: Option<u64>,
+    pub recovery_phrase_facet_count: u64,
+    pub nip46_facet_count: u64,
+    pub social_profile_facet_count: u64,
+    pub missing_key_wraps: Vec<String>,
     pub can_export_recovery_phrase: bool,
     pub device_link_request: String,
     pub device_link_invite: String,

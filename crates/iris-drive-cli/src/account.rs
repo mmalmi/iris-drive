@@ -100,10 +100,16 @@ pub(crate) fn finish_account_init(
         config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     }
     config.save(config_path_in(config_dir))?;
+    let profile = iris_profile_summary_json(&account.state);
     println!(
         "{}",
         json!({
             "config_dir": config_dir.display().to_string(),
+            "profile": profile,
+            "profile_id": account.state.profile_id.to_string(),
+            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
+                &account.state.device_pubkey
+            ),
             "owner_npub": account_npub(&account.state.owner_pubkey),
             "device_npub": account_npub(&account.state.device_pubkey),
             "has_owner_signing_authority": account.state.has_owner_signing_authority,
@@ -280,6 +286,7 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
     println!(
         "{}",
         json!({
+            "profile": iris_profile_summary_json(&state),
             "owner_npub": account_npub(&state.owner_pubkey),
             "current_device_npub": account_npub(&state.device_pubkey),
             "authorization_state": authorization_state_label(&state),
@@ -333,9 +340,15 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let state = config
         .account
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let profile = iris_profile_summary_json(&state);
     println!(
         "{}",
         json!({
+            "profile": profile,
+            "profile_id": state.profile_id.to_string(),
+            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
+                &state.device_pubkey
+            ),
             "owner_npub": account_npub(&state.owner_pubkey),
             "device_npub": account_npub(&state.device_pubkey),
             "has_owner_signing_authority": state.has_owner_signing_authority,
@@ -370,6 +383,26 @@ fn unix_now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+fn iris_profile_summary_json(state: &AccountState) -> Value {
+    let summary = iris_drive_core::device_summary::iris_profile_summary(state);
+    json!({
+        "profile_id": summary.profile_id,
+        "current_app_key_pubkey": summary.current_app_key_pubkey_hex,
+        "current_app_key_npub": summary.current_app_key_npub,
+        "current_app_key_label": summary.current_app_key_label,
+        "authorization_state": summary.authorization_state,
+        "can_write_roots": summary.can_write_roots,
+        "can_admin_profile": summary.can_admin_profile,
+        "active_app_key_count": summary.active_app_key_count,
+        "profile_roster_op_count": summary.profile_roster_op_count,
+        "current_key_epoch": summary.current_key_epoch,
+        "recovery_phrase_facet_count": summary.recovery_phrase_facet_count,
+        "nip46_facet_count": summary.nip46_facet_count,
+        "social_profile_facet_count": summary.social_profile_facet_count,
+        "missing_key_wraps": summary.missing_key_wrap_npubs,
+    })
 }
 
 pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;

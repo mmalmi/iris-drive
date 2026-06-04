@@ -59,6 +59,17 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(account.device_label, "Pixel");
     assert_eq!(account.authorization_state, "authorized");
     assert!(account.has_owner_signing_authority);
+    assert_eq!(account.current_app_key_npub, account.device_pubkey);
+    assert_eq!(account.current_app_key_label, "Pixel");
+    assert!(account.can_admin_profile);
+    assert!(account.can_write_roots);
+    assert_eq!(account.active_app_key_count, 1);
+    assert_eq!(account.profile_roster_op_count, 3);
+    assert_eq!(account.current_key_epoch, Some(1));
+    assert_eq!(account.recovery_phrase_facet_count, 1);
+    assert_eq!(account.nip46_facet_count, 0);
+    assert_eq!(account.social_profile_facet_count, 0);
+    assert!(account.missing_key_wraps.is_empty());
     assert!(account.device_link_request.is_empty());
     assert!(
         account

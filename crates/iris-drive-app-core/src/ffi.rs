@@ -25,7 +25,7 @@ use iris_drive_core::device_link_transport::{
     pending_device_link_request_frame,
 };
 use iris_drive_core::device_summary::{
-    DeviceConnectionDetails, DeviceConnectivity, authorization_state_key, device_roster_rows,
+    DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
     setup_state_flags, sync_status_label,
 };
@@ -882,13 +882,26 @@ impl NativeAppRuntime {
         };
         let mut account = raw_account.clone();
         account.recompute_authorization();
+        let profile = iris_profile_summary(&account);
         self.state.ui.account = Some(UiAccount {
-            profile_id: account.profile_id.to_string(),
+            profile_id: profile.profile_id,
             owner_pubkey: account_npub(&account.owner_pubkey),
             device_pubkey: account_npub(&account.device_pubkey),
+            current_app_key_pubkey: profile.current_app_key_pubkey_hex,
+            current_app_key_npub: profile.current_app_key_npub,
+            current_app_key_label: profile.current_app_key_label.unwrap_or_default(),
             device_label: account.device_label.clone().unwrap_or_default(),
-            authorization_state: authorization_state_key(account.authorization_state).to_owned(),
+            authorization_state: profile.authorization_state,
             has_owner_signing_authority: account.has_owner_signing_authority,
+            can_admin_profile: profile.can_admin_profile,
+            can_write_roots: profile.can_write_roots,
+            active_app_key_count: profile.active_app_key_count as u64,
+            profile_roster_op_count: profile.profile_roster_op_count as u64,
+            current_key_epoch: profile.current_key_epoch,
+            recovery_phrase_facet_count: profile.recovery_phrase_facet_count as u64,
+            nip46_facet_count: profile.nip46_facet_count as u64,
+            social_profile_facet_count: profile.social_profile_facet_count as u64,
+            missing_key_wraps: profile.missing_key_wrap_npubs,
             can_export_recovery_phrase: recovery_phrase_path_in(Path::new(&self.data_dir)).exists(),
             device_link_request: device_link_request_url(&account),
             device_link_invite: device_link_invite_url(&account),

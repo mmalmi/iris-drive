@@ -26,6 +26,14 @@ fn init_yields_authorized_owner_capable_account() {
     assert_eq!(v["authorization_state"], "authorized");
     assert!(v["owner_npub"].as_str().unwrap().starts_with("npub1"));
     assert!(v["device_npub"].as_str().unwrap().starts_with("npub1"));
+    assert!(v["profile_id"].as_str().unwrap().contains('-'));
+    assert_eq!(v["profile"]["profile_id"], v["profile_id"]);
+    assert_eq!(v["profile"]["current_app_key_npub"], v["device_npub"]);
+    assert_eq!(v["profile"]["can_admin_profile"], true);
+    assert_eq!(v["profile"]["can_write_roots"], true);
+    assert_eq!(v["profile"]["active_app_key_count"], 1);
+    assert_eq!(v["profile"]["current_key_epoch"], 1);
+    assert_eq!(v["profile"]["recovery_phrase_facet_count"], 1);
 }
 
 #[test]
@@ -684,6 +692,12 @@ fn roster_after_init_shows_dck_generation_and_self_wrap() {
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["app_keys"]["dck_generation"], 1);
+    assert_eq!(v["profile"]["active_app_key_count"], 1);
+    assert_eq!(v["profile"]["current_key_epoch"], 1);
+    assert_eq!(
+        v["profile"]["missing_key_wraps"].as_array().unwrap().len(),
+        0
+    );
     let devices = v["app_keys"]["devices"].as_array().unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0]["has_dck_wrap"], true);
@@ -838,5 +852,7 @@ fn whoami_after_init_reports_owner_and_device() {
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert!(v["owner_npub"].as_str().unwrap().starts_with("npub1"));
     assert!(v["device_npub"].as_str().unwrap().starts_with("npub1"));
+    assert_eq!(v["profile"]["current_app_key_npub"], v["device_npub"]);
+    assert_eq!(v["profile"]["can_admin_profile"], true);
     assert_eq!(v["has_owner_signing_authority"], true);
 }

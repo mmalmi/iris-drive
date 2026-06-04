@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::account::DeviceAuthorizationState;
+use crate::account::{AccountState, DeviceAuthorizationState};
 use crate::app_keys::{DeviceEntry, DeviceRole};
+use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 
@@ -66,6 +67,7 @@ pub fn sync_status_label(sync_status: &str) -> String {
         "syncing" => "Syncing".to_owned(),
         "synced" => "Synced".to_owned(),
         "root synced" => "Root synced".to_owned(),
+        "profile synced" => "Profile synced".to_owned(),
         "up to date" => "Up to date".to_owned(),
         "sync error" => "Sync failed".to_owned(),
         "paused" => "Sync paused".to_owned(),
@@ -210,12 +212,111 @@ pub struct DeviceRosterRow {
     pub added_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrisProfileSummary {
+    pub profile_id: String,
+    pub current_app_key_pubkey_hex: String,
+    pub current_app_key_npub: String,
+    pub current_app_key_label: Option<String>,
+    pub authorization_state: String,
+    pub can_write_roots: bool,
+    pub can_admin_profile: bool,
+    pub active_app_key_count: usize,
+    pub profile_roster_op_count: usize,
+    pub current_key_epoch: Option<u64>,
+    pub recovery_phrase_facet_count: usize,
+    pub nip46_facet_count: usize,
+    pub social_profile_facet_count: usize,
+    pub missing_key_wrap_npubs: Vec<String>,
+}
+
 #[must_use]
 pub fn pubkey_npub(hex: &str) -> String {
     PublicKey::from_hex(hex)
         .ok()
         .and_then(|pubkey| pubkey.to_bech32().ok())
         .unwrap_or_else(|| hex.to_owned())
+}
+
+#[must_use]
+pub fn iris_profile_summary(state: &AccountState) -> IrisProfileSummary {
+    let projection = state.profile_projection();
+    let current_facet = projection.active_facets.get(&state.device_pubkey);
+    let current_key_epoch = projection
+        .key_epochs
+        .keys()
+        .next_back()
+        .copied()
+        .or_else(|| {
+            state
+                .app_keys
+                .as_ref()
+                .map(|snapshot| snapshot.dck_generation)
+        });
+    let missing_key_wrap_npubs = current_key_epoch.map_or_else(Vec::new, |epoch| {
+        projection
+            .active_facets
+            .values()
+            .filter(|facet| {
+                matches!(
+                    projection.key_wrap_status(&facet.pubkey, epoch),
+                    KeyWrapStatus::RepairNeeded
+                )
+            })
+            .map(|facet| pubkey_npub(&facet.pubkey))
+            .collect()
+    });
+
+    IrisProfileSummary {
+        profile_id: state.profile_id.to_string(),
+        current_app_key_pubkey_hex: state.device_pubkey.clone(),
+        current_app_key_npub: pubkey_npub(&state.device_pubkey),
+        current_app_key_label: current_facet
+            .and_then(|facet| facet.label.clone())
+            .or_else(|| state.device_label.clone()),
+        authorization_state: authorization_state_key(state.authorization_state).to_owned(),
+        can_write_roots: if projection.active_facets.is_empty() {
+            state.is_authorized()
+        } else {
+            projection.can_write_roots(&state.device_pubkey)
+        },
+        can_admin_profile: if projection.active_facets.is_empty() {
+            state.can_manage_devices()
+        } else {
+            projection.can_admin_profile(&state.device_pubkey)
+        },
+        active_app_key_count: if projection.active_facets.is_empty() {
+            state
+                .app_keys
+                .as_ref()
+                .map_or(0, |snapshot| snapshot.devices.len())
+        } else {
+            projection.active_app_key_pubkeys().len()
+        },
+        profile_roster_op_count: state.profile_roster_ops.len(),
+        current_key_epoch,
+        recovery_phrase_facet_count: facet_count_for_purpose(
+            &projection,
+            IrisProfileKeyPurpose::RecoveryPhrase,
+        ),
+        nip46_facet_count: facet_count_for_purpose(&projection, IrisProfileKeyPurpose::Nip46Signer),
+        social_profile_facet_count: facet_count_for_purpose(
+            &projection,
+            IrisProfileKeyPurpose::SocialProfile,
+        ),
+        missing_key_wrap_npubs,
+    }
+}
+
+fn facet_count_for_purpose(
+    projection: &crate::IrisProfileRosterProjection,
+    purpose: IrisProfileKeyPurpose,
+) -> usize {
+    projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.has_purpose(purpose))
+        .count()
 }
 
 #[must_use]
@@ -312,7 +413,8 @@ fn device_online_via(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DeviceAuthorizationState, DeviceRole};
+    use crate::{Account, DeviceAuthorizationState, DeviceRole};
+    use tempfile::tempdir;
 
     #[test]
     fn shared_device_summary_labels_match_native_clients() {
@@ -360,6 +462,7 @@ mod tests {
             "Waiting for approval"
         );
         assert_eq!(sync_status_label("running"), "Sync on");
+        assert_eq!(sync_status_label("profile synced"), "Profile synced");
         assert_eq!(sync_status_label("up to date"), "Up to date");
         assert_eq!(sync_status_label("paused"), "Sync paused");
 
@@ -451,5 +554,64 @@ mod tests {
         assert!(rows[1].can_revoke);
         assert!(rows[1].can_appoint_admin);
         assert!(!rows[1].can_demote_admin);
+    }
+
+    #[test]
+    fn iris_profile_summary_uses_profile_roster_projection() {
+        let dir = tempdir().unwrap();
+        let mut account = Account::create(dir.path(), Some("Native".to_owned())).unwrap();
+        let profile_id = account.state.profile_id.to_string();
+        let current_app_key = account.state.device_pubkey.clone();
+        let remote = nostr_sdk::Keys::generate().public_key().to_hex();
+        account
+            .approve_device(&remote, Some("Web".to_owned()))
+            .expect("approve app key");
+        let latest_created_at = account
+            .state
+            .profile_roster_ops
+            .iter()
+            .map(|op| op.content.created_at)
+            .max()
+            .unwrap_or(0);
+        let incomplete_epoch_event = crate::build_iris_profile_roster_op_event(
+            account.device.keys(),
+            account.state.profile_id,
+            Vec::new(),
+            None,
+            crate::IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 3,
+                wrapped_dck: [(current_app_key.clone(), "wrap-current".to_owned())]
+                    .into_iter()
+                    .collect(),
+            },
+            latest_created_at + 1,
+        )
+        .unwrap();
+        account
+            .state
+            .profile_roster_ops
+            .push(crate::parse_iris_profile_roster_op_event(&incomplete_epoch_event).unwrap());
+        account.state.sync_app_keys_from_profile();
+        account.state.recompute_authorization();
+
+        let summary = iris_profile_summary(&account.state);
+
+        assert_eq!(summary.profile_id, profile_id);
+        assert_eq!(summary.current_app_key_pubkey_hex, current_app_key);
+        assert_eq!(summary.current_app_key_label.as_deref(), Some("Native"));
+        assert_eq!(summary.authorization_state, "authorized");
+        assert!(summary.can_write_roots);
+        assert!(summary.can_admin_profile);
+        assert_eq!(summary.active_app_key_count, 2);
+        assert_eq!(summary.current_key_epoch, Some(3));
+        assert_eq!(summary.recovery_phrase_facet_count, 1);
+        assert_eq!(summary.nip46_facet_count, 0);
+        assert_eq!(summary.social_profile_facet_count, 0);
+        assert_eq!(summary.missing_key_wrap_npubs.len(), 2);
+        assert!(
+            summary
+                .missing_key_wrap_npubs
+                .contains(&pubkey_npub(&remote))
+        );
     }
 }
