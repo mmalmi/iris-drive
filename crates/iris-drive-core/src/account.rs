@@ -152,6 +152,63 @@ impl AccountState {
         project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone())
     }
 
+    #[must_use]
+    pub fn app_keys_from_profile(&self) -> Option<AppKeysSnapshot> {
+        let projection = self.profile_projection();
+        let key_epoch = projection.key_epochs.values().next_back()?;
+        let app_key_pubkeys: std::collections::BTreeSet<_> =
+            projection.active_app_key_pubkeys().into_iter().collect();
+        if app_key_pubkeys.is_empty() {
+            return None;
+        }
+        let mut devices = projection
+            .active_facets
+            .values()
+            .filter(|facet| facet.is_app_key())
+            .map(|facet| {
+                let role = if facet.capabilities.can_admin_profile {
+                    DeviceRole::Admin
+                } else {
+                    DeviceRole::Member
+                };
+                DeviceEntry {
+                    pubkey: facet.pubkey.clone(),
+                    added_at: facet.added_at,
+                    label: facet.label.clone(),
+                    role,
+                }
+            })
+            .collect::<Vec<_>>();
+        devices.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
+        let wrapped_dck = key_epoch
+            .wrapped_dck
+            .iter()
+            .filter(|(pubkey, _)| app_key_pubkeys.contains(*pubkey))
+            .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
+            .collect();
+        Some(AppKeysSnapshot {
+            owner_pubkey: self.owner_pubkey.clone(),
+            signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
+            created_at: key_epoch.created_at,
+            devices,
+            dck_generation: key_epoch.epoch,
+            wrapped_dck,
+        })
+    }
+
+    pub fn sync_app_keys_from_profile(&mut self) -> bool {
+        let Some(snapshot) = self.app_keys_from_profile() else {
+            return false;
+        };
+        let changed = self.app_keys.as_ref() != Some(&snapshot);
+        self.app_keys = Some(snapshot);
+        if changed {
+            self.app_keys_event = None;
+        }
+        self.recompute_authorization();
+        changed
+    }
+
     /// Has the latest `AppKeys` snapshot included this device?
     #[must_use]
     pub fn is_authorized(&self) -> bool {
@@ -164,6 +221,11 @@ impl AccountState {
     /// Can this device add/remove other devices in the roster?
     #[must_use]
     pub fn can_manage_devices(&self) -> bool {
+        if !self.profile_roster_ops.is_empty() {
+            return self
+                .profile_projection()
+                .can_admin_profile(&self.device_pubkey);
+        }
         self.app_keys
             .as_ref()
             .map_or(self.has_owner_signing_authority, |snap| {
@@ -173,6 +235,23 @@ impl AccountState {
 
     /// Recompute `authorization_state` from the current `AppKeys` snapshot.
     pub fn recompute_authorization(&mut self) {
+        if !self.profile_roster_ops.is_empty() {
+            let projection = self.profile_projection();
+            self.has_owner_signing_authority = projection.can_admin_profile(&self.device_pubkey);
+            self.authorization_state = if projection.can_write_roots(&self.device_pubkey) {
+                DeviceAuthorizationState::Authorized
+            } else if projection.tombstones.contains_key(&self.device_pubkey)
+                || self.authorization_state == DeviceAuthorizationState::Authorized
+            {
+                DeviceAuthorizationState::Revoked
+            } else {
+                self.authorization_state
+            };
+            if self.authorization_state == DeviceAuthorizationState::Authorized {
+                self.outbound_device_link_request = None;
+            }
+            return;
+        }
         self.authorization_state = match &self.app_keys {
             Some(snap) if snap.contains(&self.device_pubkey) => {
                 DeviceAuthorizationState::Authorized
@@ -391,11 +470,12 @@ impl Account {
         )];
         let dck = generate_dck();
         let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
             &devices[0],
-            &recovery_key.pubkey_hex(),
+            Some(&recovery_pubkey),
             &dck,
             now,
         )?;
@@ -468,16 +548,15 @@ impl Account {
         )];
         let dck = generate_dck();
         let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
-        if let Some(recovery_key) = recovery_key {
-            state.profile_roster_ops = initial_profile_roster_ops(
-                device.keys(),
-                profile_id,
-                &devices[0],
-                &recovery_key.pubkey_hex(),
-                &dck,
-                now,
-            )?;
-        }
+        let recovery_pubkey = recovery_key.as_ref().map(OwnerKey::pubkey_hex);
+        state.profile_roster_ops = initial_profile_roster_ops(
+            device.keys(),
+            profile_id,
+            &devices[0],
+            recovery_pubkey.as_deref(),
+            &dck,
+            now,
+        )?;
         let snap = AppKeysSnapshot {
             owner_pubkey: state.owner_pubkey.clone(),
             signed_by_pubkey: Some(state.device_pubkey.clone()),
@@ -565,34 +644,21 @@ impl Account {
         {
             return Err(AccountError::AlreadyAuthorized);
         }
-        let now = next_local_timestamp(self.state.app_keys.as_ref());
-        let mut devices = self
-            .state
-            .app_keys
-            .as_ref()
-            .map(|s| s.devices.clone())
-            .unwrap_or_default();
-        devices.push(DeviceEntry::member(
-            device_pubkey_hex.to_string(),
+        let now = next_profile_timestamp(&self.state);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    device_pubkey_hex.to_string(),
+                    now,
+                    label,
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
             now,
-            label,
-        ));
+        )?;
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
-        let next_gen = self
-            .state
-            .app_keys
-            .as_ref()
-            .map_or(1, |s| s.dck_generation + 1);
-        let new_snap = AppKeysSnapshot {
-            owner_pubkey: self.state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
-            created_at: now,
-            devices,
-            dck_generation: next_gen,
-            wrapped_dck: wraps,
-        };
-        self.state.apply_app_keys(new_snap);
+        self.rotate_profile_dck_epoch(&dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
         self.record_current_app_keys_event()?;
         self.state
             .inbound_device_link_requests
@@ -623,25 +689,17 @@ impl Account {
         {
             return Err(AccountError::CannotRemoveLastAdmin);
         }
-        let now = next_local_timestamp(self.state.app_keys.as_ref());
-        let devices: Vec<DeviceEntry> = snap
-            .devices
-            .iter()
-            .filter(|d| d.pubkey != device_pubkey_hex)
-            .cloned()
-            .collect();
+        let now = next_profile_timestamp(&self.state);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::TombstoneFacet {
+                pubkey: device_pubkey_hex.to_string(),
+                reason: None,
+            },
+            now,
+        )?;
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
-        let next_gen = snap.dck_generation + 1;
-        let new_snap = AppKeysSnapshot {
-            owner_pubkey: self.state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
-            created_at: now,
-            devices,
-            dck_generation: next_gen,
-            wrapped_dck: wraps,
-        };
-        self.state.apply_app_keys(new_snap);
+        self.rotate_profile_dck_epoch(&dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
         self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
@@ -658,20 +716,10 @@ impl Account {
             .app_keys
             .as_ref()
             .ok_or(AccountError::NoCurrentSnapshot)?;
-        let devices = snap.devices.clone();
-        let next_gen = snap.dck_generation + 1;
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
-        let now = next_local_timestamp(Some(snap));
-        let new_snap = AppKeysSnapshot {
-            owner_pubkey: self.state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
-            created_at: now,
-            devices,
-            dck_generation: next_gen,
-            wrapped_dck: wraps,
-        };
-        self.state.apply_app_keys(new_snap);
+        let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
+        self.rotate_profile_dck_epoch(&dck, now)?;
+        self.state.sync_app_keys_from_profile();
         self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
@@ -720,33 +768,85 @@ impl Account {
         {
             return Err(AccountError::CannotRemoveLastAdmin);
         }
-        let mut devices = snap.devices.clone();
-        for device in &mut devices {
-            if device.pubkey == device_pubkey_hex {
-                device.role = role;
-            }
-        }
-        let next_gen = snap.dck_generation + 1;
-        let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(self.device.keys().secret_key(), &devices, &dck)?;
-        let now = next_local_timestamp(Some(snap));
-        let new_snap = AppKeysSnapshot {
-            owner_pubkey: self.state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(self.state.device_pubkey.clone()),
-            created_at: now,
-            devices,
-            dck_generation: next_gen,
-            wrapped_dck: wraps,
+        let capabilities = match role {
+            DeviceRole::Admin => IrisProfileCapabilities::app_admin(),
+            DeviceRole::Member => IrisProfileCapabilities::app_writer(),
         };
-        self.state.apply_app_keys(new_snap);
+        let now = next_profile_timestamp(&self.state);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::SetCapabilities {
+                pubkey: device_pubkey_hex.to_string(),
+                capabilities,
+            },
+            now,
+        )?;
+        let dck = generate_dck();
+        self.rotate_profile_dck_epoch(&dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
         self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
+    }
+
+    fn append_profile_roster_op(
+        &mut self,
+        op: IrisProfileRosterOp,
+        created_at: i64,
+    ) -> Result<(), AccountError> {
+        let signed =
+            signed_profile_roster_op(self.device.keys(), self.state.profile_id, op, created_at)?;
+        self.state.profile_roster_ops.push(signed);
+        Ok(())
+    }
+
+    fn rotate_profile_dck_epoch(
+        &mut self,
+        dck: &[u8; 32],
+        created_at: i64,
+    ) -> Result<(), AccountError> {
+        let projection = self.state.profile_projection();
+        let recipients = projection
+            .active_facets
+            .values()
+            .filter(|facet| facet.capabilities.can_receive_key_wraps)
+            .map(|facet| facet.pubkey.as_str())
+            .collect::<Vec<_>>();
+        let wrapped_dck = wrap_dck_for_pubkeys(self.device.keys().secret_key(), recipients, dck)?;
+        let epoch = projection
+            .key_epochs
+            .keys()
+            .next_back()
+            .map_or(1, |epoch| epoch + 1);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck },
+            created_at,
+        )
     }
 
     /// Decrypt this device's DCK wrap from the current snapshot. Errors
     /// with `NoWrapForThisDevice` if the device has been revoked or
     /// never authorized.
     pub fn current_dck(&self) -> Result<[u8; 32], AccountError> {
+        if !self.state.profile_roster_ops.is_empty() {
+            let projection = self.state.profile_projection();
+            let key_epoch = projection
+                .key_epochs
+                .values()
+                .next_back()
+                .ok_or(AccountError::NoCurrentSnapshot)?;
+            let wrap = key_epoch
+                .wrapped_dck
+                .get(&self.state.device_pubkey)
+                .ok_or(AccountError::NoWrapForThisDevice)?;
+            let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
+                .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+            let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
+                .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+            let arr: [u8; 32] = bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+            return Ok(arr);
+        }
         let snap = self
             .state
             .app_keys
@@ -867,7 +967,7 @@ fn initial_profile_roster_ops(
     signer_keys: &Keys,
     profile_id: IrisProfileId,
     app_entry: &DeviceEntry,
-    recovery_pubkey: &str,
+    recovery_pubkey: Option<&str>,
     dck: &[u8; 32],
     created_at: i64,
 ) -> Result<Vec<SignedIrisProfileRosterOp>, AccountError> {
@@ -886,19 +986,27 @@ fn initial_profile_roster_ops(
         },
         created_at,
     )?;
-    let recovery_op = signed_profile_roster_op(
-        signer_keys,
-        profile_id,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.to_string(), created_at + 1),
-        },
-        created_at + 1,
-    )?;
-    let wrapped_dck = wrap_dck_for_pubkeys(
-        signer_keys.secret_key(),
-        [app_pubkey.as_str(), recovery_pubkey],
-        dck,
-    )?;
+    let mut ops = vec![app_op];
+    let mut recipients = vec![app_pubkey.as_str()];
+    let epoch_created_at = if let Some(recovery_pubkey) = recovery_pubkey {
+        let recovery_op = signed_profile_roster_op(
+            signer_keys,
+            profile_id,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::recovery_phrase(
+                    recovery_pubkey.to_string(),
+                    created_at + 1,
+                ),
+            },
+            created_at + 1,
+        )?;
+        ops.push(recovery_op);
+        recipients.push(recovery_pubkey);
+        created_at + 2
+    } else {
+        created_at + 1
+    };
+    let wrapped_dck = wrap_dck_for_pubkeys(signer_keys.secret_key(), recipients, dck)?;
     let epoch_op = signed_profile_roster_op(
         signer_keys,
         profile_id,
@@ -906,9 +1014,10 @@ fn initial_profile_roster_ops(
             epoch: 1,
             wrapped_dck,
         },
-        created_at + 2,
+        epoch_created_at,
     )?;
-    Ok(vec![app_op, recovery_op, epoch_op])
+    ops.push(epoch_op);
+    Ok(ops)
 }
 
 fn signed_profile_roster_op(
@@ -945,6 +1054,23 @@ fn next_local_timestamp(current: Option<&AppKeysSnapshot>) -> i64 {
         Some(snap) if snap.created_at >= now => snap.created_at + 1,
         _ => now,
     }
+}
+
+fn next_profile_timestamp(state: &AccountState) -> i64 {
+    let latest_profile_op = state
+        .profile_roster_ops
+        .iter()
+        .map(|op| op.content.created_at)
+        .max()
+        .unwrap_or(0);
+    let latest_snapshot = state
+        .app_keys
+        .as_ref()
+        .map_or(0, |snapshot| snapshot.created_at);
+    current_unix_seconds()
+        .max(latest_profile_op)
+        .max(latest_snapshot)
+        + 1
 }
 
 fn resolve_device_label(label: Option<String>, pubkey_hex: &str) -> Option<String> {

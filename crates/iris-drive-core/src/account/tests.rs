@@ -279,6 +279,13 @@ fn approve_adds_device_to_roster() {
         .unwrap();
     assert_eq!(snap.devices.len(), 2);
     assert!(snap.contains(&new_device));
+
+    let projection = acct.state.profile_projection();
+    assert!(projection.can_write_roots(&new_device));
+    assert!(!projection.can_admin_profile(&new_device));
+    assert!(projection.active_facets.contains_key(&new_device));
+    let latest_epoch = projection.key_epochs.values().next_back().unwrap();
+    assert!(latest_epoch.wrapped_dck.contains_key(&new_device));
 }
 
 #[test]
@@ -313,6 +320,10 @@ fn revoke_removes_device_from_roster() {
     acct.approve_device(&target, None).unwrap();
     let snap = acct.revoke_device(&target).unwrap();
     assert!(!snap.contains(&target));
+
+    let projection = acct.state.profile_projection();
+    assert!(!projection.active_facets.contains_key(&target));
+    assert!(projection.tombstones.contains_key(&target));
 }
 
 #[test]
@@ -338,10 +349,14 @@ fn appoint_and_demote_admin_updates_roster_roles() {
     let snap = acct.appoint_admin(&target).unwrap();
     assert!(snap.is_admin(&target));
     assert!(snap.dck_generation >= 3);
+    assert!(acct.state.profile_projection().can_admin_profile(&target));
 
     let snap = acct.demote_admin(&target).unwrap();
     assert!(!snap.is_admin(&target));
     assert!(snap.is_admin(&current));
+    let projection = acct.state.profile_projection();
+    assert!(!projection.can_admin_profile(&target));
+    assert!(projection.can_admin_profile(&current));
 }
 
 #[test]
@@ -377,6 +392,32 @@ fn current_dck_is_decryptable_by_owner_device() {
     // Two reads return same key (state is deterministic).
     let dck2 = acct.current_dck().unwrap();
     assert_eq!(dck, dck2);
+}
+
+#[test]
+fn current_dck_comes_from_profile_epoch_without_snapshot_adapter() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    let expected = acct.current_dck().unwrap();
+    acct.state.app_keys = None;
+    assert_eq!(acct.current_dck().unwrap(), expected);
+}
+
+#[test]
+fn authorization_recomputes_from_profile_without_snapshot_adapter() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), None).unwrap();
+    acct.state.app_keys = None;
+    acct.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
+    acct.state.has_owner_signing_authority = false;
+
+    acct.state.recompute_authorization();
+
+    assert_eq!(
+        acct.state.authorization_state,
+        DeviceAuthorizationState::Authorized
+    );
+    assert!(acct.state.has_owner_signing_authority);
 }
 
 #[test]
@@ -438,6 +479,15 @@ fn rotate_dck_preserves_roster() {
         .map(|d| d.pubkey.clone())
         .collect();
     acct.rotate_dck().unwrap();
+    let latest_epoch = acct
+        .state
+        .profile_projection()
+        .key_epochs
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap();
+    assert_eq!(latest_epoch, 3);
     let devices_after: Vec<_> = acct
         .state
         .app_keys
@@ -580,16 +630,20 @@ fn external_revocation_marks_state_revoked() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     assert!(acct.state.is_authorized());
-    // Pretend a new snapshot from owner removes this device.
-    let new_snap = AppKeysSnapshot {
-        owner_pubkey: acct.state.owner_pubkey.clone(),
-        signed_by_pubkey: Some(acct.state.device_pubkey.clone()),
-        created_at: acct.state.app_keys.as_ref().unwrap().created_at + 1,
-        devices: vec![DeviceEntry::member("ff".repeat(32), 0, None)],
-        dck_generation: acct.state.app_keys.as_ref().unwrap().dck_generation + 1,
-        wrapped_dck: BTreeMap::new(),
-    };
-    acct.state.apply_app_keys(new_snap);
+    let tombstone = signed_profile_roster_op(
+        acct.device.keys(),
+        acct.state.profile_id,
+        IrisProfileRosterOp::TombstoneFacet {
+            pubkey: acct.state.device_pubkey.clone(),
+            reason: Some("external revocation".to_owned()),
+        },
+        next_profile_timestamp(&acct.state),
+    )
+    .unwrap();
+
+    acct.state.profile_roster_ops.push(tombstone);
+    acct.state.recompute_authorization();
+
     assert_eq!(
         acct.state.authorization_state,
         DeviceAuthorizationState::Revoked

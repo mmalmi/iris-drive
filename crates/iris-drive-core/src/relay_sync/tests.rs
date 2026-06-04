@@ -608,9 +608,10 @@ fn same_second_drive_root_selection_prefers_higher_device_seq() {
 }
 
 #[test]
-fn apply_app_keys_event_revokes_authorized_state_when_we_get_removed() {
+fn apply_app_keys_event_revokes_legacy_snapshot_state_when_we_get_removed() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+    cfg.account.as_mut().unwrap().profile_roster_ops.clear();
     assert_eq!(
         cfg.account.as_ref().unwrap().authorization_state,
         DeviceAuthorizationState::Authorized
