@@ -2,6 +2,8 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+private let recoveryPhraseWordCount = 12
+
 private enum MainTab: Hashable {
     case drive
     case devices
@@ -339,7 +341,7 @@ private struct RestoreOptionsSetupView: View {
 
 private struct RestoreRecoveryPhraseSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var words = Array(repeating: "", count: 24)
+    @State private var words = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var index = 0
     @FocusState private var wordFieldFocused: Bool
 
@@ -368,12 +370,12 @@ private struct RestoreRecoveryPhraseSetupView: View {
 
     var body: some View {
         Form {
-            Section("Word \(index + 1) of 24") {
+            Section("Word \(index + 1) of \(recoveryPhraseWordCount)") {
                 TextField("Word \(index + 1)", text: currentWord)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($wordFieldFocused)
-                    .submitLabel(index == 23 ? .done : .next)
+                    .submitLabel(index == recoveryPhraseWordCount - 1 ? .done : .next)
                     .accessibilityIdentifier("recoveryWordInput")
                     .onSubmit { advanceOrRestore() }
 
@@ -397,10 +399,13 @@ private struct RestoreRecoveryPhraseSetupView: View {
                     Button {
                         advanceOrRestore()
                     } label: {
-                        Label(index == 23 ? "Restore" : "Next", systemImage: index == 23 ? "checkmark" : "chevron.right")
+                        Label(
+                            index == recoveryPhraseWordCount - 1 ? "Restore" : "Next",
+                            systemImage: index == recoveryPhraseWordCount - 1 ? "checkmark" : "chevron.right"
+                        )
                     }
-                    .disabled(index == 23 ? !allWordsAreFilled : !currentWordIsFilled)
-                    .accessibilityIdentifier(index == 23 ? "restoreRecoveryPhraseSubmit" : "restoreRecoveryPhraseNext")
+                    .disabled(index == recoveryPhraseWordCount - 1 ? !allWordsAreFilled : !currentWordIsFilled)
+                    .accessibilityIdentifier(index == recoveryPhraseWordCount - 1 ? "restoreRecoveryPhraseSubmit" : "restoreRecoveryPhraseNext")
                 }
             }
         }
@@ -410,7 +415,7 @@ private struct RestoreRecoveryPhraseSetupView: View {
     }
 
     private func advanceOrRestore() {
-        if index == 23 {
+        if index == recoveryPhraseWordCount - 1 {
             guard allWordsAreFilled else { return }
             model.restoreProfile(secret: phrase)
         } else if currentWordIsFilled {
@@ -973,8 +978,8 @@ private struct RecoveryPhraseExportView: View {
                     Text(export.error)
                         .foregroundStyle(.secondary)
                 }
-            } else if export.words.count == 24 {
-                Section("Word \(index + 1) of 24") {
+            } else if export.words.count == recoveryPhraseWordCount {
+                Section("Word \(index + 1) of \(recoveryPhraseWordCount)") {
                     Text(currentWord)
                         .font(.title.monospaced().bold())
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -991,11 +996,11 @@ private struct RecoveryPhraseExportView: View {
                         Spacer()
 
                         Button {
-                            index = min(23, index + 1)
+                            index = min(recoveryPhraseWordCount - 1, index + 1)
                         } label: {
                             Label("Next", systemImage: "chevron.right")
                         }
-                        .disabled(index == 23)
+                        .disabled(index == recoveryPhraseWordCount - 1)
                     }
                 }
                 Section {

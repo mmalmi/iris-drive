@@ -22,7 +22,7 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use nostr_sdk::{Keys, SecretKey};
 use thiserror::Error;
 
-use crate::recovery_phrase::secret_input_to_nsec;
+use crate::recovery_phrase::{recovery_phrase_to_keys, secret_input_to_nsec};
 
 #[derive(Debug, Error)]
 pub enum IdentityError {
@@ -86,6 +86,15 @@ macro_rules! keypair_struct {
             pub fn from_secret(raw: &str, path: impl Into<PathBuf>) -> Result<Self, IdentityError> {
                 let secret = parse_secret_key(raw.trim())?;
                 Ok(Self::new(Keys::new(secret), path))
+            }
+
+            pub fn from_recovery_phrase(
+                raw: &str,
+                path: impl Into<PathBuf>,
+            ) -> Result<Self, IdentityError> {
+                let keys = recovery_phrase_to_keys(raw.trim())
+                    .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+                Ok(Self::new(keys, path))
             }
 
             /// Persist to `self.path()` with owner-only mode on Unix.
@@ -241,12 +250,11 @@ mod tests {
     }
 
     #[test]
-    fn from_secret_accepts_24_word_recovery_phrase() {
+    fn from_secret_accepts_12_word_recovery_phrase() {
         let dir = tempdir().unwrap();
-        let original = OwnerKey::generate(dir.path().join("original"));
-        let phrase =
-            crate::recovery_phrase::secret_to_recovery_phrase(original.keys().secret_key())
-                .unwrap();
+        let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+        let original =
+            OwnerKey::from_recovery_phrase(&phrase, dir.path().join("original")).unwrap();
 
         let recovered = OwnerKey::from_secret(&phrase, dir.path().join("restored")).unwrap();
 

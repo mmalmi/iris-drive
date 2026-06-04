@@ -33,6 +33,7 @@ use ui::*;
 use widgets::*;
 
 const APP_ID: &str = "to.iris.drive";
+const RECOVERY_PHRASE_WORD_COUNT: usize = 12;
 
 thread_local! {
     static TRAY_APP_HOLD: RefCell<Option<gio::ApplicationHoldGuard>> = const { RefCell::new(None) };

@@ -637,7 +637,7 @@ private fun RecoveryPhraseDialog(
                 Text(export.error, color = Muted)
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Word ${wordIndex + 1} of 24", color = Muted)
+                    Text("Word ${wordIndex + 1} of $RecoveryPhraseWordCount", color = Muted)
                     Text(
                         export.words.getOrNull(wordIndex).orEmpty(),
                         color = Ink,
@@ -665,14 +665,14 @@ private fun RecoveryPhraseDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (wordIndex >= 23 || export.error.isNotBlank()) {
+                    if (wordIndex >= RecoveryPhraseWordCount - 1 || export.error.isNotBlank()) {
                         onDismiss()
                     } else {
                         onWordIndexChange(wordIndex + 1)
                     }
                 },
             ) {
-                Text(if (wordIndex >= 23 || export.error.isNotBlank()) "Done" else "Next")
+                Text(if (wordIndex >= RecoveryPhraseWordCount - 1 || export.error.isNotBlank()) "Done" else "Next")
             }
         },
         dismissButton = {

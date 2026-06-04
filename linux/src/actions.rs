@@ -449,7 +449,10 @@ pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
         body.append(&error);
     } else {
         let word_index = Rc::new(Cell::new(0_usize));
-        let word_label = gtk::Label::new(Some("Word 1 of 24"));
+        let word_label = gtk::Label::new(Some(&format!(
+            "Word 1 of {}",
+            RECOVERY_PHRASE_WORD_COUNT
+        )));
         word_label.add_css_class("iris-field-name");
         word_label.set_xalign(0.0);
         body.append(&word_label);
@@ -484,11 +487,19 @@ pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
             let back = back.clone();
             let next = next.clone();
             move || {
-                let index = word_index.get().min(23);
-                word_label.set_text(&format!("Word {} of 24", index + 1));
+                let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+                word_label.set_text(&format!(
+                    "Word {} of {}",
+                    index + 1,
+                    RECOVERY_PHRASE_WORD_COUNT
+                ));
                 word_value.set_text(export.words.get(index).map_or("", String::as_str));
                 back.set_sensitive(index > 0);
-                next.set_label(if index == 23 { "Done" } else { "Next" });
+                next.set_label(if index == RECOVERY_PHRASE_WORD_COUNT - 1 {
+                    "Done"
+                } else {
+                    "Next"
+                });
             }
         };
         update();
@@ -506,10 +517,10 @@ pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
             let word_index = Rc::clone(&word_index);
             let update = update.clone();
             next.connect_clicked(move |_| {
-                if word_index.get() >= 23 {
+                if word_index.get() >= RECOVERY_PHRASE_WORD_COUNT - 1 {
                     dialog.close();
                 } else {
-                    word_index.set((word_index.get() + 1).min(23));
+                    word_index.set((word_index.get() + 1).min(RECOVERY_PHRASE_WORD_COUNT - 1));
                     update();
                 }
             });

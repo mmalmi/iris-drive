@@ -27,6 +27,11 @@ pub fn key_path_in(config_dir: &std::path::Path) -> PathBuf {
 }
 
 #[must_use]
+pub fn recovery_phrase_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("recovery_phrase")
+}
+
+#[must_use]
 pub fn config_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("config.toml")
 }
@@ -56,6 +61,10 @@ mod tests {
     fn key_and_config_paths_are_inside_dir() {
         let base = std::path::Path::new("/tmp/x");
         assert_eq!(key_path_in(base), PathBuf::from("/tmp/x/key"));
+        assert_eq!(
+            recovery_phrase_path_in(base),
+            PathBuf::from("/tmp/x/recovery_phrase")
+        );
         assert_eq!(config_path_in(base), PathBuf::from("/tmp/x/config.toml"));
         assert_eq!(
             sync_cache_path_in(base),

@@ -127,8 +127,8 @@ class AppStateTest {
             """
             {
               "can_export": true,
-              "recovery_phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
-              "words": ["abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "art"],
+              "recovery_phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+              "words": ["abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "about"],
               "secret_key": "nsec1test"
             }
             """.trimIndent(),
@@ -136,9 +136,9 @@ class AppStateTest {
 
         assertTrue(state.account?.canExportRecoveryPhrase == true)
         assertTrue(export.canExport)
-        assertEquals(24, export.words.size)
+        assertEquals(12, export.words.size)
         assertEquals("abandon", export.words.first())
-        assertEquals("art", export.words.last())
+        assertEquals("about", export.words.last())
         assertEquals("nsec1test", export.secretKey)
     }
 

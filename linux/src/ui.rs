@@ -368,7 +368,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
         daemon: RefCell::new(None),
         setup_screen: RefCell::new(SetupScreen::Welcome),
         setup_username: RefCell::new(String::new()),
-        setup_recovery_words: RefCell::new(vec![String::new(); 24]),
+        setup_recovery_words: RefCell::new(vec![String::new(); RECOVERY_PHRASE_WORD_COUNT]),
         setup_recovery_word_index: Cell::new(0),
         tray: RefCell::new(None),
         tray_available: Cell::new(false),

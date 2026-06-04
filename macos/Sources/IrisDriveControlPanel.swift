@@ -71,6 +71,7 @@ private enum IrisDriveSyncState {
 }
 
 private let setupControlWidth: CGFloat = 340
+private let recoveryPhraseWordCount = 12
 let setupButtonMinHeight: CGFloat = 44
 
 struct IrisDriveControlPanel: View {
@@ -86,7 +87,7 @@ struct IrisDriveControlPanel: View {
     @State private var setupUsername = ""
     @State private var setupPhotoPath = ""
     @State private var setupSecret = ""
-    @State private var setupRecoveryWords = Array(repeating: "", count: 24)
+    @State private var setupRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var setupRecoveryWordIndex = 0
     @State private var setupOwner = ""
     @State var submittedSetupOwner = ""
@@ -328,10 +329,10 @@ struct IrisDriveControlPanel: View {
                     }
                     .disabled(setupRecoveryWordIndex == 0)
                     .buttonStyle(.bordered)
-                    setupSubmit(setupRecoveryWordIndex == 23 ? "Restore" : "Next") {
+                    setupSubmit(setupRecoveryWordIndex == recoveryPhraseWordCount - 1 ? "Restore" : "Next") {
                         advanceOrRestoreRecoveryPhrase()
                     }
-                    .disabled(setupRecoveryWordIndex == 23 ? !allRecoveryWordsFilled : currentRecoveryWord.isEmpty)
+                    .disabled(setupRecoveryWordIndex == recoveryPhraseWordCount - 1 ? !allRecoveryWordsFilled : currentRecoveryWord.isEmpty)
                 }
             }
         case .restoreSecretKey:
@@ -423,11 +424,11 @@ struct IrisDriveControlPanel: View {
     }
 
     private func advanceOrRestoreRecoveryPhrase() {
-        if setupRecoveryWordIndex == 23 {
+        if setupRecoveryWordIndex == recoveryPhraseWordCount - 1 {
             guard allRecoveryWordsFilled else { return }
             controller.restoreProfile(secretKey: setupRecoveryPhrase)
         } else if !currentRecoveryWord.isEmpty {
-            setupRecoveryWordIndex = min(23, setupRecoveryWordIndex + 1)
+            setupRecoveryWordIndex = min(recoveryPhraseWordCount - 1, setupRecoveryWordIndex + 1)
         }
     }
 
@@ -443,7 +444,7 @@ struct IrisDriveControlPanel: View {
         for (offset, word) in words.enumerated() where setupRecoveryWordIndex + offset < setupRecoveryWords.count {
             setupRecoveryWords[setupRecoveryWordIndex + offset] = word
         }
-        setupRecoveryWordIndex = min(23, setupRecoveryWordIndex + words.count - 1)
+        setupRecoveryWordIndex = min(recoveryPhraseWordCount - 1, setupRecoveryWordIndex + words.count - 1)
     }
 
     private var setupStatusMessage: String? {
@@ -1174,8 +1175,8 @@ private struct MacRecoveryPhraseView: View {
             if !error.isEmpty {
                 Text(error)
                     .foregroundStyle(.secondary)
-            } else if words.count == 24 {
-                Text("Word \(wordIndex + 1) of 24")
+            } else if words.count == recoveryPhraseWordCount {
+                Text("Word \(wordIndex + 1) of \(recoveryPhraseWordCount)")
                     .foregroundStyle(.secondary)
                 Text(words[wordIndex])
                     .font(.largeTitle.monospaced().weight(.bold))
@@ -1190,11 +1191,11 @@ private struct MacRecoveryPhraseView: View {
                     .disabled(wordIndex == 0)
                     Spacer()
                     Button {
-                        wordIndex = min(23, wordIndex + 1)
+                        wordIndex = min(recoveryPhraseWordCount - 1, wordIndex + 1)
                     } label: {
                         Label("Next", systemImage: "chevron.right")
                     }
-                    .disabled(wordIndex == 23)
+                    .disabled(wordIndex == recoveryPhraseWordCount - 1)
                 }
                 HStack {
                     Button {

@@ -58,6 +58,7 @@ import to.iris.drive.app.core.RecoverySecretExport
 
 private val ProviderRoot: String
     get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
+internal const val RecoveryPhraseWordCount = 12
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
 private val IrisLightSurface = Color.White
@@ -115,7 +116,8 @@ internal fun fillRecoveryWords(
     startIndex: Int,
     input: String,
 ): RecoveryWordsInputResult {
-    val normalizedWords = MutableList(24) { index -> words.getOrElse(index) { "" } }
+    val lastWordIndex = RecoveryPhraseWordCount - 1
+    val normalizedWords = MutableList(RecoveryPhraseWordCount) { index -> words.getOrElse(index) { "" } }
     val normalizedParts = input
         .trim()
         .split(Regex("\\s+"))
@@ -124,27 +126,27 @@ internal fun fillRecoveryWords(
     if (normalizedParts.size <= 1) {
         return RecoveryWordsInputResult(
             words = normalizedWords.also { current ->
-                current[startIndex.coerceIn(0, 23)] = input.trim().lowercase()
+                current[startIndex.coerceIn(0, lastWordIndex)] = input.trim().lowercase()
             },
-            index = startIndex.coerceIn(0, 23),
+            index = startIndex.coerceIn(0, lastWordIndex),
         )
     }
     val next = normalizedWords
-    val boundedStart = startIndex.coerceIn(0, 23)
+    val boundedStart = startIndex.coerceIn(0, lastWordIndex)
     normalizedParts.forEachIndexed { offset, word ->
         val target = boundedStart + offset
-        if (target <= 23) {
+        if (target <= lastWordIndex) {
             next[target] = word
         }
     }
     return RecoveryWordsInputResult(
         words = next,
-        index = (boundedStart + normalizedParts.size - 1).coerceAtMost(23),
+        index = (boundedStart + normalizedParts.size - 1).coerceAtMost(lastWordIndex),
     )
 }
 
 internal fun recoveryPhraseFromWords(words: List<String>): String =
-    words.take(24).joinToString(" ") { it.trim().lowercase() }
+    words.take(RecoveryPhraseWordCount).joinToString(" ") { it.trim().lowercase() }
 
 internal enum class MainTab(
     val label: String,
@@ -463,7 +465,7 @@ private fun SetupContent(
     var createUsername by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf("") }
     var restoreSecret by remember { mutableStateOf("") }
-    var recoveryWords by remember { mutableStateOf(List(24) { "" }) }
+    var recoveryWords by remember { mutableStateOf(List(RecoveryPhraseWordCount) { "" }) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
     var linkOwner by remember { mutableStateOf("") }
     var submittedLinkOwner by remember { mutableStateOf("") }
@@ -614,11 +616,18 @@ private fun SetupContent(
                         modifier = Modifier.fillMaxWidth().testTag("recoveryWordInput"),
                         singleLine = true,
                         label = { Text("Word ${recoveryWordIndex + 1}") },
-                        keyboardOptions = KeyboardOptions(imeAction = if (recoveryWordIndex == 23) ImeAction.Done else ImeAction.Next),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                ImeAction.Done
+                            } else {
+                                ImeAction.Next
+                            },
+                        ),
                         keyboardActions = KeyboardActions(
                             onNext = {
                                 if (currentWord.isNotBlank()) {
-                                    recoveryWordIndex = (recoveryWordIndex + 1).coerceAtMost(23)
+                                    recoveryWordIndex =
+                                        (recoveryWordIndex + 1).coerceAtMost(RecoveryPhraseWordCount - 1)
                                 }
                             },
                             onDone = {
@@ -658,19 +667,28 @@ private fun SetupContent(
                         }
                         Button(
                             onClick = {
-                                if (recoveryWordIndex == 23) {
+                                if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
                                     onRestoreProfile(recoveryPhraseFromWords(recoveryWords))
                                 } else {
-                                    recoveryWordIndex = (recoveryWordIndex + 1).coerceAtMost(23)
+                                    recoveryWordIndex =
+                                        (recoveryWordIndex + 1).coerceAtMost(RecoveryPhraseWordCount - 1)
                                 }
                             },
-                            enabled = if (recoveryWordIndex == 23) allWordsFilled else currentWord.isNotBlank(),
+                            enabled = if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                allWordsFilled
+                            } else {
+                                currentWord.isNotBlank()
+                            },
                             modifier = Modifier.weight(1f).testTag(
-                                if (recoveryWordIndex == 23) "restoreRecoveryPhraseSubmit" else "restoreRecoveryPhraseNext",
+                                if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                    "restoreRecoveryPhraseSubmit"
+                                } else {
+                                    "restoreRecoveryPhraseNext"
+                                },
                             ),
                             shape = RoundedCornerShape(6.dp),
                         ) {
-                            Text(if (recoveryWordIndex == 23) "Restore" else "Next")
+                            Text(if (recoveryWordIndex == RecoveryPhraseWordCount - 1) "Restore" else "Next")
                         }
                     }
                 }

@@ -109,7 +109,7 @@
             </StackPanel>
           </Button>
           <TextBlock Text="Recovery phrase" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
-          <TextBlock x:Name="RecoveryWordLabel" Text="Word 1 of 24" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBlock x:Name="RecoveryWordLabel" Text="Word 1 of 12" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="RecoveryWordBox" Tag="word" MinHeight="34" Margin="0,0,0,12" TextChanged="RecoveryWordBox_TextChanged" KeyDown="RecoveryWordBox_KeyDown" />
           <Button Style="{StaticResource SetupButton}" Click="RecoveryPaste_Click" Margin="0,0,0,12">
             <TextBlock Text="Paste from clipboard" HorizontalAlignment="Center" />

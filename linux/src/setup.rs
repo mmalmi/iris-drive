@@ -388,7 +388,8 @@ pub(crate) fn render_restore_options(model: &AppRef) {
         let model = Rc::clone(model);
         phrase.connect_clicked(move |_| {
             model.setup_recovery_word_index.set(0);
-            *model.setup_recovery_words.borrow_mut() = vec![String::new(); 24];
+            *model.setup_recovery_words.borrow_mut() =
+                vec![String::new(); RECOVERY_PHRASE_WORD_COUNT];
             *model.setup_screen.borrow_mut() = SetupScreen::RestorePhrase;
             render_setup(&model);
         });
@@ -413,7 +414,11 @@ pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
     clamp_recovery_word_index(model);
     let word_index = model.setup_recovery_word_index.get();
 
-    container.append(&field_title(&format!("Word {} of 24", word_index + 1)));
+    container.append(&field_title(&format!(
+        "Word {} of {}",
+        word_index + 1,
+        RECOVERY_PHRASE_WORD_COUNT
+    )));
     let word = setup_entry(&format!("Word {}", word_index + 1));
     word.set_text(&current_recovery_word(model));
     container.append(&word);
@@ -440,7 +445,11 @@ pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
     }
     nav.append(&back);
 
-    let submit = primary_button(if word_index == 23 { "Restore" } else { "Next" });
+    let submit = primary_button(if word_index == RECOVERY_PHRASE_WORD_COUNT - 1 {
+        "Restore"
+    } else {
+        "Next"
+    });
     submit.set_sensitive(can_advance_recovery_word(model));
     {
         let model = Rc::clone(model);
@@ -586,15 +595,22 @@ fn link_owner_input_is_complete(value: &str) -> bool {
 }
 
 fn clamp_recovery_word_index(model: &AppRef) {
-    if model.setup_recovery_word_index.get() >= 24 {
-        model.setup_recovery_word_index.set(23);
+    if model.setup_recovery_word_index.get() >= RECOVERY_PHRASE_WORD_COUNT {
+        model
+            .setup_recovery_word_index
+            .set(RECOVERY_PHRASE_WORD_COUNT - 1);
     }
 }
 
 fn current_recovery_word(model: &AppRef) -> String {
     let words = model.setup_recovery_words.borrow();
     words
-        .get(model.setup_recovery_word_index.get().min(23))
+        .get(
+            model
+                .setup_recovery_word_index
+                .get()
+                .min(RECOVERY_PHRASE_WORD_COUNT - 1),
+        )
         .cloned()
         .unwrap_or_default()
 }
@@ -604,10 +620,13 @@ fn apply_recovery_word_input(model: &AppRef, input: &str) {
         .split_whitespace()
         .map(|word| word.to_lowercase())
         .collect::<Vec<_>>();
-    let word_index = model.setup_recovery_word_index.get().min(23);
+    let word_index = model
+        .setup_recovery_word_index
+        .get()
+        .min(RECOVERY_PHRASE_WORD_COUNT - 1);
     let mut words = model.setup_recovery_words.borrow_mut();
-    if words.len() != 24 {
-        words.resize(24, String::new());
+    if words.len() != RECOVERY_PHRASE_WORD_COUNT {
+        words.resize(RECOVERY_PHRASE_WORD_COUNT, String::new());
     }
     if parts.len() <= 1 {
         words[word_index] = input.trim().to_lowercase();
@@ -622,14 +641,20 @@ fn apply_recovery_word_input(model: &AppRef, input: &str) {
     drop(words);
     model
         .setup_recovery_word_index
-        .set((word_index + parts.len() - 1).min(23));
+        .set((word_index + parts.len() - 1).min(RECOVERY_PHRASE_WORD_COUNT - 1));
 }
 
 fn can_advance_recovery_word(model: &AppRef) -> bool {
     let words = model.setup_recovery_words.borrow();
-    let word_index = model.setup_recovery_word_index.get().min(23);
-    if word_index == 23 {
-        words.iter().take(24).all(|word| !word.trim().is_empty())
+    let word_index = model
+        .setup_recovery_word_index
+        .get()
+        .min(RECOVERY_PHRASE_WORD_COUNT - 1);
+    if word_index == RECOVERY_PHRASE_WORD_COUNT - 1 {
+        words
+            .iter()
+            .take(RECOVERY_PHRASE_WORD_COUNT)
+            .all(|word| !word.trim().is_empty())
     } else {
         words
             .get(word_index)
@@ -642,15 +667,18 @@ fn setup_recovery_phrase(model: &AppRef) -> String {
         .setup_recovery_words
         .borrow()
         .iter()
-        .take(24)
+        .take(RECOVERY_PHRASE_WORD_COUNT)
         .map(|word| word.trim().to_lowercase())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 fn advance_or_restore_recovery_phrase(model: &AppRef, notice: &gtk::Label, button: &gtk::Button) {
-    let word_index = model.setup_recovery_word_index.get().min(23);
-    if word_index < 23 {
+    let word_index = model
+        .setup_recovery_word_index
+        .get()
+        .min(RECOVERY_PHRASE_WORD_COUNT - 1);
+    if word_index < RECOVERY_PHRASE_WORD_COUNT - 1 {
         if can_advance_recovery_word(model) {
             model.setup_recovery_word_index.set(word_index + 1);
             render_setup(model);
@@ -658,7 +686,10 @@ fn advance_or_restore_recovery_phrase(model: &AppRef, notice: &gtk::Label, butto
         return;
     }
     if !can_advance_recovery_word(model) {
-        notice.set_text("All 24 words are required.");
+        notice.set_text(&format!(
+            "All {} words are required.",
+            RECOVERY_PHRASE_WORD_COUNT
+        ));
         return;
     }
 

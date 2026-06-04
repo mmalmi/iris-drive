@@ -30,7 +30,12 @@ use crate::app_keys::{
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::nostr_events::build_app_keys_event;
-use crate::paths::{config_path_in, key_path_in, owner_key_path_in, sync_cache_path_in};
+use crate::paths::{
+    config_path_in, key_path_in, owner_key_path_in, recovery_phrase_path_in, sync_cache_path_in,
+};
+use crate::recovery_phrase::{
+    generate_recovery_phrase, save_recovery_phrase, validate_recovery_phrase,
+};
 
 #[derive(Debug, Error)]
 pub enum AccountError {
@@ -335,8 +340,13 @@ impl Account {
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `AppKeys` snapshot.
     pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, AccountError> {
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let recovery_phrase = generate_recovery_phrase()
+            .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+        let device =
+            DeviceIdentity::from_recovery_phrase(&recovery_phrase, key_path_in(config_dir))?;
         device.save()?;
+        save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)
+            .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let mut state = AccountState {
@@ -385,8 +395,13 @@ impl Account {
         device_nsec: &str,
         device_label: Option<String>,
     ) -> Result<Self, AccountError> {
+        let recovery_phrase = validate_recovery_phrase(device_nsec).ok();
         let device = DeviceIdentity::from_secret(device_nsec, key_path_in(config_dir))?;
         device.save()?;
+        if let Some(phrase) = recovery_phrase {
+            save_recovery_phrase(recovery_phrase_path_in(config_dir), &phrase)
+                .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+        }
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let mut state = AccountState {

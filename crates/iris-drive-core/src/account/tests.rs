@@ -10,8 +10,9 @@ fn create_yields_admin_authorized_account() {
     assert!(acct.state.is_authorized());
     assert!(acct.owner_key.is_none());
     assert_eq!(acct.state.owner_pubkey, acct.state.device_pubkey);
-    // Only the device key exists; roster admin authority is not a second key.
+    // Roster admin authority is not a second key.
     assert!(dir.path().join("key").exists());
+    assert!(dir.path().join("recovery_phrase").exists());
     assert!(!dir.path().join("owner_key").exists());
     // AppKeys lists one device — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
@@ -66,6 +67,30 @@ fn restore_uses_provided_admin_device_nsec() {
             .is_admin(&restored.state.device_pubkey)
     );
     assert!(!dir_b.path().join("owner_key").exists());
+    assert!(!dir_b.path().join("recovery_phrase").exists());
+}
+
+#[test]
+fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
+    let dir_a = tempdir().unwrap();
+    let original = Account::create(dir_a.path(), None).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(dir_a.path()),
+    )
+    .unwrap();
+    assert_eq!(phrase.split_whitespace().count(), 12);
+
+    let dir_b = tempdir().unwrap();
+    let restored = Account::restore(dir_b.path(), &phrase, None).unwrap();
+    assert_eq!(restored.state.owner_pubkey, original.state.owner_pubkey);
+    assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
+    assert_eq!(
+        crate::recovery_phrase::load_recovery_phrase(crate::paths::recovery_phrase_path_in(
+            dir_b.path()
+        ))
+        .unwrap(),
+        phrase
+    );
 }
 
 #[test]

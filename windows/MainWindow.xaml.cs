@@ -37,7 +37,8 @@ public partial class MainWindow : Window
     private bool refreshing;
     private bool quitRequested;
     private string submittedLinkOwner = "";
-    private readonly string[] recoveryWords = new string[24];
+    private const int RecoveryPhraseWordCount = 12;
+    private readonly string[] recoveryWords = new string[RecoveryPhraseWordCount];
     private int recoveryWordIndex;
     private bool updatingRecoveryWordBox;
     private bool settingsUpdating;
@@ -796,29 +797,29 @@ public partial class MainWindow : Window
         };
         var wordLabel = new TextBlock
         {
-            Text = "Word 1 of 24",
+            Text = $"Word 1 of {RecoveryPhraseWordCount}",
             Style = (Style)FindResource("FieldName"),
             Margin = new Thickness(0, 0, 0, 8),
         };
         var wordValue = new TextBlock
         {
-            Text = export.Words.Count == 24 ? export.Words[0] : export.Error,
+            Text = export.Words.Count == RecoveryPhraseWordCount ? export.Words[0] : export.Error,
             FontSize = 32,
             FontWeight = FontWeights.Bold,
             TextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 8, 0, 16),
         };
         var back = new WpfButton { Content = "Back", MinWidth = 92 };
-        var next = new WpfButton { Content = export.Words.Count == 24 ? "Next" : "Done", MinWidth = 92 };
+        var next = new WpfButton { Content = export.Words.Count == RecoveryPhraseWordCount ? "Next" : "Done", MinWidth = 92 };
         var copyPhrase = new WpfButton { Content = "Copy recovery phrase", MinWidth = 148 };
         var copyKey = new WpfButton { Content = "Copy key", MinWidth = 92 };
 
         void RenderWord()
         {
-            wordLabel.Text = $"Word {wordIndex + 1} of 24";
-            wordValue.Text = export.Words.Count == 24 ? export.Words[wordIndex] : export.Error;
+            wordLabel.Text = $"Word {wordIndex + 1} of {RecoveryPhraseWordCount}";
+            wordValue.Text = export.Words.Count == RecoveryPhraseWordCount ? export.Words[wordIndex] : export.Error;
             back.IsEnabled = wordIndex > 0;
-            next.Content = wordIndex == 23 || export.Words.Count != 24 ? "Done" : "Next";
+            next.Content = wordIndex == RecoveryPhraseWordCount - 1 || export.Words.Count != RecoveryPhraseWordCount ? "Done" : "Next";
             copyPhrase.IsEnabled = !string.IsNullOrWhiteSpace(export.RecoveryPhrase);
             copyKey.IsEnabled = !string.IsNullOrWhiteSpace(export.SecretKey);
         }
@@ -864,7 +865,7 @@ public partial class MainWindow : Window
         };
         next.Click += (_, _) =>
         {
-            if (wordIndex >= 23 || export.Words.Count != 24)
+            if (wordIndex >= RecoveryPhraseWordCount - 1 || export.Words.Count != RecoveryPhraseWordCount)
             {
                 dialog.Close();
             }
@@ -1151,7 +1152,7 @@ public partial class MainWindow : Window
 
     private async void RecoveryNext_Click(object sender, RoutedEventArgs e)
     {
-        if (recoveryWordIndex >= 23)
+        if (recoveryWordIndex >= RecoveryPhraseWordCount - 1)
         {
             await RunSetupAsync(() => service.RestoreProfileAsync(
                 string.Join(" ", recoveryWords.Select(word => word.Trim().ToLowerInvariant()))));
@@ -1160,7 +1161,7 @@ public partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(recoveryWords[recoveryWordIndex]))
         {
-            recoveryWordIndex = Math.Min(23, recoveryWordIndex + 1);
+            recoveryWordIndex = Math.Min(RecoveryPhraseWordCount - 1, recoveryWordIndex + 1);
             UpdateRecoveryPhrasePanel();
             RecoveryWordBox.Focus();
         }
@@ -1216,19 +1217,19 @@ public partial class MainWindow : Window
         {
             recoveryWords[recoveryWordIndex + offset] = parts[offset];
         }
-        recoveryWordIndex = Math.Min(23, recoveryWordIndex + parts.Length - 1);
+        recoveryWordIndex = Math.Min(RecoveryPhraseWordCount - 1, recoveryWordIndex + parts.Length - 1);
     }
 
     private bool CanAdvanceRecoveryWord() =>
-        recoveryWordIndex == 23
+        recoveryWordIndex == RecoveryPhraseWordCount - 1
             ? recoveryWords.All(word => !string.IsNullOrWhiteSpace(word))
             : !string.IsNullOrWhiteSpace(recoveryWords[recoveryWordIndex]);
 
     private void UpdateRecoveryPhrasePanel(bool updateTextBox = true)
     {
-        RecoveryWordLabel.Text = $"Word {recoveryWordIndex + 1} of 24";
+        RecoveryWordLabel.Text = $"Word {recoveryWordIndex + 1} of {RecoveryPhraseWordCount}";
         RecoveryBackButton.IsEnabled = recoveryWordIndex > 0;
-        RecoveryNextText.Text = recoveryWordIndex == 23 ? "Restore" : "Next";
+        RecoveryNextText.Text = recoveryWordIndex == RecoveryPhraseWordCount - 1 ? "Restore" : "Next";
         RecoveryNextButton.IsEnabled = CanAdvanceRecoveryWord();
         if (updateTextBox)
         {

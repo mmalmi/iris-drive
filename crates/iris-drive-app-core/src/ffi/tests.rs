@@ -120,8 +120,8 @@ fn recovery_phrase_export_restores_same_profile_key() {
     let export = super::export_recovery_secret(dir.path().display().to_string());
     assert!(export.error.is_empty(), "{}", export.error);
     assert!(export.can_export);
-    assert_eq!(export.words.len(), 24);
-    assert_eq!(export.recovery_phrase.split_whitespace().count(), 24);
+    assert_eq!(export.words.len(), 12);
+    assert_eq!(export.recovery_phrase.split_whitespace().count(), 12);
     assert!(export.secret_key.starts_with("nsec1"));
 
     let restored_dir = tempfile::tempdir().unwrap();
