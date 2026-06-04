@@ -123,11 +123,13 @@ fn recovery_phrase_export_restores_same_profile_key() {
     assert_eq!(export.words.len(), 12);
     assert_eq!(export.recovery_phrase.split_whitespace().count(), 12);
     assert!(export.secret_key.starts_with("nsec1"));
+    let recovery_phrase = export.recovery_phrase.clone();
+    let secret_key = export.secret_key.clone();
 
     let restored_dir = tempfile::tempdir().unwrap();
     let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
     let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
-        secret: export.recovery_phrase,
+        secret: recovery_phrase.clone(),
         device_label: "Restored".to_owned(),
     });
 
@@ -139,6 +141,55 @@ fn recovery_phrase_export_restores_same_profile_key() {
         created_account.device_pubkey
     );
     assert!(restored_account.can_export_recovery_phrase);
+
+    let restored_export = super::export_recovery_secret(restored_dir.path().display().to_string());
+    assert!(
+        restored_export.error.is_empty(),
+        "{}",
+        restored_export.error
+    );
+    assert_eq!(restored_export.words.len(), 12);
+    assert_eq!(restored_export.recovery_phrase, recovery_phrase);
+    assert_eq!(restored_export.secret_key, secret_key);
+}
+
+#[test]
+fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Pixel".to_owned(),
+    });
+    let created_account = created.ui.account.as_ref().expect("account exists");
+    let export = super::export_recovery_secret(dir.path().display().to_string());
+    assert!(export.error.is_empty(), "{}", export.error);
+
+    let restored_dir = tempfile::tempdir().unwrap();
+    let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
+    let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
+        secret: export.secret_key,
+        device_label: "Restored".to_owned(),
+    });
+
+    assert!(restored.error.is_empty(), "{}", restored.error);
+    let restored_account = restored.ui.account.expect("restored account exists");
+    assert_eq!(restored_account.owner_pubkey, created_account.owner_pubkey);
+    assert_eq!(
+        restored_account.device_pubkey,
+        created_account.device_pubkey
+    );
+    assert!(!restored_account.can_export_recovery_phrase);
+
+    let raw_export = super::export_recovery_secret(restored_dir.path().display().to_string());
+    assert!(!raw_export.can_export);
+    assert!(raw_export.words.is_empty());
+    assert!(raw_export.recovery_phrase.is_empty());
+    assert!(raw_export.secret_key.is_empty());
+    assert!(
+        raw_export.error.contains("loading recovery phrase"),
+        "{}",
+        raw_export.error
+    );
 }
 
 #[test]
