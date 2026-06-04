@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use crate::CONFIG_SCHEMA_VERSION;
 use crate::account::AccountState;
+use crate::iris_profile::IrisProfileId;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
+use crate::sharing::{ShareShortcut, SharedFolder};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -49,6 +51,10 @@ pub struct AppConfig {
     pub user_profile: Option<UserProfile>,
     #[serde(default)]
     pub drives: Vec<Drive>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_folders: Vec<SharedFolder>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub share_shortcuts: Vec<ShareShortcut>,
     /// Relays to publish to and subscribe from. Defaults to
     /// [`DEFAULT_RELAYS`] on a fresh install.
     #[serde(default = "default_relays")]
@@ -114,6 +120,8 @@ impl Default for AppConfig {
             account: None,
             user_profile: None,
             drives: Vec::new(),
+            shared_folders: Vec::new(),
+            share_shortcuts: Vec::new(),
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
             local_nhash_resolver_enabled: true,
@@ -147,6 +155,41 @@ impl AppConfig {
     pub fn remove_drive(&mut self, drive_id: &str) -> Option<Drive> {
         let pos = self.drives.iter().position(|d| d.drive_id == drive_id)?;
         Some(self.drives.remove(pos))
+    }
+
+    #[must_use]
+    pub fn shared_folder(&self, share_id: IrisProfileId) -> Option<&SharedFolder> {
+        self.shared_folders
+            .iter()
+            .find(|share| share.share_id == share_id)
+    }
+
+    pub fn upsert_shared_folder(&mut self, shared_folder: SharedFolder) -> bool {
+        if let Some(existing) = self
+            .shared_folders
+            .iter_mut()
+            .find(|existing| existing.share_id == shared_folder.share_id)
+        {
+            *existing = shared_folder;
+            false
+        } else {
+            self.shared_folders.push(shared_folder);
+            true
+        }
+    }
+
+    pub fn upsert_share_shortcut(&mut self, shortcut: ShareShortcut) -> bool {
+        if let Some(existing) = self
+            .share_shortcuts
+            .iter_mut()
+            .find(|existing| existing.path == shortcut.path)
+        {
+            *existing = shortcut;
+            false
+        } else {
+            self.share_shortcuts.push(shortcut);
+            true
+        }
     }
 
     pub fn upsert_backup_target(&mut self, target: BackupTarget) -> bool {

@@ -51,6 +51,7 @@ pub mod relay_config;
 pub mod relay_status;
 pub mod relay_sync;
 pub mod root_meta;
+pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
 
@@ -106,6 +107,9 @@ pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
+pub use sharing::{
+    ShareRecipient, ShareRole, ShareShortcut, SharedFolder, SharingError, create_shared_folder,
+};
 pub use sync::{
     ConflictResolution, SyncBaseState, SyncError, SyncReport, sync as run_sync, sync_with_base,
     sync_with_base_anchor, sync_with_cache,

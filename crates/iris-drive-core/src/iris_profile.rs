@@ -145,6 +145,17 @@ impl IrisProfileCapabilities {
     }
 
     #[must_use]
+    pub fn app_reader() -> Self {
+        Self {
+            can_write_roots: false,
+            can_admin_profile: false,
+            can_recover_app_keys: false,
+            can_receive_key_wraps: true,
+            can_decrypt_key_epochs: true,
+        }
+    }
+
+    #[must_use]
     pub fn recovery_phrase() -> Self {
         Self {
             can_write_roots: false,
