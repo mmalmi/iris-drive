@@ -1,3 +1,4 @@
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn apply_one_event(
     _client: &nostr_sdk::Client,
     config_dir: &std::path::Path,

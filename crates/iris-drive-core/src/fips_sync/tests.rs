@@ -379,8 +379,10 @@ async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
 fn discovery_scope_uses_iris_drive_overlay() {
     let config = AppConfig {
         account: Some(crate::AccountState {
+            profile_id: crate::IrisProfileId::new_v4(),
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "bb".repeat(32),
+            profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
@@ -463,8 +465,10 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     };
     let config = AppConfig {
         account: Some(crate::AccountState {
+            profile_id: crate::IrisProfileId::new_v4(),
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "dd".repeat(32),
+            profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::Authorized,
@@ -519,8 +523,10 @@ fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
     };
     let config = AppConfig {
         account: Some(crate::AccountState {
+            profile_id: crate::IrisProfileId::new_v4(),
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "dd".repeat(32),
+            profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             has_owner_signing_authority: false,
             authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
@@ -571,8 +577,10 @@ fn admin_endpoint_options_allow_open_device_link_requests() {
     let settings = FipsTransportSettings::default();
     let config = AppConfig {
         account: Some(crate::AccountState {
+            profile_id: crate::IrisProfileId::new_v4(),
             owner_pubkey: "aa".repeat(32),
             device_pubkey: "aa".repeat(32),
+            profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             has_owner_signing_authority: true,
             authorization_state: crate::DeviceAuthorizationState::Authorized,

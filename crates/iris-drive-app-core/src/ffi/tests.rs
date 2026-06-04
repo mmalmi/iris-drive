@@ -108,7 +108,7 @@ fn profile_actions_populate_mobile_parity_state() {
 }
 
 #[test]
-fn recovery_phrase_export_restores_same_profile_key() {
+fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let created = app.dispatch(NativeAppAction::CreateProfile {
@@ -135,8 +135,9 @@ fn recovery_phrase_export_restores_same_profile_key() {
 
     assert!(restored.error.is_empty(), "{}", restored.error);
     let restored_account = restored.ui.account.expect("restored account exists");
-    assert_eq!(restored_account.owner_pubkey, created_account.owner_pubkey);
-    assert_eq!(
+    assert_eq!(restored_account.profile_id, created_account.profile_id);
+    assert_ne!(restored_account.owner_pubkey, created_account.owner_pubkey);
+    assert_ne!(
         restored_account.device_pubkey,
         created_account.device_pubkey
     );
@@ -173,8 +174,9 @@ fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
 
     assert!(restored.error.is_empty(), "{}", restored.error);
     let restored_account = restored.ui.account.expect("restored account exists");
-    assert_eq!(restored_account.owner_pubkey, created_account.owner_pubkey);
-    assert_eq!(
+    assert_ne!(restored_account.profile_id, created_account.profile_id);
+    assert_ne!(restored_account.owner_pubkey, created_account.owner_pubkey);
+    assert_ne!(
         restored_account.device_pubkey,
         created_account.device_pubkey
     );
@@ -599,6 +601,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn native_fips_status_drives_device_online_presence() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

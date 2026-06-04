@@ -565,8 +565,10 @@ dck_generation = 1
 
         let mut newer = AppConfig {
             account: Some(AccountState {
+                profile_id: crate::IrisProfileId::new_v4(),
                 owner_pubkey: "owner".into(),
                 device_pubkey: "device-a".into(),
+                profile_roster_ops: Vec::new(),
                 device_link_secret: "link-secret".into(),
                 has_owner_signing_authority: false,
                 authorization_state: crate::account::DeviceAuthorizationState::Authorized,

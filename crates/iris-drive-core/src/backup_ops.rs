@@ -244,7 +244,7 @@ pub async fn check_backups(
                         config.backup_targets[index].last_check = Some(
                             backup_target_check_from_report(&check, &state, &root_cid_str, None),
                         );
-                        reports.push(check_report(&target, &state, &root_cid_str, check));
+                        reports.push(check_report(&target, &state, &root_cid_str, &check));
                     }
                     Err(error) => {
                         let error = error.to_string();
@@ -602,7 +602,7 @@ fn check_report(
     target: &BackupTarget,
     state: &str,
     root_cid: &str,
-    check: BackupCheckReport,
+    check: &BackupCheckReport,
 ) -> BackupOperationReport {
     BackupOperationReport {
         id: target.id.clone(),
@@ -612,7 +612,7 @@ fn check_report(
         state: state.to_owned(),
         root_cid: root_cid.to_owned(),
         upload: None,
-        check: Some(check_summary(&check)),
+        check: Some(check_summary(check)),
         error: None,
     }
 }

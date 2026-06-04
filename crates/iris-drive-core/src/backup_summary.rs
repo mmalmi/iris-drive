@@ -73,22 +73,19 @@ fn backup_target_label(target: &BackupTarget) -> Option<&str> {
 }
 
 fn backup_target_title(target: &BackupTarget, label: Option<&str>) -> String {
-    label
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| backup_target_display_target(target))
+    label.map_or_else(|| backup_target_display_target(target), ToOwned::to_owned)
 }
 
 fn backup_target_state(target: &BackupTarget) -> &str {
-    target
-        .last_sync
-        .as_ref()
-        .map(|sync| sync.state.as_str())
-        .unwrap_or(match target.kind {
+    target.last_sync.as_ref().map_or(
+        match target.kind {
             BackupTargetKind::Fips => "pending",
             BackupTargetKind::Blossom | BackupTargetKind::Filesystem | BackupTargetKind::Lmdb => {
                 "ready"
             }
-        })
+        },
+        |sync| sync.state.as_str(),
+    )
 }
 
 fn backup_target_detail(target: &BackupTarget) -> String {
@@ -136,6 +133,7 @@ fn short_status_value(value: &str) -> String {
 
 fn format_backup_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    #[allow(clippy::cast_precision_loss)]
     let mut value = bytes as f64;
     let mut unit = 0;
     while value >= 1024.0 && unit < UNITS.len() - 1 {

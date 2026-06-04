@@ -5,11 +5,26 @@ use tempfile::tempdir;
 fn create_yields_admin_authorized_account() {
     let dir = tempdir().unwrap();
     let acct = Account::create(dir.path(), Some("my-laptop".into())).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(dir.path()),
+    )
+    .unwrap();
+    let recovery_keys =
+        OwnerKey::from_recovery_phrase(&phrase, dir.path().join("recovery")).unwrap();
     assert!(acct.state.has_owner_signing_authority);
     assert!(acct.state.can_manage_devices());
     assert!(acct.state.is_authorized());
     assert!(acct.owner_key.is_none());
     assert_eq!(acct.state.owner_pubkey, acct.state.device_pubkey);
+    assert_ne!(
+        acct.state.device_pubkey,
+        recovery_keys.pubkey_hex(),
+        "the 12-word recovery phrase must not be the app key"
+    );
+    assert_eq!(
+        acct.state.profile_id,
+        crate::recovery_phrase::recovery_phrase_to_profile_id(&phrase).unwrap()
+    );
     // Roster admin authority is not a second key.
     assert!(dir.path().join("key").exists());
     assert!(dir.path().join("recovery_phrase").exists());
@@ -23,6 +38,17 @@ fn create_yields_admin_authorized_account() {
     let record = acct.state.app_keys_event.as_ref().unwrap();
     assert_eq!(record.signer_pubkey, acct.state.device_pubkey);
     assert!(!record.event_json.is_empty());
+
+    let projection = acct.state.profile_projection();
+    assert!(projection.can_write_roots(&acct.state.device_pubkey));
+    assert!(projection.can_admin_profile(&acct.state.device_pubkey));
+    assert!(!projection.can_write_roots(&recovery_keys.pubkey_hex()));
+    assert!(projection.can_admin_profile(&recovery_keys.pubkey_hex()));
+    assert_eq!(projection.key_epochs.len(), 1);
+    assert_eq!(
+        acct.current_dck_from_recovery_phrase(&phrase).unwrap(),
+        acct.current_dck().unwrap()
+    );
 }
 
 #[test]
@@ -82,8 +108,11 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
 
     let dir_b = tempdir().unwrap();
     let restored = Account::restore(dir_b.path(), &phrase, None).unwrap();
-    assert_eq!(restored.state.owner_pubkey, original.state.owner_pubkey);
-    assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
+    assert_eq!(restored.state.profile_id, original.state.profile_id);
+    assert_ne!(
+        restored.state.device_pubkey, original.state.device_pubkey,
+        "recovery creates a fresh app key instead of cloning the old one"
+    );
     assert_eq!(
         crate::recovery_phrase::load_recovery_phrase(crate::paths::recovery_phrase_path_in(
             dir_b.path()
@@ -480,8 +509,10 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     // the device would see after pulling the latest snapshot.
     let snapshot_for_linked = owner_acct.state.app_keys.clone();
     let linked_state = AccountState {
+        profile_id: owner_acct.state.profile_id,
         owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey.clone(),
+        profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),
         has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Authorized,
@@ -520,8 +551,10 @@ fn revoked_device_cannot_decrypt_new_dck() {
     owner_acct.revoke_device(&linked_pubkey).unwrap();
 
     let linked_state = AccountState {
+        profile_id: owner_acct.state.profile_id,
         owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey,
+        profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),
         has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Revoked,

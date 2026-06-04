@@ -39,6 +39,7 @@ pub mod gateway;
 pub mod history;
 pub mod identity;
 pub mod indexer;
+pub mod iris_profile;
 pub mod merge;
 pub mod network_sync;
 pub mod nostr_events;
@@ -82,6 +83,14 @@ pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
 pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
     path_has_ignored_component, read_conflict_records, should_ignore_name,
+};
+pub use iris_profile::{
+    IRIS_PROFILE_ROSTER_SCHEMA, IrisProfileCapabilities, IrisProfileError, IrisProfileFacet,
+    IrisProfileId, IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterLog,
+    IrisProfileRosterOp, IrisProfileRosterOpContent, IrisProfileRosterProjection,
+    IrisProfileTombstone, KIND_IRIS_PROFILE_ROSTER_OP, KeyWrapStatus, SignedIrisProfileRosterOp,
+    build_iris_profile_roster_op_event, iris_profile_roster_op_d_tag,
+    parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,

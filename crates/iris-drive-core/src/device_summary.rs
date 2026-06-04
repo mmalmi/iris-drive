@@ -185,6 +185,7 @@ pub struct DeviceConnectivity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DeviceRosterRow {
     pub pubkey_hex: String,
     pub npub: String,
@@ -290,6 +291,7 @@ pub fn device_roster_rows(
         .collect()
 }
 
+#[allow(clippy::fn_params_excessive_bools)]
 fn device_online_via(
     is_current_device: bool,
     is_online: bool,

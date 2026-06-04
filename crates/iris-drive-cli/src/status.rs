@@ -159,6 +159,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn status_summary(
     initialized: bool,
     account: Option<&Value>,

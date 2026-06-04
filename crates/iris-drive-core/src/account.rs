@@ -29,18 +29,29 @@ use crate::app_keys::{
 };
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
+use crate::iris_profile::{
+    IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
+    IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
+    build_iris_profile_roster_op_event, parse_iris_profile_roster_op_event,
+    project_iris_profile_roster,
+};
 use crate::nostr_events::build_app_keys_event;
 use crate::paths::{
     config_path_in, key_path_in, owner_key_path_in, recovery_phrase_path_in, sync_cache_path_in,
 };
 use crate::recovery_phrase::{
-    generate_recovery_phrase, save_recovery_phrase, validate_recovery_phrase,
+    RecoveryPhraseError, generate_recovery_phrase, recovery_phrase_to_profile_id,
+    save_recovery_phrase, validate_recovery_phrase,
 };
 
 #[derive(Debug, Error)]
 pub enum AccountError {
     #[error("identity: {0}")]
     Identity(#[from] IdentityError),
+    #[error("iris profile: {0}")]
+    IrisProfile(#[from] IrisProfileError),
+    #[error("recovery phrase: {0}")]
+    RecoveryPhrase(#[from] RecoveryPhraseError),
     #[error("invalid owner pubkey: {0}")]
     InvalidOwnerPubkey(String),
     #[error("invalid device pubkey: {0}")]
@@ -110,10 +121,13 @@ pub struct InboundDeviceLinkRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AccountState {
+    pub profile_id: IrisProfileId,
     /// Stable account id. New accounts use their first admin device pubkey.
     /// The name is kept for config/wire compatibility.
     pub owner_pubkey: String,
     pub device_pubkey: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
     #[serde(default = "default_device_link_secret")]
     pub device_link_secret: String,
     /// Historical field name. In the current model this is true when the
@@ -133,6 +147,11 @@ pub struct AccountState {
 }
 
 impl AccountState {
+    #[must_use]
+    pub fn profile_projection(&self) -> IrisProfileRosterProjection {
+        project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone())
+    }
+
     /// Has the latest `AppKeys` snapshot included this device?
     #[must_use]
     pub fn is_authorized(&self) -> bool {
@@ -340,18 +359,20 @@ impl Account {
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `AppKeys` snapshot.
     pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, AccountError> {
-        let recovery_phrase = generate_recovery_phrase()
-            .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
-        let device =
-            DeviceIdentity::from_recovery_phrase(&recovery_phrase, key_path_in(config_dir))?;
+        let recovery_phrase = generate_recovery_phrase()?;
+        let profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
+        let recovery_key =
+            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(config_dir))?;
+        let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
-        save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)
-            .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+        save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let mut state = AccountState {
+            profile_id,
             owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
+            profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
@@ -370,6 +391,14 @@ impl Account {
         )];
         let dck = generate_dck();
         let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        state.profile_roster_ops = initial_profile_roster_ops(
+            device.keys(),
+            profile_id,
+            &devices[0],
+            &recovery_key.pubkey_hex(),
+            &dck,
+            now,
+        )?;
         let snap = AppKeysSnapshot {
             owner_pubkey: state.owner_pubkey.clone(),
             signed_by_pubkey: Some(state.device_pubkey.clone()),
@@ -396,17 +425,31 @@ impl Account {
         device_label: Option<String>,
     ) -> Result<Self, AccountError> {
         let recovery_phrase = validate_recovery_phrase(device_nsec).ok();
-        let device = DeviceIdentity::from_secret(device_nsec, key_path_in(config_dir))?;
+        let profile_id = recovery_phrase
+            .as_deref()
+            .map(recovery_phrase_to_profile_id)
+            .transpose()?
+            .unwrap_or_else(IrisProfileId::new_v4);
+        let recovery_key = recovery_phrase
+            .as_deref()
+            .map(|phrase| OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir)))
+            .transpose()?;
+        let device = if recovery_phrase.is_some() {
+            DeviceIdentity::generate(key_path_in(config_dir))
+        } else {
+            DeviceIdentity::from_secret(device_nsec, key_path_in(config_dir))?
+        };
         device.save()?;
         if let Some(phrase) = recovery_phrase {
-            save_recovery_phrase(recovery_phrase_path_in(config_dir), &phrase)
-                .map_err(|error| IdentityError::InvalidKey(error.to_string()))?;
+            save_recovery_phrase(recovery_phrase_path_in(config_dir), &phrase)?;
         }
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let mut state = AccountState {
+            profile_id,
             owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
+            profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
@@ -425,6 +468,16 @@ impl Account {
         )];
         let dck = generate_dck();
         let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        if let Some(recovery_key) = recovery_key {
+            state.profile_roster_ops = initial_profile_roster_ops(
+                device.keys(),
+                profile_id,
+                &devices[0],
+                &recovery_key.pubkey_hex(),
+                &dck,
+                now,
+            )?;
+        }
         let snap = AppKeysSnapshot {
             owner_pubkey: state.owner_pubkey.clone(),
             signed_by_pubkey: Some(state.device_pubkey.clone()),
@@ -461,8 +514,10 @@ impl Account {
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let state = AccountState {
+            profile_id: IrisProfileId::new_v4(),
             owner_pubkey: owner_pubkey_hex,
             device_pubkey: device.pubkey_hex(),
+            profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
             has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
@@ -712,6 +767,41 @@ impl Account {
         Ok(arr)
     }
 
+    pub fn current_dck_from_recovery_phrase(
+        &self,
+        recovery_phrase: &str,
+    ) -> Result<[u8; 32], AccountError> {
+        let profile_id = recovery_phrase_to_profile_id(recovery_phrase)?;
+        if profile_id != self.state.profile_id {
+            return Err(AccountError::InvalidOwnerPubkey(format!(
+                "recovery phrase belongs to profile {profile_id}, expected {}",
+                self.state.profile_id
+            )));
+        }
+        let recovery_key =
+            OwnerKey::from_recovery_phrase(recovery_phrase, owner_key_path_in(Path::new("")))?;
+        let recovery_pubkey = recovery_key.pubkey_hex();
+        let projection = self.state.profile_projection();
+        let key_epoch = projection
+            .key_epochs
+            .values()
+            .next_back()
+            .ok_or(AccountError::NoCurrentSnapshot)?;
+        let wrap = key_epoch
+            .wrapped_dck
+            .get(&recovery_pubkey)
+            .ok_or(AccountError::NoWrapForThisDevice)?;
+        let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
+            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+        let bytes = nip44::decrypt_to_bytes(recovery_key.keys().secret_key(), &signer_pk, wrap)
+            .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+        Ok(arr)
+    }
+
     fn record_current_app_keys_event(&mut self) -> Result<(), AccountError> {
         let Some(snapshot) = self.state.app_keys.as_ref() else {
             return Ok(());
@@ -747,15 +837,95 @@ fn wrap_dck_for_devices(
     devices: &[DeviceEntry],
     dck: &[u8; 32],
 ) -> Result<BTreeMap<String, String>, AccountError> {
+    wrap_dck_for_pubkeys(
+        owner_secret,
+        devices.iter().map(|device| device.pubkey.as_str()),
+        dck,
+    )
+}
+
+fn wrap_dck_for_pubkeys<'a, I>(
+    owner_secret: &SecretKey,
+    pubkeys: I,
+    dck: &[u8; 32],
+) -> Result<BTreeMap<String, String>, AccountError>
+where
+    I: IntoIterator<Item = &'a str>,
+{
     let mut wraps = BTreeMap::new();
-    for d in devices {
-        let pk = PublicKey::from_hex(&d.pubkey)
+    for pubkey in pubkeys {
+        let pk = PublicKey::from_hex(pubkey)
             .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
         let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
             .map_err(|e| AccountError::Wrap(e.to_string()))?;
-        wraps.insert(d.pubkey.clone(), ct);
+        wraps.insert(pubkey.to_string(), ct);
     }
     Ok(wraps)
+}
+
+fn initial_profile_roster_ops(
+    signer_keys: &Keys,
+    profile_id: IrisProfileId,
+    app_entry: &DeviceEntry,
+    recovery_pubkey: &str,
+    dck: &[u8; 32],
+    created_at: i64,
+) -> Result<Vec<SignedIrisProfileRosterOp>, AccountError> {
+    let app_pubkey = app_entry.pubkey.clone();
+    let app_label = app_entry.label.clone();
+    let app_op = signed_profile_roster_op(
+        signer_keys,
+        profile_id,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                app_pubkey.clone(),
+                created_at,
+                app_label,
+                IrisProfileCapabilities::app_admin(),
+            ),
+        },
+        created_at,
+    )?;
+    let recovery_op = signed_profile_roster_op(
+        signer_keys,
+        profile_id,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.to_string(), created_at + 1),
+        },
+        created_at + 1,
+    )?;
+    let wrapped_dck = wrap_dck_for_pubkeys(
+        signer_keys.secret_key(),
+        [app_pubkey.as_str(), recovery_pubkey],
+        dck,
+    )?;
+    let epoch_op = signed_profile_roster_op(
+        signer_keys,
+        profile_id,
+        IrisProfileRosterOp::RotateKeyEpoch {
+            epoch: 1,
+            wrapped_dck,
+        },
+        created_at + 2,
+    )?;
+    Ok(vec![app_op, recovery_op, epoch_op])
+}
+
+fn signed_profile_roster_op(
+    signer_keys: &Keys,
+    profile_id: IrisProfileId,
+    op: IrisProfileRosterOp,
+    created_at: i64,
+) -> Result<SignedIrisProfileRosterOp, AccountError> {
+    let event = build_iris_profile_roster_op_event(
+        signer_keys,
+        profile_id,
+        Vec::new(),
+        None,
+        op,
+        created_at,
+    )?;
+    parse_iris_profile_roster_op_event(&event).map_err(AccountError::from)
 }
 
 fn current_unix_seconds() -> i64 {

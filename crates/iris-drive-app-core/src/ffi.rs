@@ -37,9 +37,7 @@ use iris_drive_core::fips_status::{
 use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
-use iris_drive_core::{
-    Account, AppConfig, BackupTarget, DeviceAuthorizationState, DeviceIdentity, Drive,
-};
+use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
 #[cfg(not(test))]
 use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
@@ -885,13 +883,13 @@ impl NativeAppRuntime {
         let mut account = raw_account.clone();
         account.recompute_authorization();
         self.state.ui.account = Some(UiAccount {
+            profile_id: account.profile_id.to_string(),
             owner_pubkey: account_npub(&account.owner_pubkey),
             device_pubkey: account_npub(&account.device_pubkey),
             device_label: account.device_label.clone().unwrap_or_default(),
             authorization_state: authorization_state_key(account.authorization_state).to_owned(),
             has_owner_signing_authority: account.has_owner_signing_authority,
-            can_export_recovery_phrase: account.owner_pubkey == account.device_pubkey
-                && recovery_phrase_path_in(Path::new(&self.data_dir)).exists(),
+            can_export_recovery_phrase: recovery_phrase_path_in(Path::new(&self.data_dir)).exists(),
             device_link_request: device_link_request_url(&account),
             device_link_invite: device_link_invite_url(&account),
             inbound_device_link_requests: inbound_device_link_requests(&account),
@@ -924,11 +922,11 @@ impl NativeAppRuntime {
             .get("visible_file_bytes")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or_default();
-        self.state.ui.provider_change_key = value
+        value
             .get("change_key")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
-            .to_owned();
+            .clone_into(&mut self.state.ui.provider_change_key);
         self.state.ui.provider_directory_paths = value
             .get("directory_paths")
             .and_then(serde_json::Value::as_array)
@@ -1080,6 +1078,7 @@ fn run_device_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(),
 }
 
 #[cfg(not(test))]
+#[allow(clippy::too_many_lines)]
 async fn run_device_link_exchange_async(
     data_dir: &str,
     stop: Arc<AtomicBool>,
@@ -1957,27 +1956,6 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             ..RecoverySecretExport::default()
         };
     };
-    if account.owner_pubkey != account.device_pubkey {
-        return RecoverySecretExport {
-            error: "recovery phrase is available on the profile identity device".to_owned(),
-            ..RecoverySecretExport::default()
-        };
-    }
-    let device = match DeviceIdentity::load(key_path_in(config_dir)) {
-        Ok(device) => device,
-        Err(error) => {
-            return RecoverySecretExport {
-                error: format!("loading device key: {error}"),
-                ..RecoverySecretExport::default()
-            };
-        }
-    };
-    if device.pubkey_hex() != account.device_pubkey {
-        return RecoverySecretExport {
-            error: "device key does not match profile".to_owned(),
-            ..RecoverySecretExport::default()
-        };
-    }
     let phrase_path = recovery_phrase_path_in(config_dir);
     let phrase = match iris_drive_core::recovery_phrase::load_recovery_phrase(&phrase_path) {
         Ok(phrase) => phrase,
@@ -1988,7 +1966,22 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             };
         }
     };
-    let secret_key = device.keys().secret_key().to_bech32().unwrap_or_default();
+    let phrase_profile_id =
+        match iris_drive_core::recovery_phrase::recovery_phrase_to_profile_id(&phrase) {
+            Ok(profile_id) => profile_id,
+            Err(error) => {
+                return RecoverySecretExport {
+                    error: format!("validating recovery phrase profile: {error}"),
+                    ..RecoverySecretExport::default()
+                };
+            }
+        };
+    if phrase_profile_id != account.profile_id {
+        return RecoverySecretExport {
+            error: "recovery phrase does not match IrisProfile".to_owned(),
+            ..RecoverySecretExport::default()
+        };
+    }
     let phrase_secret = match iris_drive_core::recovery_phrase::recovery_phrase_to_nsec(&phrase) {
         Ok(secret) => secret,
         Err(error) => {
@@ -1998,17 +1991,11 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             };
         }
     };
-    if phrase_secret != secret_key {
-        return RecoverySecretExport {
-            error: "recovery phrase does not match profile key".to_owned(),
-            ..RecoverySecretExport::default()
-        };
-    }
     RecoverySecretExport {
         can_export: true,
         words: phrase.split_whitespace().map(ToOwned::to_owned).collect(),
         recovery_phrase: phrase,
-        secret_key,
+        secret_key: phrase_secret,
         error: String::new(),
     }
 }

@@ -36,6 +36,7 @@ pub struct UiSyncRoot {
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiAccount {
+    pub profile_id: String,
     pub owner_pubkey: String,
     pub device_pubkey: String,
     pub device_label: String,

@@ -80,8 +80,10 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
     );
     let mut config = AppConfig {
         account: Some(AccountState {
+            profile_id: iris_drive_core::IrisProfileId::new_v4(),
             owner_pubkey: "owner".to_string(),
             device_pubkey: "device-a".to_string(),
+            profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".to_string(),
             has_owner_signing_authority: true,
             authorization_state: iris_drive_core::DeviceAuthorizationState::Authorized,

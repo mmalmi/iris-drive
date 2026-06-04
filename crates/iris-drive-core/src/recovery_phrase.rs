@@ -6,7 +6,10 @@ use bip39::{Language, Mnemonic};
 use nostr_sdk::nips::nip06::FromMnemonic;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use nostr_sdk::{Keys, SecretKey};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::IrisProfileId;
 
 pub const RECOVERY_PHRASE_WORD_COUNT: usize = 12;
 
@@ -53,6 +56,16 @@ pub fn recovery_phrase_to_nsec(phrase: &str) -> Result<String, RecoveryPhraseErr
     keys.secret_key()
         .to_bech32()
         .map_err(|error| RecoveryPhraseError::InvalidSecret(error.to_string()))
+}
+
+pub fn recovery_phrase_to_profile_id(phrase: &str) -> Result<IrisProfileId, RecoveryPhraseError> {
+    let normalized = validate_recovery_phrase(phrase)?;
+    let digest = Sha256::digest([b"iris-profile-id-v1".as_slice(), normalized.as_bytes()].concat());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(IrisProfileId::from_uuid(uuid::Uuid::from_bytes(bytes)))
 }
 
 pub fn normalize_recovery_phrase(phrase: &str) -> String {
@@ -171,12 +184,24 @@ mod tests {
         let phrase =
             "leader monkey parrot ring guide accident before fence cannon height naive bean";
 
-        let secret = SecretKey::from_bech32(&recovery_phrase_to_nsec(phrase).unwrap()).unwrap();
+        let secret = SecretKey::from_bech32(recovery_phrase_to_nsec(phrase).unwrap()).unwrap();
 
         assert_eq!(
             secret.to_secret_hex(),
             "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
         );
+    }
+
+    #[test]
+    fn recovery_phrase_derives_stable_uuid_profile_id() {
+        let phrase =
+            "leader monkey parrot ring guide accident before fence cannon height naive bean";
+
+        let profile_id = recovery_phrase_to_profile_id(phrase).unwrap();
+        let same_profile_id = recovery_phrase_to_profile_id(&phrase.to_uppercase()).unwrap();
+
+        assert_eq!(profile_id, same_profile_id);
+        assert_eq!(profile_id.as_uuid().get_version_num(), 4);
     }
 
     #[test]
