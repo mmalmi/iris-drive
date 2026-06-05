@@ -135,7 +135,8 @@ pub use sync_cache::{
 ///
 /// v2: added optional `AccountState` for the owner/device key split + `AppKeys`.
 /// v3: removed plain working-directory mode; configs are strict.
-pub const CONFIG_SCHEMA_VERSION: u32 = 3;
+/// v4: renamed the persisted local identity field from `account` to `profile`.
+pub const CONFIG_SCHEMA_VERSION: u32 = 4;
 
 #[cfg(test)]
 mod tests {

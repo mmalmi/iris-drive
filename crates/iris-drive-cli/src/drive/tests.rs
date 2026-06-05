@@ -4,7 +4,7 @@ use iris_drive_core::root_meta::DriveRootMeta;
 fn init_config(config_dir: &Path) -> Account {
     let account = Account::create(config_dir, Some("local".into())).unwrap();
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -17,7 +17,7 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveR
     let remote =
         iris_drive_core::identity::Identity::generate(config_dir.join("remote.key")).pubkey_hex();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state.app_keys.as_mut().unwrap().app_actors.push(
         iris_drive_core::app_keys::AppActorEntry::member(
             remote.clone(),

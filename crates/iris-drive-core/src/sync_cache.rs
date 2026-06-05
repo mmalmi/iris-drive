@@ -580,7 +580,7 @@ fn roots_for_drive(
     let Some(root_cid) = drive.last_root_cid.clone() else {
         return Vec::new();
     };
-    let device_id = config.account.as_ref().map_or_else(
+    let device_id = config.profile.as_ref().map_or_else(
         || "legacy".to_string(),
         |account| account.device_pubkey.clone(),
     );

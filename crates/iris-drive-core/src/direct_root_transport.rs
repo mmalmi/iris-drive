@@ -53,7 +53,7 @@ impl DirectRootExchange {
         let config = AppConfig::load_or_default(config_path_in(config_dir))
             .map_err(|error| format!("loading config: {error}"))?;
         sync.refresh_authorized_peers(&config).await;
-        let Some(state) = config.account.as_ref() else {
+        let Some(state) = config.profile.as_ref() else {
             return Ok(());
         };
         let root_scope_id = state.root_scope_id();
@@ -384,7 +384,7 @@ pub async fn apply_direct_root_event(
 }
 
 fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return false;
     };
     config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {

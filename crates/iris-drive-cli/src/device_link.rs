@@ -30,7 +30,7 @@ pub(crate) fn cmd_app_keys(config_dir: &std::path::Path, command: AppKeysCmd) ->
 pub(crate) fn cmd_app_keys_invite(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let invite = device_link_invite_json(state);
@@ -48,7 +48,7 @@ pub(crate) fn cmd_app_keys_reset_invite(config_dir: &std::path::Path) -> Result<
     let mut config = AppConfig::load_or_default(&config_path)?;
     let (invite, inbound_requests) = {
         let state = config
-            .account
+            .profile
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
         if !state.can_manage_devices() {
@@ -77,7 +77,7 @@ pub(crate) fn cmd_app_keys_reset_invite(config_dir: &std::path::Path) -> Result<
 pub(crate) fn cmd_app_keys_requests(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     println!(

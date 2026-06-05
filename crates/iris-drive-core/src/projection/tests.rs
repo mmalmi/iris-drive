@@ -59,7 +59,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
         .unwrap();
 
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -127,7 +127,7 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     };
 
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -231,7 +231,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         ));
 
     let mut config = AppConfig {
-        account: Some(account_state),
+        profile: Some(account_state),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -298,7 +298,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
         .unwrap();
 
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -346,7 +346,7 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
         .unwrap();
 
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -395,7 +395,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
         ));
 
     let mut config = AppConfig {
-        account: Some(account_state),
+        profile: Some(account_state),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -522,7 +522,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         ));
 
     let mut config = AppConfig {
-        account: Some(account_state),
+        profile: Some(account_state),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -624,7 +624,7 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
         ));
 
     let mut config = AppConfig {
-        account: Some(account_state),
+        profile: Some(account_state),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -691,7 +691,7 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
         ));
 
     let mut config = AppConfig {
-        account: Some(account_state),
+        profile: Some(account_state),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());

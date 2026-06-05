@@ -12,7 +12,7 @@ pub(crate) fn peer_statuses(
     config: &AppConfig,
     daemon_status: Option<&Value>,
 ) -> Vec<serde_json::Value> {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
     let Some(snapshot) = account.app_keys.as_ref() else {

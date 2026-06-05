@@ -55,7 +55,7 @@ pub(crate) fn cmd_recover_app_key(
 ) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive restore` first"))?;
     let loaded_from_disk = recovery_phrase.is_none_or(|phrase| phrase.trim().is_empty());
@@ -86,7 +86,7 @@ pub(crate) fn cmd_recover_app_key(
         "loaded_recovery_phrase_from_disk".to_string(),
         json!(loaded_from_disk),
     );
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!("{}", Value::Object(output));
     Ok(())
@@ -144,7 +144,7 @@ pub(crate) fn finish_account_init(
     user_profile: Option<UserProfile>,
 ) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     if user_profile.is_some() {
         config.user_profile = user_profile;
     }
@@ -206,7 +206,7 @@ pub(crate) fn cmd_approve(
 ) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let (device_hex, label) = resolve_device_approval_input(device, state.profile_id, label)
@@ -217,7 +217,7 @@ pub(crate) fn cmd_approve(
         .approve_device(&device_hex, label)
         .context("approving device")?;
     let device_count = snap.app_actors.len();
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
@@ -232,7 +232,7 @@ pub(crate) fn cmd_approve(
 pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if !state.can_manage_devices() {
@@ -252,7 +252,7 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
             "rejected": rejected,
             "rejected_app_key_npub": account_npub(&device_hex),
             "inbound_device_link_requests": inbound_device_link_requests_json(
-                config.account.as_ref().expect("account still present")
+                config.profile.as_ref().expect("account still present")
             ),
         })
     );
@@ -263,7 +263,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if state.device_pubkey == device_hex {
@@ -275,7 +275,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
         .context("revoking AppKey")?;
     let device_count = snap.app_actors.len();
     let dck_generation = snap.dck_generation;
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
@@ -304,7 +304,7 @@ fn set_device_admin_role(
     let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut account = Account::load(state, config_dir).context("loading account")?;
@@ -321,7 +321,7 @@ fn set_device_admin_role(
         .app_actor(&device_hex)
         .map_or(iris_drive_core::AppActorRole::Member, |actor| actor.role);
     let dck_generation = snap.dck_generation;
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
@@ -337,7 +337,7 @@ fn set_device_admin_role(
 pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let snap = state.app_keys.as_ref();
     let mut output = account_identity_json_map(&state);
@@ -374,13 +374,13 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
 pub(crate) fn cmd_rotate_dck(config_dir: &std::path::Path) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account.rotate_dck().context("rotating DCK")?;
     let dck_gen = snap.dck_generation;
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
@@ -399,7 +399,7 @@ pub(crate) fn cmd_rotate_dck(config_dir: &std::path::Path) -> Result<()> {
 pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut account = Account::load(state, config_dir).context("loading account")?;
@@ -418,7 +418,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
         .iter()
         .map(|pubkey| account_npub(pubkey))
         .collect::<Vec<_>>();
-    config.account = Some(account.state.clone());
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
@@ -436,7 +436,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
 pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut output = account_identity_json_map(&state);
     output.insert(
@@ -457,7 +457,7 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
 
 pub(crate) fn load_account_state(config_dir: &std::path::Path) -> Result<AccountState> {
     AppConfig::load_or_default(config_path_in(config_dir))?
-        .account
+        .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))
 }
 
@@ -469,7 +469,7 @@ pub(crate) fn already_initialized(config_dir: &std::path::Path) -> bool {
         && config_path_in(config_dir).exists()
         && AppConfig::load_or_default(config_path_in(config_dir))
             .ok()
-            .and_then(|c| c.account)
+            .and_then(|c| c.profile)
             .is_some()
 }
 
@@ -569,7 +569,7 @@ pub(crate) async fn send_pending_device_link_request(
     sent_cache: &mut BTreeMap<String, SentDeviceLinkRequest>,
 ) -> Result<Option<Value>> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
     if state.can_manage_devices()
@@ -653,7 +653,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
         return Ok(None);
     };
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
     if !state.can_manage_devices() {
@@ -753,7 +753,7 @@ async fn handle_device_link_request_app_message(
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_mut() else {
+    let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
     let changed = state
@@ -801,7 +801,7 @@ async fn handle_device_link_roster_app_message(
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_mut() else {
+    let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
     if state.can_manage_devices() {
@@ -829,7 +829,7 @@ async fn handle_device_link_roster_app_message(
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
-    let state = config.account.as_ref().expect("account still present");
+    let state = config.profile.as_ref().expect("account still present");
     let ack_frame = if accepted {
         device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
     } else {
@@ -877,7 +877,7 @@ fn handle_device_link_roster_ack_app_message(
     }
 
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
     if admin_device_hex != frame.admin_device_pubkey

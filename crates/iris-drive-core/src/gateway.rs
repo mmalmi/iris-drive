@@ -582,7 +582,7 @@ fn current_drive_root(config_dir: &Path, drive_id: &str) -> Result<Cid, GatewayE
         .drive(drive_id)
         .ok_or_else(|| GatewayError::InvalidRequest(format!("drive {drive_id} not found")))?;
     let root_cid = config
-        .account
+        .profile
         .as_ref()
         .and_then(|account| drive.device_roots.get(&account.device_pubkey))
         .map(|root| root.root_cid.as_str())

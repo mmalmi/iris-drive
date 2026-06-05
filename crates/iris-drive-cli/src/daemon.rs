@@ -20,7 +20,7 @@ async fn publish_provider_root_if_changed(
     let Some(current_key) = current_key else {
         return Ok(Some(updated_config));
     };
-    let Some(updated_state) = updated_config.account.clone() else {
+    let Some(updated_state) = updated_config.profile.clone() else {
         return Ok(Some(updated_config));
     };
 
@@ -54,7 +54,7 @@ async fn publish_provider_root_if_changed(
 }
 
 fn current_device_root_key(config: &AppConfig) -> Option<String> {
-    let state = config.account.as_ref()?;
+    let state = config.profile.as_ref()?;
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
     let root = drive.device_roots.get(&state.device_pubkey)?;
     Some(format!(

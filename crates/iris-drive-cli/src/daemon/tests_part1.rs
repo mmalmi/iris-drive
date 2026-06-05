@@ -79,7 +79,7 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
         DeviceRootRef::legacy("remote-root-a", 11, 1),
     );
     let mut config = AppConfig {
-        account: Some(AccountState {
+        profile: Some(AccountState {
             profile_id: iris_drive_core::IrisProfileId::new_v4(),
             device_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),

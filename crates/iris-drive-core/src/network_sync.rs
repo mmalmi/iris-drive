@@ -70,7 +70,7 @@ pub async fn sync_once_with_fips(
 ) -> Result<NetworkSyncReport> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; create or link a profile first"))?;
     let relays = pick_relays(&config, relay_override);
@@ -120,7 +120,7 @@ pub async fn sync_once_with_fips(
     }
 
     let authorized_devices = config
-        .account
+        .profile
         .as_ref()
         .map(authorized_device_pubkeys)
         .unwrap_or_default();
@@ -161,7 +161,7 @@ pub async fn sync_once_with_fips(
     report.drive_root_events_skipped = drive_roots.skipped;
     let mut root_cids_to_download = drive_roots.root_cids_to_download;
 
-    if let Some(account_state) = config.account.clone().filter(AccountState::can_write_roots) {
+    if let Some(account_state) = config.profile.clone().filter(AccountState::can_write_roots) {
         match relay_sync::fetch_latest_files_root(
             &client,
             &account_state.device_pubkey,
@@ -283,7 +283,7 @@ fn files_root_apply_label(outcome: &relay_sync::FilesRootApply) -> &'static str 
 }
 
 fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return false;
     };
     config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {

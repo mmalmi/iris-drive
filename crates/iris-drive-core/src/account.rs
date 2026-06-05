@@ -1386,7 +1386,7 @@ pub fn logout_local_account(config_dir: &Path) -> Result<LogoutReport, AccountEr
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path)?;
 
-    let cleared_account = config.account.take().is_some();
+    let cleared_account = config.profile.take().is_some();
     let cleared_user_profile = config.user_profile.take().is_some();
     let cleared_drives = !config.drives.is_empty();
     config.drives.clear();

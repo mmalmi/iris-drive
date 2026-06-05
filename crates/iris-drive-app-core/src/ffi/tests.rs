@@ -127,7 +127,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(created.error.is_empty(), "{}", created.error);
 
     let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    let account = iris_drive_core::Account::load(config.account.clone().unwrap(), dir.path())
+    let account = iris_drive_core::Account::load(config.profile.clone().unwrap(), dir.path())
         .expect("account loads");
     let folder = iris_drive_core::create_shared_folder(
         account.device.keys(),
@@ -223,7 +223,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let created_account = created.ui.profile.expect("created account exists");
     let owner_config =
         AppConfig::load_or_default(config_path_in(owner_dir.path())).expect("owner config loads");
-    let owner_state = owner_config.account.expect("owner state exists");
+    let owner_state = owner_config.profile.expect("owner state exists");
     let export = super::export_recovery_secret(owner_dir.path().display().to_string());
     assert!(export.error.is_empty(), "{}", export.error);
 
@@ -238,12 +238,12 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
 
     let mut restored_config =
         AppConfig::load_or_default(config_path_in(restored_dir.path())).expect("config loads");
-    let mut awaiting_state = restored_config.account.take().expect("state exists");
+    let mut awaiting_state = restored_config.profile.take().expect("state exists");
     awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
     awaiting_state.authorization_state =
         iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
-    restored_config.account = Some(awaiting_state);
+    restored_config.profile = Some(awaiting_state);
     restored_config
         .save(config_path_in(restored_dir.path()))
         .expect("save restored config");
@@ -516,7 +516,7 @@ fn logout_clears_local_profile_state_and_key_material() {
     assert_eq!(state.ui.sync.status_label, "Sync paused");
     assert!(!dir.path().join("key").exists());
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    assert!(config.account.is_none());
+    assert!(config.profile.is_none());
     assert!(config.drives.is_empty());
 }
 
@@ -880,7 +880,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
 
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let link_secret = state.device_link_secret.clone();
     state
@@ -938,7 +938,7 @@ fn owner_can_reject_inbound_device_link_request() {
 
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let link_secret = state.device_link_secret.clone();
     state
@@ -977,7 +977,7 @@ fn owner_can_reject_inbound_device_link_request() {
     let saved = AppConfig::load_or_default(&config_path).unwrap();
     assert!(
         saved
-            .account
+            .profile
             .unwrap()
             .inbound_device_link_requests
             .is_empty()
@@ -1052,7 +1052,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
 
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let link_secret = state.device_link_secret.clone();
     let linked_device =
@@ -1101,7 +1101,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         .unwrap();
 
     let mut linked_config = AppConfig {
-        account: Some(linked.state.clone()),
+        profile: Some(linked.state.clone()),
         ..AppConfig::default()
     };
     linked_config.upsert_drive(iris_drive_core::Drive::primary(owner.state.root_scope_id()));
@@ -1146,7 +1146,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
 
     let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
     let linked_roster = linked_config
-        .account
+        .profile
         .as_ref()
         .unwrap()
         .app_keys
@@ -1157,7 +1157,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
 
 fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
-    let owner_state = owner_config.account.as_ref().unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
     let frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,

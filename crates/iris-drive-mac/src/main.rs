@@ -198,7 +198,7 @@ fn bootstrap_first_launch_with(config_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(config_dir).context("creating config dir")?;
         let account =
             Account::create(config_dir, Some("Mac".into())).context("generating account keys")?;
-        config.account = Some(account.state.clone());
+        config.profile = Some(account.state.clone());
         if config.drive(PRIMARY_DRIVE_ID).is_none() {
             config.upsert_drive(Drive::primary(account.state.root_scope_id()));
         }
@@ -305,7 +305,7 @@ mod tests {
         assert!(key_path_in(cfg.path()).exists(), "device key written");
 
         let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
-        assert!(config.account.is_some(), "account stamped");
+        assert!(config.profile.is_some(), "account stamped");
         assert!(
             config.drive(PRIMARY_DRIVE_ID).is_some(),
             "primary drive present"
@@ -328,8 +328,8 @@ mod tests {
 
         // Keys + account survive untouched; same npub, same drive id.
         assert_eq!(
-            first.account.as_ref().map(|a| &a.device_pubkey),
-            second.account.as_ref().map(|a| &a.device_pubkey),
+            first.profile.as_ref().map(|a| &a.device_pubkey),
+            second.profile.as_ref().map(|a| &a.device_pubkey),
         );
         assert_eq!(first.drives, second.drives);
     }

@@ -75,7 +75,7 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
             .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
         let config = daemon.config();
         let account = config
-            .account
+            .profile
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let drive = config

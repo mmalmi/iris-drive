@@ -37,7 +37,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     drop(daemon);
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state
         .app_keys
         .as_mut()
@@ -99,7 +99,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
 
     let mut converged = daemon.config().clone();
     converged
-        .account
+        .profile
         .as_mut()
         .unwrap()
         .app_keys
@@ -108,7 +108,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .app_actors
         .retain(|device| device.pubkey != remote);
     converged
-        .account
+        .profile
         .as_mut()
         .unwrap()
         .app_keys

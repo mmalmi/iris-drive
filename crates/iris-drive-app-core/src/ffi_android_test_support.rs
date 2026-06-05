@@ -25,7 +25,7 @@ fn native_apply_owner_snapshot_for_test(
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir))?;
     let owner_account_state = owner_config
-        .account
+        .profile
         .as_ref()
         .context("owner account missing")?;
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir))?;
@@ -44,7 +44,7 @@ fn native_apply_owner_snapshot_for_test(
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir))?;
     let owner_account_state = owner_config
-        .account
+        .profile
         .as_ref()
         .context("owner account missing")?;
     let owner = iris_drive_core::Account::load(owner_account_state.clone(), owner_dir)

@@ -997,7 +997,7 @@ all_authorized() {
   local label status
   for label in "${LABELS[@]}"; do
     status="$(idrive_cmd "$label" status 2>/dev/null || true)"
-    jq -e '.account.authorization_state == "authorized"' >/dev/null 2>&1 <<<"$status" || return 1
+    jq -e '.profile.authorization_state == "authorized"' >/dev/null 2>&1 <<<"$status" || return 1
   done
 }
 

@@ -978,7 +978,7 @@ fn seed_conflict_record(config_dir: &std::path::Path, conflict_id: &str) {
         let new_root = iris_drive_core::layer_conflict_records(&tree, root, &[record])
             .await
             .unwrap();
-        let account_device = config.account.as_ref().unwrap().device_pubkey.clone();
+        let account_device = config.profile.as_ref().unwrap().device_pubkey.clone();
         let drive = config
             .drives
             .iter_mut()

@@ -25,7 +25,7 @@ fn init_config(dir: &Path) -> Identity {
 fn init_config_with_account(dir: &Path) -> crate::account::Account {
     let account = crate::account::Account::create(dir, Some("test-device".into())).unwrap();
     let mut cfg = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -100,7 +100,7 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state
         .app_keys
         .as_mut()
@@ -213,7 +213,7 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state
         .app_keys
         .as_mut()
@@ -316,7 +316,7 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state
         .app_keys
         .as_mut()
@@ -431,7 +431,7 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     state
         .app_keys
         .as_mut()

@@ -179,7 +179,7 @@ pub(crate) async fn start_iris_drive_mount(
 
 #[cfg(target_os = "linux")]
 fn current_device_root_missing(config: &AppConfig) -> bool {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return false;
     };
     config

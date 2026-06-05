@@ -29,7 +29,7 @@ pub(crate) fn fips_network_diagnostics(config: &AppConfig, daemon_status: Option
 }
 
 fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
     let Some(snapshot) = account.app_keys.as_ref() else {

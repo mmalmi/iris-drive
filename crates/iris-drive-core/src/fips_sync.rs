@@ -379,7 +379,7 @@ fn fips_endpoint_options(
 
 fn accepts_device_link_requests(config: &AppConfig) -> bool {
     config
-        .account
+        .profile
         .as_ref()
         .is_some_and(crate::AccountState::can_manage_devices)
 }
@@ -499,7 +499,7 @@ fn authorized_device_fips_peers(
     config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> Vec<FipsPeerConfig> {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
     let mut peers = Vec::new();
@@ -552,7 +552,7 @@ fn pending_device_link_fips_peer(
     config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> Option<FipsPeerConfig> {
-    let account = config.account.as_ref()?;
+    let account = config.profile.as_ref()?;
     if account.can_manage_devices()
         || account.authorization_state != crate::DeviceAuthorizationState::AwaitingApproval
     {

@@ -101,7 +101,7 @@ fn direct_root_publish_includes_profile_roster_ops() {
     let config_dir = tempfile::tempdir().unwrap();
     let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
     let config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -129,7 +129,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
     let work = tempfile::tempdir().unwrap();
     let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
     let mut initial_config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -167,7 +167,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
         .device_roots
         .insert(account.state.device_pubkey.clone(), root);
     let config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         shared_folders: vec![folder.clone()],
         ..AppConfig::default()
     };

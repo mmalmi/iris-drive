@@ -276,7 +276,7 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
         .approve_device(&linked_device, Some("Phone".into()))
         .unwrap();
     let mut config = AppConfig {
-        account: Some(owner.state.clone()),
+        profile: Some(owner.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(owner.state.root_scope_id()));
@@ -390,7 +390,7 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
         .approve_device(&linked_device, Some("Phone".into()))
         .unwrap();
     let config = AppConfig {
-        account: Some(owner.state.clone()),
+        profile: Some(owner.state.clone()),
         ..AppConfig::default()
     };
     config.save(config_path_in(dir.path())).unwrap();
@@ -432,7 +432,7 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
         DeviceRootRef::legacy(&root_cid, 10, 1),
     );
     let config = AppConfig {
-        account: Some(owner.state.clone()),
+        profile: Some(owner.state.clone()),
         drives: vec![drive],
         ..AppConfig::default()
     };

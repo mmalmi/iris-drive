@@ -45,7 +45,7 @@ pub(crate) fn cmd_stats(config_dir: &std::path::Path) -> Result<()> {
         })
         .unwrap_or(0);
     let authorized_devices = config
-        .account
+        .profile
         .as_ref()
         .and_then(|state| state.app_keys.as_ref())
         .map_or(0, |snap| snap.app_actors.len());

@@ -378,7 +378,7 @@ async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
 #[test]
 fn discovery_scope_uses_iris_drive_overlay() {
     let config = AppConfig {
-        account: Some(crate::AccountState {
+        profile: Some(crate::AccountState {
             profile_id: crate::IrisProfileId::new_v4(),
             device_pubkey: "bb".repeat(32),
             profile_roster_ops: Vec::new(),
@@ -462,7 +462,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
         ..Default::default()
     };
     let config = AppConfig {
-        account: Some(crate::AccountState {
+        profile: Some(crate::AccountState {
             profile_id,
             device_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
@@ -517,7 +517,7 @@ fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
         ..Default::default()
     };
     let config = AppConfig {
-        account: Some(crate::AccountState {
+        profile: Some(crate::AccountState {
             profile_id: crate::IrisProfileId::new_v4(),
             device_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
@@ -569,7 +569,7 @@ fn admin_endpoint_options_allow_open_device_link_requests() {
     let settings = FipsTransportSettings::default();
     let profile_id = crate::IrisProfileId::new_v4();
     let config = AppConfig {
-        account: Some(crate::AccountState {
+        profile: Some(crate::AccountState {
             profile_id,
             device_pubkey: "aa".repeat(32),
             profile_roster_ops: Vec::new(),

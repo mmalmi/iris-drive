@@ -496,7 +496,7 @@ mod daemon_lock_tests {
         daemon.import_source_dir(work.path()).await.unwrap();
 
         let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-        let state = config.account.clone().unwrap();
+        let state = config.profile.clone().unwrap();
         let mut drive = config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
@@ -543,12 +543,12 @@ mod daemon_lock_tests {
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
             .device_roots
-            .get(&daemon.config().account.as_ref().unwrap().device_pubkey)
+            .get(&daemon.config().profile.as_ref().unwrap().device_pubkey)
             .unwrap()
             .clone();
 
         std::fs::write(work.path().join("peer.txt"), b"local-only peer").unwrap();
-        let account = daemon.config().account.as_ref().unwrap().clone();
+        let account = daemon.config().profile.as_ref().unwrap().clone();
         let first_cid = Cid::parse(&first.root_cid).unwrap();
         let second_time = first_root.published_at + 1;
         let meta = iris_drive_core::DriveRootMeta {
@@ -619,7 +619,7 @@ mod daemon_lock_tests {
         .unwrap();
 
         let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-        let account = config.account.clone().unwrap();
+        let account = config.profile.clone().unwrap();
         let mut drive = config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()

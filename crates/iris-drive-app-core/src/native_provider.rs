@@ -422,7 +422,7 @@ async fn publish_current_device_root_best_effort(config_dir: &Path) -> serde_jso
 
 async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_json::Value> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Ok(json!({"published_drive_root": false, "error": "account missing"}));
     };
     let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {

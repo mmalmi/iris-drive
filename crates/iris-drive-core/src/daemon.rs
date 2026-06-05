@@ -232,7 +232,7 @@ impl Daemon {
         // can diff against it and emit tombstones for removed files.
         let previous_root_cid = self
             .config
-            .account
+            .profile
             .as_ref()
             .and_then(|account| {
                 self.config
@@ -286,7 +286,7 @@ impl Daemon {
     pub async fn materialize_primary_merged_root(
         &mut self,
     ) -> Result<Option<ImportReport>, DaemonError> {
-        let Some(account) = self.config.account.clone() else {
+        let Some(account) = self.config.profile.clone() else {
             return Ok(None);
         };
         let drive = self
@@ -363,7 +363,7 @@ impl Daemon {
     ) -> Result<ImportReport, DaemonError> {
         let previous_root_cid = self
             .config
-            .account
+            .profile
             .as_ref()
             .and_then(|account| {
                 self.config
@@ -554,7 +554,7 @@ impl Daemon {
             .config
             .drive(PRIMARY_DRIVE_ID)
             .ok_or(DaemonError::PrimaryDriveMissing)?;
-        if let Some(account) = self.config.account.as_ref()
+        if let Some(account) = self.config.profile.as_ref()
             && let Some(root) = drive.device_roots.get(&account.device_pubkey)
         {
             return Ok(&root.root_cid);
@@ -586,7 +586,7 @@ impl Daemon {
     }
 
     async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
-        let Some(account) = self.config.account.as_ref() else {
+        let Some(account) = self.config.profile.as_ref() else {
             let cache =
                 SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
             cache.save(sync_cache_path_in(&self.config_dir))?;
@@ -629,7 +629,7 @@ impl Daemon {
         // Per-device root entry, keyed by this device's pubkey.
         // Falls back to no-op when there is no account yet (legacy
         // installs from before the multi-device split).
-        if let Some(account) = self.config.account.as_ref() {
+        if let Some(account) = self.config.profile.as_ref() {
             let dck_generation = account
                 .app_keys
                 .as_ref()
@@ -650,7 +650,7 @@ impl Daemon {
 
     fn next_import_timestamp(&self) -> i64 {
         let now = unix_now();
-        let previous = self.config.account.as_ref().and_then(|account| {
+        let previous = self.config.profile.as_ref().and_then(|account| {
             self.config
                 .drive(PRIMARY_DRIVE_ID)
                 .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
@@ -659,7 +659,7 @@ impl Daemon {
     }
 
     fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
-        let account = self.config.account.as_ref()?;
+        let account = self.config.profile.as_ref()?;
         let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
         let previous = drive.device_roots.get(&account.device_pubkey);
         let device_seq = previous.map_or(1, |root| root.device_seq.saturating_add(1).max(1));

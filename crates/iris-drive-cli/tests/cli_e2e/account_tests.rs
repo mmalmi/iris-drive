@@ -64,7 +64,7 @@ fn logout_removes_local_account_and_key_material() {
     assert!(!dir.path().join("owner_key").exists());
 
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    assert!(config.account.is_none());
+    assert!(config.profile.is_none());
     assert!(config.user_profile.is_none());
     assert!(config.drives.is_empty());
 
@@ -266,9 +266,9 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
     );
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    let owner_state = owner_config.account.as_ref().unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
     let config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    let state = config.account.as_ref().unwrap();
+    let state = config.profile.as_ref().unwrap();
     assert_eq!(
         state
             .outbound_device_link_request
@@ -442,14 +442,14 @@ fn owner_rejects_device_request_link() {
     {
         let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
         let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
-        let state = config.account.as_mut().unwrap();
+        let state = config.profile.as_mut().unwrap();
         let profile_id = state.profile_id;
         let link_secret = state.device_link_secret.clone();
         let linked_hex = iris_drive_core::AppConfig::load_or_default(
             iris_drive_core::paths::config_path_in(linked_dir.path()),
         )
         .unwrap()
-        .account
+        .profile
         .unwrap()
         .device_pubkey;
         state
@@ -575,7 +575,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     );
     let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
     let linked_app_key = linked_config
-        .account
+        .profile
         .as_ref()
         .unwrap()
         .device_pubkey
@@ -583,7 +583,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
 
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let old_secret = state.device_link_secret.clone();
     state
@@ -612,7 +612,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     );
 
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let state = config.account.as_mut().unwrap();
+    let state = config.profile.as_mut().unwrap();
     assert_ne!(state.device_link_secret, old_secret);
     assert!(
         !state

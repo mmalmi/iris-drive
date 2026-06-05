@@ -95,7 +95,7 @@ pub(crate) async fn apply_one_event(
         );
         return Ok(());
     } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
-        let Some(account_state) = config.account.clone() else {
+        let Some(account_state) = config.profile.clone() else {
             return Ok(());
         };
         return apply_files_root_event(
@@ -399,7 +399,7 @@ async fn materialize_primary_merged_root_for_followup(
 }
 
 fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return false;
     };
     config

@@ -84,7 +84,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
         let account = config
-            .account
+            .profile
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let authorized = authorized_device_pubkeys(account);

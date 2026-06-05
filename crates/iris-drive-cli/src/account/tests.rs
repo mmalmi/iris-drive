@@ -21,7 +21,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     awaiting_state.authorization_state =
         iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
     let mut config = AppConfig {
-        account: Some(awaiting_state),
+        profile: Some(awaiting_state),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(owner.state.profile_id.to_string()));
@@ -30,7 +30,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     cmd_recover_app_key(recovered_dir.path(), None, Some("Recovered browser".into())).unwrap();
 
     let saved = AppConfig::load_or_default(config_path_in(recovered_dir.path())).unwrap();
-    let state = saved.account.expect("recovered state saved");
+    let state = saved.profile.expect("recovered state saved");
     assert_eq!(
         state.authorization_state,
         iris_drive_core::DeviceAuthorizationState::Authorized
@@ -65,7 +65,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();
     let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -100,7 +100,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     );
 
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-    let inbound = &saved.account.unwrap().inbound_device_link_requests;
+    let inbound = &saved.profile.unwrap().inbound_device_link_requests;
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].device_pubkey, linked_device);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
@@ -112,7 +112,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     let config_dir = tempdir().unwrap();
     let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -148,7 +148,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
     assert!(
         saved
-            .account
+            .profile
             .unwrap()
             .inbound_device_link_requests
             .is_empty()
@@ -187,7 +187,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     };
 
     let mut config = AppConfig {
-        account: Some(joiner.state.clone()),
+        profile: Some(joiner.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
@@ -199,7 +199,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
             .unwrap()
     );
     let saved = AppConfig::load_or_default(config_path_in(joiner_dir.path())).unwrap();
-    let state = saved.account.unwrap();
+    let state = saved.profile.unwrap();
     assert_eq!(
         state.authorization_state,
         iris_drive_core::DeviceAuthorizationState::AwaitingApproval
@@ -215,7 +215,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         )
         .unwrap();
     let mut config = AppConfig {
-        account: Some(requested),
+        profile: Some(requested),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
@@ -234,7 +234,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
             .root_scope_id,
         admin.state.profile_id.to_string()
     );
-    let state = saved.account.unwrap();
+    let state = saved.profile.unwrap();
     assert_eq!(
         state.authorization_state,
         iris_drive_core::DeviceAuthorizationState::Authorized
@@ -270,7 +270,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         .unwrap()
     );
     let saved = AppConfig::load_or_default(config_path_in(joiner_dir.path())).unwrap();
-    let state = saved.account.unwrap();
+    let state = saved.profile.unwrap();
     assert!(state.app_keys.as_ref().unwrap().contains(&third_device));
 }
 
@@ -283,7 +283,7 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
         .approve_device(&joiner_pubkey, Some("laptop".into()))
         .unwrap();
     let mut config = AppConfig {
-        account: Some(admin.state.clone()),
+        profile: Some(admin.state.clone()),
         ..AppConfig::default()
     };
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));

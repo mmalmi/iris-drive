@@ -75,7 +75,7 @@ pub async fn primary_merged_view<S: Store>(
     tree: &HashTree<S>,
     config: &AppConfig,
 ) -> Result<PrimaryMergedView, ProjectionError> {
-    let account = config.account.as_ref().ok_or(ProjectionError::NoAccount)?;
+    let account = config.profile.as_ref().ok_or(ProjectionError::NoAccount)?;
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
@@ -253,7 +253,7 @@ pub async fn primary_merged_root<S: Store>(
     tree: &HashTree<S>,
     config: &AppConfig,
 ) -> Result<PrimaryMergedRoot, ProjectionError> {
-    let account = config.account.as_ref().ok_or(ProjectionError::NoAccount)?;
+    let account = config.profile.as_ref().ok_or(ProjectionError::NoAccount)?;
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;

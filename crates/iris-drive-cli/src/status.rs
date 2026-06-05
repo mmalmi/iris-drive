@@ -104,7 +104,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "current_app_key_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
+            "current_app_key_npub": config.profile.as_ref().map(|s| account_npub(&s.device_pubkey)),
             "profile": profile_block,
             "summary": status_summary(
                 initialized,
@@ -299,7 +299,7 @@ pub(crate) fn local_nhash_resolver_status(
 }
 
 pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
-    config.account.as_ref().map(|state| {
+    config.profile.as_ref().map(|state| {
         let mut state = state.clone();
         state.recompute_authorization();
         let mut output = account_identity_json_map(&state);
@@ -334,7 +334,7 @@ pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
 
 pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
     config
-        .account
+        .profile
         .as_ref()
         .and_then(|state| {
             config
@@ -512,7 +512,7 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
 }
 
 fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, usize) {
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return (0, 0);
     };
     let Some(snapshot) = account.app_keys.as_ref() else {

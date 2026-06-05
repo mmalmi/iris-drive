@@ -7,7 +7,7 @@ use std::path::Path;
 
 fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();
-    let owner_state = owner_config.account.as_ref().unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
     let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
@@ -232,7 +232,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     apply_owner_profile_roster_to_linked_config(owner_dir.path(), linked_dir.path());
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    let owner_account_state = owner_config.account.as_ref().unwrap();
+    let owner_account_state = owner_config.profile.as_ref().unwrap();
     let owner =
         iris_drive_core::Account::load(owner_account_state.clone(), owner_dir.path()).unwrap();
     let drive = owner_config

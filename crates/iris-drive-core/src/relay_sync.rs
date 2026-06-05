@@ -98,7 +98,7 @@ pub fn apply_remote_device_link_request_event(
     event: &Event,
 ) -> Result<DeviceLinkRequestApply, RelayError> {
     let frame = parse_device_link_request_event(event)?;
-    let Some(account) = config.account.as_mut() else {
+    let Some(account) = config.profile.as_mut() else {
         return Err(RelayError::NoAccount);
     };
     if frame.profile_id != account.profile_id {
@@ -140,7 +140,7 @@ pub fn apply_device_link_roster_frame(
     if frame.schema != 1 {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
     if frame.admin_device_pubkey != admin_device_pubkey {
@@ -196,7 +196,7 @@ pub fn apply_device_link_roster_frame(
     }
 
     let root_scope_id = {
-        let Some(account) = config.account.as_mut() else {
+        let Some(account) = config.profile.as_mut() else {
             return Err(RelayError::NoAccount);
         };
         account.profile_roster_ops = merged_ops;
@@ -240,7 +240,7 @@ pub fn apply_remote_iris_profile_roster_op_event(
     event: &Event,
 ) -> Result<IrisProfileRosterOpApply, RelayError> {
     let op = parse_iris_profile_roster_op_event(event)?;
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
     if op.content.profile_id == account.profile_id {
@@ -253,7 +253,7 @@ pub fn apply_remote_iris_profile_roster_op_event(
         }
 
         let root_scope_id = {
-            let Some(account) = config.account.as_mut() else {
+            let Some(account) = config.profile.as_mut() else {
                 return Err(RelayError::NoAccount);
             };
             account.profile_roster_ops =
@@ -387,7 +387,7 @@ pub fn apply_remote_drive_root_event(
 ) -> Result<DriveRootApply, RelayError> {
     let preview = parse_drive_root_event_preview(event)?;
     let device_hex = preview.device_pubkey_hex.clone();
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
     if preview.owner_pubkey_hex == account.root_scope_id() {
@@ -500,7 +500,7 @@ pub fn apply_remote_files_root_event(
         observed: std::collections::BTreeMap::new(),
         local_only: false,
     };
-    let Some(account) = config.account.as_ref() else {
+    let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
     if parsed.event.pubkey != account.device_pubkey {

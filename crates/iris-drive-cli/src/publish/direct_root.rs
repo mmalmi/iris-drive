@@ -137,7 +137,7 @@ impl DirectRootExchange {
         }
         self.cache_event(direct_event);
         let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-        if let Some(state) = config.account.as_ref() {
+        if let Some(state) = config.profile.as_ref() {
             self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
                 .await?;
         }
@@ -156,7 +156,7 @@ impl DirectRootExchange {
         let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
             return;
         };
-        if let Some(state) = config.account.as_ref() {
+        if let Some(state) = config.profile.as_ref() {
             self.subscribe_profile_stream(&state.root_scope_id(), Some(sync))
                 .await;
         }

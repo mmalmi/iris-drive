@@ -36,7 +36,7 @@ pub(crate) fn cmd_daemon(
 
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let mut state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     state.recompute_authorization();

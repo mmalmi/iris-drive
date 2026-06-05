@@ -304,7 +304,7 @@ pub fn effective_backup_targets(config: &AppConfig) -> Vec<BackupTarget> {
 #[must_use]
 pub fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
     config
-        .account
+        .profile
         .as_ref()
         .and_then(|state| {
             config

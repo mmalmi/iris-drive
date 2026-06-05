@@ -14,7 +14,7 @@ pub(crate) fn cmd_publish(
     runtime.block_on(async {
         let config = AppConfig::load_or_default(config_path_in(config_dir))?;
         let state = config
-            .account
+            .profile
             .clone()
             .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
         let relays = pick_relays(&config, relay_override);
@@ -83,7 +83,7 @@ pub(crate) async fn announce_current_state_direct(
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(());
     };
     direct_roots
@@ -321,7 +321,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
         .await
         .context("importing mounted root")?;
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(updated_state) = updated_config.account.clone() else {
+    let Some(updated_state) = updated_config.profile.clone() else {
         return Err(anyhow::anyhow!("missing account after mount import"));
     };
     let direct_root_mesh_error =

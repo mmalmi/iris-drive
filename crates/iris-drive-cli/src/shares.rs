@@ -23,7 +23,7 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
 fn cmd_shares_list(config_dir: &Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let current_app_pubkey = config
-        .account
+        .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
         .device_pubkey
@@ -49,7 +49,7 @@ fn cmd_shares_shortcut(
         .context("parsing share id")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let current_app_pubkey = config
-        .account
+        .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
         .device_pubkey
@@ -93,7 +93,7 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
         .context("parsing share id")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
-        .account
+        .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let account = Account::load(state, config_dir).context("loading account")?;
@@ -199,7 +199,7 @@ mod tests {
         )
         .unwrap();
         let mut config = AppConfig {
-            account: Some(account.state.clone()),
+            profile: Some(account.state.clone()),
             ..AppConfig::default()
         };
         config.upsert_shared_folder(folder.clone());
@@ -266,7 +266,7 @@ mod tests {
             vec![recipient_pubkey.clone()]
         );
         let mut config = AppConfig {
-            account: Some(account.state.clone()),
+            profile: Some(account.state.clone()),
             ..AppConfig::default()
         };
         config.upsert_shared_folder(folder.clone());

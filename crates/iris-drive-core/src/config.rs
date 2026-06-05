@@ -42,10 +42,10 @@ pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub schema_version: u32,
-    /// Account state. `None` until the user has run a create / restore
-    /// / link flow.
+    /// Local `IrisProfile` state. `None` until the user has run a create /
+    /// restore / link flow.
     #[serde(default)]
-    pub account: Option<AccountState>,
+    pub profile: Option<AccountState>,
     /// Optional local profile metadata collected during account creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_profile: Option<UserProfile>,
@@ -117,7 +117,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
-            account: None,
+            profile: None,
             user_profile: None,
             drives: Vec::new(),
             shared_folders: Vec::new(),
@@ -237,7 +237,7 @@ impl AppConfig {
                 expected: CONFIG_SCHEMA_VERSION,
             });
         }
-        if let Some(account) = parsed.account.as_mut() {
+        if let Some(account) = parsed.profile.as_mut() {
             account.sync_app_keys_from_profile();
         }
         Ok(parsed)
@@ -276,7 +276,7 @@ impl AppConfig {
                         .insert(device.clone(), existing_root.clone());
                 }
             }
-            if let Some(account) = self.account.as_ref()
+            if let Some(account) = self.profile.as_ref()
                 && let Some(root) = drive.device_roots.get(&account.device_pubkey)
             {
                 drive.last_root_cid = Some(root.root_cid.clone());
@@ -553,6 +553,26 @@ working_dir = "/tmp/Iris Drive"
     }
 
     #[test]
+    fn stale_account_config_field_is_rejected() {
+        let raw = format!(
+            r#"
+schema_version = {CONFIG_SCHEMA_VERSION}
+
+[account]
+profile_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
+device_pubkey = "device-a"
+device_link_secret = "link-secret"
+authorization_state = "authorized"
+"#
+        );
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, raw).unwrap();
+        let error = AppConfig::load_or_default(&path).unwrap_err();
+        assert!(error.to_string().contains("unknown field `account`"));
+    }
+
+    #[test]
     fn missing_blossom_servers_field_loads_default_server() {
         let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
         let cfg: AppConfig = toml::from_str(&raw).unwrap();
@@ -615,7 +635,7 @@ dck_generation = 1
             .clone()
             .expect("created account has derived app keys");
         let mut cfg = AppConfig {
-            account: Some(account.state.clone()),
+            profile: Some(account.state.clone()),
             ..AppConfig::default()
         };
         cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
@@ -623,11 +643,13 @@ dck_generation = 1
         let path = dir.path().join("config.toml");
         cfg.save(&path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("[profile]"));
+        assert!(!raw.contains("[account"));
         assert!(raw.contains("profile_roster_ops"));
-        assert!(!raw.contains("[account.app_keys]"));
+        assert!(!raw.contains("[profile.app_keys]"));
 
         let loaded = AppConfig::load_or_default(&path).unwrap();
-        let loaded_account = loaded.account.expect("account persisted");
+        let loaded_account = loaded.profile.expect("account persisted");
         assert_eq!(loaded_account.app_keys, Some(expected));
     }
 
@@ -637,7 +659,7 @@ dck_generation = 1
         let path = dir.path().join("config.toml");
 
         let mut newer = AppConfig {
-            account: Some(AccountState {
+            profile: Some(AccountState {
                 profile_id: crate::IrisProfileId::new_v4(),
                 device_pubkey: "device-a".into(),
                 profile_roster_ops: Vec::new(),

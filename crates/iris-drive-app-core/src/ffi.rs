@@ -393,7 +393,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.clone() else {
+        let Some(state) = config.profile.clone() else {
             "profile is required to recover this app key".clone_into(&mut self.state.error);
             return;
         };
@@ -423,7 +423,7 @@ impl NativeAppRuntime {
             self.state.error = format!("recovering app key: {error}");
             return;
         }
-        config.account = Some(account.state);
+        config.profile = Some(account.state);
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         } else {
@@ -510,7 +510,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.clone() else {
+        let Some(state) = config.profile.clone() else {
             "owner profile is required to approve devices".clone_into(&mut self.state.error);
             return;
         };
@@ -537,7 +537,7 @@ impl NativeAppRuntime {
             self.state.error = format!("approving device: {error}");
             return;
         }
-        config.account = Some(account.state);
+        config.profile = Some(account.state);
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -551,7 +551,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.as_mut() else {
+        let Some(state) = config.profile.as_mut() else {
             "owner profile is required to reset invites".clone_into(&mut self.state.error);
             return;
         };
@@ -585,7 +585,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.as_mut() else {
+        let Some(state) = config.profile.as_mut() else {
             "owner profile is required to reject devices".clone_into(&mut self.state.error);
             return;
         };
@@ -624,7 +624,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.clone() else {
+        let Some(state) = config.profile.clone() else {
             "owner profile is required to revoke devices".clone_into(&mut self.state.error);
             return;
         };
@@ -643,7 +643,7 @@ impl NativeAppRuntime {
             self.state.error = format!("revoking device: {error}");
             return;
         }
-        config.account = Some(account.state);
+        config.profile = Some(account.state);
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -664,7 +664,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.account.clone() else {
+        let Some(state) = config.profile.clone() else {
             "admin profile is required to manage device admins".clone_into(&mut self.state.error);
             return;
         };
@@ -684,7 +684,7 @@ impl NativeAppRuntime {
             self.state.error = format!("updating device role: {error}");
             return;
         }
-        config.account = Some(account.state);
+        config.profile = Some(account.state);
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -827,12 +827,12 @@ impl NativeAppRuntime {
             && self
                 .load_config()
                 .ok()
-                .and_then(|config| config.account)
+                .and_then(|config| config.profile)
                 .is_some()
     }
 
     fn current_authorization_state(&self) -> Option<DeviceAuthorizationState> {
-        let mut account = self.load_config().ok()?.account?;
+        let mut account = self.load_config().ok()?.profile?;
         account.recompute_authorization();
         Some(account.authorization_state)
     }
@@ -853,7 +853,7 @@ impl NativeAppRuntime {
 
     fn finish_account_init(&self, account: &Account) -> Result<(), String> {
         let mut config = self.load_config()?;
-        config.account = Some(account.state.clone());
+        config.profile = Some(account.state.clone());
         if config.drive(iris_drive_core::PRIMARY_DRIVE_ID).is_none() {
             config.upsert_drive(Drive::primary(account.state.root_scope_id()));
         }
@@ -869,7 +869,7 @@ impl NativeAppRuntime {
             let Ok(config) = self.load_config() else {
                 return;
             };
-            if config.account.is_none() {
+            if config.profile.is_none() {
                 return;
             }
             if self
@@ -951,7 +951,7 @@ impl NativeAppRuntime {
                 .collect()
         };
 
-        let Some(raw_account) = config.account.as_ref() else {
+        let Some(raw_account) = config.profile.as_ref() else {
             self.refresh_ui_summary(None);
             return;
         };
@@ -1173,7 +1173,7 @@ async fn run_device_link_exchange_async(
     let config_dir = Path::new(data_dir);
     let startup_config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    if startup_config.account.is_none() {
+    if startup_config.profile.is_none() {
         return Ok(());
     }
 
@@ -1186,7 +1186,7 @@ async fn run_device_link_exchange_async(
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
     let account_state = startup_config
-        .account
+        .profile
         .as_ref()
         .expect("account checked above");
     let root_scope_id = account_state.root_scope_id();
@@ -1315,7 +1315,7 @@ async fn drive_device_link_exchange_tick(
 ) -> Result<bool, String> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(false);
     };
 
@@ -1504,7 +1504,7 @@ fn handle_native_device_link_request(
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let Some(state) = config.account.as_mut() else {
+    let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
     let changed = state
@@ -1579,7 +1579,7 @@ async fn handle_native_device_link_roster(
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
     if state.can_manage_devices() {
@@ -1607,7 +1607,7 @@ async fn handle_native_device_link_roster(
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
-    let state = config.account.as_ref().expect("account still present");
+    let state = config.profile.as_ref().expect("account still present");
     let ack_frame = if accepted {
         device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
     } else {
@@ -1629,7 +1629,7 @@ async fn handle_native_device_link_roster(
     }
     let should_sync_roots = changed
         && config
-            .account
+            .profile
             .as_ref()
             .is_some_and(iris_drive_core::AccountState::is_authorized);
     if should_sync_roots {
@@ -1678,7 +1678,7 @@ fn handle_native_device_link_roster_ack(
 
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let Some(state) = config.account.as_ref() else {
+    let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
     if admin_device_hex != frame.admin_device_pubkey
@@ -1937,7 +1937,7 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             };
         }
     };
-    let Some(account) = config.account else {
+    let Some(account) = config.profile else {
         return RecoverySecretExport {
             error: "profile is required".to_owned(),
             ..RecoverySecretExport::default()
@@ -2296,7 +2296,7 @@ fn update_snapshot_link(state: &mut NativeAppState, config: &AppConfig) {
 
 fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
     config
-        .account
+        .profile
         .as_ref()
         .and_then(|account| {
             config

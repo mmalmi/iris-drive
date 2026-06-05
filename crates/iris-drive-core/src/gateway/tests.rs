@@ -8,7 +8,7 @@ use tempfile::tempdir;
 fn init_account_config(dir: &Path) {
     let account = Account::create(dir, Some("gateway-test".into())).unwrap();
     let mut cfg = AppConfig {
-        account: Some(account.state.clone()),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
