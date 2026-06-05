@@ -78,14 +78,12 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
-        owner_pubkey: account.state.owner_pubkey.clone(),
         device_pubkey: linked_device.clone(),
         link_secret: link_secret.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_device_approval_request(
             account.state.profile_id,
-            &account.state.owner_pubkey,
             &linked_device,
             &link_secret,
             Some(" phone "),
@@ -126,14 +124,12 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
-        owner_pubkey: account.state.owner_pubkey.clone(),
         device_pubkey: linked_device.clone(),
         link_secret: "wrong-secret".into(),
         label: Some("phone".into()),
         requested_at: 123,
         url: encode_device_approval_request(
             account.state.profile_id,
-            &account.state.owner_pubkey,
             &linked_device,
             "wrong-secret",
             Some("phone"),
@@ -181,7 +177,6 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
         sent_at: 456,
@@ -255,7 +250,6 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let updated_frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
         sent_at: 789,
@@ -298,7 +292,6 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
 
     let frame = DeviceLinkRosterAckFrame {
         schema: 1,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         device_pubkey: joiner_pubkey.clone(),
         roster_fingerprint: device_link_roster_fingerprint(

@@ -61,7 +61,6 @@ fn roster_frame(
     DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         profile_roster_ops,
         sent_at,
@@ -143,7 +142,7 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 }
 
 #[test]
-fn apply_device_link_roster_is_profile_scoped_not_owner_pubkey_scoped() {
+fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
@@ -171,8 +170,7 @@ fn apply_device_link_roster_is_profile_scoped_not_owner_pubkey_scoped() {
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
-    let mut frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
-    frame.owner_pubkey = Keys::generate().public_key().to_hex();
+    let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
 
     let outcome =
         apply_device_link_roster_frame(&mut cfg, &frame, &admin.state.device_pubkey).unwrap();
@@ -260,14 +258,11 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 
 #[test]
 fn subscription_filters_match_device_link_requests_for_profile() {
-    let owner = Keys::generate();
     let device = Keys::generate();
-    let owner_hex = owner.public_key().to_hex();
     let profile_id = IrisProfileId::new_v4();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id,
-        owner_pubkey: owner_hex.clone(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
         label: Some("phone".to_string()),
@@ -281,9 +276,13 @@ fn subscription_filters_match_device_link_requests_for_profile() {
         Some(device_link_request_d_tag(profile_id).as_str())
     );
     assert!(
-        subscription_filters(&owner_hex, &profile_id.to_string(), "main")
-            .iter()
-            .any(|filter| filter.match_event(&event))
+        subscription_filters(
+            &device.public_key().to_hex(),
+            &profile_id.to_string(),
+            "main"
+        )
+        .iter()
+        .any(|filter| filter.match_event(&event))
     );
 }
 
@@ -524,7 +523,6 @@ fn apply_device_link_request_event_records_admin_inbound_request() {
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        owner_pubkey: Keys::generate().public_key().to_hex(),
         device_pubkey: linked.state.device_pubkey.clone(),
         link_secret: admin.state.device_link_secret.clone(),
         label: Some("phone".to_string()),

@@ -11,7 +11,6 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
     let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
-        owner_pubkey: owner_state.owner_pubkey.clone(),
         admin_device_pubkey: owner_state.device_pubkey.clone(),
         profile_roster_ops: owner_state.profile_roster_ops.clone(),
         sent_at: 123,

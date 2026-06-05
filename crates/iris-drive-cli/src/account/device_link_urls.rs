@@ -28,7 +28,6 @@ pub(crate) struct DeviceLinkTarget {
 
 pub(crate) fn resolve_device_approval_input(
     input: &str,
-    expected_owner_hex: &str,
     expected_profile_id: iris_drive_core::IrisProfileId,
     explicit_label: Option<String>,
 ) -> Result<(String, Option<String>)> {
@@ -39,11 +38,6 @@ pub(crate) fn resolve_device_approval_input(
         {
             return Err(anyhow::anyhow!(
                 "AppKey-link request belongs to a different profile"
-            ));
-        }
-        if request.owner_hex != expected_owner_hex {
-            return Err(anyhow::anyhow!(
-                "AppKey-link request belongs to a different owner"
             ));
         }
         let label = explicit_label.or(request.label);
@@ -66,10 +60,11 @@ pub(crate) fn resolve_device_link_target_with_admin(
                 "--admin-app-key is only valid with a manual owner pubkey, not an invite URL"
             ));
         }
+        let admin_device_hex = invite.admin_device_hex;
         return Ok(DeviceLinkTarget {
             profile_id: invite.profile_id,
-            owner_hex: invite.owner_hex,
-            admin_device_hex: Some(invite.admin_device_hex),
+            owner_hex: admin_device_hex.clone(),
+            admin_device_hex: Some(admin_device_hex),
             link_secret: invite.link_secret,
         });
     }
@@ -94,7 +89,6 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
 
     let url = encode_device_approval_request(
         state.profile_id,
-        &state.owner_pubkey,
         &state.device_pubkey,
         state
             .outbound_device_link_request
@@ -109,7 +103,6 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     json!({
         "url": url,
         "profile_id": state.profile_id.to_string(),
-        "owner_npub": account_npub(&state.owner_pubkey),
         "app_key_npub": account_npub(&state.device_pubkey),
         "label": state.device_label.as_deref(),
         "admin_app_key_npub": state
@@ -131,7 +124,6 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
     }
     let Ok(url) = iris_drive_core::device_link_invite::encode_device_link_invite(
         state.profile_id,
-        &state.owner_pubkey,
         &state.device_pubkey,
         &state.device_link_secret,
     ) else {
@@ -141,7 +133,6 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
         "url": url,
         "web_url": device_link_web_url(&url),
         "profile_id": state.profile_id.to_string(),
-        "owner_npub": account_npub(&state.owner_pubkey),
         "admin_app_key_npub": account_npub(&state.device_pubkey),
     })
 }
@@ -154,13 +145,11 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
             json!({
                 "url": encode_device_approval_request(
                     state.profile_id,
-                    &state.owner_pubkey,
                     &request.device_pubkey,
                     &request.link_secret,
                     request.label.as_deref(),
                 ),
                 "profile_id": state.profile_id.to_string(),
-                "owner_npub": account_npub(&state.owner_pubkey),
                 "app_key_npub": account_npub(&request.device_pubkey),
                 "label": request.label.as_deref(),
                 "requested_at": request.requested_at,

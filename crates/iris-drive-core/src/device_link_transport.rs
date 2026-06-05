@@ -17,7 +17,6 @@ pub const DEVICE_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/devi
 pub struct DeviceLinkRequestFrame {
     pub schema: u32,
     pub profile_id: IrisProfileId,
-    pub owner_pubkey: String,
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub link_secret: String,
@@ -30,7 +29,6 @@ pub struct DeviceLinkRequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceApprovalRequest {
     pub profile_id: Option<IrisProfileId>,
-    pub owner_hex: String,
     pub device_hex: String,
     pub link_secret: String,
     pub label: Option<String>,
@@ -40,7 +38,6 @@ pub struct DeviceApprovalRequest {
 pub struct DeviceLinkRosterFrame {
     pub schema: u32,
     pub profile_id: IrisProfileId,
-    pub owner_pubkey: String,
     pub admin_device_pubkey: String,
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
     pub sent_at: u64,
@@ -49,7 +46,6 @@ pub struct DeviceLinkRosterFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeviceLinkRosterAckFrame {
     pub schema: u32,
-    pub owner_pubkey: String,
     pub admin_device_pubkey: String,
     pub device_pubkey: String,
     pub roster_fingerprint: String,
@@ -78,14 +74,12 @@ pub fn pending_device_link_request_frame(state: &AccountState) -> Option<DeviceL
     Some(DeviceLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
-        owner_pubkey: state.owner_pubkey.clone(),
         device_pubkey: state.device_pubkey.clone(),
         link_secret: link_secret.clone(),
         label: state.device_label.clone(),
         requested_at: pending.requested_at,
         url: encode_device_approval_request(
             state.profile_id,
-            &state.owner_pubkey,
             &state.device_pubkey,
             &link_secret,
             state.device_label.as_deref(),
@@ -104,7 +98,6 @@ pub fn device_link_roster_frame(
     Some(DeviceLinkRosterFrame {
         schema: 1,
         profile_id: state.profile_id,
-        owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
         profile_roster_ops: state.profile_roster_ops.clone(),
         sent_at,
@@ -142,7 +135,6 @@ pub fn device_link_roster_ack_frame(
     }
     Some(DeviceLinkRosterAckFrame {
         schema: 1,
-        owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: admin_device_pubkey.to_string(),
         device_pubkey: state.device_pubkey.clone(),
         roster_fingerprint: device_link_roster_fingerprint(
@@ -207,15 +199,13 @@ fn current_app_key_is_authorized(state: &AccountState) -> bool {
 #[must_use]
 pub fn encode_device_approval_request(
     profile_id: IrisProfileId,
-    owner_hex: &str,
     device_hex: &str,
     link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
-        "iris-drive://device-link?profile={}&owner={}&device={}",
+        "iris-drive://device-link?profile={}&device={}",
         profile_id,
-        account_npub(owner_hex),
         account_npub(device_hex)
     );
     if !link_secret.trim().is_empty() {
@@ -236,7 +226,6 @@ pub fn parse_device_approval_request(input: &str) -> Result<Option<DeviceApprova
     };
 
     let mut profile_id = None;
-    let mut owner = None;
     let mut device = None;
     let mut link_secret = None;
     let mut label = None;
@@ -251,7 +240,6 @@ pub fn parse_device_approval_request(input: &str) -> Result<Option<DeviceApprova
             "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
                 profile_id = Some(value.trim().parse().context("parsing request profile id")?);
             }
-            "owner" if !value.trim().is_empty() => owner = Some(value),
             "device" if !value.trim().is_empty() => device = Some(value),
             "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
             "label" if !value.trim().is_empty() => label = Some(value),
@@ -259,12 +247,11 @@ pub fn parse_device_approval_request(input: &str) -> Result<Option<DeviceApprova
         }
     }
 
-    let owner = owner.ok_or_else(|| anyhow!("AppKey-link request is missing owner"))?;
+    let profile_id = profile_id.ok_or_else(|| anyhow!("AppKey-link request is missing profile"))?;
     let device = device.ok_or_else(|| anyhow!("AppKey-link request is missing AppKey"))?;
 
     Ok(Some(DeviceApprovalRequest {
-        profile_id,
-        owner_hex: normalize_pubkey_hex(&owner).context("parsing request owner")?,
+        profile_id: Some(profile_id),
         device_hex: normalize_pubkey_hex(&device).context("parsing request AppKey")?,
         link_secret: link_secret.unwrap_or_default().trim().to_string(),
         label,
@@ -398,34 +385,9 @@ mod tests {
             .expect("approved app actor is a roster recipient");
         let frame = DeviceLinkRosterAckFrame {
             schema: 1,
-            owner_pubkey: account.state.owner_pubkey.clone(),
             admin_device_pubkey: account.state.device_pubkey.clone(),
             device_pubkey: app_actor,
             roster_fingerprint: recipient.roster_fingerprint.clone(),
-            acknowledged_at: 123,
-        };
-
-        assert!(device_link_roster_ack_matches_state(&account.state, &frame));
-    }
-
-    #[test]
-    fn roster_ack_is_profile_roster_scoped_not_owner_pubkey_scoped() {
-        let dir = tempdir().unwrap();
-        let mut account = Account::create(dir.path(), Some("Mac".into())).unwrap();
-        let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
-        account
-            .approve_device(&app_actor, Some("Browser".into()))
-            .unwrap();
-        let recipient = device_link_roster_recipients(&account.state)
-            .into_iter()
-            .find(|recipient| recipient.device_pubkey == app_actor)
-            .expect("approved app actor is a roster recipient");
-        let frame = DeviceLinkRosterAckFrame {
-            schema: 1,
-            owner_pubkey: nostr_sdk::Keys::generate().public_key().to_hex(),
-            admin_device_pubkey: account.state.device_pubkey.clone(),
-            device_pubkey: app_actor,
-            roster_fingerprint: recipient.roster_fingerprint,
             acknowledged_at: 123,
         };
 
@@ -464,14 +426,12 @@ mod tests {
     }
 
     #[test]
-    fn approval_request_round_trips_profile_keys_secret_and_label() {
+    fn approval_request_round_trips_profile_app_key_secret_and_label_without_owner() {
         let profile_id = IrisProfileId::new_v4();
-        let owner = nostr_sdk::Keys::generate().public_key();
         let app_key = nostr_sdk::Keys::generate().public_key();
 
         let url = encode_device_approval_request(
             profile_id,
-            &owner.to_hex(),
             &app_key.to_hex(),
             " join secret ",
             Some("Web + Native"),
@@ -481,20 +441,18 @@ mod tests {
             .expect("request");
 
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.owner_hex, owner.to_hex());
         assert_eq!(parsed.device_hex, app_key.to_hex());
         assert_eq!(parsed.link_secret, "join secret");
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
+        assert!(!url.contains("owner="));
     }
 
     #[test]
     fn approval_request_parser_accepts_aliases_and_rejects_nearby_routes() {
         let profile_id = IrisProfileId::new_v4();
-        let owner = nostr_sdk::Keys::generate().public_key();
         let app_key = nostr_sdk::Keys::generate().public_key();
         let url = format!(
-            "iris-drive:/device-link?profile_id={profile_id}&owner={}&device={}&link_secret=s&label=Phone+Browser",
-            owner.to_hex(),
+            "iris-drive:/device-link?profile_id={profile_id}&device={}&link_secret=s&label=Phone+Browser",
             app_key.to_hex()
         );
         let parsed = parse_device_approval_request(&url)
@@ -502,7 +460,6 @@ mod tests {
             .expect("request");
 
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.owner_hex, owner.to_hex());
         assert_eq!(parsed.device_hex, app_key.to_hex());
         assert_eq!(parsed.link_secret, "s");
         assert_eq!(parsed.label.as_deref(), Some("Phone Browser"));

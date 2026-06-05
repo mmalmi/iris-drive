@@ -132,8 +132,6 @@ pub fn build_device_link_request_event(
     device_keys: &Keys,
     frame: &DeviceLinkRequestFrame,
 ) -> Result<Event, WireError> {
-    PublicKey::from_hex(&frame.owner_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     PublicKey::from_hex(&frame.device_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     let content_json =
@@ -164,8 +162,6 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let frame: DeviceLinkRequestFrame =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
-    PublicKey::from_hex(&frame.owner_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     PublicKey::from_hex(&frame.device_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     if d_tag_profile != frame.profile_id {

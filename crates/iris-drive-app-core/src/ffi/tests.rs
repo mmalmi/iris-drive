@@ -395,35 +395,36 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert_eq!(invite.kind, "invite");
     assert!(invite.is_complete);
     assert!(invite.is_valid);
-    let owner_npub = invite.owner_pubkey.clone();
-    assert!(!owner_npub.is_empty());
-    assert!(!invite.admin_device_pubkey.is_empty());
+    assert!(invite.owner_pubkey.is_empty());
+    let admin_app_key_npub = invite.admin_device_pubkey.clone();
+    assert!(!admin_app_key_npub.is_empty());
     assert!(invite.has_link_secret);
 
-    let npub = super::classify_link_input(owner_npub.clone());
+    let npub = super::classify_link_input(admin_app_key_npub.clone());
     assert_eq!(npub.kind, "owner_pubkey");
     assert!(npub.is_complete);
     assert!(npub.is_valid);
-    assert_eq!(npub.owner_pubkey, owner_npub);
+    assert_eq!(npub.owner_pubkey, admin_app_key_npub);
 
     let short_invite = super::classify_link_input("iris-drive://invite/abc".to_owned());
     assert_eq!(short_invite.kind, "invite");
     assert!(!short_invite.is_complete);
     assert!(!short_invite.is_valid);
 
-    let short_npub = super::classify_link_input(owner_npub[..20].to_owned());
+    let short_npub = super::classify_link_input(admin_app_key_npub[..20].to_owned());
     assert_eq!(short_npub.kind, "owner_pubkey");
     assert!(!short_npub.is_complete);
     assert!(!short_npub.is_valid);
 
+    let profile_id = owner_account.profile_id.clone();
     let approval = super::classify_link_input(format!(
-        "iris-drive://device-link?owner={owner_npub}&device={owner_npub}"
+        "iris-drive://device-link?profile={profile_id}&device={admin_app_key_npub}"
     ));
     assert_eq!(approval.kind, "device_approval");
     assert!(approval.is_complete);
     assert!(approval.is_valid);
-    assert_eq!(approval.owner_pubkey, owner_npub);
-    assert_eq!(approval.device_pubkey, owner_npub);
+    assert!(approval.owner_pubkey.is_empty());
+    assert_eq!(approval.device_pubkey, admin_app_key_npub);
 
     let web_invite_route =
         super::classify_link_input("https://drive.iris.to/invite/demo".to_owned());
@@ -554,7 +555,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite,
+        owner_pubkey: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -619,7 +620,7 @@ fn delete_device_json_action_revokes_linked_device() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite,
+        owner_pubkey: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -663,11 +664,10 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     });
     let owner_account = owner.ui.account.unwrap();
     let owner_invite = owner_account.device_link_invite.clone();
-    let owner_npub = super::classify_link_input(owner_invite.clone()).owner_pubkey;
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite,
+        owner_pubkey: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -711,7 +711,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     assert_eq!(refreshed.ui.sync.status_label, "Sync paused");
 
     let relinked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_npub,
+        owner_pubkey: owner_invite,
         device_label: "Phone".to_owned(),
     });
     let account = relinked.ui.account.as_ref().expect("account exists");
@@ -1085,7 +1085,6 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     let first_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner.state.profile_id,
-        owner_pubkey: owner.state.owner_pubkey.clone(),
         admin_device_pubkey: owner.state.device_pubkey.clone(),
         profile_roster_ops: owner.state.profile_roster_ops.clone(),
         sent_at: 456,
@@ -1107,7 +1106,6 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     let updated_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner.state.profile_id,
-        owner_pubkey: owner.state.owner_pubkey.clone(),
         admin_device_pubkey: owner.state.device_pubkey.clone(),
         profile_roster_ops: owner.state.profile_roster_ops.clone(),
         sent_at: 789,
@@ -1140,7 +1138,6 @@ fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
     let frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
-        owner_pubkey: owner_state.owner_pubkey.clone(),
         admin_device_pubkey: owner_state.device_pubkey.clone(),
         profile_roster_ops: owner_state.profile_roster_ops.clone(),
         sent_at: 123,

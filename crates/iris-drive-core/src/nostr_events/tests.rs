@@ -180,12 +180,10 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
 
 #[test]
 fn device_link_request_event_round_trips_and_is_its_own_coordinate() {
-    let owner = Keys::generate();
     let device = Keys::generate();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
-        owner_pubkey: owner.public_key().to_hex(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
         label: Some("phone".to_string()),
@@ -206,12 +204,10 @@ fn device_link_request_event_round_trips_and_is_its_own_coordinate() {
 
 #[test]
 fn device_link_request_event_d_tag_is_profile_scoped() {
-    let owner = Keys::generate();
     let device = Keys::generate();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
-        owner_pubkey: owner.public_key().to_hex(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
         label: None,
@@ -235,13 +231,11 @@ fn device_link_request_event_d_tag_is_profile_scoped() {
 
 #[test]
 fn device_link_request_event_must_be_signed_by_requesting_device() {
-    let owner = Keys::generate();
     let device = Keys::generate();
     let attacker = Keys::generate();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
-        owner_pubkey: owner.public_key().to_hex(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
         label: None,
