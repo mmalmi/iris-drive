@@ -4,7 +4,7 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{AccountState, DeviceAuthorizationState, IrisProfileId, SignedIrisProfileRosterOp};
+use crate::{DeviceAuthorizationState, IrisProfileId, ProfileState, SignedIrisProfileRosterOp};
 
 pub const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
 pub const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
@@ -59,7 +59,7 @@ pub struct DeviceLinkRosterRecipient {
 }
 
 #[must_use]
-pub fn pending_device_link_request_frame(state: &AccountState) -> Option<DeviceLinkRequestFrame> {
+pub fn pending_device_link_request_frame(state: &ProfileState) -> Option<DeviceLinkRequestFrame> {
     if state.can_manage_devices()
         || state.authorization_state != DeviceAuthorizationState::AwaitingApproval
     {
@@ -89,7 +89,7 @@ pub fn pending_device_link_request_frame(state: &AccountState) -> Option<DeviceL
 
 #[must_use]
 pub fn device_link_roster_frame(
-    state: &AccountState,
+    state: &ProfileState,
     sent_at: u64,
 ) -> Option<DeviceLinkRosterFrame> {
     if !state.can_manage_devices() || !current_app_key_is_authorized(state) {
@@ -105,7 +105,7 @@ pub fn device_link_roster_frame(
 }
 
 #[must_use]
-pub fn device_link_roster_recipients(state: &AccountState) -> Vec<DeviceLinkRosterRecipient> {
+pub fn device_link_roster_recipients(state: &ProfileState) -> Vec<DeviceLinkRosterRecipient> {
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
@@ -126,7 +126,7 @@ pub fn device_link_roster_recipients(state: &AccountState) -> Vec<DeviceLinkRost
 
 #[must_use]
 pub fn device_link_roster_ack_frame(
-    state: &AccountState,
+    state: &ProfileState,
     admin_device_pubkey: &str,
     acknowledged_at: u64,
 ) -> Option<DeviceLinkRosterAckFrame> {
@@ -148,7 +148,7 @@ pub fn device_link_roster_ack_frame(
 
 #[must_use]
 pub fn device_link_roster_ack_matches_state(
-    state: &AccountState,
+    state: &ProfileState,
     frame: &DeviceLinkRosterAckFrame,
 ) -> bool {
     state.can_manage_devices()
@@ -189,7 +189,7 @@ pub fn device_link_roster_fingerprint(
     hex::encode(digest.finalize())
 }
 
-fn current_app_key_is_authorized(state: &AccountState) -> bool {
+fn current_app_key_is_authorized(state: &ProfileState) -> bool {
     state
         .app_keys
         .as_ref()
@@ -343,13 +343,13 @@ fn hex_digit(value: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Account;
+    use crate::Profile;
     use tempfile::tempdir;
 
     #[test]
     fn roster_fingerprint_changes_with_profile_roster_ops() {
         let dir = tempdir().unwrap();
-        let mut account = Account::create(dir.path(), Some("Mac".into())).unwrap();
+        let mut account = Profile::create(dir.path(), Some("Mac".into())).unwrap();
         let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
         let before = device_link_roster_fingerprint(
             &app_actor,
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn roster_ack_matches_current_profile_roster_fingerprint() {
         let dir = tempdir().unwrap();
-        let mut account = Account::create(dir.path(), Some("Mac".into())).unwrap();
+        let mut account = Profile::create(dir.path(), Some("Mac".into())).unwrap();
         let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
         account
             .approve_device(&app_actor, Some("Browser".into()))
@@ -397,9 +397,9 @@ mod tests {
     #[test]
     fn pending_request_frame_carries_profile_id_in_frame_and_url() {
         let owner_dir = tempdir().unwrap();
-        let owner = Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
         let linked_dir = tempdir().unwrap();
-        let mut linked = Account::link_to_profile(
+        let mut linked = Profile::link_to_profile(
             linked_dir.path(),
             owner.state.profile_id,
             owner.state.device_pubkey.clone(),

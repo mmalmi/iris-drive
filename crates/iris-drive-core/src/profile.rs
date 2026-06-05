@@ -1,4 +1,4 @@
-//! Account state machine.
+//! Profile state machine.
 //!
 //! Wraps the profile roster model — stable `IrisProfile` id, this app install's
 //! `AppKey`, whether the `AppKey` is an admin in the current roster, and the
@@ -42,7 +42,7 @@ use crate::recovery_phrase::{
 };
 
 #[derive(Debug, Error)]
-pub enum AccountError {
+pub enum ProfileError {
     #[error("identity: {0}")]
     Identity(#[from] IdentityError),
     #[error("iris profile: {0}")]
@@ -127,10 +127,10 @@ pub struct InboundDeviceLinkRequest {
     pub requested_at: u64,
 }
 
-/// Persisted account state. Lives inside `AppConfig`.
+/// Persisted local profile state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct AccountState {
+pub struct ProfileState {
     pub profile_id: IrisProfileId,
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -156,7 +156,7 @@ pub struct KeyWrapRepairOutcome {
     pub snapshot: AppKeysSnapshot,
 }
 
-impl AccountState {
+impl ProfileState {
     #[must_use]
     pub fn profile_projection(&self) -> IrisProfileRosterProjection {
         project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone())
@@ -256,9 +256,9 @@ impl AccountState {
         admin_device_pubkey: String,
         link_secret: &str,
         requested_at: u64,
-    ) -> Result<bool, AccountError> {
+    ) -> Result<bool, ProfileError> {
         if !is_pubkey_hex(&admin_device_pubkey) {
-            return Err(AccountError::InvalidDevicePubkey(admin_device_pubkey));
+            return Err(ProfileError::InvalidDevicePubkey(admin_device_pubkey));
         }
         if self.device_pubkey == admin_device_pubkey {
             return Ok(false);
@@ -280,7 +280,7 @@ impl AccountState {
         label: Option<String>,
         link_secret: &str,
         requested_at: u64,
-    ) -> Result<bool, AccountError> {
+    ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_manage_devices() {
             return Ok(false);
         }
@@ -290,7 +290,7 @@ impl AccountState {
             return Ok(false);
         }
         if !is_pubkey_hex(device_pubkey) {
-            return Err(AccountError::InvalidDevicePubkey(device_pubkey.to_string()));
+            return Err(ProfileError::InvalidDevicePubkey(device_pubkey.to_string()));
         }
         if device_pubkey == self.device_pubkey
             || self
@@ -350,9 +350,9 @@ impl AccountState {
     pub fn reject_inbound_device_link_request(
         &mut self,
         device_pubkey: &str,
-    ) -> Result<bool, AccountError> {
+    ) -> Result<bool, ProfileError> {
         if !is_pubkey_hex(device_pubkey) {
-            return Err(AccountError::InvalidDevicePubkey(device_pubkey.to_string()));
+            return Err(ProfileError::InvalidDevicePubkey(device_pubkey.to_string()));
         }
         let before = self.inbound_device_link_requests.len();
         self.inbound_device_link_requests
@@ -422,20 +422,20 @@ pub fn app_keys_from_profile_projection(
     })
 }
 
-/// In-memory account: persisted state + the keypairs it references.
-pub struct Account {
-    pub state: AccountState,
+/// In-memory profile: persisted state + the keypairs it references.
+pub struct Profile {
+    pub state: ProfileState,
     pub device: DeviceIdentity,
-    /// Legacy compatibility slot. New accounts do not create or require a
+    /// Legacy compatibility slot. New profiles do not create or require a
     /// separate owner key; admin authority lives in the roster.
     pub owner_key: Option<OwnerKey>,
 }
 
-impl Account {
+impl Profile {
     /// **Create** flow — fresh device saved to the config dir. The device is
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `AppKeys` snapshot.
-    pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, AccountError> {
+    pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, ProfileError> {
         let recovery_phrase = generate_recovery_phrase()?;
         let profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
         let recovery_key =
@@ -445,7 +445,7 @@ impl Account {
         save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
-        let mut state = AccountState {
+        let mut state = ProfileState {
             profile_id,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
@@ -484,7 +484,7 @@ impl Account {
         config_dir: &Path,
         device_nsec: &str,
         device_label: Option<String>,
-    ) -> Result<Self, AccountError> {
+    ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(device_nsec).ok();
         let profile_id = recovery_phrase
             .as_deref()
@@ -506,7 +506,7 @@ impl Account {
         }
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
-        let mut state = AccountState {
+        let mut state = ProfileState {
             profile_id,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
@@ -548,15 +548,15 @@ impl Account {
         profile_id: IrisProfileId,
         admin_app_key_hex: String,
         device_label: Option<String>,
-    ) -> Result<Self, AccountError> {
+    ) -> Result<Self, ProfileError> {
         if !is_pubkey_hex(&admin_app_key_hex) {
-            return Err(AccountError::InvalidAppKeyPubkey(admin_app_key_hex));
+            return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_hex));
         }
         let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
-        let state = AccountState {
+        let state = ProfileState {
             profile_id,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
@@ -575,11 +575,11 @@ impl Account {
         })
     }
 
-    /// Load an account from its config dir. Reconstructs the in-memory
-    /// view from the persisted `AccountState` plus the on-disk key
+    /// Load a profile from its config dir. Reconstructs the in-memory
+    /// view from the persisted `ProfileState` plus the on-disk key
     /// files. Errors if the device key is missing — caller should run a
     /// create/restore/link flow first.
-    pub fn load(mut state: AccountState, config_dir: &Path) -> Result<Self, AccountError> {
+    pub fn load(mut state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
         let device = DeviceIdentity::load(key_path_in(config_dir))?;
         state.sync_app_keys_from_profile();
         Ok(Self {
@@ -597,14 +597,14 @@ impl Account {
         &mut self,
         device_pubkey_hex: &str,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
         if let Some(snap) = &self.state.app_keys
             && snap.contains(device_pubkey_hex)
         {
-            return Err(AccountError::AlreadyAuthorized);
+            return Err(ProfileError::AlreadyAuthorized);
         }
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
@@ -633,22 +633,22 @@ impl Account {
     pub fn revoke_device(
         &mut self,
         device_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
             .state
             .app_keys
             .as_ref()
-            .ok_or(AccountError::DeviceNotInRoster)?;
+            .ok_or(ProfileError::DeviceNotInRoster)?;
         if !snap.contains(device_pubkey_hex) {
-            return Err(AccountError::DeviceNotInRoster);
+            return Err(ProfileError::DeviceNotInRoster);
         }
         if snap.is_admin(device_pubkey_hex)
             && snap.app_actors.iter().filter(|d| d.is_admin()).count() <= 1
         {
-            return Err(AccountError::CannotRemoveLastAdmin);
+            return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
@@ -667,15 +667,15 @@ impl Account {
     /// Rotate the DCK without changing the device roster. Useful for
     /// periodic key freshness ("rotate weekly even with no membership
     /// churn"). Owner-only.
-    pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, AccountError> {
+    pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, ProfileError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
             .state
             .app_keys
             .as_ref()
-            .ok_or(AccountError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentSnapshot)?;
         let dck = generate_dck();
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
@@ -691,18 +691,18 @@ impl Account {
         nip46_pubkey_hex: &str,
         label: Option<String>,
         can_decrypt_key_epochs: bool,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), ProfileError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
         PublicKey::from_hex(nip46_pubkey_hex)
-            .map_err(|e| AccountError::InvalidDevicePubkey(e.to_string()))?;
+            .map_err(|e| ProfileError::InvalidDevicePubkey(e.to_string()))?;
         let projection = self.state.profile_projection();
         if projection.active_facets.contains_key(nip46_pubkey_hex) {
-            return Err(AccountError::AlreadyAuthorized);
+            return Err(ProfileError::AlreadyAuthorized);
         }
         if projection.tombstones.contains_key(nip46_pubkey_hex) {
-            return Err(AccountError::CurrentAppKeyTombstoned);
+            return Err(ProfileError::CurrentAppKeyTombstoned);
         }
 
         let now = next_profile_timestamp(&self.state);
@@ -735,11 +735,11 @@ impl Account {
         &mut self,
         recovery_phrase: &str,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
         let found_profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
         if found_profile_id != self.state.profile_id {
-            return Err(AccountError::RecoveryProfileMismatch {
+            return Err(ProfileError::RecoveryProfileMismatch {
                 expected: self.state.profile_id,
                 found: found_profile_id,
             });
@@ -760,7 +760,7 @@ impl Account {
         &mut self,
         nip46_keys: &Keys,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         self.admit_current_app_key_with_authority_keys(
             nip46_keys,
             IrisProfileKeyPurpose::Nip46Signer,
@@ -773,31 +773,31 @@ impl Account {
         authority_keys: &Keys,
         expected_purpose: IrisProfileKeyPurpose,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
         let Some(authority_facet) = projection.active_facets.get(&authority_pubkey) else {
-            return Err(AccountError::RecoveryAuthorityUnavailable);
+            return Err(ProfileError::RecoveryAuthorityUnavailable);
         };
         if !authority_facet.has_purpose(expected_purpose)
             || !authority_facet.capabilities.can_recover_app_keys
         {
-            return Err(AccountError::RecoveryAuthorityUnavailable);
+            return Err(ProfileError::RecoveryAuthorityUnavailable);
         }
         if projection
             .tombstones
             .contains_key(&self.state.device_pubkey)
         {
-            return Err(AccountError::CurrentAppKeyTombstoned);
+            return Err(ProfileError::CurrentAppKeyTombstoned);
         }
         if projection.can_write_roots(&self.state.device_pubkey) {
-            return Err(AccountError::AlreadyAuthorized);
+            return Err(ProfileError::AlreadyAuthorized);
         }
         let should_rotate_epoch = authority_facet.capabilities.can_decrypt_key_epochs;
         if should_rotate_epoch {
             self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
             if !authority_facet.capabilities.can_change_key_epochs() {
-                return Err(AccountError::RecoveryCannotRotateKeyEpochs);
+                return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
             }
         }
 
@@ -831,14 +831,14 @@ impl Account {
     pub fn appoint_admin(
         &mut self,
         device_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         self.set_device_role(device_pubkey_hex, AppActorRole::Admin)
     }
 
     pub fn demote_admin(
         &mut self,
         device_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         self.set_device_role(device_pubkey_hex, AppActorRole::Member)
     }
 
@@ -846,18 +846,18 @@ impl Account {
         &mut self,
         device_pubkey_hex: &str,
         role: AppActorRole,
-    ) -> Result<&AppKeysSnapshot, AccountError> {
+    ) -> Result<&AppKeysSnapshot, ProfileError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
             .state
             .app_keys
             .as_ref()
-            .ok_or(AccountError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentSnapshot)?;
         let current = snap
             .app_actor(device_pubkey_hex)
-            .ok_or(AccountError::DeviceNotInRoster)?;
+            .ok_or(ProfileError::DeviceNotInRoster)?;
         if current.role == role {
             return Ok(self.state.app_keys.as_ref().expect("checked above"));
         }
@@ -870,7 +870,7 @@ impl Account {
                 .count()
                 <= 1
         {
-            return Err(AccountError::CannotRemoveLastAdmin);
+            return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let capabilities = match role {
             AppActorRole::Admin => IrisProfileCapabilities::app_admin(),
@@ -894,7 +894,7 @@ impl Account {
         &mut self,
         op: IrisProfileRosterOp,
         created_at: i64,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), ProfileError> {
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
         let signed = signed_profile_roster_op_with_parents(
             self.device.keys(),
@@ -911,7 +911,7 @@ impl Account {
         &mut self,
         dck: &[u8; 32],
         created_at: i64,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), ProfileError> {
         let signer = self.device.keys().clone();
         self.rotate_profile_dck_epoch_with_signer(&signer, dck, created_at)
     }
@@ -921,7 +921,7 @@ impl Account {
         signer_keys: &Keys,
         dck: &[u8; 32],
         created_at: i64,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), ProfileError> {
         let projection = self.state.profile_projection();
         let recipients = projection
             .active_facets
@@ -950,21 +950,21 @@ impl Account {
     /// Add missing DCK wraps for the current key epoch without rotating the
     /// DCK. Only the `AppKey` that signed the epoch may repair it, keeping the
     /// epoch's encryption authority unambiguous after divergent roster merges.
-    pub fn repair_current_key_epoch_wraps(&mut self) -> Result<KeyWrapRepairOutcome, AccountError> {
+    pub fn repair_current_key_epoch_wraps(&mut self) -> Result<KeyWrapRepairOutcome, ProfileError> {
         let projection = self.state.profile_projection();
         let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
-            return Err(AccountError::NoCurrentSnapshot);
+            return Err(ProfileError::NoCurrentSnapshot);
         };
         if key_epoch.signed_by_pubkey != self.state.device_pubkey {
-            return Err(AccountError::CurrentAppKeyCannotRepairKeyEpoch {
+            return Err(ProfileError::CurrentAppKeyCannotRepairKeyEpoch {
                 signed_by_pubkey: key_epoch.signed_by_pubkey.clone(),
             });
         }
         let Some(current_facet) = projection.active_facets.get(&self.state.device_pubkey) else {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         };
         if !current_facet.capabilities.can_change_key_epochs() {
-            return Err(AccountError::NoAdminAuthority);
+            return Err(ProfileError::NoAdminAuthority);
         }
 
         let missing_pubkeys = projection.active_key_recipients_missing_wraps(*epoch);
@@ -977,7 +977,7 @@ impl Account {
                     .state
                     .app_keys
                     .as_ref()
-                    .ok_or(AccountError::NoCurrentSnapshot)?
+                    .ok_or(ProfileError::NoCurrentSnapshot)?
                     .clone(),
             });
         }
@@ -1008,7 +1008,7 @@ impl Account {
                 .state
                 .app_keys
                 .as_ref()
-                .ok_or(AccountError::NoCurrentSnapshot)?
+                .ok_or(ProfileError::NoCurrentSnapshot)?
                 .clone(),
         })
     }
@@ -1016,58 +1016,58 @@ impl Account {
     /// Decrypt this device's DCK wrap from the current snapshot. Errors
     /// with `NoWrapForThisDevice` if the device has been revoked or
     /// never authorized.
-    pub fn current_dck(&self) -> Result<[u8; 32], AccountError> {
+    pub fn current_dck(&self) -> Result<[u8; 32], ProfileError> {
         if !self.state.profile_roster_ops.is_empty() {
             let projection = self.state.profile_projection();
             let key_epoch = projection
                 .key_epochs
                 .values()
                 .next_back()
-                .ok_or(AccountError::NoCurrentSnapshot)?;
+                .ok_or(ProfileError::NoCurrentSnapshot)?;
             let wrap = key_epoch
                 .wrapped_dck
                 .get(&self.state.device_pubkey)
-                .ok_or(AccountError::NoWrapForThisDevice)?;
+                .ok_or(ProfileError::NoWrapForThisDevice)?;
             let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
-                .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
+                .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
             let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
-                .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+                .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
             let arr: [u8; 32] = bytes
                 .as_slice()
                 .try_into()
-                .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+                .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
             return Ok(arr);
         }
         let snap = self
             .state
             .app_keys
             .as_ref()
-            .ok_or(AccountError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentSnapshot)?;
         let wrap = snap
             .wrapped_dck
             .get(&self.state.device_pubkey)
-            .ok_or(AccountError::NoWrapForThisDevice)?;
+            .ok_or(ProfileError::NoWrapForThisDevice)?;
         let signer_pubkey = snap
             .signer_pubkey()
-            .ok_or(AccountError::MissingSnapshotSigner)?;
+            .ok_or(ProfileError::MissingSnapshotSigner)?;
         let signer_pk = PublicKey::from_hex(signer_pubkey)
-            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
-            .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+            .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .as_slice()
             .try_into()
-            .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
         Ok(arr)
     }
 
     pub fn current_dck_from_recovery_phrase(
         &self,
         recovery_phrase: &str,
-    ) -> Result<[u8; 32], AccountError> {
+    ) -> Result<[u8; 32], ProfileError> {
         let profile_id = recovery_phrase_to_profile_id(recovery_phrase)?;
         if profile_id != self.state.profile_id {
-            return Err(AccountError::RecoveryProfileMismatch {
+            return Err(ProfileError::RecoveryProfileMismatch {
                 expected: self.state.profile_id,
                 found: profile_id,
             });
@@ -1080,7 +1080,7 @@ impl Account {
         )
     }
 
-    pub fn current_dck_from_nip46_keys(&self, nip46_keys: &Keys) -> Result<[u8; 32], AccountError> {
+    pub fn current_dck_from_nip46_keys(&self, nip46_keys: &Keys) -> Result<[u8; 32], ProfileError> {
         self.current_dck_from_authority_keys(nip46_keys, IrisProfileKeyPurpose::Nip46Signer)
     }
 
@@ -1088,32 +1088,32 @@ impl Account {
         &self,
         authority_keys: &Keys,
         expected_purpose: IrisProfileKeyPurpose,
-    ) -> Result<[u8; 32], AccountError> {
+    ) -> Result<[u8; 32], ProfileError> {
         let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
         let Some(facet) = projection.active_facets.get(&authority_pubkey) else {
-            return Err(AccountError::RecoveryAuthorityUnavailable);
+            return Err(ProfileError::RecoveryAuthorityUnavailable);
         };
         if !facet.has_purpose(expected_purpose) || !facet.capabilities.can_decrypt_key_epochs {
-            return Err(AccountError::RecoveryAuthorityUnavailable);
+            return Err(ProfileError::RecoveryAuthorityUnavailable);
         }
         let key_epoch = projection
             .key_epochs
             .values()
             .next_back()
-            .ok_or(AccountError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentSnapshot)?;
         let wrap = key_epoch
             .wrapped_dck
             .get(&authority_pubkey)
-            .ok_or(AccountError::NoWrapForThisDevice)?;
+            .ok_or(ProfileError::NoWrapForThisDevice)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
-            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
-            .map_err(|e| AccountError::Unwrap(e.to_string()))?;
+            .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .as_slice()
             .try_into()
-            .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
+            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
         Ok(arr)
     }
 }
@@ -1134,16 +1134,16 @@ fn wrap_dck_for_pubkeys<'a, I>(
     owner_secret: &SecretKey,
     pubkeys: I,
     dck: &[u8; 32],
-) -> Result<BTreeMap<String, String>, AccountError>
+) -> Result<BTreeMap<String, String>, ProfileError>
 where
     I: IntoIterator<Item = &'a str>,
 {
     let mut wraps = BTreeMap::new();
     for pubkey in pubkeys {
         let pk = PublicKey::from_hex(pubkey)
-            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
-            .map_err(|e| AccountError::Wrap(e.to_string()))?;
+            .map_err(|e| ProfileError::Wrap(e.to_string()))?;
         wraps.insert(pubkey.to_string(), ct);
     }
     Ok(wraps)
@@ -1156,7 +1156,7 @@ fn initial_profile_roster_ops(
     recovery_pubkey: Option<&str>,
     dck: &[u8; 32],
     created_at: i64,
-) -> Result<Vec<SignedIrisProfileRosterOp>, AccountError> {
+) -> Result<Vec<SignedIrisProfileRosterOp>, ProfileError> {
     let app_pubkey = app_entry.pubkey.clone();
     let app_label = app_entry.label.clone();
     let app_op = signed_profile_roster_op(
@@ -1213,7 +1213,7 @@ fn signed_profile_roster_op(
     profile_id: IrisProfileId,
     op: IrisProfileRosterOp,
     created_at: i64,
-) -> Result<SignedIrisProfileRosterOp, AccountError> {
+) -> Result<SignedIrisProfileRosterOp, ProfileError> {
     signed_profile_roster_op_with_parents(signer_keys, profile_id, Vec::new(), op, created_at)
 }
 
@@ -1223,10 +1223,10 @@ fn signed_profile_roster_op_with_parents(
     parents: Vec<String>,
     op: IrisProfileRosterOp,
     created_at: i64,
-) -> Result<SignedIrisProfileRosterOp, AccountError> {
+) -> Result<SignedIrisProfileRosterOp, ProfileError> {
     let event =
         build_iris_profile_roster_op_event(signer_keys, profile_id, parents, None, op, created_at)?;
-    parse_iris_profile_roster_op_event(&event).map_err(AccountError::from)
+    parse_iris_profile_roster_op_event(&event).map_err(ProfileError::from)
 }
 
 fn current_unix_seconds() -> i64 {
@@ -1248,7 +1248,7 @@ fn next_local_timestamp(current: Option<&AppKeysSnapshot>) -> i64 {
     }
 }
 
-fn next_profile_timestamp(state: &AccountState) -> i64 {
+fn next_profile_timestamp(state: &ProfileState) -> i64 {
     let latest_profile_op = state
         .profile_roster_ops
         .iter()
@@ -1345,63 +1345,63 @@ fn is_pubkey_hex(s: &str) -> bool {
 
 /// Convenience: load just the keypair paths under a given config dir.
 #[must_use]
-pub fn account_paths(config_dir: &Path) -> AccountPaths {
-    AccountPaths {
+pub fn profile_paths(config_dir: &Path) -> ProfilePaths {
+    ProfilePaths {
         device_key: key_path_in(config_dir),
         owner_key: owner_key_path_in(config_dir),
     }
 }
 
-pub struct AccountPaths {
+pub struct ProfilePaths {
     pub device_key: PathBuf,
     pub owner_key: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct LogoutReport {
+pub struct ProfileLogoutReport {
     pub removed_key: bool,
     pub removed_owner_key: bool,
     pub removed_sync_cache: bool,
-    pub cleared_account: bool,
+    pub cleared_profile: bool,
     pub cleared_user_profile: bool,
     pub cleared_drives: bool,
     pub cleared_backup_targets: bool,
 }
 
-impl LogoutReport {
+impl ProfileLogoutReport {
     #[must_use]
     pub fn changed(&self) -> bool {
         self.removed_key
             || self.removed_owner_key
             || self.removed_sync_cache
-            || self.cleared_account
+            || self.cleared_profile
             || self.cleared_user_profile
             || self.cleared_drives
             || self.cleared_backup_targets
     }
 }
 
-pub fn logout_local_account(config_dir: &Path) -> Result<LogoutReport, AccountError> {
+pub fn logout_local_profile(config_dir: &Path) -> Result<ProfileLogoutReport, ProfileError> {
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path)?;
 
-    let cleared_account = config.profile.take().is_some();
+    let cleared_profile = config.profile.take().is_some();
     let cleared_user_profile = config.user_profile.take().is_some();
     let cleared_drives = !config.drives.is_empty();
     config.drives.clear();
     let cleared_backup_targets = !config.backup_targets.is_empty();
     config.backup_targets.clear();
-    let mut report = LogoutReport {
-        cleared_account,
+    let mut report = ProfileLogoutReport {
+        cleared_profile,
         cleared_user_profile,
         cleared_drives,
         cleared_backup_targets,
-        ..LogoutReport::default()
+        ..ProfileLogoutReport::default()
     };
 
     if config_path.exists()
-        || report.cleared_account
+        || report.cleared_profile
         || report.cleared_user_profile
         || report.cleared_drives
         || report.cleared_backup_targets

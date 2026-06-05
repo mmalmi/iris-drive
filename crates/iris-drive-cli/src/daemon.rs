@@ -583,7 +583,7 @@ pub(crate) fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<S
     }
 }
 
-pub(crate) fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
+pub(crate) fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()

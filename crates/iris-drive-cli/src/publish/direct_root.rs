@@ -44,7 +44,7 @@ impl DirectRootExchange {
         &mut self,
         config_dir: &Path,
         config: &AppConfig,
-        state: &AccountState,
+        state: &ProfileState,
         fips_blocks: Option<&FsFipsBlockSync>,
     ) -> Result<()> {
         let Some(sync) = fips_blocks else {
@@ -320,7 +320,7 @@ impl DirectRootExchange {
 pub(crate) async fn build_current_sync_events(
     config_dir: &Path,
     config: &AppConfig,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
@@ -334,7 +334,7 @@ pub(crate) async fn build_current_sync_events(
 
 fn append_profile_roster_events(
     events: &mut Vec<DirectRootEvent>,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<()> {
     for op in &state.profile_roster_ops {
         let event =
@@ -368,7 +368,7 @@ async fn append_primary_drive_root_events(
     events: &mut Vec<DirectRootEvent>,
     config_dir: &Path,
     config: &AppConfig,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<()> {
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
@@ -398,7 +398,7 @@ async fn append_primary_drive_root_events(
         )?);
 
         if state.can_write_roots() {
-            let account = Account::load(state.clone(), config_dir).context("loading account")?;
+            let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
                 account.device.keys(),
                 &drive.drive_id,
@@ -421,7 +421,7 @@ async fn append_share_root_events(
     events: &mut Vec<DirectRootEvent>,
     config_dir: &Path,
     config: &AppConfig,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<()> {
     let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
         .context("loading device key")?;
@@ -470,7 +470,7 @@ async fn append_share_root_events(
 pub(crate) async fn publishable_device_root(
     config_dir: &Path,
     drive: &Drive,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<Option<DeviceRootRef>> {
     let Some(root) = drive.device_roots.get(&state.device_pubkey).cloned() else {
         return Ok(None);
@@ -483,7 +483,7 @@ pub(crate) async fn publishable_device_root(
 
 pub(crate) async fn publishable_parent_root(
     config_dir: &Path,
-    state: &AccountState,
+    state: &ProfileState,
     mut root: DeviceRootRef,
 ) -> Result<Option<DeviceRootRef>> {
     let daemon = Daemon::open(config_dir).context("opening daemon for publishable root lookup")?;

@@ -127,7 +127,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(created.error.is_empty(), "{}", created.error);
 
     let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    let account = iris_drive_core::Account::load(config.profile.clone().unwrap(), dir.path())
+    let account = iris_drive_core::Profile::load(config.profile.clone().unwrap(), dir.path())
         .expect("account loads");
     let folder = iris_drive_core::create_shared_folder(
         account.device.keys(),
@@ -1079,8 +1079,8 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
 fn native_profile_roster_ops_refresh_authorized_member_roster() {
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
-    let mut owner = iris_drive_core::Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
-    let mut linked = iris_drive_core::Account::link_to_profile(
+    let mut owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let mut linked = iris_drive_core::Profile::link_to_profile(
         linked_dir.path(),
         owner.state.profile_id,
         owner.state.device_pubkey.clone(),

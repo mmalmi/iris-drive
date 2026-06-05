@@ -1,4 +1,3 @@
-pub mod account;
 pub mod app_keys;
 pub mod backup_ops;
 pub mod backup_summary;
@@ -11,10 +10,11 @@ pub mod device_summary;
 pub mod direct_root_transport;
 pub mod fips_status;
 pub mod fips_sync;
+pub mod profile;
 
 /// Convenience constructor: a `BlossomClient` wired with the given
 /// signing keys and the given server URLs. Used as both the write and
-/// read pool — single account installs typically use the same servers
+/// read pool — single profile installs typically use the same servers
 /// for both.
 #[must_use]
 pub fn blossom_sync_client(
@@ -56,10 +56,6 @@ pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
 
-pub use account::{
-    Account, AccountError, AccountState, DeviceAuthorizationState, KeyWrapRepairOutcome,
-    LogoutReport, logout_local_account,
-};
 pub use app_keys::{
     AppActorEntry, AppActorRole, AppKeysSnapshot, ApplyDecision, apply_snapshot, select_latest,
 };
@@ -109,6 +105,10 @@ pub use network_sync::{
     DriveRootEventApplyReport, NetworkSyncReport, apply_drive_root_events,
     authorized_device_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
 };
+pub use profile::{
+    DeviceAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
+    ProfileState, logout_local_profile,
+};
 pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
 };
@@ -133,7 +133,7 @@ pub use sync_cache::{
 /// removed or repurposed so older installs fail closed instead of carrying
 /// stale state forward.
 ///
-/// v2: added optional `AccountState` for the owner/device key split + `AppKeys`.
+/// v2: added optional `ProfileState` for the owner/device key split + `AppKeys`.
 /// v3: removed plain working-directory mode; configs are strict.
 /// v4: renamed the persisted local identity field from `account` to `profile`.
 pub const CONFIG_SCHEMA_VERSION: u32 = 4;

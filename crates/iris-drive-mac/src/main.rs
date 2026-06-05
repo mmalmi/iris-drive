@@ -12,9 +12,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
-use iris_drive_core::account::Account;
 use iris_drive_core::config::AppConfig;
 use iris_drive_core::paths::{config_path_in, key_path_in};
+use iris_drive_core::profile::Profile;
 use iris_drive_core::{Drive, PRIMARY_DRIVE_ID};
 use serde_json::Value;
 use tao::event::{Event, StartCause};
@@ -197,7 +197,7 @@ fn bootstrap_first_launch_with(config_dir: &Path) -> Result<()> {
     if !key_path.exists() {
         std::fs::create_dir_all(config_dir).context("creating config dir")?;
         let account =
-            Account::create(config_dir, Some("Mac".into())).context("generating account keys")?;
+            Profile::create(config_dir, Some("Mac".into())).context("generating profile keys")?;
         config.profile = Some(account.state.clone());
         if config.drive(PRIMARY_DRIVE_ID).is_none() {
             config.upsert_drive(Drive::primary(account.state.root_scope_id()));

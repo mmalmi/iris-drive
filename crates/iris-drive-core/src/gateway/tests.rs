@@ -1,12 +1,12 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-use crate::account::Account;
 use crate::config::Drive;
 use crate::paths::config_path_in;
+use crate::profile::Profile;
 use tempfile::tempdir;
 
 fn init_account_config(dir: &Path) {
-    let account = Account::create(dir, Some("gateway-test".into())).unwrap();
+    let account = Profile::create(dir, Some("gateway-test".into())).unwrap();
     let mut cfg = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()

@@ -99,7 +99,7 @@ fn direct_root_republishes_after_short_native_cadence() {
 #[test]
 fn direct_root_publish_includes_profile_roster_ops() {
     let config_dir = tempfile::tempdir().unwrap();
-    let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
     let config = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()
@@ -127,7 +127,7 @@ fn direct_root_publish_includes_profile_roster_ops() {
 fn direct_root_publish_includes_share_roster_ops_and_roots() {
     let config_dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
-    let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
     let mut initial_config = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()

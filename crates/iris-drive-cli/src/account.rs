@@ -24,7 +24,7 @@ pub(crate) fn cmd_init(
         eprintln!("use --force to print the existing state instead of erroring");
         return Err(anyhow::anyhow!("already initialized"));
     }
-    let account = Account::create(config_dir, label).context("creating account")?;
+    let account = Profile::create(config_dir, label).context("creating profile")?;
     finish_account_init(
         config_dir,
         &account,
@@ -44,7 +44,7 @@ pub(crate) fn cmd_restore(
             config_dir.display()
         ));
     }
-    let account = Account::restore(config_dir, nsec, label).context("restoring account")?;
+    let account = Profile::restore(config_dir, nsec, label).context("restoring profile")?;
     finish_account_init(config_dir, &account, None)
 }
 
@@ -67,7 +67,7 @@ pub(crate) fn cmd_recover_app_key(
     } else {
         recovery_phrase.expect("checked above").trim().to_string()
     };
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     account
         .admit_current_app_key_with_recovery_phrase(&phrase, label)
         .context("recovering app key")?;
@@ -115,7 +115,7 @@ pub(crate) fn cmd_link_with_admin_device(
         ));
     }
     let target = resolve_device_link_target_with_admin(invite_or_profile, admin_device)?;
-    let mut account = Account::link_to_profile(
+    let mut account = Profile::link_to_profile(
         config_dir,
         target.profile_id,
         target.admin_app_key_hex.clone(),
@@ -140,7 +140,7 @@ pub(crate) fn cmd_link_with_admin_device(
 
 pub(crate) fn finish_account_init(
     config_dir: &std::path::Path,
-    account: &Account,
+    account: &Profile,
     user_profile: Option<UserProfile>,
 ) -> Result<()> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -180,7 +180,7 @@ pub(crate) fn finish_account_init(
 }
 
 pub(crate) fn cmd_logout(config_dir: &std::path::Path) -> Result<()> {
-    let report = iris_drive_core::logout_local_account(config_dir).context("logging out")?;
+    let report = iris_drive_core::logout_local_profile(config_dir).context("logging out")?;
     println!(
         "{}",
         json!({
@@ -190,7 +190,7 @@ pub(crate) fn cmd_logout(config_dir: &std::path::Path) -> Result<()> {
             "removed_key": report.removed_key,
             "removed_owner_key": report.removed_owner_key,
             "removed_sync_cache": report.removed_sync_cache,
-            "cleared_account": report.cleared_account,
+            "cleared_profile": report.cleared_profile,
             "cleared_user_profile": report.cleared_user_profile,
             "cleared_drives": report.cleared_drives,
             "cleared_backup_targets": report.cleared_backup_targets,
@@ -212,7 +212,7 @@ pub(crate) fn cmd_approve(
     let (device_hex, label) = resolve_device_approval_input(device, state.profile_id, label)
         .context("parsing AppKey approval request")?;
     let approved_app_key_npub = account_npub(&device_hex);
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     let snap = account
         .approve_device(&device_hex, label)
         .context("approving device")?;
@@ -269,7 +269,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     if state.device_pubkey == device_hex {
         return Err(anyhow::anyhow!("cannot revoke this AppKey from itself"));
     }
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     let snap = account
         .revoke_device(&device_hex)
         .context("revoking AppKey")?;
@@ -307,7 +307,7 @@ fn set_device_admin_role(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     let snap = if make_admin {
         account
             .appoint_admin(&device_hex)
@@ -377,7 +377,7 @@ pub(crate) fn cmd_rotate_dck(config_dir: &std::path::Path) -> Result<()> {
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     let snap = account.rotate_dck().context("rotating DCK")?;
     let dck_gen = snap.dck_generation;
     config.profile = Some(account.state.clone());
@@ -402,7 +402,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let mut account = Profile::load(state, config_dir).context("loading profile")?;
     let repair = account
         .repair_current_key_epoch_wraps()
         .context("repairing current key epoch wraps")?;
@@ -455,7 +455,7 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn load_account_state(config_dir: &std::path::Path) -> Result<AccountState> {
+pub(crate) fn load_account_state(config_dir: &std::path::Path) -> Result<ProfileState> {
     AppConfig::load_or_default(config_path_in(config_dir))?
         .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))
@@ -479,7 +479,7 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-pub(crate) fn account_identity_json_map(state: &AccountState) -> serde_json::Map<String, Value> {
+pub(crate) fn account_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {
     let summary = iris_drive_core::device_summary::iris_profile_summary(state);
     let mut output = serde_json::Map::new();
     output.insert("profile".to_string(), iris_profile_summary_json(&summary));
@@ -932,7 +932,7 @@ pub(crate) fn account_npub(hex: &str) -> String {
         .unwrap_or_else(|| hex.to_string())
 }
 
-pub(crate) fn authorization_state_label(state: &AccountState) -> &'static str {
+pub(crate) fn authorization_state_label(state: &ProfileState) -> &'static str {
     iris_drive_core::device_summary::authorization_state_key(state.authorization_state)
 }
 

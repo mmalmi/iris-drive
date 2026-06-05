@@ -20,7 +20,6 @@ use std::time::Duration;
 use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
-use crate::account::app_keys_from_profile_projection;
 use crate::app_keys::{AppKeysSnapshot, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
@@ -30,6 +29,7 @@ use crate::nostr_events::{
     drive_root_d_tag, parse_device_link_request_event, parse_drive_root_event,
     parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
+use crate::profile::app_keys_from_profile_projection;
 use crate::{
     IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
@@ -48,7 +48,7 @@ pub enum RelayError {
     #[error("hashtree root: {0}")]
     HashtreeRoot(String),
     #[error("account: {0}")]
-    Account(#[from] crate::account::AccountError),
+    Profile(#[from] crate::profile::ProfileError),
     #[error("iris profile: {0}")]
     IrisProfile(#[from] crate::iris_profile::IrisProfileError),
     #[error("device-link roster: {0}")]

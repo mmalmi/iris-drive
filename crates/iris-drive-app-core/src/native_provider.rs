@@ -11,7 +11,7 @@ use iris_drive_core::provider::{
     provider_path_is_child_document, sanitized_provider_file_name, split_provider_path,
     unique_provider_path,
 };
-use iris_drive_core::{Account, AppConfig};
+use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
 
 use crate::provider_metadata::provider_modified_at_index;
@@ -432,7 +432,7 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
         return Ok(json!({"published_drive_root": false, "error": "device root missing"}));
     };
     let loaded_account =
-        Account::load(account.clone(), config_dir).context("loading account keys")?;
+        Profile::load(account.clone(), config_dir).context("loading profile keys")?;
 
     let relays = if config.relays.is_empty() {
         default_relays()
@@ -497,7 +497,7 @@ pub(crate) fn native_sync_status_label(
     }
 }
 
-fn authorized_device_pubkeys(state: &iris_drive_core::AccountState) -> Vec<String> {
+fn authorized_device_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()

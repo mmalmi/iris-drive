@@ -96,7 +96,7 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let account = Account::load(state, config_dir).context("loading account")?;
+    let account = Profile::load(state, config_dir).context("loading profile")?;
     let folder = config
         .shared_folders
         .iter_mut()
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn shares_shortcut_command_adds_unique_my_drive_shortcut() {
         let config_dir = tempdir().unwrap();
-        let account = Account::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let folder = iris_drive_core::create_shared_folder(
             account.device.keys(),
             account.state.profile_id,
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn shares_repair_wraps_command_repairs_missing_share_wraps() {
         let config_dir = tempdir().unwrap();
-        let account = Account::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
         let recipient_pubkey = recipient_keys.public_key().to_hex();
         let mut folder = iris_drive_core::create_shared_folder(

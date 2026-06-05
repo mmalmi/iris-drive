@@ -1,10 +1,10 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-use crate::account::Account;
 use crate::app_keys::AppActorEntry;
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
 use crate::merge::DeviceFileEntry;
+use crate::profile::Profile;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore, sha256};
 use std::sync::Arc;
@@ -36,7 +36,7 @@ fn may_replace_destination_preserves_unimported_deletions() {
 #[tokio::test]
 async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     let source = tempdir().unwrap();
@@ -103,7 +103,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
 #[tokio::test]
 async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
     let (file_cid, file_size) = tree.put_file(b"legacy").await.unwrap();
     let source_root = tree
@@ -159,7 +159,7 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
 #[tokio::test]
 async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
     let remote_device =
         "5555555555555555555555555555555555555555555555555555555555555555".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -264,7 +264,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
 #[tokio::test]
 async fn primary_merged_root_hides_ignored_legacy_directories() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     let source = tempdir().unwrap();
@@ -320,7 +320,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
 #[tokio::test]
 async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink() {
     let cfg_dir = tempdir().unwrap();
-    let mut account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let old_pixel = nostr_sdk::Keys::generate().public_key().to_hex();
     let new_pixel = nostr_sdk::Keys::generate().public_key().to_hex();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -373,7 +373,7 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
 #[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "2222222222222222222222222222222222222222222222222222222222222222".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -463,7 +463,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
 #[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "4444444444444444444444444444444444444444444444444444444444444444".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -580,7 +580,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
 #[tokio::test]
 async fn primary_merged_view_ignores_local_only_root_publish_time() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "3333333333333333333333333333333333333333333333333333333333333333".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -651,7 +651,7 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
 #[tokio::test]
 async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
     let cfg_dir = tempdir().unwrap();
-    let account = Account::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "5555555555555555555555555555555555555555555555555555555555555555".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());

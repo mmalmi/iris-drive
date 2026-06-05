@@ -9,8 +9,8 @@ use thiserror::Error;
 use std::collections::BTreeMap;
 
 use crate::CONFIG_SCHEMA_VERSION;
-use crate::account::AccountState;
 use crate::iris_profile::IrisProfileId;
+use crate::profile::ProfileState;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use crate::sharing::{ShareShortcut, SharedFolder};
 
@@ -45,7 +45,7 @@ pub struct AppConfig {
     /// Local `IrisProfile` state. `None` until the user has run a create /
     /// restore / link flow.
     #[serde(default)]
-    pub profile: Option<AccountState>,
+    pub profile: Option<ProfileState>,
     /// Optional local profile metadata collected during account creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_profile: Option<UserProfile>,
@@ -628,7 +628,7 @@ dck_generation = 1
     #[test]
     fn app_keys_snapshot_is_hydrated_from_profile_roster_not_persisted() {
         let dir = tempdir().unwrap();
-        let account = crate::account::Account::create(dir.path(), Some("Mac".into())).unwrap();
+        let account = crate::profile::Profile::create(dir.path(), Some("Mac".into())).unwrap();
         let expected = account
             .state
             .app_keys
@@ -659,12 +659,12 @@ dck_generation = 1
         let path = dir.path().join("config.toml");
 
         let mut newer = AppConfig {
-            profile: Some(AccountState {
+            profile: Some(ProfileState {
                 profile_id: crate::IrisProfileId::new_v4(),
                 device_pubkey: "device-a".into(),
                 profile_roster_ops: Vec::new(),
                 device_link_secret: "link-secret".into(),
-                authorization_state: crate::account::DeviceAuthorizationState::Authorized,
+                authorization_state: crate::profile::DeviceAuthorizationState::Authorized,
                 device_label: None,
                 app_keys: None,
                 outbound_device_link_request: None,

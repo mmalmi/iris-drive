@@ -1,5 +1,4 @@
 use super::*;
-use crate::account::{Account, DeviceAuthorizationState};
 use crate::config::Drive;
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::iris_profile::{
@@ -10,12 +9,13 @@ use crate::nostr_events::{
     build_device_link_request_event, build_drive_root_event, build_private_hashtree_root_event,
     device_link_request_d_tag,
 };
+use crate::profile::{DeviceAuthorizationState, Profile};
 use crate::sharing::{ShareRecipient, ShareRole};
 use hashtree_core::Cid;
 use tempfile::tempdir;
 
-fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Account) {
-    let acct = Account::create(dir, None).unwrap();
+fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
+    let acct = Profile::create(dir, None).unwrap();
     let mut cfg = AppConfig {
         profile: Some(acct.state.clone()),
         ..AppConfig::default()
@@ -54,7 +54,7 @@ fn causal_encrypted_root(
 }
 
 fn roster_frame(
-    admin: &Account,
+    admin: &Profile,
     profile_roster_ops: Vec<crate::SignedIrisProfileRosterOp>,
     sent_at: u64,
 ) -> DeviceLinkRosterFrame {
@@ -67,11 +67,11 @@ fn roster_frame(
     }
 }
 
-fn linked_config_after_initial_roster() -> (Account, AppConfig) {
+fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
-    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let mut linked = Account::link_to_profile(
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
         admin.state.device_pubkey.clone(),
@@ -146,8 +146,8 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
-    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let mut linked = Account::link_to_profile(
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
         admin.state.device_pubkey.clone(),
@@ -514,8 +514,8 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
 fn apply_device_link_request_event_records_admin_inbound_request() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
-    let admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let linked = Account::link_to_profile(
+    let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
         admin.state.device_pubkey.clone(),
@@ -589,7 +589,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
         .approve_device(&device_b_hex, Some("old-phone".into()))
         .unwrap();
 
-    let linked = Account::link_to_profile(
+    let linked = Profile::link_to_profile(
         linked_dir.path(),
         owner_acct.state.profile_id,
         owner_acct.state.device_pubkey.clone(),
@@ -756,9 +756,9 @@ fn apply_drive_root_event_for_foreign_owner_ignored() {
 #[test]
 fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
     let owner_dir = tempdir().unwrap();
-    let owner = Account::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
     let reader_dir = tempdir().unwrap();
-    let reader = Account::create(reader_dir.path(), Some("Reader".into())).unwrap();
+    let reader = Profile::create(reader_dir.path(), Some("Reader".into())).unwrap();
     let folder = crate::create_shared_folder(
         owner.device.keys(),
         owner.state.profile_id,
@@ -813,9 +813,9 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
 #[test]
 fn apply_share_root_event_rejects_reader_publisher() {
     let owner_dir = tempdir().unwrap();
-    let owner = Account::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
     let reader_dir = tempdir().unwrap();
-    let reader = Account::create(reader_dir.path(), Some("Reader".into())).unwrap();
+    let reader = Profile::create(reader_dir.path(), Some("Reader".into())).unwrap();
     let folder = crate::create_shared_folder(
         owner.device.keys(),
         owner.state.profile_id,

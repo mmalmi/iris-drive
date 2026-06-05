@@ -120,7 +120,7 @@ pub(crate) fn apply_files_root_event(
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     config: &mut AppConfig,
-    account_state: AccountState,
+    account_state: ProfileState,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     if !account_state.can_write_roots() {
@@ -135,7 +135,7 @@ pub(crate) fn apply_files_root_event(
         );
         return Ok(());
     }
-    let account = Account::load(account_state, config_dir).context("loading account")?;
+    let account = Profile::load(account_state, config_dir).context("loading profile")?;
     let outcome =
         relay_sync::apply_remote_files_root_event(config, event, Some(account.device.keys()))?;
     let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);

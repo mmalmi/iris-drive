@@ -234,7 +234,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_account_state = owner_config.profile.as_ref().unwrap();
     let owner =
-        iris_drive_core::Account::load(owner_account_state.clone(), owner_dir.path()).unwrap();
+        iris_drive_core::Profile::load(owner_account_state.clone(), owner_dir.path()).unwrap();
     let drive = owner_config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .unwrap();

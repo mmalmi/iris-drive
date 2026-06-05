@@ -270,7 +270,7 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
 #[test]
 fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     let dir = tempfile::tempdir().unwrap();
-    let mut owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     owner
         .approve_device(&linked_device, Some("Phone".into()))
@@ -384,7 +384,7 @@ fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
 #[test]
 fn daemon_status_writer_persists_normalized_summary_for_clients() {
     let dir = tempfile::tempdir().unwrap();
-    let mut owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     owner
         .approve_device(&linked_device, Some("Phone".into()))
@@ -424,7 +424,7 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
 #[test]
 fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
     let dir = tempfile::tempdir().unwrap();
-    let owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
+    let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let root_cid = Cid::encrypted([0x11; 32], [0x22; 32]).to_string();
     let mut drive = Drive::primary(owner.state.root_scope_id());
     drive.device_roots.insert(

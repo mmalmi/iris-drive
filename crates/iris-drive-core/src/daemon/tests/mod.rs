@@ -19,11 +19,11 @@ fn init_config(dir: &Path) -> Identity {
     identity
 }
 
-/// Spin up a real `Account` via the create flow, then save the
-/// `AccountState` into `AppConfig`. Used to exercise the per-device
+/// Spin up a real `Profile` via the create flow, then save the
+/// `ProfileState` into `AppConfig`. Used to exercise the per-device
 /// root code path.
-fn init_config_with_account(dir: &Path) -> crate::account::Account {
-    let account = crate::account::Account::create(dir, Some("test-device".into())).unwrap();
+fn init_config_with_account(dir: &Path) -> crate::profile::Profile {
+    let account = crate::profile::Profile::create(dir, Some("test-device".into())).unwrap();
     let mut cfg = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()

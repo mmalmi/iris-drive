@@ -8,7 +8,6 @@ use hashtree_core::{
 use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
-use crate::account::AccountState;
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::conflict::conflict_filename;
 use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
@@ -16,6 +15,7 @@ use crate::merge::{
     DeviceSnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
     MergedView, merge_drives, walk_device_tree,
 };
+use crate::profile::ProfileState;
 
 #[derive(Debug, Error)]
 pub enum ProjectionError {
@@ -590,7 +590,7 @@ fn collect_user_directory_paths<'a, S: Store>(
     })
 }
 
-fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
+fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
@@ -608,7 +608,7 @@ fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
 }
 
 #[must_use]
-pub fn merge_device_pubkeys(account: &AccountState, drive: &Drive) -> Vec<String> {
+pub fn merge_device_pubkeys(account: &ProfileState, drive: &Drive) -> Vec<String> {
     let mut devices = authorized_device_pubkeys(account);
     for device_pubkey in drive.device_roots.keys() {
         if !devices.contains(device_pubkey) {

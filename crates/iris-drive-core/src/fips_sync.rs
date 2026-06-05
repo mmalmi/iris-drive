@@ -381,7 +381,7 @@ fn accepts_device_link_requests(config: &AppConfig) -> bool {
     config
         .profile
         .as_ref()
-        .is_some_and(crate::AccountState::can_manage_devices)
+        .is_some_and(crate::ProfileState::can_manage_devices)
 }
 
 fn non_empty_env(name: &str) -> Option<String> {

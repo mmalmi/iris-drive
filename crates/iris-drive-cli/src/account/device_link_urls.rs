@@ -39,7 +39,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
     iris_drive_core::resolve_app_key_link_target(input, admin_device)
 }
 
-pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
+pub(crate) fn device_link_request_json(state: &ProfileState) -> Value {
     if state.can_manage_devices()
         || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
     {
@@ -77,7 +77,7 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     })
 }
 
-pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
+pub(crate) fn device_link_invite_json(state: &ProfileState) -> Value {
     if !state.can_manage_devices() {
         return Value::Null;
     }
@@ -96,7 +96,7 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
     })
 }
 
-pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Value> {
+pub(crate) fn inbound_device_link_requests_json(state: &ProfileState) -> Vec<Value> {
     state
         .inbound_device_link_requests
         .iter()

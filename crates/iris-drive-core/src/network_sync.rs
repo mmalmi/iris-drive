@@ -11,13 +11,13 @@ use anyhow::{Context, Result};
 use hashtree_core::Cid;
 use nostr_sdk::Event;
 
-use crate::account::AccountState;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::daemon::Daemon;
 use crate::fips_sync::FsFipsBlockSync;
 use crate::identity::DeviceIdentity;
 use crate::paths::{config_path_in, key_path_in};
+use crate::profile::ProfileState;
 use crate::{PRIMARY_DRIVE_ID, blossom_sync, blossom_sync_client, relay_sync};
 
 const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
@@ -161,7 +161,7 @@ pub async fn sync_once_with_fips(
     report.drive_root_events_skipped = drive_roots.skipped;
     let mut root_cids_to_download = drive_roots.root_cids_to_download;
 
-    if let Some(account_state) = config.profile.clone().filter(AccountState::can_write_roots) {
+    if let Some(account_state) = config.profile.clone().filter(ProfileState::can_write_roots) {
         match relay_sync::fetch_latest_files_root(
             &client,
             &account_state.device_pubkey,
@@ -173,7 +173,7 @@ pub async fn sync_once_with_fips(
             Ok(Some(ev)) => {
                 report.files_root_event_seen = true;
                 let account =
-                    crate::Account::load(account_state, config_dir).context("loading account")?;
+                    crate::Profile::load(account_state, config_dir).context("loading profile")?;
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
                     &ev,
@@ -253,7 +253,7 @@ pub fn apply_drive_root_events(
 }
 
 #[must_use]
-pub fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
+pub fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()

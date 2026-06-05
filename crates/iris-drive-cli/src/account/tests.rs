@@ -4,7 +4,7 @@ use tempfile::tempdir;
 #[test]
 fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
     let phrase = iris_drive_core::recovery_phrase::load_recovery_phrase(
         iris_drive_core::paths::recovery_phrase_path_in(owner_dir.path()),
     )
@@ -12,7 +12,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let owner_dck = owner.current_dck().unwrap();
 
     let recovered_dir = tempdir().unwrap();
-    let recovered = Account::restore(recovered_dir.path(), &phrase, Some("browser".into()))
+    let recovered = Profile::restore(recovered_dir.path(), &phrase, Some("browser".into()))
         .expect("restore from recovery phrase");
     let recovered_pubkey = recovered.state.device_pubkey.clone();
     let mut awaiting_state = recovered.state.clone();
@@ -52,7 +52,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
         Some("Recovered browser")
     );
 
-    let recovered_account = Account::load(state.clone(), recovered_dir.path()).unwrap();
+    let recovered_account = Profile::load(state.clone(), recovered_dir.path()).unwrap();
     let recovered_dck = recovered_account.current_dck().unwrap();
     assert_ne!(recovered_dck, owner_dck);
     owner.state.profile_roster_ops = state.profile_roster_ops;
@@ -63,7 +63,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
 #[tokio::test]
 async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();
-    let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
+    let account = Profile::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()
@@ -110,7 +110,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
 #[tokio::test]
 async fn device_link_app_message_ignores_wrong_link_secret() {
     let config_dir = tempdir().unwrap();
-    let account = Account::create(config_dir.path(), Some("admin".into())).unwrap();
+    let account = Profile::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()
@@ -159,9 +159,9 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
 #[allow(clippy::too_many_lines)]
 async fn device_link_roster_message_authorizes_only_after_local_request() {
     let admin_dir = tempdir().unwrap();
-    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_dir = tempdir().unwrap();
-    let joiner = Account::link_to_profile(
+    let joiner = Profile::link_to_profile(
         joiner_dir.path(),
         admin.state.profile_id,
         admin.state.device_pubkey.clone(),
@@ -277,7 +277,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
 #[tokio::test]
 async fn device_link_roster_ack_marks_delivery_for_admin() {
     let admin_dir = tempdir().unwrap();
-    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
     admin
         .approve_device(&joiner_pubkey, Some("laptop".into()))

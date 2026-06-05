@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    AccountState, AppConfig, DeviceIdentity, FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    AppConfig, DeviceIdentity, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
     authorized_device_pubkeys,
 };
 
@@ -267,7 +267,7 @@ impl DirectRootExchange {
 pub fn build_current_direct_root_events(
     config_dir: &Path,
     config: &AppConfig,
-    state: &AccountState,
+    state: &ProfileState,
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
     for op in &state.profile_roster_ops {

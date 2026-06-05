@@ -362,7 +362,7 @@ pub(crate) fn spawn_publish_current_state(
     client: nostr_sdk::Client,
     config_dir: PathBuf,
     config: AppConfig,
-    state: AccountState,
+    state: ProfileState,
     upload_blossom: bool,
     event_name: &'static str,
     context: Value,
@@ -400,7 +400,7 @@ pub(crate) async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     config: &AppConfig,
-    state: &AccountState,
+    state: &ProfileState,
     upload_blossom: bool,
 ) -> Result<PublishStateReport> {
     use iris_drive_core::relay_sync;
@@ -449,7 +449,7 @@ pub(crate) async fn publish_current_state(
         }
 
         if state.can_write_roots() {
-            let account = Account::load(state.clone(), config_dir).context("loading account")?;
+            let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,
                 account.device.keys(),
@@ -473,7 +473,7 @@ pub(crate) fn spawn_initial_publish(
     client: nostr_sdk::Client,
     config_dir: PathBuf,
     startup_config: AppConfig,
-    startup_state: AccountState,
+    startup_state: ProfileState,
 ) {
     tokio::spawn(async move {
         match tokio::time::timeout(

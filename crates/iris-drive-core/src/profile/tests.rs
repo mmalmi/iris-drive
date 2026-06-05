@@ -5,7 +5,7 @@ use tempfile::tempdir;
 #[test]
 fn create_yields_admin_authorized_account() {
     let dir = tempdir().unwrap();
-    let acct = Account::create(dir.path(), Some("my-laptop".into())).unwrap();
+    let acct = Profile::create(dir.path(), Some("my-laptop".into())).unwrap();
     let phrase = crate::recovery_phrase::load_recovery_phrase(
         crate::paths::recovery_phrase_path_in(dir.path()),
     )
@@ -82,11 +82,11 @@ fn empty_device_label_uses_pubkey_label() {
 #[test]
 fn restore_uses_provided_admin_device_nsec() {
     let dir_a = tempdir().unwrap();
-    let original = Account::create(dir_a.path(), None).unwrap();
+    let original = Profile::create(dir_a.path(), None).unwrap();
     let nsec = original.device.keys().secret_key().to_secret_hex();
 
     let dir_b = tempdir().unwrap();
-    let restored = Account::restore(dir_b.path(), &nsec, None).unwrap();
+    let restored = Profile::restore(dir_b.path(), &nsec, None).unwrap();
     assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
     assert_ne!(restored.state.profile_id, original.state.profile_id);
     assert!(restored.state.can_manage_devices());
@@ -105,7 +105,7 @@ fn restore_uses_provided_admin_device_nsec() {
 #[test]
 fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
     let dir_a = tempdir().unwrap();
-    let original = Account::create(dir_a.path(), None).unwrap();
+    let original = Profile::create(dir_a.path(), None).unwrap();
     let phrase = crate::recovery_phrase::load_recovery_phrase(
         crate::paths::recovery_phrase_path_in(dir_a.path()),
     )
@@ -113,7 +113,7 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
     assert_eq!(phrase.split_whitespace().count(), 12);
 
     let dir_b = tempdir().unwrap();
-    let restored = Account::restore(dir_b.path(), &phrase, None).unwrap();
+    let restored = Profile::restore(dir_b.path(), &phrase, None).unwrap();
     assert_eq!(restored.state.profile_id, original.state.profile_id);
     assert_ne!(
         restored.state.device_pubkey, original.state.device_pubkey,
@@ -131,7 +131,7 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
 #[test]
 fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
     let phrase = crate::recovery_phrase::load_recovery_phrase(
         crate::paths::recovery_phrase_path_in(owner_dir.path()),
     )
@@ -144,8 +144,8 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
     recovered_device.save().unwrap();
     let recovered_pubkey = recovered_device.pubkey_hex();
-    let mut recovered = Account {
-        state: AccountState {
+    let mut recovered = Profile {
+        state: ProfileState {
             profile_id: owner.state.profile_id,
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
@@ -189,7 +189,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
 #[test]
 fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), Some("native".into())).unwrap();
+    let mut acct = Profile::create(dir.path(), Some("native".into())).unwrap();
     let nip46 = Keys::generate();
     let nip46_pubkey = nip46.public_key().to_hex();
 
@@ -215,7 +215,7 @@ fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
 #[test]
 fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
     let nip46 = Keys::generate();
     let nip46_pubkey = nip46.public_key().to_hex();
     owner
@@ -227,8 +227,8 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
     recovered_device.save().unwrap();
     let recovered_pubkey = recovered_device.pubkey_hex();
-    let mut recovered = Account {
-        state: AccountState {
+    let mut recovered = Profile {
+        state: ProfileState {
             profile_id: owner.state.profile_id,
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
@@ -267,7 +267,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
 #[test]
 fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
     let nip46 = Keys::generate();
     let nip46_pubkey = nip46.public_key().to_hex();
     owner
@@ -278,8 +278,8 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
     recovered_device.save().unwrap();
     let recovered_pubkey = recovered_device.pubkey_hex();
-    let mut recovered = Account {
-        state: AccountState {
+    let mut recovered = Profile {
+        state: ProfileState {
             profile_id: owner.state.profile_id,
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
@@ -312,14 +312,14 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     );
     assert!(matches!(
         recovered.current_dck(),
-        Err(AccountError::NoWrapForThisDevice)
+        Err(ProfileError::NoWrapForThisDevice)
     ));
 }
 
 #[test]
 fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
     let nip46 = Keys::generate();
     owner
         .add_nip46_recovery(
@@ -334,8 +334,8 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
     let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
     recovered_device.save().unwrap();
     let recovered_pubkey = recovered_device.pubkey_hex();
-    let mut recovered = Account {
-        state: AccountState {
+    let mut recovered = Profile {
+        state: ProfileState {
             profile_id: owner.state.profile_id,
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
@@ -386,7 +386,7 @@ fn link_starts_awaiting_approval_no_owner_key() {
     let dir = tempdir().unwrap();
     let profile_id = IrisProfileId::new_v4();
     let admin_app_key = fresh_device_pubkey();
-    let acct = Account::link_to_profile(
+    let acct = Profile::link_to_profile(
         dir.path(),
         profile_id,
         admin_app_key.clone(),
@@ -408,7 +408,7 @@ fn link_starts_awaiting_approval_no_owner_key() {
 #[test]
 fn inbound_device_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
     let link_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
@@ -463,7 +463,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
 #[test]
 fn inbound_device_link_request_requires_link_secret() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
     let device = fresh_device_pubkey();
 
@@ -485,7 +485,7 @@ fn inbound_device_link_request_requires_link_secret() {
 #[test]
 fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
     let old_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
@@ -521,14 +521,14 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
 #[test]
 fn link_with_invalid_pubkey_errors() {
     let dir = tempdir().unwrap();
-    let result = Account::link_to_profile(
+    let result = Profile::link_to_profile(
         dir.path(),
         IrisProfileId::new_v4(),
         "not-a-real-pubkey".into(),
         None,
     );
     match result {
-        Err(AccountError::InvalidAppKeyPubkey(_)) => {}
+        Err(ProfileError::InvalidAppKeyPubkey(_)) => {}
         other => panic!("expected InvalidAppKeyPubkey, got {:?}", other.is_ok()),
     }
 }
@@ -543,7 +543,7 @@ fn fresh_device_pubkey() -> String {
 #[test]
 fn approve_adds_device_to_roster() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let new_device = fresh_device_pubkey();
     let snap = acct
         .approve_device(&new_device, Some("phone".into()))
@@ -566,9 +566,9 @@ fn approve_without_admin_authority_errors() {
     // check before reaching crypto, so this is fine.
     let admin_app_key = fresh_device_pubkey();
     let mut acct =
-        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.approve_device(&fresh_device_pubkey(), None) {
-        Err(AccountError::NoAdminAuthority) => {}
+        Err(ProfileError::NoAdminAuthority) => {}
         _ => panic!("expected NoAdminAuthority"),
     }
 }
@@ -576,10 +576,10 @@ fn approve_without_admin_authority_errors() {
 #[test]
 fn approving_already_authorized_device_errors() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let current = acct.state.device_pubkey.clone();
     match acct.approve_device(&current, None) {
-        Err(AccountError::AlreadyAuthorized) => {}
+        Err(ProfileError::AlreadyAuthorized) => {}
         _ => panic!("expected AlreadyAuthorized"),
     }
 }
@@ -587,7 +587,7 @@ fn approving_already_authorized_device_errors() {
 #[test]
 fn revoke_removes_device_from_roster() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let target = fresh_device_pubkey();
     acct.approve_device(&target, None).unwrap();
     let snap = acct.revoke_device(&target).unwrap();
@@ -601,11 +601,11 @@ fn revoke_removes_device_from_roster() {
 #[test]
 fn revoke_missing_device_errors() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     // Pubkey is well-formed but not in the roster.
     let stranger = fresh_device_pubkey();
     match acct.revoke_device(&stranger) {
-        Err(AccountError::DeviceNotInRoster) => {}
+        Err(ProfileError::DeviceNotInRoster) => {}
         _ => panic!("expected DeviceNotInRoster"),
     }
 }
@@ -613,7 +613,7 @@ fn revoke_missing_device_errors() {
 #[test]
 fn appoint_and_demote_admin_updates_roster_roles() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let current = acct.state.device_pubkey.clone();
     let target = fresh_device_pubkey();
     acct.approve_device(&target, None).unwrap();
@@ -634,10 +634,10 @@ fn appoint_and_demote_admin_updates_roster_roles() {
 #[test]
 fn cannot_demote_last_admin() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let current = acct.state.device_pubkey.clone();
     match acct.demote_admin(&current) {
-        Err(AccountError::CannotRemoveLastAdmin) => {}
+        Err(ProfileError::CannotRemoveLastAdmin) => {}
         other => panic!("expected CannotRemoveLastAdmin, got {:?}", other.is_ok()),
     }
 }
@@ -647,7 +647,7 @@ fn cannot_demote_last_admin() {
 #[test]
 fn create_seeds_dck_generation_one_with_self_wrap() {
     let dir = tempdir().unwrap();
-    let acct = Account::create(dir.path(), None).unwrap();
+    let acct = Profile::create(dir.path(), None).unwrap();
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.dck_generation, 1);
     // One wrap, for the current device.
@@ -658,7 +658,7 @@ fn create_seeds_dck_generation_one_with_self_wrap() {
 #[test]
 fn current_dck_is_decryptable_by_owner_device() {
     let dir = tempdir().unwrap();
-    let acct = Account::create(dir.path(), None).unwrap();
+    let acct = Profile::create(dir.path(), None).unwrap();
     let dck = acct.current_dck().unwrap();
     assert_eq!(dck.len(), 32);
     // Two reads return same key (state is deterministic).
@@ -669,7 +669,7 @@ fn current_dck_is_decryptable_by_owner_device() {
 #[test]
 fn current_dck_comes_from_profile_epoch_without_snapshot_adapter() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let expected = acct.current_dck().unwrap();
     acct.state.app_keys = None;
     assert_eq!(acct.current_dck().unwrap(), expected);
@@ -678,7 +678,7 @@ fn current_dck_comes_from_profile_epoch_without_snapshot_adapter() {
 #[test]
 fn authorization_recomputes_from_profile_without_snapshot_adapter() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     acct.state.app_keys = None;
     acct.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
 
@@ -694,7 +694,7 @@ fn authorization_recomputes_from_profile_without_snapshot_adapter() {
 #[test]
 fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
     let new_device = fresh_device_pubkey();
     let snap = acct
@@ -711,7 +711,7 @@ fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
 #[test]
 fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let target = fresh_device_pubkey();
     let own_device_pubkey = acct.state.device_pubkey.clone();
     acct.approve_device(&target, None).unwrap();
@@ -727,7 +727,7 @@ fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
 #[test]
 fn dck_changes_after_rotation() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let dck_before = acct.current_dck().unwrap();
     acct.rotate_dck().unwrap();
     let dck_after = acct.current_dck().unwrap();
@@ -737,7 +737,7 @@ fn dck_changes_after_rotation() {
 #[test]
 fn rotate_dck_preserves_roster() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     let new_device = fresh_device_pubkey();
     acct.approve_device(&new_device, None).unwrap();
     let devices_before: Vec<_> = acct
@@ -787,9 +787,9 @@ fn rotate_dck_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_device_pubkey();
     let mut acct =
-        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.rotate_dck() {
-        Err(AccountError::NoAdminAuthority) => {}
+        Err(ProfileError::NoAdminAuthority) => {}
         other => panic!("expected NoAdminAuthority, got {:?}", other.is_ok()),
     }
 }
@@ -799,9 +799,9 @@ fn current_dck_without_snapshot_errors() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_device_pubkey();
     let acct =
-        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.current_dck() {
-        Err(AccountError::NoCurrentSnapshot) => {}
+        Err(ProfileError::NoCurrentSnapshot) => {}
         other => panic!("expected NoCurrentSnapshot, got {:?}", other.is_ok()),
     }
 }
@@ -813,7 +813,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     // independently decrypts its wrap and recovers the same DCK
     // the owner has.
     let owner_dir = tempdir().unwrap();
-    let mut owner_acct = Account::create(owner_dir.path(), None).unwrap();
+    let mut owner_acct = Profile::create(owner_dir.path(), None).unwrap();
 
     // Manually create a "linked device" keypair we control end-to-end.
     let linked_dir = tempdir().unwrap();
@@ -827,11 +827,11 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         .unwrap();
     let owner_dck = owner_acct.current_dck().unwrap();
 
-    // Reconstruct an Account from the linked device's perspective:
-    // device key is the one we generated; AccountState mirrors what
+    // Reconstruct a Profile from the linked device's perspective:
+    // device key is the one we generated; ProfileState mirrors what
     // the device would see after pulling the latest snapshot.
     let snapshot_for_linked = owner_acct.state.app_keys.clone();
-    let linked_state = AccountState {
+    let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
         device_pubkey: linked_pubkey.clone(),
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
@@ -842,7 +842,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };
-    let linked_acct = Account {
+    let linked_acct = Profile {
         state: linked_state,
         device: linked_device,
         owner_key: None,
@@ -861,7 +861,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
     // After revoke, the linked device should fail current_dck()
     // because its wrap is no longer present.
     let owner_dir = tempdir().unwrap();
-    let mut owner_acct = Account::create(owner_dir.path(), None).unwrap();
+    let mut owner_acct = Profile::create(owner_dir.path(), None).unwrap();
     let linked_dir = tempdir().unwrap();
     let linked_device = DeviceIdentity::generate(linked_dir.path().join("key"));
     linked_device.save().unwrap();
@@ -870,7 +870,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
     owner_acct.approve_device(&linked_pubkey, None).unwrap();
     owner_acct.revoke_device(&linked_pubkey).unwrap();
 
-    let linked_state = AccountState {
+    let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
         device_pubkey: linked_pubkey,
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
@@ -881,13 +881,13 @@ fn revoked_device_cannot_decrypt_new_dck() {
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };
-    let linked_acct = Account {
+    let linked_acct = Profile {
         state: linked_state,
         device: linked_device,
         owner_key: None,
     };
     match linked_acct.current_dck() {
-        Err(AccountError::NoWrapForThisDevice) => {}
+        Err(ProfileError::NoWrapForThisDevice) => {}
         other => panic!("expected NoWrapForThisDevice, got {:?}", other.is_ok()),
     }
 }
@@ -895,7 +895,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
 #[test]
 fn external_revocation_marks_state_revoked() {
     let dir = tempdir().unwrap();
-    let mut acct = Account::create(dir.path(), None).unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
     assert!(acct.state.is_authorized());
     let tombstone = signed_profile_roster_op_with_parents(
         acct.device.keys(),
@@ -921,9 +921,9 @@ fn external_revocation_marks_state_revoked() {
 #[test]
 fn load_round_trips_account_state() {
     let dir = tempdir().unwrap();
-    let created = Account::create(dir.path(), Some("desktop".into())).unwrap();
+    let created = Profile::create(dir.path(), Some("desktop".into())).unwrap();
     let state = created.state.clone();
-    let loaded = Account::load(state.clone(), dir.path()).unwrap();
+    let loaded = Profile::load(state.clone(), dir.path()).unwrap();
     assert_eq!(loaded.state, state);
     assert_eq!(loaded.device.pubkey_hex(), created.device.pubkey_hex());
     assert!(loaded.owner_key.is_none());
@@ -934,8 +934,8 @@ fn load_for_linked_device_skips_owner_key() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_device_pubkey();
     let linked =
-        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     let state = linked.state.clone();
-    let loaded = Account::load(state, dir.path()).unwrap();
+    let loaded = Profile::load(state, dir.path()).unwrap();
     assert!(loaded.owner_key.is_none());
 }

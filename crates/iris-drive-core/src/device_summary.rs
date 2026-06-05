@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::account::{AccountState, DeviceAuthorizationState};
 use crate::app_keys::{AppActorEntry, AppActorRole};
 use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
+use crate::profile::{DeviceAuthorizationState, ProfileState};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 
@@ -239,7 +239,7 @@ pub fn pubkey_npub(hex: &str) -> String {
 }
 
 #[must_use]
-pub fn iris_profile_summary(state: &AccountState) -> IrisProfileSummary {
+pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
     let projection = state.profile_projection();
     let current_facet = projection.active_facets.get(&state.device_pubkey);
     let current_key_epoch = projection
@@ -409,7 +409,7 @@ fn device_online_via(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Account, AppActorRole, DeviceAuthorizationState};
+    use crate::{AppActorRole, DeviceAuthorizationState, Profile};
     use tempfile::tempdir;
 
     #[test]
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn iris_profile_summary_uses_profile_roster_projection() {
         let dir = tempdir().unwrap();
-        let mut account = Account::create(dir.path(), Some("Native".to_owned())).unwrap();
+        let mut account = Profile::create(dir.path(), Some("Native".to_owned())).unwrap();
         let profile_id = account.state.profile_id.to_string();
         let current_app_key = account.state.device_pubkey.clone();
         let remote = nostr_sdk::Keys::generate().public_key().to_hex();

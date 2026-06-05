@@ -47,7 +47,7 @@ Mobile (spec): same 4 destinations as a bottom tab bar.
   published time, Public/Private. (Decision: expandable in place.)
 - **"Add app install"** becomes a button -> sheet/popover with the AppKey + label fields + Approve
   (only when the current AppKey can admin the profile). No always-visible inline form.
-- The **profile keys** block (Profile ID / Current AppKey / State) leaves this view -> Settings -> Account.
+- The **profile keys** block (Profile ID / Current AppKey / State) leaves this view -> Settings -> Profile.
 
 ### Backups — clean list
 - Row = kind icon · friendly **name** · status line ("Synced · up to date" / "Syncing 40%" / "Pending").
@@ -58,7 +58,7 @@ Mobile (spec): same 4 destinations as a bottom tab bar.
 ### Settings — sectioned (the home for everything technical)
 Grouped sections (native grouped `Form`/list per platform):
 1. **General** — Menu bar on close (macOS) and any existing app toggles.
-2. **Account** — IrisProfile ID, current AppKey (copy button), authorization state. *(moved from Devices)*
+2. **Profile** — IrisProfile ID, current AppKey (copy button), authorization state. *(moved from Devices)*
 3. **Network** — the entire former Network tab: Relays editor, Blossom servers, FIPS diagnostics.
 4. **Sync & Advanced** — Start / Stop / Restart daemon; copy/view drive.iris.to link; Blocks & raw storage.
 5. **About** — version / drive name.
@@ -98,7 +98,7 @@ primitive.
   `adw::PreferencesGroup` sections. Reuse helpers in `widgets.rs` (`metric_tile`, `section_title`, etc.).
 
 **Android / iOS — spec only.** No code. This document is the structure they build to: bottom tab bar with
-the same 4 destinations, friendly status home, expandable rows, Settings holding Account + Network +
+the same 4 destinations, friendly status home, expandable rows, Settings holding Profile + Network +
 Advanced.
 
 ## New shared primitives to add per platform

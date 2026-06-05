@@ -47,7 +47,7 @@ fn native_apply_owner_snapshot_for_test(
         .profile
         .as_ref()
         .context("owner account missing")?;
-    let owner = iris_drive_core::Account::load(owner_account_state.clone(), owner_dir)
+    let owner = iris_drive_core::Profile::load(owner_account_state.clone(), owner_dir)
         .context("loading owner account keys")?;
     let drive = owner_config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)

@@ -41,7 +41,7 @@ use iris_drive_core::fips_status::{
 use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
-use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
+use iris_drive_core::{AppConfig, BackupTarget, DeviceAuthorizationState, Drive, Profile};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -344,10 +344,10 @@ impl NativeAppRuntime {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let account = match Account::create(Path::new(&self.data_dir), label_option(device_label)) {
+        let account = match Profile::create(Path::new(&self.data_dir), label_option(device_label)) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("creating account: {error}");
+                self.state.error = format!("creating profile: {error}");
                 return;
             }
         };
@@ -367,14 +367,14 @@ impl NativeAppRuntime {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let account = match Account::restore(
+        let account = match Profile::restore(
             Path::new(&self.data_dir),
             secret.trim(),
             label_option(device_label),
         ) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("restoring account: {error}");
+                self.state.error = format!("restoring profile: {error}");
                 return;
             }
         };
@@ -410,10 +410,10 @@ impl NativeAppRuntime {
         } else {
             recovery_phrase.trim().to_string()
         };
-        let mut account = match Account::load(state, Path::new(&self.data_dir)) {
+        let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("loading account: {error}");
+                self.state.error = format!("loading profile: {error}");
                 return;
             }
         };
@@ -443,7 +443,7 @@ impl NativeAppRuntime {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let link_result = Account::link_to_profile(
+        let link_result = Profile::link_to_profile(
             Path::new(&self.data_dir),
             target.profile_id,
             target.admin_app_key_hex.clone(),
@@ -477,7 +477,7 @@ impl NativeAppRuntime {
     }
 
     fn logout(&mut self) {
-        match iris_drive_core::logout_local_account(Path::new(&self.data_dir)) {
+        match iris_drive_core::logout_local_profile(Path::new(&self.data_dir)) {
             Ok(_) => {
                 self.stop_device_link_exchange();
                 self.state.ui.roots.clear();
@@ -526,10 +526,10 @@ impl NativeAppRuntime {
             return;
         }
         let label = label_option(label).or(request.label);
-        let mut account = match Account::load(state, Path::new(&self.data_dir)) {
+        let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("loading account: {error}");
+                self.state.error = format!("loading profile: {error}");
                 return;
             }
         };
@@ -632,10 +632,10 @@ impl NativeAppRuntime {
             "cannot revoke this device from itself".clone_into(&mut self.state.error);
             return;
         }
-        let mut account = match Account::load(state, Path::new(&self.data_dir)) {
+        let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("loading account: {error}");
+                self.state.error = format!("loading profile: {error}");
                 return;
             }
         };
@@ -668,10 +668,10 @@ impl NativeAppRuntime {
             "admin profile is required to manage device admins".clone_into(&mut self.state.error);
             return;
         };
-        let mut account = match Account::load(state, Path::new(&self.data_dir)) {
+        let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("loading account: {error}");
+                self.state.error = format!("loading profile: {error}");
                 return;
             }
         };
@@ -851,7 +851,7 @@ impl NativeAppRuntime {
             .map_err(|error| format!("loading config: {error}"))
     }
 
-    fn finish_account_init(&self, account: &Account) -> Result<(), String> {
+    fn finish_account_init(&self, account: &Profile) -> Result<(), String> {
         let mut config = self.load_config()?;
         config.profile = Some(account.state.clone());
         if config.drive(iris_drive_core::PRIMARY_DRIVE_ID).is_none() {
@@ -1341,7 +1341,7 @@ async fn send_native_pending_device_link_request(
     relay_client: &nostr_sdk::Client,
     device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
-    state: &iris_drive_core::AccountState,
+    state: &iris_drive_core::ProfileState,
     sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
 ) -> Result<(), String> {
     let Some(frame) = pending_device_link_request_frame(state) else {
@@ -1401,7 +1401,7 @@ async fn send_native_pending_device_link_request(
 async fn send_native_authorized_device_link_rosters(
     _config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
-    state: &iris_drive_core::AccountState,
+    state: &iris_drive_core::ProfileState,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<(), String> {
@@ -1631,7 +1631,7 @@ async fn handle_native_device_link_roster(
         && config
             .profile
             .as_ref()
-            .is_some_and(iris_drive_core::AccountState::is_authorized);
+            .is_some_and(iris_drive_core::ProfileState::is_authorized);
     if should_sync_roots {
         match iris_drive_core::sync_once_with_fips(
             config_dir,
@@ -2081,7 +2081,7 @@ fn account_npub(hex: &str) -> String {
 }
 
 fn devices_from_account(
-    state: &iris_drive_core::AccountState,
+    state: &iris_drive_core::ProfileState,
     fips_status: &UiFipsStatus,
 ) -> Vec<UiDevice> {
     let Some(app_keys) = state.app_keys.as_ref() else {
@@ -2193,7 +2193,7 @@ fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceCon
     }
 }
 
-fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {
+fn device_link_request_url(state: &iris_drive_core::ProfileState) -> String {
     if state.can_manage_devices()
         || state.authorization_state != DeviceAuthorizationState::AwaitingApproval
     {
@@ -2213,7 +2213,7 @@ fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {
     )
 }
 
-fn device_link_invite_url(state: &iris_drive_core::AccountState) -> String {
+fn device_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
     if !state.can_manage_devices() {
         return String::new();
     }
@@ -2225,7 +2225,7 @@ fn device_link_invite_url(state: &iris_drive_core::AccountState) -> String {
     .unwrap_or_default()
 }
 
-fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<UiDeviceLinkRequest> {
+fn inbound_device_link_requests(state: &iris_drive_core::ProfileState) -> Vec<UiDeviceLinkRequest> {
     if !state.can_manage_devices() {
         return Vec::new();
     }

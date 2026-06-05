@@ -1,8 +1,8 @@
 use super::*;
 use iris_drive_core::root_meta::DriveRootMeta;
 
-fn init_config(config_dir: &Path) -> Account {
-    let account = Account::create(config_dir, Some("local".into())).unwrap();
+fn init_config(config_dir: &Path) -> Profile {
+    let account = Profile::create(config_dir, Some("local".into())).unwrap();
     let mut config = AppConfig {
         profile: Some(account.state.clone()),
         ..AppConfig::default()
@@ -12,7 +12,7 @@ fn init_config(config_dir: &Path) -> Account {
     account
 }
 
-fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveRootMeta) {
+fn init_config_with_remote_device(config_dir: &Path) -> (Profile, String, DriveRootMeta) {
     let account = init_config(config_dir);
     let remote =
         iris_drive_core::identity::Identity::generate(config_dir.join("remote.key")).pubkey_hex();
