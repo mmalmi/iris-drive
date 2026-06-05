@@ -27,6 +27,7 @@ require_absent "fileProviderSignalKey("
 require_absent "externalFileProviderSignalKey("
 require_absent 'lastBlockSync["fetched"]'
 require_absent 'drive["device_root_count"]'
+require_absent 'drive["app_key_root_count"]'
 require_absent 'peer["fips_online"]'
 
 echo "MACOS_PROVIDER_SUMMARY_OK"

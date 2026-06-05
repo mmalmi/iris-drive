@@ -74,7 +74,7 @@ pub(crate) fn peer_statuses(
     )
     .iter()
     .map(|app_key| {
-        let root = primary_drive.and_then(|drive| drive.device_roots.get(&app_key.pubkey_hex));
+        let root = primary_drive.and_then(|drive| drive.app_key_roots.get(&app_key.pubkey_hex));
         let root_cid = root.map(|root| root.root_cid.clone());
         let root_private = root_cid.as_deref().and_then(root_is_private);
         let root_available = root_cid
@@ -140,7 +140,7 @@ pub(crate) fn peer_statuses(
             "last_block_sync": last_block_sync,
             "published_at": root.map(|root| root.published_at),
             "dck_generation": root.map(|root| root.dck_generation),
-            "device_seq": root.map(|root| root.device_seq),
+            "app_key_seq": root.map(|root| root.app_key_seq),
         })
     })
     .collect()

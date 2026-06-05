@@ -29,21 +29,21 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
     if state.ui.devices.is_empty() {
-        list.append(&simple_row("No devices", ""));
+        list.append(&simple_row("No AppKeys", ""));
         return;
     }
     for peer in &state.ui.devices {
         let title = if peer.display_label.is_empty() {
-            "Device"
+            "AppKey"
         } else {
             &peer.display_label
         };
         let device_npub = peer.pubkey.as_str();
         let mut metadata = Vec::new();
         if peer.is_current_device {
-            metadata.push("this device".to_string());
+            metadata.push("this AppKey".to_string());
             if !device_npub.is_empty() {
-                metadata.push(format!("Device ID: {device_npub}"));
+                metadata.push(format!("AppKey: {device_npub}"));
             }
         }
         metadata.push(if peer.role_label.is_empty() {
@@ -322,7 +322,7 @@ pub(crate) fn peer_row(
         appoint.connect_clicked(move |_| match appoint_admin(&device_npub) {
             Ok(()) => {
                 restart_daemon(&model);
-                model.ui.notice.set_text("Device made admin");
+                model.ui.notice.set_text("AppKey made admin");
                 refresh(&model);
             }
             Err(error) => model.ui.notice.set_text(&error),
@@ -346,7 +346,7 @@ pub(crate) fn peer_row(
     }
 
     if can_revoke {
-        let delete = icon_button("user-trash-symbolic", "Remove device");
+        let delete = icon_button("user-trash-symbolic", "Remove AppKey");
         let model = Rc::clone(model);
         let device_npub = device_npub.to_string();
         let title = title.to_string();

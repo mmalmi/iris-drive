@@ -145,9 +145,9 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
   roster ops and `(profile_id, drive_id)` root events. New root → fetch diff →
   apply non-conflicting changes → flag conflicts.
 - **Conflict resolution**: last-writer-wins by published timestamp,
-  conflicted local file renamed `file (conflict from <device>).ext`.
+  conflicted local file renamed `file (conflict from <app install>).ext`.
 
-Deliverable: `idrive` CLI can create a drive, add files, see another device's
+Deliverable: `idrive` CLI can create a drive, add files, see another app install's
 edits appear, republish. No OS mount yet.
 
 ### Phase 2 — First desktop platform end-to-end (weeks 4–7)

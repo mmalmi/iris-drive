@@ -15,7 +15,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         case .drive:
             return "My Drive"
         case .peers:
-            return "Devices"
+            return "AppKeys"
         case .backups:
             return "Backups"
         case .settings:
@@ -290,9 +290,9 @@ struct IrisDriveControlPanel: View {
                 Button {
                     setupMode = .link
                 } label: {
-                    setupButtonLabel("Link device", systemImage: "desktopcomputer")
+                    setupButtonLabel("Link app install", systemImage: "desktopcomputer")
                 }
-                .accessibilityLabel("Link device")
+                .accessibilityLabel("Link app install")
                 .buttonStyle(.bordered)
                 Button {
                     setupMode = .restorePhrase
@@ -347,7 +347,7 @@ struct IrisDriveControlPanel: View {
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         case .link:
-            setupForm(title: "Link device", backTarget: .restoreOptions) {
+            setupForm(title: "Link app install", backTarget: .restoreOptions) {
                 TextField("IrisProfile invite link or admin AppKey", text: $setupLinkTarget)
                     .accessibilityLabel("IrisProfile invite link or admin AppKey")
                     .onSubmit {
@@ -363,7 +363,7 @@ struct IrisDriveControlPanel: View {
                     .onAppear {
                         refreshSetupLinkTargetInput(setupLinkTarget)
                     }
-                setupSubmit("Link device") {
+                setupSubmit("Link app install") {
                     submitSetupLinkTarget(
                         setupLinkTarget,
                         force: true,
@@ -636,23 +636,23 @@ struct IrisDriveControlPanel: View {
         ].joined(separator: "  ·  ")
     }
 
-    // MARK: Devices
+    // MARK: AppKeys
 
     private var peers: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionTitle("Devices")
+                SectionTitle("AppKeys")
                 Spacer()
                 if status.canAdminProfile {
                     Button {
                         showAddDevice = true
                     } label: {
-                        Label("Add Device", systemImage: "plus")
+                        Label("Add AppKey", systemImage: "plus")
                     }
                 }
             }
             if status.peers.isEmpty {
-                emptyState("No devices yet")
+                emptyState("No AppKeys yet")
             } else {
                 let adminCount = status.peers.filter { $0.role == "admin" }.count
                 ForEach(status.peers) { peer in
@@ -682,10 +682,10 @@ struct IrisDriveControlPanel: View {
 
     private var addDeviceSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add a device")
+            Text("Add an AppKey")
                 .font(.title3.weight(.semibold))
             if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
-                Text("Invite device")
+                Text("Invite app install")
                     .font(.headline)
                 IrisDriveQRCodeView(value: invite)
                     .frame(width: 220, height: 220)
@@ -702,16 +702,16 @@ struct IrisDriveControlPanel: View {
                 }
             }
             if !status.inboundAppKeyLinkRequests.isEmpty {
-                Text("Device requests")
+                Text("AppKey requests")
                     .font(.headline)
                 ForEach(status.inboundAppKeyLinkRequests) { request in
                     AppKeyLinkRequestRow(request: request, controller: controller)
                 }
             }
-            Text("Paste the Device ID shown on the other device when you link it manually.")
+            Text("Paste the AppKey shown by the app install you want to approve.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("Device ID", text: $approveDeviceKey)
+            TextField("AppKey", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
@@ -801,7 +801,7 @@ struct IrisDriveControlPanel: View {
                 .disableAutocorrection(true)
             TextField("Name (optional)", text: $backupLabel)
                 .textFieldStyle(.roundedBorder)
-            Text("A web address, another device (npub…), or a local path (fs:/…, lmdb:/…).")
+            Text("A web address, another AppKey (npub…), or a local path (fs:/…, lmdb:/…).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -846,7 +846,7 @@ struct IrisDriveControlPanel: View {
                 AccountKeyRow(title: "AppKey", value: status.currentAppKeyNpub) {
                     controller.copyAppKey()
                 }
-                AccountKeyRow(title: "This device", value: status.deviceNpub) {
+                AccountKeyRow(title: "Current AppKey", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
                 if status.canExportRecoveryPhrase {
@@ -1413,7 +1413,7 @@ private struct PeerRow: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the device from Iris Drive and rotates access keys.")
+            Text("This removes the AppKey from Iris Drive and rotates access keys.")
         }
     }
 
@@ -1454,7 +1454,7 @@ private struct AppKeyLinkRequestRow: View {
                 .frame(width: 24)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
-                Text(request.label?.isEmpty == false ? request.label! : "New device")
+                Text(request.label?.isEmpty == false ? request.label! : "New AppKey")
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Text(request.deviceNpub)

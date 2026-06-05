@@ -1,7 +1,7 @@
 use super::{FfiApp, SentAppKeyLinkRequest, app_key_link_request_send_due, normalize_pubkey};
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
-use iris_drive_core::{AppConfig, DeviceRootRef, Drive};
+use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
 use std::path::Path;
 
 #[test]
@@ -477,9 +477,9 @@ fn snapshot_link_uses_drive_iris_nhash_route() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let mut drive = Drive::primary(account.profile_id.clone());
     drive.last_root_cid = Some(root_cid.clone());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.current_app_key_pubkey.clone(),
-        DeviceRootRef::legacy(root_cid, 1, 0),
+        AppKeyRootRef::legacy(root_cid, 1, 0),
     );
     config.upsert_drive(drive);
     config.save(&config_path).unwrap();

@@ -31,8 +31,8 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Profile, String, DriveR
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -152,9 +152,9 @@ fn provider_delete_tombstones_foreign_visible_files() {
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(
+        AppKeyRootRef::from_meta(
             remote_root.to_string(),
             remote_meta.created_at,
             &remote_meta,

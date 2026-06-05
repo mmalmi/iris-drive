@@ -120,7 +120,7 @@ pub(crate) fn logout(model: &AppRef) {
 pub(crate) fn show_add_device_dialog(model: &AppRef) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Add a device")
+        .title("Add an AppKey")
         .modal(true)
         .default_width(420)
         .build();
@@ -134,7 +134,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Add a device"));
+    let title = gtk::Label::new(Some("Add an AppKey"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
@@ -144,14 +144,14 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
             .map(|account| account.inbound_app_key_link_requests.as_slice())
             .filter(|requests| !requests.is_empty())
         {
-            let heading = gtk::Label::new(Some("Devices asking to join"));
+            let heading = gtk::Label::new(Some("AppKeys asking to join"));
             heading.add_css_class("iris-row-title");
             heading.set_xalign(0.0);
             body.append(&heading);
             for request in requests {
                 let request_url = request.request_link.clone();
                 let request_label = if request.label.is_empty() {
-                    "New device".to_string()
+                    "New AppKey".to_string()
                 } else {
                     request.label.clone()
                 };
@@ -179,7 +179,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
                     let dialog = dialog.clone();
                     reject.connect_clicked(move |_| match reject_device(&request_url) {
                         Ok(()) => {
-                            model.ui.notice.set_text("Device request rejected");
+                            model.ui.notice.set_text("AppKey request rejected");
                             refresh(&model);
                             dialog.close();
                         }
@@ -206,14 +206,14 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     }
 
     let help = gtk::Label::new(Some(
-        "Paste the Device ID shown on the other device when you link it manually.",
+        "Paste the AppKey shown by the app install you want to approve.",
     ));
     help.add_css_class("iris-muted");
     help.set_xalign(0.0);
     help.set_wrap(true);
     body.append(&help);
 
-    let device = setup_entry("Device ID");
+    let device = setup_entry("AppKey");
     let label = setup_entry("Name (optional)");
     body.append(&device);
     body.append(&label);
@@ -260,7 +260,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
 
 pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
     if device.trim().is_empty() {
-        model.ui.notice.set_text("Device key is required");
+        model.ui.notice.set_text("AppKey is required");
         return false;
     }
 
@@ -272,7 +272,7 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
     }) {
         Ok(_) => {
             restart_daemon(model);
-            model.ui.notice.set_text("Device approved");
+            model.ui.notice.set_text("AppKey approved");
             refresh(model);
             true
         }
@@ -286,7 +286,7 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Remove device")
+        .title("Remove AppKey")
         .modal(true)
         .default_width(360)
         .build();
@@ -300,7 +300,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Remove device?"));
+    let title = gtk::Label::new(Some("Remove AppKey?"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
@@ -332,7 +332,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
         delete.connect_clicked(move |_| match delete_device(&device_npub) {
             Ok(()) => {
                 restart_daemon(&model);
-                model.ui.notice.set_text("Device removed");
+                model.ui.notice.set_text("AppKey removed");
                 refresh(&model);
                 dialog.close();
             }
@@ -400,7 +400,7 @@ pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
             let message = if key == "app_key_npub" || key == "current_app_key_npub" {
                 "AppKey copied"
             } else {
-                "Device key copied"
+                "AppKey copied"
             };
             copy_text(model, &value, message);
         }

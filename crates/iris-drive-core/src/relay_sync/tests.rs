@@ -28,8 +28,8 @@ fn profile_event(op: &crate::SignedIrisProfileRosterOp) -> Event {
     Event::from_json(&op.event_json).unwrap()
 }
 
-fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> DeviceRootRef {
-    DeviceRootRef::legacy(
+fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {
+    AppKeyRootRef::legacy(
         Cid::encrypted([seed; 32], [seed.wrapping_add(1); 32]).to_string(),
         published_at,
         dck_generation,
@@ -40,13 +40,13 @@ fn causal_encrypted_root(
     seed: u8,
     published_at: i64,
     dck_generation: u64,
-    device_seq: u64,
-) -> DeviceRootRef {
-    DeviceRootRef {
+    app_key_seq: u64,
+) -> AppKeyRootRef {
+    AppKeyRootRef {
         root_cid: Cid::encrypted([seed; 32], [seed.wrapping_add(1); 32]).to_string(),
         published_at,
         dck_generation,
-        device_seq,
+        app_key_seq,
         parents: Vec::new(),
         observed: std::collections::BTreeMap::new(),
         local_only: false,
@@ -670,7 +670,7 @@ fn apply_drive_root_event_from_authorized_app_key_applies() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
 
-    // Approve a second device whose Keys we control end-to-end.
+    // Approve a second AppKey whose Keys we control end-to-end.
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
     acct.approve_app_key(&device_b_hex, None).unwrap();
@@ -691,7 +691,7 @@ fn apply_drive_root_event_from_authorized_app_key_applies() {
     assert_eq!(outcome, DriveRootApply::Applied);
 
     let drive = cfg.drive("main").unwrap();
-    let entry = drive.device_roots.get(&device_b_hex).unwrap();
+    let entry = drive.app_key_roots.get(&device_b_hex).unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
     assert!(entry.published_at > 0); // came from event.created_at
 }
@@ -737,11 +737,11 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
         apply_remote_drive_root_event(&mut cfg, &event, Some(linked.app_key.keys())).unwrap();
 
     assert_eq!(outcome, DriveRootApply::KeyUnavailable);
-    assert!(cfg.drive("main").unwrap().device_roots.is_empty());
+    assert!(cfg.drive("main").unwrap().app_key_roots.is_empty());
 }
 
 #[test]
-fn apply_files_root_event_from_current_app_key_maps_to_current_device() {
+fn apply_files_root_event_from_current_app_key_maps_to_current_app_key() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let root = encrypted_root(0x5a, 1_700_000_000, 0);
@@ -754,7 +754,7 @@ fn apply_files_root_event_from_current_app_key_maps_to_current_device() {
     let entry = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
@@ -771,7 +771,7 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let native_root = causal_encrypted_root(0x5b, 100, 1, 4);
     cfg.drives[0]
-        .device_roots
+        .app_key_roots
         .insert(acct.state.app_key_pubkey.clone(), native_root.clone());
     let legacy_root = encrypted_root(0x5c, 1_700_000_000, 0);
     let event =
@@ -784,11 +784,11 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
     let entry = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, native_root.root_cid);
-    assert_eq!(entry.device_seq, 4);
+    assert_eq!(entry.app_key_seq, 4);
 }
 
 #[test]
@@ -814,7 +814,7 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
     let entry = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
@@ -832,7 +832,7 @@ fn apply_files_root_event_from_foreign_app_key_ignored() {
     let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_app_key)).unwrap();
 
     assert_eq!(outcome, FilesRootApply::NotOurAppKey);
-    assert!(cfg.drive("main").unwrap().device_roots.is_empty());
+    assert!(cfg.drive("main").unwrap().app_key_roots.is_empty());
 }
 
 #[test]
@@ -850,7 +850,7 @@ fn apply_drive_root_event_from_unauthorized_app_key_ignored() {
         apply_remote_drive_root_event(&mut cfg, &event, None).unwrap()
     };
     assert_eq!(outcome, DriveRootApply::UnauthorizedAppKey);
-    assert!(cfg.drive("main").unwrap().device_roots.is_empty());
+    assert!(cfg.drive("main").unwrap().app_key_roots.is_empty());
 }
 
 #[test]
@@ -922,11 +922,11 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
     let stored = cfg
         .shared_folder(folder.share_id)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&owner.state.app_key_pubkey)
         .expect("owner share root stored");
     assert_eq!(stored.root_cid, root.root_cid);
-    assert_eq!(stored.device_seq, 7);
+    assert_eq!(stored.app_key_seq, 7);
 }
 
 #[test]
@@ -979,7 +979,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
     assert!(
         cfg.shared_folder(folder.share_id)
             .unwrap()
-            .device_roots
+            .app_key_roots
             .is_empty()
     );
 }
@@ -1031,7 +1031,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     let first_published_at = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&device_b_hex)
         .unwrap()
         .published_at;
@@ -1041,11 +1041,11 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
         apply_remote_drive_root_event(&mut cfg, &event_1, None).unwrap(),
         DriveRootApply::StaleTimestamp
     );
-    // device_roots entry unchanged.
+    // app_key_roots entry unchanged.
     assert_eq!(
         cfg.drive("main")
             .unwrap()
-            .device_roots
+            .app_key_roots
             .get(&device_b_hex)
             .unwrap()
             .root_cid,
@@ -1054,7 +1054,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     assert_eq!(
         cfg.drive("main")
             .unwrap()
-            .device_roots
+            .app_key_roots
             .get(&device_b_hex)
             .unwrap()
             .published_at,
@@ -1102,7 +1102,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
     let entry = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&device_b_hex)
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
@@ -1110,7 +1110,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
 }
 
 #[test]
-fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
+fn apply_drive_root_event_prefers_higher_app_key_seq_over_newer_timestamp() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
@@ -1149,16 +1149,16 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     let entry = cfg
         .drive("main")
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&device_b_hex)
         .unwrap();
     assert_eq!(entry.root_cid, root_2.root_cid);
-    assert_eq!(entry.device_seq, 2);
+    assert_eq!(entry.app_key_seq, 2);
     assert_eq!(entry.published_at, 100);
 }
 
 #[test]
-fn same_second_drive_root_selection_prefers_higher_device_seq() {
+fn same_second_drive_root_selection_prefers_higher_app_key_seq() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
     let older = causal_encrypted_root(0x31, 1_700_000_000, 1, 1);

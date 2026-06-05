@@ -1,19 +1,19 @@
-//! Multi-device drive merge.
+//! Multi-AppKey drive merge.
 //!
-//! Each authorized device publishes its own htree root tree carrying
-//! that device's contribution to the drive. The merged drive view is
-//! computed by walking every authorized device's tree and resolving
+//! Each authorized `AppKey` publishes its own htree root tree carrying
+//! that app install's contribution to the drive. The merged drive view is
+//! computed by walking every authorized `AppKey`'s tree and resolving
 //! per-path conflicts with causal root metadata. Publication time is
-//! only legacy ordering for roots without `device_seq` / observations.
+//! only legacy ordering for roots without `app_key_seq` / observations.
 //!
 //! Tombstones are stored alongside regular files under a reserved
-//! `.hashtree/tombstones/` subtree in each device's root. A tombstone
+//! `.hashtree/tombstones/` subtree in each `AppKey`'s root. A tombstone
 //! is a leaf whose path is `.hashtree/tombstones/<mirror of original
 //! path>` and whose content is the unix-seconds timestamp at which
 //! the file was removed. Tombstones participate in the same causal
 //! ordering as writes; timestamp ordering is only for legacy roots.
 //!
-//! This module is pure logic — it takes pre-fetched per-device entry
+//! This module is pure logic — it takes pre-fetched per-AppKey entry
 //! and tombstone lists and produces a `MergedView`. The actual htree
 //! traversal happens in the caller; this keeps the algorithm trivially
 //! testable against synthetic inputs.
@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex};
 use serde::{Deserialize, Serialize};
 
-use crate::config::DeviceRootRef;
+use crate::config::AppKeyRootRef;
 use crate::indexer::{path_has_ignored_component, should_ignore_name};
 
 /// Reserved top-level subdirectory inside any hashtree directory for
@@ -56,7 +56,7 @@ pub const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
 
 /// Directory-entry metadata key carrying the user-visible file mtime as Unix
 /// seconds. This lives on the htree link so provider surfaces can expose a
-/// stable per-file timestamp instead of the device-root publish time.
+/// stable per-file timestamp instead of the AppKey-root publish time.
 pub const MODIFIED_AT_META_KEY: &str = "modified_at";
 
 /// Reserved entry path for the directory-revision back-link. A
@@ -71,11 +71,11 @@ pub const MODIFIED_AT_META_KEY: &str = "modified_at";
 /// the chain terminates or a block is GC'd).
 pub const PREV_LINK_PATH: &str = ".hashtree/prev";
 
-/// One entry from a device's tree, as observed by the merge engine.
+/// One entry from an `AppKey`'s tree, as observed by the merge engine.
 /// Hash + size are enough to identify content; the merge does not
 /// need to inspect bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeviceFileEntry {
+pub struct AppKeyFileEntry {
     pub path: String,
     pub hash: [u8; 32],
     pub size: u64,
@@ -85,26 +85,26 @@ pub struct DeviceFileEntry {
     pub modified_at: Option<i64>,
 }
 
-/// One tombstone from a device's tree.
+/// One tombstone from an `AppKey`'s tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeviceTombstone {
+pub struct AppKeyTombstone {
     /// Original path that was removed (the `.hashtree/tombstones/`
     /// prefix has been stripped).
     pub path: String,
-    /// Unix-seconds when this device removed the file.
+    /// Unix-seconds when this `AppKey` removed the file.
     pub tombstoned_at: i64,
 }
 
-/// What a single device contributes to a merge.
+/// What a single `AppKey` contributes to a merge.
 #[derive(Debug, Clone)]
-pub struct DeviceSnapshot<'a> {
+pub struct AppKeySnapshot<'a> {
     pub app_key_pubkey: &'a str,
-    pub root: &'a DeviceRootRef,
-    pub files: Vec<DeviceFileEntry>,
-    pub tombstones: Vec<DeviceTombstone>,
+    pub root: &'a AppKeyRootRef,
+    pub files: Vec<AppKeyFileEntry>,
+    pub tombstones: Vec<AppKeyTombstone>,
 }
 
-/// One file in the merged view. `source_device` is the device whose
+/// One file in the merged view. `source_app_key_pubkey` is the `AppKey` whose
 /// write currently wins for this path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedEntry {
@@ -117,7 +117,7 @@ pub struct MergedEntry {
     pub whole_file_hash: Option<[u8; 32]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<i64>,
-    pub source_device: String,
+    pub source_app_key_pubkey: String,
     pub published_at: i64,
 }
 
@@ -132,8 +132,8 @@ pub enum MergedConflictKind {
 /// File-producing side of a conflicted path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedConflictFile {
-    pub device_id: String,
-    pub device_seq: u64,
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
     pub root_cid: String,
     pub content_hash: String,
     pub content_cid_hash: String,
@@ -145,8 +145,8 @@ pub struct MergedConflictFile {
 /// Tombstone-producing side of a conflicted path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedConflictTombstone {
-    pub device_id: String,
-    pub device_seq: u64,
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
     pub root_cid: String,
     pub tombstoned_at: i64,
 }
@@ -183,14 +183,14 @@ pub struct MergedView {
 struct WriteCandidate {
     entry: MergedEntry,
     app_key_pubkey: String,
-    root: DeviceRootRef,
+    root: AppKeyRootRef,
 }
 
 #[derive(Debug, Clone)]
 struct TombstoneCandidate {
     tombstoned_at: i64,
     app_key_pubkey: String,
-    root: DeviceRootRef,
+    root: AppKeyRootRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,8 +201,8 @@ enum RootRelation {
     Concurrent,
 }
 
-/// Merge across all authorized device snapshots. `authorized_devices`
-/// is the device-pubkey allowlist from the current `AppKeys` roster;
+/// Merge across all authorized `AppKey` snapshots. `authorized_app_keys`
+/// is the AppKey-pubkey allowlist from the current `AppKeys` roster;
 /// any snapshot whose `app_key_pubkey` is not in the allowlist is
 /// silently ignored.
 ///
@@ -214,8 +214,8 @@ enum RootRelation {
 ///   - if the latest write and a tombstone share the same timestamp,
 ///     the tombstone wins (deletion is conservative)
 #[must_use]
-pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>]) -> MergedView {
-    let allow: std::collections::BTreeSet<&str> = authorized_devices.iter().copied().collect();
+pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_>]) -> MergedView {
+    let allow: std::collections::BTreeSet<&str> = authorized_app_keys.iter().copied().collect();
 
     let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
     let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
@@ -239,7 +239,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 size: f.size,
                 whole_file_hash: f.whole_file_hash,
                 modified_at: f.modified_at,
-                source_device: snap.app_key_pubkey.to_string(),
+                source_app_key_pubkey: snap.app_key_pubkey.to_string(),
                 published_at: snap.root.published_at,
             };
             let candidate = WriteCandidate {
@@ -307,7 +307,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     }
     // Tombstones that don't have a surviving write anywhere should also
     // show up as evidence the path was deleted. Without this, a
-    // single-device delete (no concurrent write to suppress) would
+    // single-AppKey delete (no concurrent write to suppress) would
     // silently vanish from both lists.
     for path in tombstones.keys() {
         if !writes.contains_key(path) {
@@ -394,8 +394,8 @@ fn record_write_delete_conflict(
     detail.kind = MergedConflictKind::WriteDelete;
     insert_conflict_file(&mut detail.files, conflict_file_side(write));
     detail.tombstone = Some(MergedConflictTombstone {
-        device_id: tombstone.app_key_pubkey.clone(),
-        device_seq: tombstone.root.device_seq,
+        app_key_pubkey: tombstone.app_key_pubkey.clone(),
+        app_key_seq: tombstone.root.app_key_seq,
         root_cid: tombstone.root.root_cid.clone(),
         tombstoned_at: tombstone.tombstoned_at,
     });
@@ -403,16 +403,16 @@ fn record_write_delete_conflict(
 
 fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflictFile) {
     if !files.iter().any(|f| {
-        f.device_id == file.device_id
-            && f.device_seq == file.device_seq
+        f.app_key_pubkey == file.app_key_pubkey
+            && f.app_key_seq == file.app_key_seq
             && f.root_cid == file.root_cid
             && f.content_hash == file.content_hash
     }) {
         files.push(file);
         files.sort_by(|a, b| {
-            a.device_id
-                .cmp(&b.device_id)
-                .then(a.device_seq.cmp(&b.device_seq))
+            a.app_key_pubkey
+                .cmp(&b.app_key_pubkey)
+                .then(a.app_key_seq.cmp(&b.app_key_seq))
                 .then(a.root_cid.cmp(&b.root_cid))
                 .then(a.content_hash.cmp(&b.content_hash))
         });
@@ -421,8 +421,8 @@ fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflic
 
 fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
     MergedConflictFile {
-        device_id: write.app_key_pubkey.clone(),
-        device_seq: write.root.device_seq,
+        app_key_pubkey: write.app_key_pubkey.clone(),
+        app_key_seq: write.root.app_key_seq,
         root_cid: write.root.root_cid.clone(),
         content_hash: to_hex(&identity_hash(&write.entry)),
         content_cid_hash: to_hex(&write.entry.hash),
@@ -523,16 +523,16 @@ fn should_mark_write_delete_conflict(
 }
 
 fn root_relation(
-    left_device: &str,
-    left: &DeviceRootRef,
-    right_device: &str,
-    right: &DeviceRootRef,
+    left_app_key: &str,
+    left: &AppKeyRootRef,
+    right_app_key: &str,
+    right: &AppKeyRootRef,
 ) -> RootRelation {
     if left.root_cid == right.root_cid {
         return RootRelation::Same;
     }
-    let left_descends = root_observes(left_device, left, right_device, right);
-    let right_descends = root_observes(right_device, right, left_device, left);
+    let left_descends = root_observes(left_app_key, left, right_app_key, right);
+    let right_descends = root_observes(right_app_key, right, left_app_key, left);
     match (left_descends, right_descends) {
         (true, false) => RootRelation::LeftDescends,
         (false, true) => RootRelation::RightDescends,
@@ -541,48 +541,49 @@ fn root_relation(
 }
 
 fn root_observes(
-    newer_device_id: &str,
-    newer_root: &DeviceRootRef,
-    candidate_device_id: &str,
-    candidate_root: &DeviceRootRef,
+    newer_app_key_pubkey: &str,
+    newer_root: &AppKeyRootRef,
+    candidate_app_key_pubkey: &str,
+    candidate_root: &AppKeyRootRef,
 ) -> bool {
     if newer_root.root_cid == candidate_root.root_cid {
         return true;
     }
-    if newer_device_id == candidate_device_id
-        && newer_root.device_seq > 0
-        && candidate_root.device_seq > 0
-        && newer_root.device_seq > candidate_root.device_seq
+    if newer_app_key_pubkey == candidate_app_key_pubkey
+        && newer_root.app_key_seq > 0
+        && candidate_root.app_key_seq > 0
+        && newer_root.app_key_seq > candidate_root.app_key_seq
     {
         return true;
     }
     if newer_root.parents.iter().any(|parent| {
-        parent.device_id == candidate_device_id
+        parent.app_key_pubkey == candidate_app_key_pubkey
             && (parent.root_cid == candidate_root.root_cid
-                || (candidate_root.device_seq > 0 && parent.device_seq > candidate_root.device_seq))
+                || (candidate_root.app_key_seq > 0
+                    && parent.app_key_seq > candidate_root.app_key_seq))
     }) {
         return true;
     }
     newer_root
         .observed
-        .get(candidate_device_id)
+        .get(candidate_app_key_pubkey)
         .is_some_and(|o| {
             o.root_cid == candidate_root.root_cid
-                || (candidate_root.device_seq > 0 && o.device_seq > candidate_root.device_seq)
+                || (candidate_root.app_key_seq > 0 && o.app_key_seq > candidate_root.app_key_seq)
         })
 }
 
-fn roots_are_causal(root: &DeviceRootRef) -> bool {
-    root.device_seq > 0 || !root.parents.is_empty() || !root.observed.is_empty()
+fn roots_are_causal(root: &AppKeyRootRef) -> bool {
+    root.app_key_seq > 0 || !root.parents.is_empty() || !root.observed.is_empty()
 }
 
 fn legacy_order_newer(
     left_time: i64,
-    left_device: &str,
+    left_app_key: &str,
     right_time: i64,
-    right_device: &str,
+    right_app_key: &str,
 ) -> bool {
-    left_time > right_time || (left_time == right_time && left_device > right_device)
+    left_time > right_time || (left_time == right_time && left_app_key > right_app_key)
 }
 
 /// Encode a file path into the path under `.hashtree/tombstones/`
@@ -605,10 +606,10 @@ pub fn original_path_from_tombstone(tombstone_path: &str) -> Option<&str> {
 /// regular files and tombstones. Tombstone leaves (under `.tombstones/`)
 /// are decoded by parsing their content as a unix-seconds integer; any
 /// leaf whose content can't be parsed is silently skipped.
-pub async fn walk_device_tree<S: Store>(
+pub async fn walk_app_key_tree<S: Store>(
     tree: &HashTree<S>,
     root: &Cid,
-) -> Result<(Vec<DeviceFileEntry>, Vec<DeviceTombstone>), HashTreeError> {
+) -> Result<(Vec<AppKeyFileEntry>, Vec<AppKeyTombstone>), HashTreeError> {
     let mut files = Vec::new();
     let mut tombstones = Vec::new();
     walk_dir_recursive(tree, root, "", &mut files, &mut tombstones).await?;
@@ -623,8 +624,8 @@ fn walk_meta_dir<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir_cid: &'a Cid,
     prefix: &'a str,
-    files: &'a mut Vec<DeviceFileEntry>,
-    tombstones: &'a mut Vec<DeviceTombstone>,
+    files: &'a mut Vec<AppKeyFileEntry>,
+    tombstones: &'a mut Vec<AppKeyTombstone>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
         let entries = tree.list_directory(dir_cid).await?;
@@ -653,8 +654,8 @@ fn walk_dir_recursive<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir_cid: &'a Cid,
     prefix: &'a str,
-    files: &'a mut Vec<DeviceFileEntry>,
-    tombstones: &'a mut Vec<DeviceTombstone>,
+    files: &'a mut Vec<AppKeyFileEntry>,
+    tombstones: &'a mut Vec<AppKeyTombstone>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
         let entries = tree.list_directory(dir_cid).await?;
@@ -688,7 +689,7 @@ fn walk_dir_recursive<'a, S: Store>(
                     .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
                 let ts_str = String::from_utf8_lossy(&raw);
                 if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
-                    tombstones.push(DeviceTombstone {
+                    tombstones.push(AppKeyTombstone {
                         path: orig_path.to_string(),
                         tombstoned_at,
                     });
@@ -696,7 +697,7 @@ fn walk_dir_recursive<'a, S: Store>(
                     tracing::warn!("malformed tombstone at {path}: {ts_str:?}");
                 }
             } else {
-                files.push(DeviceFileEntry {
+                files.push(AppKeyFileEntry {
                     path,
                     hash: entry.hash,
                     size: entry.size,

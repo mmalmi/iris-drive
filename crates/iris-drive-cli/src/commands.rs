@@ -502,7 +502,7 @@ pub(crate) enum ProviderCmd {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum EventCmd {
-    /// Device-signed drive-root event (kind 30078) for the primary
+    /// AppKey-signed drive-root event (kind 30078) for the primary
     /// drive. Requires a previous `idrive import` so there's a CID
     /// to publish.
     DriveRoot,

@@ -7,20 +7,20 @@ struct RevokedDeviceSetupView: View {
     var body: some View {
         let target = status.currentAppKeyNpub ?? ""
         VStack(alignment: .leading, spacing: 12) {
-            Text("Device removed")
+            Text("AppKey removed")
                 .font(.title2.weight(.semibold))
-            Text("This device no longer has access to Iris Drive.")
+            Text("This app install no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
             if !target.isEmpty {
                 keyedValue("AppKey", target)
             }
             if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("This device", device)
+                keyedValue("Current AppKey", device)
             }
             Button {
                 controller.linkDevice(target: target)
             } label: {
-                buttonLabel("Link this device again", systemImage: "link")
+                buttonLabel("Link this app install again", systemImage: "link")
             }
             .buttonStyle(.borderedProminent)
             .disabled(target.isEmpty)
@@ -28,7 +28,7 @@ struct RevokedDeviceSetupView: View {
                 Button {
                     controller.copyDeviceKey()
                 } label: {
-                    buttonLabel("Copy device ID", systemImage: "doc.on.doc")
+                    buttonLabel("Copy AppKey", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }
@@ -76,11 +76,11 @@ struct AwaitingApprovalSetupView: View {
                 keyedValue("AppKey", appKey)
             }
             if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("This device", device)
+                keyedValue("Current AppKey", device)
                 Button {
                     controller.copyDeviceKey()
                 } label: {
-                    buttonLabel("Copy device ID", systemImage: "doc.on.doc")
+                    buttonLabel("Copy AppKey", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }

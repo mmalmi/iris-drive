@@ -44,14 +44,14 @@ pub(crate) fn cmd_stats(config_dir: &std::path::Path) -> Result<()> {
                 .map(|stats| stats.visible_file_bytes)
         })
         .unwrap_or(0);
-    let authorized_devices = config
+    let authorized_app_keys = config
         .profile
         .as_ref()
         .and_then(|state| state.app_keys.as_ref())
         .map_or(0, |snap| snap.app_actors.len());
-    let published_device_roots = config
+    let published_app_key_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .map_or(0, |drive| drive.device_roots.len());
+        .map_or(0, |drive| drive.app_key_roots.len());
     let unresolved_conflicts = current_root_cid
         .as_deref()
         .and_then(|root| root_conflict_status(config_dir, root))
@@ -77,8 +77,8 @@ pub(crate) fn cmd_stats(config_dir: &std::path::Path) -> Result<()> {
             "visible_file_bytes": visible_file_bytes,
             "local_block_count": block_stats.file_count,
             "local_block_bytes": block_stats.total_bytes,
-            "authorized_devices": authorized_devices,
-            "published_device_roots": published_device_roots,
+            "authorized_app_keys": authorized_app_keys,
+            "published_app_key_roots": published_app_key_roots,
             "backup_targets": effective_backup_targets(&config).len(),
             "unresolved_conflicts": unresolved_conflicts,
             "daemon_running": daemon_running,

@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
-use crate::config::{AppConfig, DeviceRootRef, Drive};
+use crate::config::{AppConfig, AppKeyRootRef};
 use crate::nostr_events::{
     KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
     build_app_key_link_request_event, build_drive_root_publish_event,
@@ -219,7 +219,7 @@ pub fn apply_app_key_link_roster_frame(
         debug_assert_eq!(account.app_keys.as_ref(), Some(&merged_app_keys));
         account.root_scope_id()
     };
-    sync_primary_drive_scope(config, root_scope_id);
+    config.sync_primary_drive_scope(root_scope_id);
     Ok(AppKeyLinkRosterApply::Applied(decision))
 }
 
@@ -276,7 +276,7 @@ pub fn apply_remote_iris_profile_roster_op_event(
             account.recompute_authorization();
             account.root_scope_id()
         };
-        sync_primary_drive_scope(config, root_scope_id);
+        config.sync_primary_drive_scope(root_scope_id);
         return Ok(IrisProfileRosterOpApply::Applied);
     }
 
@@ -345,18 +345,6 @@ fn merge_profile_roster_ops(
     by_id.into_values().collect()
 }
 
-fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
-    if let Some(drive) = config
-        .drives
-        .iter_mut()
-        .find(|drive| drive.drive_id == crate::daemon::PRIMARY_DRIVE_ID)
-    {
-        drive.root_scope_id = root_scope_id;
-    } else {
-        config.upsert_drive(Drive::primary(root_scope_id));
-    }
-}
-
 /// Result of applying a remote drive-root event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriveRootApply {
@@ -368,7 +356,7 @@ pub enum DriveRootApply {
     /// Protects against forged events from unauthorized app actors.
     UnauthorizedAppKey,
     /// Older than what we already have for this device — ignored.
-    /// Causal roots compare by `device_seq`; legacy roots compare by
+    /// Causal roots compare by `app_key_seq`; legacy roots compare by
     /// timestamp.
     StaleTimestamp,
     /// The event is for an authorized device, but this local device has not
@@ -420,7 +408,7 @@ pub fn apply_remote_drive_root_event(
         else {
             return Ok(DriveRootApply::UnknownDrive);
         };
-        return apply_root_to_device_roots(&mut drive.device_roots, event, device_keys, &preview);
+        return apply_root_to_app_key_roots(&mut drive.app_key_roots, event, device_keys, &preview);
     }
 
     let Ok(share_id) = preview.root_scope_id.parse::<IrisProfileId>() else {
@@ -439,23 +427,23 @@ pub fn apply_remote_drive_root_event(
     if !shared_folder.projection().can_write_roots(&app_key_hex) {
         return Ok(DriveRootApply::UnauthorizedAppKey);
     }
-    apply_root_to_device_roots(
-        &mut shared_folder.device_roots,
+    apply_root_to_app_key_roots(
+        &mut shared_folder.app_key_roots,
         event,
         device_keys,
         &preview,
     )
 }
 
-fn apply_root_to_device_roots(
-    device_roots: &mut BTreeMap<String, DeviceRootRef>,
+fn apply_root_to_app_key_roots(
+    app_key_roots: &mut BTreeMap<String, AppKeyRootRef>,
     event: &Event,
     device_keys: Option<&Keys>,
     preview: &crate::nostr_events::DriveRootEventPreview,
 ) -> Result<DriveRootApply, RelayError> {
     let app_key_hex = preview.app_key_pubkey_hex.clone();
-    if let Some(existing) = device_roots.get(&app_key_hex)
-        && incoming_root_is_stale(existing, preview.device_seq, preview.published_at)
+    if let Some(existing) = app_key_roots.get(&app_key_hex)
+        && incoming_root_is_stale(existing, preview.app_key_seq, preview.published_at)
     {
         return Ok(DriveRootApply::StaleTimestamp);
     }
@@ -470,13 +458,13 @@ fn apply_root_to_device_roots(
     } else {
         parse_drive_root_event(event)?
     };
-    if device_roots
+    if app_key_roots
         .get(&app_key_hex)
         .is_some_and(|existing| existing.root_cid == incoming_root.root_cid)
     {
         return Ok(DriveRootApply::StaleTimestamp);
     }
-    device_roots.insert(app_key_hex, incoming_root);
+    app_key_roots.insert(app_key_hex, incoming_root);
     Ok(DriveRootApply::Applied)
 }
 
@@ -505,11 +493,11 @@ pub fn apply_remote_files_root_event(
             "hashtree root key is unavailable".to_string(),
         ));
     }
-    let incoming_root = DeviceRootRef {
+    let incoming_root = AppKeyRootRef {
         root_cid: root_cid.to_string(),
         published_at: i64::try_from(parsed.event.created_at).unwrap_or(i64::MAX),
         dck_generation: 0,
-        device_seq: 0,
+        app_key_seq: 0,
         parents: Vec::new(),
         observed: std::collections::BTreeMap::new(),
         local_only: false,
@@ -528,11 +516,11 @@ pub fn apply_remote_files_root_event(
     else {
         return Ok(FilesRootApply::UnknownDrive);
     };
-    if let Some(existing) = drive.device_roots.get(&app_key_pubkey) {
+    if let Some(existing) = drive.app_key_roots.get(&app_key_pubkey) {
         if existing.root_cid == incoming_root.root_cid {
             return Ok(FilesRootApply::StaleTimestamp);
         }
-        if existing.device_seq > 0 {
+        if existing.app_key_seq > 0 {
             return Ok(FilesRootApply::StaleTimestamp);
         }
         if existing.published_at >= incoming_root.published_at {
@@ -540,23 +528,23 @@ pub fn apply_remote_files_root_event(
         }
     }
     drive.last_root_cid = Some(incoming_root.root_cid.clone());
-    drive.device_roots.insert(app_key_pubkey, incoming_root);
+    drive.app_key_roots.insert(app_key_pubkey, incoming_root);
     Ok(FilesRootApply::Applied)
 }
 
 fn incoming_root_is_stale(
-    existing: &DeviceRootRef,
-    incoming_device_seq: u64,
+    existing: &AppKeyRootRef,
+    incoming_app_key_seq: u64,
     incoming_published_at: i64,
 ) -> bool {
-    if existing.device_seq > 0 || incoming_device_seq > 0 {
-        if incoming_device_seq == 0 {
+    if existing.app_key_seq > 0 || incoming_app_key_seq > 0 {
+        if incoming_app_key_seq == 0 {
             return true;
         }
-        if existing.device_seq == 0 {
+        if existing.app_key_seq == 0 {
             return false;
         }
-        return incoming_device_seq <= existing.device_seq;
+        return incoming_app_key_seq <= existing.app_key_seq;
     }
     existing.published_at >= incoming_published_at
 }
@@ -624,7 +612,7 @@ pub async fn publish_drive_root(
     device_keys: &Keys,
     root_scope_id: &str,
     drive_id: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_drive_root_publish_event(
@@ -646,7 +634,7 @@ pub async fn publish_files_root(
     client: &Client,
     app_key: &Keys,
     tree_name: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_private_hashtree_root_event(app_key, tree_name, root)?;
     let output = client
@@ -917,21 +905,21 @@ fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
         )
 }
 
-/// Fetch drive-root events from any of `authorized_devices` for
+/// Fetch drive-root events from any of `authorized_app_keys` for
 /// `(root_scope_id, drive_id)`. Returns the latest event from each
 /// device (one event per device).
 pub async fn fetch_drive_roots(
     client: &Client,
     root_scope_id: &str,
     drive_id: &str,
-    authorized_devices: &[String],
+    authorized_app_keys: &[String],
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
-    if authorized_devices.is_empty() {
+    if authorized_app_keys.is_empty() {
         return Ok(Vec::new());
     }
-    let mut authors = Vec::with_capacity(authorized_devices.len());
-    for hex in authorized_devices {
+    let mut authors = Vec::with_capacity(authorized_app_keys.len());
+    for hex in authorized_app_keys {
         authors
             .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
     }
@@ -968,8 +956,8 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
         parse_drive_root_event_preview(current),
     ) {
         (Ok(candidate), Ok(current)) => candidate
-            .device_seq
-            .cmp(&current.device_seq)
+            .app_key_seq
+            .cmp(&current.app_key_seq)
             .then_with(|| candidate.published_at.cmp(&current.published_at))
             .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
             .is_gt(),

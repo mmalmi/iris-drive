@@ -53,9 +53,9 @@ fn native_apply_owner_snapshot_for_test(
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .context("owner primary drive missing")?;
     let root = drive
-        .device_roots
+        .app_key_roots
         .get(&owner_account_state.app_key_pubkey)
-        .context("owner device root missing")?;
+        .context("owner AppKey root missing")?;
     let authorized = owner_account_state
         .app_keys
         .as_ref()

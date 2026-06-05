@@ -427,9 +427,9 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
     let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let root_cid = Cid::encrypted([0x11; 32], [0x22; 32]).to_string();
     let mut drive = Drive::primary(owner.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         owner.state.app_key_pubkey.clone(),
-        DeviceRootRef::legacy(&root_cid, 10, 1),
+        AppKeyRootRef::legacy(&root_cid, 10, 1),
     );
     let config = AppConfig {
         profile: Some(owner.state.clone()),

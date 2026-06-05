@@ -40,7 +40,7 @@ struct IrisDriveRootView: View {
                     DevicesView(model: model)
                 }
                 .tabItem {
-                    Label("Devices", systemImage: "person.2.fill")
+                    Label("AppKeys", systemImage: "person.2.fill")
                 }
                 .tag(MainTab.devices)
 
@@ -83,19 +83,19 @@ private struct RevokedDeviceSetupView: View {
                     .padding(.vertical, 24)
                 }
 
-                Section("Device removed") {
-                    Text("This device no longer has access to Iris Drive.")
+                Section("AppKey removed") {
+                    Text("This app install no longer has access to Iris Drive.")
                     LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                    LabeledContent("This device", value: model.devicePublicKey)
+                    LabeledContent("Current AppKey", value: model.devicePublicKey)
                     Button {
                         model.relinkDevice()
                     } label: {
-                        Label("Link this device again", systemImage: "link")
+                        Label("Link this app install again", systemImage: "link")
                     }
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy device ID", systemImage: "doc.on.doc")
+                        Label("Copy AppKey", systemImage: "doc.on.doc")
                     }
                 }
 
@@ -140,11 +140,11 @@ private struct AwaitingApprovalSetupView: View {
 
                 Section("Waiting for approval") {
                     LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                    LabeledContent("This device", value: model.devicePublicKey)
+                    LabeledContent("Current AppKey", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy device ID", systemImage: "doc.on.doc")
+                        Label("Copy AppKey", systemImage: "doc.on.doc")
                     }
                 }
 
@@ -321,7 +321,7 @@ private struct RestoreOptionsSetupView: View {
         Form {
             Section {
                 Button(action: openLinkDevice) {
-                    Label("Link device", systemImage: "link")
+                    Label("Link app install", systemImage: "link")
                 }
                 .accessibilityIdentifier("openLinkDevice")
                 Button(action: openRecoveryPhrase) {
@@ -493,7 +493,7 @@ private struct LinkDeviceSetupView: View {
                 Button {
                     submitLinkDevice(linkTarget, force: true)
                 } label: {
-                    Label("Link device", systemImage: "link")
+                    Label("Link app install", systemImage: "link")
                 }
                 .accessibilityIdentifier("linkDeviceSubmit")
                 .disabled(!IrisDriveNativeLinkInput.isComplete(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -504,7 +504,7 @@ private struct LinkDeviceSetupView: View {
                 }
             }
         }
-        .navigationTitle("Link this device")
+        .navigationTitle("Link app install")
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
             submitLinkDevice(linkTarget, force: false)
@@ -573,10 +573,10 @@ private struct DriveHomeView: View {
                     .accessibilityValue("\(model.fileCount)")
                 LabeledContent("Storage", value: byteString(model.visibleFileBytes))
                 Button(action: showDevices) {
-                    LabeledContent("Devices", value: deviceSummaryText)
+                    LabeledContent("AppKeys", value: deviceSummaryText)
                 }
                 .accessibilityIdentifier("devicesSummaryButton")
-                .accessibilityLabel("Devices")
+                .accessibilityLabel("AppKeys")
                 .accessibilityValue(deviceSummaryText)
             }
 
@@ -639,7 +639,7 @@ private struct DevicesView: View {
                 ForEach(model.devices) { device in
                     DisclosureGroup {
                         if device.detail == model.devicePublicKey {
-                            LabeledContent("Device ID", value: model.devicePublicKey)
+                            LabeledContent("AppKey", value: model.devicePublicKey)
                         }
                         Text(device.detail)
                             .font(.footnote)
@@ -709,13 +709,13 @@ private struct DevicesView: View {
                 }
             }
         }
-        .navigationTitle("Devices")
+        .navigationTitle("AppKeys")
         .toolbar {
             if model.canAdminProfile {
                 Button {
                     showingAddDevice = true
                 } label: {
-                    Label("Add Device", systemImage: "plus")
+                    Label("Add AppKey", systemImage: "plus")
                 }
                 .accessibilityIdentifier("addDeviceButton")
             }
@@ -724,7 +724,7 @@ private struct DevicesView: View {
             AddDeviceSheet(model: model, isPresented: $showingAddDevice)
         }
         .alert(
-            "Delete device?",
+            "Remove AppKey?",
             isPresented: Binding(
                 get: { devicePendingDelete != nil },
                 set: { presented in
@@ -735,7 +735,7 @@ private struct DevicesView: View {
             ),
             presenting: devicePendingDelete
         ) { device in
-            Button("Delete", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 model.deleteDevice(id: device.id)
                 devicePendingDelete = nil
             }
@@ -743,7 +743,7 @@ private struct DevicesView: View {
                 devicePendingDelete = nil
             }
         } message: { device in
-            Text("Delete \(device.label) from Iris Drive? This removes its access to future syncs.")
+            Text("Remove \(device.label) from Iris Drive? This removes its access to future syncs.")
         }
     }
 }
@@ -766,7 +766,7 @@ private struct AddDeviceSheet: View {
         NavigationStack {
             Form {
                 if !model.appKeyLinkInvite.isEmpty {
-                    Section("Invite device") {
+                    Section("Invite app install") {
                         QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
                             .frame(width: 260, height: 260)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -788,10 +788,10 @@ private struct AddDeviceSheet: View {
                 }
 
                 if !model.inboundAppKeyLinkRequests.isEmpty {
-                    Section("Devices asking to join") {
+                    Section("AppKeys asking to join") {
                         ForEach(model.inboundAppKeyLinkRequests) { request in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(request.label.isEmpty ? "New device" : request.label)
+                                Text(request.label.isEmpty ? "New AppKey" : request.label)
                                     .font(.headline)
                                 Text(request.devicePubkey)
                                     .font(.footnote)
@@ -813,10 +813,10 @@ private struct AddDeviceSheet: View {
                 }
 
                 Section("Link manually") {
-                    Text("Paste the Device ID shown on the other device when you link it manually.")
+                    Text("Paste the AppKey shown by the app install you want to approve.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    TextField("Device ID", text: $model.approveDeviceKey)
+                    TextField("AppKey", text: $model.approveDeviceKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("manualDeviceId")
@@ -837,7 +837,7 @@ private struct AddDeviceSheet: View {
                     .disabled(!canAddManualDevice)
                 }
             }
-            .navigationTitle("Add a device")
+            .navigationTitle("Add an AppKey")
             .toolbar {
                 Button("Cancel") {
                     isPresented = false
@@ -1033,10 +1033,10 @@ private struct SettingsView: View {
     var body: some View {
         Form {
             Section("Account") {
-                TextField("Device label", text: $model.deviceLabel)
+                TextField("App install label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
                 LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                LabeledContent("Device", value: model.devicePublicKey)
+                LabeledContent("Current AppKey", value: model.devicePublicKey)
                 Button {
                     model.copyAppKey()
                 } label: {
@@ -1045,7 +1045,7 @@ private struct SettingsView: View {
                 Button {
                     model.copyDeviceKey()
                 } label: {
-                    Label("Copy device key", systemImage: "doc.on.doc")
+                    Label("Copy AppKey", systemImage: "doc.on.doc")
                 }
                 if model.canExportRecoveryPhrase {
                     NavigationLink {
@@ -1116,7 +1116,7 @@ private struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .confirmationDialog(
-            "Log out of Iris Drive on this device?",
+            "Log out of Iris Drive on this app install?",
             isPresented: $showingLogoutConfirmation,
             titleVisibility: .visible
         ) {

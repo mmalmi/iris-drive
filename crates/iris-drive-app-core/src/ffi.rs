@@ -492,7 +492,7 @@ impl NativeAppRuntime {
     fn approve_app_key(&mut self, request: &str, label: &str) {
         let request = request.trim();
         if request.is_empty() {
-            "device request is required".clone_into(&mut self.state.error);
+            "AppKey request is required".clone_into(&mut self.state.error);
             return;
         }
         let request = match decode_app_key_approval_request(request) {
@@ -521,7 +521,7 @@ impl NativeAppRuntime {
             .profile_id
             .is_some_and(|profile_id| profile_id != state.profile_id)
         {
-            "device request is for a different profile".clone_into(&mut self.state.error);
+            "AppKey request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
         let label = label_option(label).or(request.label);
@@ -567,7 +567,7 @@ impl NativeAppRuntime {
     fn reject_device(&mut self, request: &str) {
         let request = request.trim();
         if request.is_empty() {
-            "device request is required".clone_into(&mut self.state.error);
+            "AppKey request is required".clone_into(&mut self.state.error);
             return;
         }
         let request = match decode_app_key_approval_request(request) {
@@ -596,7 +596,7 @@ impl NativeAppRuntime {
             .profile_id
             .is_some_and(|profile_id| profile_id != state.profile_id)
         {
-            "device request is for a different profile".clone_into(&mut self.state.error);
+            "AppKey request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
         if let Err(error) = state.reject_inbound_app_key_link_request(&request.app_key_hex) {
@@ -2320,7 +2320,7 @@ fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
         .and_then(|account| {
             config
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
+                .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
                 .map(|root| root.root_cid.clone())
         })
         .or_else(|| {

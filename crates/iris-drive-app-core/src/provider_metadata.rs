@@ -53,7 +53,7 @@ mod tests {
                         size: 1,
                         whole_file_hash: None,
                         modified_at: None,
-                        source_device: "device".to_string(),
+                        source_app_key_pubkey: "device".to_string(),
                         published_at: 1_800_000_000,
                     },
                     MergedEntry {
@@ -63,14 +63,14 @@ mod tests {
                         size: 2,
                         whole_file_hash: None,
                         modified_at: Some(1_700_000_000),
-                        source_device: "device".to_string(),
+                        source_app_key_pubkey: "device".to_string(),
                         published_at: 1_800_000_000,
                     },
                 ],
                 ..MergedView::default()
             },
-            authorized_devices: 1,
-            device_roots_present: 1,
+            authorized_app_keys: 1,
+            app_key_roots_present: 1,
         };
 
         let index = provider_modified_at_index(&view);

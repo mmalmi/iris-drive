@@ -237,8 +237,17 @@ impl AppConfig {
                 expected: CONFIG_SCHEMA_VERSION,
             });
         }
-        if let Some(account) = parsed.profile.as_mut() {
-            account.sync_app_keys_from_profile();
+        let adopted_root_scope_id = if let Some(account) = parsed.profile.as_mut() {
+            let adopted = account.adopt_single_roster_profile_id();
+            if !adopted {
+                account.sync_app_keys_from_profile();
+            }
+            adopted.then(|| account.root_scope_id())
+        } else {
+            None
+        };
+        if let Some(root_scope_id) = adopted_root_scope_id {
+            parsed.sync_primary_drive_scope(root_scope_id);
         }
         Ok(parsed)
     }
@@ -252,7 +261,7 @@ impl AppConfig {
         if path.exists()
             && let Ok(existing) = Self::load_or_default(path)
         {
-            config.preserve_newer_device_roots(&existing);
+            config.preserve_newer_app_key_roots(&existing);
         }
         let raw =
             toml::to_string_pretty(&config).map_err(|e| ConfigError::Serialize(e.to_string()))?;
@@ -260,27 +269,39 @@ impl AppConfig {
         Ok(())
     }
 
-    fn preserve_newer_device_roots(&mut self, existing: &Self) {
+    fn preserve_newer_app_key_roots(&mut self, existing: &Self) {
         for drive in &mut self.drives {
             let Some(existing_drive) = existing.drive(&drive.drive_id) else {
                 continue;
             };
-            for (device, existing_root) in &existing_drive.device_roots {
+            for (app_key_pubkey, existing_root) in &existing_drive.app_key_roots {
                 let keep_existing = drive
-                    .device_roots
-                    .get(device)
+                    .app_key_roots
+                    .get(app_key_pubkey)
                     .is_none_or(|incoming| existing_root.is_newer_than(incoming));
                 if keep_existing {
                     drive
-                        .device_roots
-                        .insert(device.clone(), existing_root.clone());
+                        .app_key_roots
+                        .insert(app_key_pubkey.clone(), existing_root.clone());
                 }
             }
             if let Some(account) = self.profile.as_ref()
-                && let Some(root) = drive.device_roots.get(&account.app_key_pubkey)
+                && let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey)
             {
                 drive.last_root_cid = Some(root.root_cid.clone());
             }
+        }
+    }
+
+    pub fn sync_primary_drive_scope(&mut self, root_scope_id: String) {
+        if let Some(drive) = self
+            .drives
+            .iter_mut()
+            .find(|drive| drive.drive_id == crate::daemon::PRIMARY_DRIVE_ID)
+        {
+            drive.root_scope_id = root_scope_id;
+        } else {
+            self.upsert_drive(Drive::primary(root_scope_id));
         }
     }
 }
@@ -376,17 +397,16 @@ pub struct Drive {
     pub drive_id: String,
     pub display_name: String,
     pub role: DriveRole,
-    /// Per-device drive roots, keyed by `app_key_pubkey` (hex). Every
-    /// authorized device publishes its own root tree; the merged view
+    /// Per-AppKey drive roots, keyed by `app_key_pubkey` (hex). Every
+    /// authorized app install publishes its own root tree; the merged view
     /// is computed causally across all entries, with timestamp ordering
     /// for legacy roots (see [`crate::merge::merge_drives`]).
-    /// Single-device installs carry exactly one entry here.
+    /// Single-AppKey installs carry exactly one entry here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub device_roots: BTreeMap<String, DeviceRootRef>,
-    /// Deprecated: this device's most-recent root CID. Retained as a
-    /// flat scalar for compatibility with existing tooling that hasn't
-    /// learned `device_roots` yet. New code should read
-    /// `device_roots[my_app_key_pubkey].root_cid`.
+    pub app_key_roots: BTreeMap<String, AppKeyRootRef>,
+    /// This `AppKey`'s most-recent root CID as a flat scalar for status surfaces
+    /// that do not need the full per-AppKey root map. New code should read
+    /// `app_key_roots[my_app_key_pubkey].root_cid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_root_cid: Option<String>,
     /// Symmetric key for encrypted drives, hex-encoded.
@@ -394,32 +414,32 @@ pub struct Drive {
     pub key_hex: Option<String>,
 }
 
-/// One device's contribution to a drive. Each authorized device
+/// One `AppKey`'s contribution to a drive. Each authorized app install
 /// publishes its own complete root tree. Causal fields are optional
 /// for legacy roots; new roots fill them from `.hashtree/root.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeviceRootRef {
-    /// htree root CID the device most recently published.
+pub struct AppKeyRootRef {
+    /// htree root CID the `AppKey` most recently published.
     pub root_cid: String,
     /// Unix-seconds publication time. Used for display and as the
     /// deterministic ordering when a legacy root has no causal fields.
     pub published_at: i64,
     /// DCK generation this root was sealed with. Lets readers detect
-    /// stale device roots that pre-date a rotation.
+    /// stale `AppKey` roots that pre-date a rotation.
     pub dck_generation: u64,
-    /// Monotonic per-device sequence for this drive. `0` means legacy
+    /// Monotonic per-AppKey sequence for this drive. `0` means legacy
     /// root with unknown causality.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub device_seq: u64,
+    pub app_key_seq: u64,
     /// Direct parent roots this snapshot replaces or incorporates.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<RootParent>,
-    /// Latest roots this device had observed when publishing this
-    /// snapshot, keyed by device id.
+    /// Latest roots this `AppKey` had observed when publishing this
+    /// snapshot, keyed by `AppKey` pubkey.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub observed: BTreeMap<String, RootObservation>,
     /// Local bookkeeping root that can be used as base state but should
-    /// not be announced as this device's own edit.
+    /// not be announced as this `AppKey`'s own edit.
     #[serde(default, skip_serializing_if = "is_false")]
     pub local_only: bool,
 }
@@ -434,14 +454,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-impl DeviceRootRef {
+impl AppKeyRootRef {
     #[must_use]
     pub fn legacy(root_cid: impl Into<String>, published_at: i64, dck_generation: u64) -> Self {
         Self {
             root_cid: root_cid.into(),
             published_at,
             dck_generation,
-            device_seq: 0,
+            app_key_seq: 0,
             parents: Vec::new(),
             observed: BTreeMap::new(),
             local_only: false,
@@ -454,7 +474,7 @@ impl DeviceRootRef {
             root_cid: root_cid.into(),
             published_at,
             dck_generation: meta.dck_generation,
-            device_seq: meta.device_seq,
+            app_key_seq: meta.app_key_seq,
             parents: meta.parents.clone(),
             observed: meta.observed.clone(),
             local_only: meta.local_only,
@@ -463,8 +483,8 @@ impl DeviceRootRef {
 
     #[must_use]
     pub fn is_newer_than(&self, other: &Self) -> bool {
-        if self.device_seq > 0 || other.device_seq > 0 {
-            return self.device_seq > other.device_seq;
+        if self.app_key_seq > 0 || other.app_key_seq > 0 {
+            return self.app_key_seq > other.app_key_seq;
         }
         self.published_at > other.published_at
     }
@@ -477,7 +497,7 @@ impl Drive {
             drive_id: "main".into(),
             display_name: "My Drive".into(),
             role: DriveRole::Owner,
-            device_roots: BTreeMap::new(),
+            app_key_roots: BTreeMap::new(),
             last_root_cid: None,
             key_hex: None,
         }
@@ -587,17 +607,17 @@ authorization_state = "authorized"
     }
 
     #[test]
-    fn legacy_device_root_ref_defaults_causal_fields() {
+    fn legacy_app_key_root_ref_defaults_causal_fields() {
         let raw = r#"
 root_cid = "cid-legacy"
 published_at = 1234
 dck_generation = 1
 "#;
-        let root: DeviceRootRef = toml::from_str(raw).unwrap();
+        let root: AppKeyRootRef = toml::from_str(raw).unwrap();
         assert_eq!(root.root_cid, "cid-legacy");
         assert_eq!(root.published_at, 1234);
         assert_eq!(root.dck_generation, 1);
-        assert_eq!(root.device_seq, 0);
+        assert_eq!(root.app_key_seq, 0);
         assert!(root.parents.is_empty());
         assert!(root.observed.is_empty());
         assert!(!root.local_only);
@@ -612,7 +632,7 @@ dck_generation = 1
             drive_id: "shared-photos".into(),
             display_name: "Photos from Alice".into(),
             role: DriveRole::Reader,
-            device_roots: BTreeMap::new(),
+            app_key_roots: BTreeMap::new(),
             last_root_cid: Some("Q123abc".into()),
             key_hex: Some("deadbeef".into()),
         });
@@ -654,7 +674,45 @@ dck_generation = 1
     }
 
     #[test]
-    fn save_preserves_newer_device_root_already_on_disk() {
+    fn load_adopts_single_roster_profile_id_from_recovery_evidence() {
+        let owner_dir = tempdir().unwrap();
+        let owner =
+            crate::profile::Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        let phrase = crate::recovery_phrase::load_recovery_phrase(
+            crate::paths::recovery_phrase_path_in(owner_dir.path()),
+        )
+        .unwrap();
+
+        let restored_dir = tempdir().unwrap();
+        let restored =
+            crate::profile::Profile::restore(restored_dir.path(), &phrase, Some("Web".into()))
+                .unwrap();
+        let temporary_profile_id = restored.state.profile_id;
+        let mut restored_state = restored.state.clone();
+        restored_state.profile_roster_ops = owner.state.profile_roster_ops.clone();
+        restored_state.app_keys = None;
+
+        let mut cfg = AppConfig {
+            profile: Some(restored_state),
+            ..AppConfig::default()
+        };
+        cfg.upsert_drive(Drive::primary(temporary_profile_id.to_string()));
+        let path = restored_dir.path().join("config.toml");
+        cfg.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let loaded_state = loaded.profile.as_ref().expect("profile persisted");
+        assert_eq!(loaded_state.profile_id, owner.state.profile_id);
+        assert_ne!(loaded_state.profile_id, temporary_profile_id);
+        assert!(loaded_state.app_keys.is_some());
+        assert_eq!(
+            loaded.drive("main").unwrap().root_scope_id,
+            owner.state.root_scope_id()
+        );
+    }
+
+    #[test]
+    fn save_preserves_newer_app_key_root_already_on_disk() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
@@ -673,13 +731,13 @@ dck_generation = 1
             ..AppConfig::default()
         };
         let mut newer_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
-        newer_drive.device_roots.insert(
+        newer_drive.app_key_roots.insert(
             "device-a".into(),
-            DeviceRootRef {
+            AppKeyRootRef {
                 root_cid: "newer".into(),
                 published_at: 20,
                 dck_generation: 1,
-                device_seq: 7,
+                app_key_seq: 7,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
                 local_only: false,
@@ -695,13 +753,13 @@ dck_generation = 1
             .iter_mut()
             .find(|d| d.drive_id == "main")
             .unwrap();
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             "device-a".into(),
-            DeviceRootRef {
+            AppKeyRootRef {
                 root_cid: "stale".into(),
                 published_at: 30,
                 dck_generation: 1,
-                device_seq: 6,
+                app_key_seq: 6,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
                 local_only: false,
@@ -712,26 +770,26 @@ dck_generation = 1
 
         let loaded = AppConfig::load_or_default(&path).unwrap();
         let drive = loaded.drive("main").unwrap();
-        let root = drive.device_roots.get("device-a").unwrap();
+        let root = drive.app_key_roots.get("device-a").unwrap();
         assert_eq!(root.root_cid, "newer");
-        assert_eq!(root.device_seq, 7);
+        assert_eq!(root.app_key_seq, 7);
         assert_eq!(drive.last_root_cid.as_deref(), Some("newer"));
     }
 
     #[test]
-    fn save_accepts_newer_device_root_over_disk() {
+    fn save_accepts_newer_app_key_root_over_disk() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
         let mut older = AppConfig::default();
         let mut older_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
-        older_drive.device_roots.insert(
+        older_drive.app_key_roots.insert(
             "device-a".into(),
-            DeviceRootRef {
+            AppKeyRootRef {
                 root_cid: "older".into(),
                 published_at: 10,
                 dck_generation: 1,
-                device_seq: 1,
+                app_key_seq: 1,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
                 local_only: false,
@@ -746,13 +804,13 @@ dck_generation = 1
             .iter_mut()
             .find(|d| d.drive_id == "main")
             .unwrap();
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             "device-a".into(),
-            DeviceRootRef {
+            AppKeyRootRef {
                 root_cid: "newer".into(),
                 published_at: 11,
                 dck_generation: 1,
-                device_seq: 2,
+                app_key_seq: 2,
                 parents: Vec::new(),
                 observed: BTreeMap::new(),
                 local_only: false,
@@ -764,11 +822,11 @@ dck_generation = 1
         let root = loaded
             .drive("main")
             .unwrap()
-            .device_roots
+            .app_key_roots
             .get("device-a")
             .unwrap();
         assert_eq!(root.root_cid, "newer");
-        assert_eq!(root.device_seq, 2);
+        assert_eq!(root.app_key_seq, 2);
     }
 
     #[test]

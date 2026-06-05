@@ -303,7 +303,7 @@ private fun StatusPanel(state: AppState) {
             }
         }
         Text(
-            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} devices",
+            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} AppKeys",
             color = Muted,
         )
     }
@@ -325,7 +325,7 @@ private fun SummaryPanel(state: AppState, onShowDevices: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Devices", color = Muted)
+                Text("AppKeys", color = Muted)
                 Text(
                     "${state.onlineDeviceCount}/${state.authorizedDeviceCount} online",
                     color = Ink,
@@ -592,14 +592,14 @@ private fun SettingsPanel(
         }
         Text("AppKey", fontWeight = FontWeight.SemiBold)
         Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Device key", fontWeight = FontWeight.SemiBold)
+        Text("Current AppKey", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopyAppKey) {
                 Text("Copy AppKey")
             }
             OutlinedButton(onClick = onCopyDeviceKey) {
-                Text("Copy device key")
+                Text("Copy AppKey")
             }
         }
         if (profile?.canExportRecoveryPhrase == true) {

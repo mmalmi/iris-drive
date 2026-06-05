@@ -4,7 +4,7 @@ use super::*;
 pub(crate) fn start_daemon(model: &AppRef) {
     if desktop_state().is_ok_and(|state| is_revoked(&state)) {
         stop_daemon(model);
-        model.ui.notice.set_text("Device removed");
+        model.ui.notice.set_text("AppKey removed");
         return;
     }
     if ensure_daemon_running(model) {

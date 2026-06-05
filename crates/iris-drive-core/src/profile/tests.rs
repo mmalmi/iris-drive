@@ -24,7 +24,7 @@ fn create_yields_admin_authorized_account() {
     // Roster admin authority is not a second key.
     assert!(dir.path().join("key").exists());
     assert!(dir.path().join("recovery_phrase").exists());
-    // AppKeys lists one device — this one.
+    // AppKeys lists one app install — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.profile_id, acct.state.profile_id.to_string());
     assert_eq!(snap.app_actors.len(), 1);
@@ -44,7 +44,7 @@ fn create_yields_admin_authorized_account() {
     assert!(projection.can_write_roots(&acct.state.app_key_pubkey));
     assert!(projection.can_admin_profile(&acct.state.app_key_pubkey));
     assert!(!projection.can_write_roots(&recovery_keys.pubkey_hex()));
-    assert!(projection.can_admin_profile(&recovery_keys.pubkey_hex()));
+    assert!(!projection.can_admin_profile(&recovery_keys.pubkey_hex()));
     assert_eq!(projection.key_epochs.len(), 1);
     assert_eq!(
         acct.current_dck_from_recovery_phrase(&phrase).unwrap(),
@@ -315,7 +315,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert!(projection.can_admin_profile(&recovered_pubkey));
     assert!(!projection.can_write_roots(&recovery_key.pubkey_hex()));
-    assert!(projection.can_admin_profile(&recovery_key.pubkey_hex()));
+    assert!(!projection.can_admin_profile(&recovery_key.pubkey_hex()));
     assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
 
     let recovered_dck = recovered.current_dck().unwrap();
@@ -340,7 +340,7 @@ fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
     let facet = projection.active_facets.get(&nip46_pubkey).unwrap();
     assert!(facet.has_purpose(IrisProfileKeyPurpose::Nip46Signer));
     assert!(!projection.can_write_roots(&nip46_pubkey));
-    assert!(projection.can_admin_profile(&nip46_pubkey));
+    assert!(!projection.can_admin_profile(&nip46_pubkey));
     let latest_epoch = projection.key_epochs.keys().next_back().copied().unwrap();
     assert_eq!(
         projection.key_wrap_status(&nip46_pubkey, latest_epoch),
@@ -786,7 +786,7 @@ fn create_seeds_dck_generation_one_with_self_wrap() {
     let acct = Profile::create(dir.path(), None).unwrap();
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.dck_generation, 1);
-    // One wrap, for the current device.
+    // One wrap, for the current AppKey.
     assert_eq!(snap.wrapped_dck.len(), 1);
     assert!(snap.wrapped_dck.contains_key(&acct.state.app_key_pubkey));
 }
@@ -837,7 +837,7 @@ fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
         .approve_app_key(&new_device, Some("phone".into()))
         .unwrap();
     assert!(snap.dck_generation > gen_before);
-    // Every authorized device has a wrap.
+    // Every authorized AppKey has a wrap.
     assert_eq!(snap.wrapped_dck.len(), snap.app_actors.len());
     for d in &snap.app_actors {
         assert!(snap.wrapped_dck.contains_key(&d.pubkey));
@@ -854,9 +854,9 @@ fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
     let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
     let snap = acct.revoke_app_key(&target).unwrap();
     assert!(snap.dck_generation > gen_before);
-    // Revoked device no longer has a wrap.
+    // Revoked AppKey no longer has a wrap.
     assert!(!snap.wrapped_dck.contains_key(&target));
-    // Remaining device(s) still have wraps.
+    // Remaining AppKeys still have wraps.
     assert!(snap.wrapped_dck.contains_key(&own_app_key_pubkey));
 }
 
@@ -905,7 +905,7 @@ fn rotate_dck_preserves_roster() {
         .map(|d| d.pubkey.clone())
         .collect();
     assert_eq!(devices_before, devices_after);
-    // Both devices still have a wrap for the new DCK.
+    // Both AppKeys still have a wrap for the new DCK.
     for d in &devices_after {
         assert!(
             acct.state
@@ -948,26 +948,26 @@ fn current_dck_without_key_epoch_errors() {
 #[test]
 fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     // This is the end-to-end crypto test: owner creates,
-    // owner approves a *real* app keypair, the device then
+    // owner approves a *real* app keypair, the app install then
     // independently decrypts its wrap and recovers the same DCK
     // the owner has.
     let owner_dir = tempdir().unwrap();
     let mut owner_acct = Profile::create(owner_dir.path(), None).unwrap();
 
-    // Manually create a "linked device" keypair we control end-to-end.
+    // Manually create a linked AppKey pair we control end-to-end.
     let linked_dir = tempdir().unwrap();
     let linked_device = AppKey::generate(linked_dir.path().join("key"));
     linked_device.save().unwrap();
     let linked_pubkey = linked_device.pubkey_hex();
 
-    // Owner approves the device's pubkey.
+    // Owner approves the AppKey's pubkey.
     owner_acct
         .approve_app_key(&linked_pubkey, Some("phone".into()))
         .unwrap();
     let owner_dck = owner_acct.current_dck().unwrap();
 
-    // Reconstruct a Profile from the linked device's perspective: app key is
-    // the one we generated, with the same roster ops the device would pull.
+    // Reconstruct a Profile from the linked app install's perspective: app key is
+    // the one we generated, with the same roster ops it would pull.
     let app_keys_for_linked = owner_acct.state.app_keys.clone();
     let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
@@ -988,14 +988,14 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     let linked_dck = linked_acct.current_dck().unwrap();
     assert_eq!(
         owner_dck, linked_dck,
-        "linked device must derive the same DCK the owner does"
+        "linked AppKey must derive the same DCK the owner does"
     );
 }
 
 #[test]
 fn revoked_device_cannot_decrypt_new_dck() {
-    // Owner approves linked device, sees a DCK, then revokes it.
-    // After revoke, the linked device should fail current_dck()
+    // Owner approves linked AppKey, sees a DCK, then revokes it.
+    // After revoke, the linked AppKey should fail current_dck()
     // because its wrap is no longer present.
     let owner_dir = tempdir().unwrap();
     let mut owner_acct = Profile::create(owner_dir.path(), None).unwrap();

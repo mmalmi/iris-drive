@@ -1,9 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use crate::app_keys::AppActorEntry;
-use crate::config::{AppConfig, DeviceRootRef, Drive};
+use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
-use crate::merge::DeviceFileEntry;
+use crate::merge::AppKeyFileEntry;
 use crate::profile::Profile;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore, sha256};
@@ -21,7 +21,7 @@ fn safe_relative_path_rejects_traversal() {
 
 #[test]
 fn may_replace_destination_preserves_unimported_deletions() {
-    let local_entry = DeviceFileEntry {
+    let local_entry = AppKeyFileEntry {
         path: "note.txt".to_string(),
         hash: [1; 32],
         size: 5,
@@ -46,8 +46,8 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 1,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -63,9 +63,9 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
+        AppKeyRootRef::from_meta(source_root.to_string(), 1, &meta),
     );
     config.upsert_drive(drive);
 
@@ -86,7 +86,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
         .expect("note exists");
     let bytes = tree.get(&note, None).await.unwrap().unwrap();
     assert_eq!(bytes, b"mounted");
-    let (files, _) = walk_device_tree(&tree, &merged.root_cid).await.unwrap();
+    let (files, _) = walk_app_key_tree(&tree, &merged.root_cid).await.unwrap();
     let note_entry = files
         .iter()
         .find(|entry| entry.path == "docs/note.txt")
@@ -117,8 +117,8 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 1,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -131,9 +131,9 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
+        AppKeyRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
     );
     config.upsert_drive(drive);
 
@@ -174,8 +174,8 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: remote_device.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote_device.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -190,15 +190,15 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let local_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 1,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
         observed: BTreeMap::from([(
             remote_device.clone(),
             RootObservation {
-                device_seq: 1,
+                app_key_seq: 1,
                 root_cid: remote_root.to_string(),
             },
         )]),
@@ -235,13 +235,13 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(local_root.to_string(), 101, &local_meta),
+        AppKeyRootRef::from_meta(local_root.to_string(), 101, &local_meta),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote_device,
-        DeviceRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
+        AppKeyRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
     );
     config.upsert_drive(drive);
 
@@ -273,8 +273,8 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 1,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -302,9 +302,9 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
+        AppKeyRootRef::from_meta(source_root.to_string(), 1, &meta),
     );
     config.upsert_drive(drive);
 
@@ -350,13 +350,13 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+        AppKeyRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         old_pixel,
-        DeviceRootRef::from_meta(old_pixel_root.0.to_string(), 11, &old_pixel_root.1),
+        AppKeyRootRef::from_meta(old_pixel_root.0.to_string(), 11, &old_pixel_root.1),
     );
     config.upsert_drive(drive);
 
@@ -399,13 +399,13 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+        AppKeyRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         peer_device,
-        DeviceRootRef::from_meta(peer_root.0.to_string(), 11, &peer_root.1),
+        AppKeyRootRef::from_meta(peer_root.0.to_string(), 11, &peer_root.1),
     );
     config.upsert_drive(drive);
 
@@ -471,8 +471,8 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let owner_edit_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 2,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 2,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -486,13 +486,13 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let peer_delete_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: peer_device.clone(),
-        device_seq: 2,
+        app_key_pubkey: peer_device.clone(),
+        app_key_seq: 2,
         dck_generation: 1,
         local_only: false,
         parents: vec![RootParent {
-            device_id: peer_device.clone(),
-            device_seq: 1,
+            app_key_pubkey: peer_device.clone(),
+            app_key_seq: 1,
             root_cid: peer_base.0.to_string(),
         }],
         observed: BTreeMap::new(),
@@ -526,13 +526,13 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(owner_edit_root.to_string(), 10, &owner_edit_meta),
+        AppKeyRootRef::from_meta(owner_edit_root.to_string(), 10, &owner_edit_meta),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         peer_device,
-        DeviceRootRef::from_meta(peer_delete_root.to_string(), 11, &peer_delete_meta),
+        AppKeyRootRef::from_meta(peer_delete_root.to_string(), 11, &peer_delete_meta),
     );
     config.upsert_drive(drive);
 
@@ -591,13 +591,13 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
     let owner_mirror_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 2,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 2,
         dck_generation: 1,
         local_only: true,
         parents: vec![RootParent {
-            device_id: account.state.app_key_pubkey.clone(),
-            device_seq: 1,
+            app_key_pubkey: account.state.app_key_pubkey.clone(),
+            app_key_seq: 1,
             root_cid: owner_source.0.to_string(),
         }],
         observed: BTreeMap::new(),
@@ -628,13 +628,13 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
+        AppKeyRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         peer_device.clone(),
-        DeviceRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
+        AppKeyRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
     );
     config.upsert_drive(drive);
 
@@ -645,7 +645,7 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
         .iter()
         .find(|entry| entry.path == "docs/note.txt")
         .expect("original path remains visible");
-    assert_eq!(original.source_device, peer_device);
+    assert_eq!(original.source_app_key_pubkey, peer_device);
 }
 
 #[tokio::test]
@@ -662,13 +662,13 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
     let owner_mirror_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.app_key_pubkey.clone(),
-        device_seq: 2,
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 2,
         dck_generation: 1,
         local_only: true,
         parents: vec![RootParent {
-            device_id: account.state.app_key_pubkey.clone(),
-            device_seq: 1,
+            app_key_pubkey: account.state.app_key_pubkey.clone(),
+            app_key_seq: 1,
             root_cid: owner_source.0.to_string(),
         }],
         observed: BTreeMap::new(),
@@ -695,13 +695,13 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         account.state.app_key_pubkey.clone(),
-        DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
+        AppKeyRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         peer_device,
-        DeviceRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
+        AppKeyRootRef::from_meta(peer_source.0.to_string(), 11, &peer_source.1),
     );
     config.upsert_drive(drive);
 
@@ -734,16 +734,16 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
 
 async fn index_device_note_root(
     tree: &HashTree<MemoryStore>,
-    device_id: &str,
+    app_key_pubkey: &str,
     bytes: &[u8],
-    device_seq: u64,
+    app_key_seq: u64,
     published_at: i64,
 ) -> (Cid, DriveRootMeta) {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: device_id.to_string(),
-        device_seq,
+        app_key_pubkey: app_key_pubkey.to_string(),
+        app_key_seq,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -756,17 +756,17 @@ async fn index_device_note_root(
 
 async fn index_device_file_root(
     tree: &HashTree<MemoryStore>,
-    device_id: &str,
+    app_key_pubkey: &str,
     path: &str,
     bytes: &[u8],
-    device_seq: u64,
+    app_key_seq: u64,
     published_at: i64,
 ) -> (Cid, DriveRootMeta) {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: device_id.to_string(),
-        device_seq,
+        app_key_pubkey: app_key_pubkey.to_string(),
+        app_key_seq,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),

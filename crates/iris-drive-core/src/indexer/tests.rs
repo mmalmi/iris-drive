@@ -149,7 +149,7 @@ async fn ignored_files_do_not_keep_removed_files_alive() {
         .await
         .unwrap();
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     assert!(files.is_empty());
@@ -188,19 +188,19 @@ async fn root_metadata_is_embedded_under_hashtree_and_not_user_visible() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: "main".into(),
-        device_id: "device-a".into(),
-        device_seq: 2,
+        app_key_pubkey: "device-a".into(),
+        app_key_seq: 2,
         dck_generation: 1,
         local_only: false,
         parents: vec![RootParent {
-            device_id: "device-a".into(),
-            device_seq: 1,
+            app_key_pubkey: "device-a".into(),
+            app_key_seq: 1,
             root_cid: "cid-parent".into(),
         }],
         observed: BTreeMap::from([(
             "device-b".into(),
             RootObservation {
-                device_seq: 7,
+                app_key_seq: 7,
                 root_cid: "cid-b".into(),
             },
         )]),
@@ -214,7 +214,7 @@ async fn root_metadata_is_embedded_under_hashtree_and_not_user_visible() {
     let loaded = read_root_meta(&tree, &root).await.unwrap().unwrap();
     assert_eq!(loaded, meta);
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "a.txt");
     assert!(tombstones.is_empty());
@@ -230,7 +230,7 @@ async fn indexed_large_files_preserve_whole_file_hash_metadata() {
 
     let root = index_dir(&tree, dir.path()).await.unwrap();
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
     assert!(tombstones.is_empty());
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "large.bin");
@@ -264,7 +264,7 @@ async fn indexed_files_preserve_modified_at_metadata() {
         .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
         .and_then(serde_json::Value::as_i64);
     assert_eq!(stored, Some(modified_at));
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &root).await.unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
     assert!(tombstones.is_empty());
     assert_eq!(files[0].modified_at, Some(modified_at));
 }
@@ -281,14 +281,14 @@ async fn conflict_records_round_trip_and_are_not_user_visible() {
         path: "report.pdf".into(),
         visible_conflict_path: "report (conflict from phone).pdf".into(),
         local: ConflictSide {
-            device_id: "dev-a".into(),
-            device_seq: 2,
+            app_key_pubkey: "dev-a".into(),
+            app_key_seq: 2,
             root_cid: "cid-a".into(),
             whole_file_hash: "hash-a".into(),
         },
         remote: Some(ConflictSide {
-            device_id: "dev-b".into(),
-            device_seq: 7,
+            app_key_pubkey: "dev-b".into(),
+            app_key_seq: 7,
             root_cid: "cid-b".into(),
             whole_file_hash: "hash-b".into(),
         }),
@@ -304,7 +304,7 @@ async fn conflict_records_round_trip_and_are_not_user_visible() {
     let records = read_conflict_records(&tree, &with_conflict).await.unwrap();
     assert_eq!(records, vec![record]);
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &with_conflict)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &with_conflict)
         .await
         .unwrap();
     let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -333,14 +333,14 @@ async fn conflict_record_id_must_be_single_path_segment() {
         path: "report.pdf".into(),
         visible_conflict_path: "report (conflict from phone).pdf".into(),
         local: ConflictSide {
-            device_id: "dev-a".into(),
-            device_seq: 2,
+            app_key_pubkey: "dev-a".into(),
+            app_key_seq: 2,
             root_cid: "cid-a".into(),
             whole_file_hash: "hash-a".into(),
         },
         remote: Some(ConflictSide {
-            device_id: "dev-b".into(),
-            device_seq: 7,
+            app_key_pubkey: "dev-b".into(),
+            app_key_seq: 7,
             root_cid: "cid-b".into(),
             whole_file_hash: "hash-b".into(),
         }),
@@ -368,7 +368,7 @@ async fn removed_file_emits_tombstone_in_next_import() {
         .await
         .unwrap();
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     assert!(files.is_empty(), "no live files expected, got {files:?}");
@@ -391,7 +391,7 @@ async fn missing_tombstone_blob_errors_instead_of_ignoring_delete() {
         DirEntry::from_cid(META_DIR.to_string(), &meta_cid).with_link_type(LinkType::Dir);
     let root = tree.put_directory(vec![meta_dir]).await.unwrap();
 
-    let err = crate::merge::walk_device_tree(&tree, &root)
+    let err = crate::merge::walk_app_key_tree(&tree, &root)
         .await
         .unwrap_err();
 
@@ -415,7 +415,7 @@ async fn visible_root_history_emits_tombstone_without_plain_directory() {
         .await
         .unwrap();
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     assert_eq!(files.len(), 1);
@@ -458,7 +458,7 @@ async fn visible_root_history_filters_ignored_entries_before_diffing() {
 
     let top = tree.list_directory(&second).await.unwrap();
     assert!(top.iter().all(|entry| entry.name != ".Trash-1000"));
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     assert_eq!(
@@ -531,7 +531,7 @@ async fn visible_root_import_tombstones_deleted_scoped_directory_tree() {
     )
     .await
     .unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &layered)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &layered)
         .await
         .unwrap();
     assert!(files.is_empty());
@@ -560,7 +560,9 @@ async fn tombstone_carries_forward_when_file_stays_absent() {
     let third = index_dir_with_history(&tree, dir.path(), Some(&second), 2000)
         .await
         .unwrap();
-    let (_, tombstones) = crate::merge::walk_device_tree(&tree, &third).await.unwrap();
+    let (_, tombstones) = crate::merge::walk_app_key_tree(&tree, &third)
+        .await
+        .unwrap();
     assert_eq!(tombstones.len(), 1);
     assert_eq!(tombstones[0].tombstoned_at, 1000, "original ts preserved");
 }
@@ -581,7 +583,9 @@ async fn tombstone_drops_when_file_returns() {
     let third = index_dir_with_history(&tree, dir.path(), Some(&second), 2000)
         .await
         .unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &third).await.unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &third)
+        .await
+        .unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "back.txt");
     assert!(tombstones.is_empty(), "tombstone should be gone");
@@ -600,7 +604,7 @@ async fn nested_file_removal_writes_nested_tombstone() {
         .await
         .unwrap();
 
-    let (_, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (_, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     assert_eq!(tombstones.len(), 1);
@@ -621,7 +625,7 @@ async fn surviving_files_unaffected_by_unrelated_removal() {
         .await
         .unwrap();
 
-    let (files, tombstones) = crate::merge::walk_device_tree(&tree, &second)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
     let live_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();

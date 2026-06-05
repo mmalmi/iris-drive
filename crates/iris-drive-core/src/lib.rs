@@ -58,8 +58,8 @@ pub mod sync_cache;
 
 pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
 pub use config::{
-    AppConfig, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, ConfigError,
-    DeviceRootRef, Drive, DriveRole, UserProfile,
+    AppConfig, AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync,
+    ConfigError, Drive, DriveRole, UserProfile,
 };
 pub use conflict::{
     ConflictDeletedSide, ConflictRecord, ConflictSide, ConflictState, FileSnapshot, SyncAction,
@@ -99,7 +99,7 @@ pub use link_input::{
     resolve_app_key_link_target,
 };
 pub use merge::{
-    CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,
+    AppKeyFileEntry, AppKeySnapshot, AppKeyTombstone, CONFLICTS_PREFIX, META_DIR, MergedConflict,
     MergedConflictFile, MergedConflictKind, MergedConflictTombstone, MergedEntry, MergedView,
     ROOT_META_PATH, TOMBSTONE_PREFIX, WHOLE_FILE_HASH_META_KEY, merge_drives,
     original_path_from_tombstone, tombstone_path,

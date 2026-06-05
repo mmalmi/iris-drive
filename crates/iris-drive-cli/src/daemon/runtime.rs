@@ -307,7 +307,7 @@ pub(crate) fn cmd_daemon(
         let mut sent_app_key_link_requests = BTreeMap::new();
         let mut sent_app_key_link_rosters = BTreeMap::new();
         let mut acked_app_key_link_rosters = BTreeSet::new();
-        let mut last_provider_root_key = current_device_root_key(&config);
+        let mut last_provider_root_key = current_app_key_root_key(&config);
 
         loop {
             tokio::select! {

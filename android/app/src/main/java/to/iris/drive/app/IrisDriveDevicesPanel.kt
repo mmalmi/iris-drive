@@ -70,13 +70,13 @@ internal fun DevicesPanel(
         NativeCore.isCompleteLinkInput(request)
     }
 
-    CardSection(title = "Devices", trailing = "${devices.size}") {
+    CardSection(title = "AppKeys", trailing = "${devices.size}") {
         if (canApprove) {
             OutlinedButton(
                 onClick = { showAddDevice = true },
                 modifier = Modifier.testTag("addDeviceButton"),
             ) {
-                Text("Add Device")
+                Text("Add AppKey")
             }
         }
         devices.forEach { device ->
@@ -92,7 +92,7 @@ internal fun DevicesPanel(
                     )
                     if (device.isCurrentDevice) {
                         Text(
-                            "Device ID: ${device.pubkey}",
+                            "AppKey: ${device.pubkey}",
                             color = Muted,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -176,7 +176,7 @@ private val OnlineGreen = Color(0xFF16A34A)
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {
-        val title = displayLabel.ifBlank { "Device" }
+        val title = displayLabel.ifBlank { "AppKey" }
         return "$title ${if (isOnline) "online" else "offline"}"
     }
 
@@ -188,16 +188,16 @@ private fun DeleteDeviceDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete device?") },
+        title = { Text("Remove AppKey?") },
         text = {
-            Text("Delete ${device.label} from Iris Drive? This removes its access to future syncs.")
+            Text("Remove ${device.label} from Iris Drive? This removes its access to future syncs.")
         },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 modifier = Modifier.testTag("confirmDeleteDevice"),
             ) {
-                Text("Delete", color = Danger)
+                Text("Remove", color = Danger)
             }
         },
         dismissButton = {
@@ -233,14 +233,14 @@ private fun AddDeviceDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add a device") },
+        title = { Text("Add an AppKey") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (linkInvite.isNotBlank()) {
-                    Text("Invite device", fontWeight = FontWeight.SemiBold)
+                    Text("Invite app install", fontWeight = FontWeight.SemiBold)
                     QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
                     Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     OutlinedButton(onClick = onCopyLinkInvite) {
@@ -251,11 +251,11 @@ private fun AddDeviceDialog(
                     }
                 }
                 if (inboundRequests.isNotEmpty()) {
-                    Text("Devices asking to join", fontWeight = FontWeight.SemiBold)
+                    Text("AppKeys asking to join", fontWeight = FontWeight.SemiBold)
                     inboundRequests.forEach { inbound ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.weight(1f)) {
-                                Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
+                                Text(inbound.label.ifBlank { "New AppKey" }, fontWeight = FontWeight.SemiBold)
                                 Text(
                                     inbound.devicePubkey,
                                     color = Muted,
@@ -281,7 +281,7 @@ private fun AddDeviceDialog(
                     }
                 }
                 Text(
-                    "Paste the Device ID shown on the other device when you link it manually.",
+                    "Paste the AppKey shown by the app install you want to approve.",
                     color = Muted,
                 )
                 OutlinedTextField(
@@ -289,7 +289,7 @@ private fun AddDeviceDialog(
                     onValueChange = onRequestChange,
                     modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
                     singleLine = true,
-                    label = { Text("Device ID") },
+                    label = { Text("AppKey") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
                 OutlinedTextField(

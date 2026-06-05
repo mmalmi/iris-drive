@@ -187,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn current_view_skips_prev_entry() {
         // Verifies the chain link doesn't pollute the user-visible
-        // listing — walk_device_tree (used by `idrive list`) filters
+        // listing — walk_app_key_tree (used by `idrive list`) filters
         // out ._prev.
         let dir = tempdir().unwrap();
         let tree = new_tree();
@@ -197,7 +197,7 @@ mod tests {
         let r2 = index_dir_with_history(&tree, dir.path(), Some(&r1), 1000)
             .await
             .unwrap();
-        let (files, _) = crate::merge::walk_device_tree(&tree, &r2).await.unwrap();
+        let (files, _) = crate::merge::walk_app_key_tree(&tree, &r2).await.unwrap();
         let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(names, vec!["v1.txt", "v2.txt"]);
         assert!(!names.iter().any(|n| n.starts_with(META_DIR)));

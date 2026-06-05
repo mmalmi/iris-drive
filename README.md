@@ -278,7 +278,7 @@ files for machine-specific signing, htree release, and Zapstore settings.
 
 - [`crates/iris-drive-cli`](crates/iris-drive-cli): `idrive` CLI and daemon
 - [`crates/iris-drive-core`](crates/iris-drive-core): config, identity, htree,
-  sync, gateway, device-link, and backup logic
+  sync, gateway, AppKey-link, and backup logic
 - [`crates/iris-drive-app-core`](crates/iris-drive-app-core): native app
   state/action contract and UniFFI bridge
 - [`crates/hashtree-provider`](crates/hashtree-provider): provider-facing tree

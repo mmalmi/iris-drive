@@ -1,21 +1,21 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-fn dev_root(published_at: i64) -> DeviceRootRef {
-    DeviceRootRef::legacy(format!("cid-{published_at}"), published_at, 1)
+fn dev_root(published_at: i64) -> AppKeyRootRef {
+    AppKeyRootRef::legacy(format!("cid-{published_at}"), published_at, 1)
 }
 
 fn causal_root(
     root_cid: &str,
     published_at: i64,
-    device_seq: u64,
+    app_key_seq: u64,
     observed: &[(&str, u64, &str)],
-) -> DeviceRootRef {
-    DeviceRootRef {
+) -> AppKeyRootRef {
+    AppKeyRootRef {
         root_cid: root_cid.into(),
         published_at,
         dck_generation: 1,
-        device_seq,
+        app_key_seq,
         parents: Vec::new(),
         observed: observed
             .iter()
@@ -23,7 +23,7 @@ fn causal_root(
                 (
                     (*device).to_string(),
                     crate::RootObservation {
-                        device_seq: *seq,
+                        app_key_seq: *seq,
                         root_cid: (*cid).to_string(),
                     },
                 )
@@ -33,8 +33,8 @@ fn causal_root(
     }
 }
 
-fn file(path: &str, hash_byte: u8, size: u64) -> DeviceFileEntry {
-    DeviceFileEntry {
+fn file(path: &str, hash_byte: u8, size: u64) -> AppKeyFileEntry {
+    AppKeyFileEntry {
         path: path.into(),
         hash: [hash_byte; 32],
         size,
@@ -48,8 +48,8 @@ fn file_with_whole_hash(
     cid_hash_byte: u8,
     whole_hash_byte: u8,
     size: u64,
-) -> DeviceFileEntry {
-    DeviceFileEntry {
+) -> AppKeyFileEntry {
+    AppKeyFileEntry {
         path: path.into(),
         hash: [cid_hash_byte; 32],
         size,
@@ -58,8 +58,8 @@ fn file_with_whole_hash(
     }
 }
 
-fn tomb(path: &str, at: i64) -> DeviceTombstone {
-    DeviceTombstone {
+fn tomb(path: &str, at: i64) -> AppKeyTombstone {
+    AppKeyTombstone {
         path: path.into(),
         tombstoned_at: at,
     }
@@ -67,11 +67,11 @@ fn tomb(path: &str, at: i64) -> DeviceTombstone {
 
 fn snap<'a>(
     device: &'a str,
-    root: &'a DeviceRootRef,
-    files: Vec<DeviceFileEntry>,
-    tombstones: Vec<DeviceTombstone>,
-) -> DeviceSnapshot<'a> {
-    DeviceSnapshot {
+    root: &'a AppKeyRootRef,
+    files: Vec<AppKeyFileEntry>,
+    tombstones: Vec<AppKeyTombstone>,
+) -> AppKeySnapshot<'a> {
+    AppKeySnapshot {
         app_key_pubkey: device,
         root,
         files,
@@ -100,7 +100,7 @@ fn single_device_files_pass_through() {
     );
     assert_eq!(view.files.len(), 2);
     assert_eq!(view.files[0].path, "dir/x");
-    assert_eq!(view.files[0].source_device, "dev-a");
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-a");
     assert_eq!(view.files[1].path, "hello.txt");
 }
 
@@ -146,7 +146,7 @@ fn unauthorized_device_is_ignored() {
     // dev-evil's write doesn't win because it isn't in the allow list.
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].hash, [1u8; 32]);
-    assert_eq!(view.files[0].source_device, "dev-a");
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-a");
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn lww_picks_newer_publisher_for_same_path() {
         ],
     );
     assert_eq!(view.files.len(), 1);
-    assert_eq!(view.files[0].source_device, "dev-b");
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
     assert_eq!(view.files[0].hash, [2u8; 32]);
 }
 
@@ -177,7 +177,7 @@ fn causal_descendant_wins_even_with_older_wall_clock() {
         ],
     );
     assert_eq!(view.files.len(), 1);
-    assert_eq!(view.files[0].source_device, "dev-b");
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
     assert_eq!(view.files[0].hash, [2u8; 32]);
     assert!(view.conflicts.is_empty());
 }
@@ -195,7 +195,7 @@ fn observed_same_sequence_with_different_root_is_not_descendant() {
     );
     assert_eq!(view.files.len(), 1);
     assert_eq!(
-        view.files[0].source_device, "dev-a",
+        view.files[0].source_app_key_pubkey, "dev-a",
         "legacy timestamp ordering should win when ancestry is unknown"
     );
     assert_eq!(view.conflicts, vec!["x".to_string()]);
@@ -220,12 +220,12 @@ fn concurrent_different_writes_are_marked_as_conflicts() {
     assert_eq!(detail.kind, MergedConflictKind::WriteWrite);
     assert!(detail.tombstone.is_none());
     assert_eq!(detail.files.len(), 2);
-    assert_eq!(detail.files[0].device_id, "dev-a");
-    assert_eq!(detail.files[0].device_seq, 1);
+    assert_eq!(detail.files[0].app_key_pubkey, "dev-a");
+    assert_eq!(detail.files[0].app_key_seq, 1);
     assert_eq!(detail.files[0].root_cid, "cid-a");
     assert_eq!(detail.files[0].content_hash, "01".repeat(32));
-    assert_eq!(detail.files[1].device_id, "dev-b");
-    assert_eq!(detail.files[1].device_seq, 1);
+    assert_eq!(detail.files[1].app_key_pubkey, "dev-b");
+    assert_eq!(detail.files[1].app_key_seq, 1);
     assert_eq!(detail.files[1].root_cid, "cid-b");
     assert_eq!(detail.files[1].content_hash, "02".repeat(32));
 }
@@ -328,10 +328,10 @@ fn concurrent_write_delete_is_marked_as_conflict() {
     assert_eq!(detail.path, "x");
     assert_eq!(detail.kind, MergedConflictKind::WriteDelete);
     assert_eq!(detail.files.len(), 1);
-    assert_eq!(detail.files[0].device_id, "dev-a");
+    assert_eq!(detail.files[0].app_key_pubkey, "dev-a");
     let tombstone = detail.tombstone.as_ref().unwrap();
-    assert_eq!(tombstone.device_id, "dev-b");
-    assert_eq!(tombstone.device_seq, 1);
+    assert_eq!(tombstone.app_key_pubkey, "dev-b");
+    assert_eq!(tombstone.app_key_seq, 1);
     assert_eq!(tombstone.root_cid, "cid-b");
     assert_eq!(tombstone.tombstoned_at, 200);
 }
@@ -379,7 +379,7 @@ fn newer_write_resurrects_after_older_tombstone() {
         ],
     );
     assert_eq!(view.files.len(), 1);
-    assert_eq!(view.files[0].source_device, "dev-b");
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
 }
 
 #[test]
@@ -430,7 +430,7 @@ fn three_devices_converge() {
     assert_eq!(paths, vec!["alpha", "beta", "contested", "gamma"]);
     // Contested file resolved to dev-c (latest).
     let contested = view.files.iter().find(|e| e.path == "contested").unwrap();
-    assert_eq!(contested.source_device, "dev-c");
+    assert_eq!(contested.source_app_key_pubkey, "dev-c");
 }
 
 #[test]
@@ -470,7 +470,7 @@ fn local_only_roots_do_not_compete_with_source_roots() {
     );
 
     assert_eq!(view.files.len(), 1);
-    assert_eq!(view.files[0].source_device, "remote");
+    assert_eq!(view.files[0].source_app_key_pubkey, "remote");
     assert_eq!(view.files[0].hash, [2; 32]);
     assert!(view.conflicts.is_empty());
 }
@@ -526,7 +526,7 @@ fn local_only_roots_fill_in_when_source_root_is_absent() {
             .collect::<Vec<_>>(),
         vec!["note.txt"]
     );
-    assert_eq!(view.files[0].source_device, "local");
+    assert_eq!(view.files[0].source_app_key_pubkey, "local");
     assert!(view.conflicts.is_empty());
 }
 

@@ -13,14 +13,14 @@ use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::{
-    BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, DeviceRootRef, Drive,
+    AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, Drive,
     DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
     daemon::{Daemon, EmbeddedHashtreeHost},
     gateway::{GatewayBind, GatewayServer},
     index_dir,
-    merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
+    merge::{AppKeyFileEntry, AppKeySnapshot, AppKeyTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
 use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
@@ -422,14 +422,14 @@ mod daemon_lock_tests {
                 path: "report.pdf".into(),
                 visible_conflict_path: "report (conflict from phone).pdf".into(),
                 local: iris_drive_core::ConflictSide {
-                    device_id: "laptop".into(),
-                    device_seq: 4,
+                    app_key_pubkey: "laptop".into(),
+                    app_key_seq: 4,
                     root_cid: "cid-local".into(),
                     whole_file_hash: "hash-local".into(),
                 },
                 remote: Some(iris_drive_core::ConflictSide {
-                    device_id: "phone".into(),
-                    device_seq: 9,
+                    app_key_pubkey: "phone".into(),
+                    app_key_seq: 9,
                     root_cid: "cid-remote".into(),
                     whole_file_hash: "hash-remote".into(),
                 }),
@@ -443,15 +443,15 @@ mod daemon_lock_tests {
                 path: "notes.txt".into(),
                 visible_conflict_path: "notes (conflict from tablet).txt".into(),
                 local: iris_drive_core::ConflictSide {
-                    device_id: "laptop".into(),
-                    device_seq: 5,
+                    app_key_pubkey: "laptop".into(),
+                    app_key_seq: 5,
                     root_cid: "cid-local-2".into(),
                     whole_file_hash: "hash-local-2".into(),
                 },
                 remote: None,
                 deleted: Some(iris_drive_core::ConflictDeletedSide {
-                    device_id: "tablet".into(),
-                    device_seq: 2,
+                    app_key_pubkey: "tablet".into(),
+                    app_key_seq: 2,
                     root_cid: "cid-delete".into(),
                     tombstoned_at: 1200,
                 }),
@@ -513,7 +513,7 @@ mod daemon_lock_tests {
             .unwrap()
             .clone();
         drive
-            .device_roots
+            .app_key_roots
             .get_mut(&state.app_key_pubkey)
             .unwrap()
             .local_only = true;
@@ -553,7 +553,7 @@ mod daemon_lock_tests {
             .config()
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
-            .device_roots
+            .app_key_roots
             .get(&daemon.config().profile.as_ref().unwrap().app_key_pubkey)
             .unwrap()
             .clone();
@@ -565,13 +565,13 @@ mod daemon_lock_tests {
         let meta = iris_drive_core::DriveRootMeta {
             schema: iris_drive_core::DriveRootMeta::SCHEMA,
             drive_id: iris_drive_core::PRIMARY_DRIVE_ID.to_string(),
-            device_id: account.app_key_pubkey.clone(),
-            device_seq: first_root.device_seq + 1,
+            app_key_pubkey: account.app_key_pubkey.clone(),
+            app_key_seq: first_root.app_key_seq + 1,
             dck_generation: first_root.dck_generation,
             local_only: true,
             parents: vec![iris_drive_core::RootParent {
-                device_id: account.app_key_pubkey.clone(),
-                device_seq: first_root.device_seq,
+                app_key_pubkey: account.app_key_pubkey.clone(),
+                app_key_seq: first_root.app_key_seq,
                 root_cid: first.root_cid.clone(),
             }],
             observed: BTreeMap::new(),
@@ -591,9 +591,9 @@ mod daemon_lock_tests {
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
             .clone();
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             account.app_key_pubkey.clone(),
-            DeviceRootRef::from_meta(second.to_string(), second_time, &meta),
+            AppKeyRootRef::from_meta(second.to_string(), second_time, &meta),
         );
         config.upsert_drive(drive);
         config.save(config_path_in(cfg_dir.path())).unwrap();
@@ -636,9 +636,9 @@ mod daemon_lock_tests {
             .unwrap()
             .clone();
         let missing_root = Cid::encrypted([0x42; 32], [0x24; 32]).to_string();
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             account.app_key_pubkey.clone(),
-            DeviceRootRef::legacy(missing_root.clone(), 1, 1),
+            AppKeyRootRef::legacy(missing_root.clone(), 1, 1),
         );
         config.upsert_drive(drive);
         config.save(config_path_in(cfg_dir.path())).unwrap();
@@ -663,14 +663,14 @@ mod daemon_lock_tests {
                 path: "report.pdf".into(),
                 visible_conflict_path: format!("report (conflict from phone {index}).pdf"),
                 local: iris_drive_core::ConflictSide {
-                    device_id: "laptop".into(),
-                    device_seq: 4,
+                    app_key_pubkey: "laptop".into(),
+                    app_key_seq: 4,
                     root_cid: "cid-local".into(),
                     whole_file_hash: format!("hash-local-{index}"),
                 },
                 remote: Some(iris_drive_core::ConflictSide {
-                    device_id: "phone".into(),
-                    device_seq: index as u64,
+                    app_key_pubkey: "phone".into(),
+                    app_key_seq: index as u64,
                     root_cid: "cid-remote".into(),
                     whole_file_hash: format!("hash-remote-{index}"),
                 }),

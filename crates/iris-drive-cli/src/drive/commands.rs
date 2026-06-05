@@ -2,11 +2,11 @@
 use super::*;
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 
-pub(crate) async fn walk_device_tree(
+pub(crate) async fn walk_app_key_tree(
     tree: &HashTree<hashtree_fs::FsBlobStore>,
     root: &Cid,
-) -> Result<(Vec<DeviceFileEntry>, Vec<DeviceTombstone>)> {
-    iris_drive_core::merge::walk_device_tree(tree, root)
+) -> Result<(Vec<AppKeyFileEntry>, Vec<AppKeyTombstone>)> {
+    iris_drive_core::merge::walk_app_key_tree(tree, root)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -81,7 +81,7 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
         let drive = config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
-        let Some(root_ref) = drive.device_roots.get(&account.app_key_pubkey) else {
+        let Some(root_ref) = drive.app_key_roots.get(&account.app_key_pubkey) else {
             println!("{}", json!({"revisions": [], "note": "no imports yet"}));
             return Ok::<_, anyhow::Error>(());
         };
@@ -128,10 +128,10 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
     let root_ref = drive
-        .device_roots
+        .app_key_roots
         .get(&state.app_key_pubkey)
         .ok_or_else(|| {
-            anyhow::anyhow!("no root for this device yet - run `idrive import <dir>` first")
+            anyhow::anyhow!("no root for this AppKey yet - run `idrive import <dir>` first")
         })?;
     let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
         .context("loading app key")?;

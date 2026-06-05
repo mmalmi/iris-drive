@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::conflict::ConflictRecord;
 use crate::merge::{
     CONFLICTS_PREFIX, META_DIR, MODIFIED_AT_META_KEY, PREV_LINK_PATH, ROOT_META_PATH,
-    WHOLE_FILE_HASH_META_KEY, walk_device_tree,
+    WHOLE_FILE_HASH_META_KEY, walk_app_key_tree,
 };
 use crate::root_meta::DriveRootMeta;
 
@@ -191,7 +191,7 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
     );
     if previous_root.is_some() || tombstone_base_root.is_some() {
         let phase = std::time::Instant::now();
-        let (current_files, _) = walk_device_tree(tree, &root)
+        let (current_files, _) = walk_app_key_tree(tree, &root)
             .await
             .map_err(IndexError::Tree)?;
         let current_paths: BTreeSet<String> =
@@ -424,7 +424,7 @@ async fn attach_history_for_current_paths<S: Store>(
     // fresh tombstone stamped at import time.
     if let Some(base) = tombstone_base_root {
         let phase = std::time::Instant::now();
-        let (base_files, _base_tombstones) = walk_device_tree(tree, base)
+        let (base_files, _base_tombstones) = walk_app_key_tree(tree, base)
             .await
             .map_err(IndexError::Tree)?;
         tracing::debug!(
@@ -442,7 +442,7 @@ async fn attach_history_for_current_paths<S: Store>(
 
     if let Some(prev) = previous_root {
         let phase = std::time::Instant::now();
-        let (prev_files, prev_tombstones) = walk_device_tree(tree, prev)
+        let (prev_files, prev_tombstones) = walk_app_key_tree(tree, prev)
             .await
             .map_err(IndexError::Tree)?;
         tracing::debug!(

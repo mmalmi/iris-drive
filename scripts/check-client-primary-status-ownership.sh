@@ -33,7 +33,7 @@ require_absent windows/MainWindow.xaml.cs 'DriveMessage.Text = syncRunning ? "Sy
 require_absent windows/MainWindow.xaml.cs 'StatusPill.Text = syncRunning ? "On" : "Paused";'
 require_absent windows/MainWindow.xaml.cs 'status.FileCount > 0 ? status.FileCount : status.TopLevelEntries'
 require_absent windows/IrisDriveModels.cs "public int RosterSize"
-require_absent windows/IrisDriveModels.cs "public int PublishedDeviceRoots"
+require_absent windows/IrisDriveModels.cs "public int PublishedAppKeyRoots"
 require_absent windows/IrisDriveModels.cs "public int TopLevelEntries"
 require_absent windows/IrisDriveModels.cs "public int LocalBlockCount"
 require_absent windows/IrisDriveModels.cs "public long LocalBlockBytes"

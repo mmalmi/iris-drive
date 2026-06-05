@@ -5,7 +5,7 @@ use nostr_sdk::{Keys, PublicKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::config::DeviceRootRef;
+use crate::config::AppKeyRootRef;
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
@@ -98,7 +98,7 @@ pub struct SharedFolder {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub participant_profiles: BTreeMap<String, IrisProfileId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub device_roots: BTreeMap<String, DeviceRootRef>,
+    pub app_key_roots: BTreeMap<String, AppKeyRootRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roster_ops: Vec<SignedIrisProfileRosterOp>,
 }
@@ -476,7 +476,7 @@ pub fn create_shared_folder(
         display_name,
         local_role: ShareRole::Admin,
         participant_profiles,
-        device_roots: BTreeMap::new(),
+        app_key_roots: BTreeMap::new(),
         roster_ops: ops,
     })
 }
@@ -723,7 +723,7 @@ mod tests {
             display_name: "Alpha".to_string(),
             local_role: ShareRole::Admin,
             participant_profiles: BTreeMap::from([(owner_pubkey.clone(), IrisProfileId::new_v4())]),
-            device_roots: BTreeMap::new(),
+            app_key_roots: BTreeMap::new(),
             roster_ops: vec![
                 sign_share_roster_op(
                     &owner_keys,
@@ -817,7 +817,7 @@ mod tests {
                 (owner_pubkey.clone(), IrisProfileId::new_v4()),
                 (recipient_pubkey.clone(), IrisProfileId::new_v4()),
             ]),
-            device_roots: BTreeMap::new(),
+            app_key_roots: BTreeMap::new(),
             roster_ops,
         };
 

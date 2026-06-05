@@ -128,7 +128,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let metrics = flow_section("iris-metrics", 1, 4);
     metrics.append(&metric_tile("Files", &files));
     metrics.append(&metric_tile("Storage", &storage));
-    metrics.append(&metric_tile("Devices", &devices));
+    metrics.append(&metric_tile("AppKeys", &devices));
     dashboard.append(&metrics);
 
     let drives = gtk::ListBox::new();
@@ -142,12 +142,12 @@ pub(crate) fn build_ui(app: &adw::Application) {
     dashboard.append(&notice);
 
     let peers_page = page_box();
-    peers_page.append(&section_title("Devices"));
+    peers_page.append(&section_title("AppKeys"));
     let account_app_key = value_label();
     let account_device = value_label();
     let account_authorization = value_label();
     let copy_app_key_button = icon_button("edit-copy-symbolic", "Copy AppKey");
-    let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
+    let copy_device_button = icon_button("edit-copy-symbolic", "Copy AppKey");
     let account_grid = gtk::Grid::new();
     account_grid.add_css_class("iris-summary");
     account_grid.set_column_spacing(10);
@@ -163,7 +163,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     add_copy_field(
         &account_grid,
         1,
-        "This device",
+        "Current AppKey",
         &account_device,
         &copy_device_button,
     );
@@ -171,14 +171,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     approve_box.set_hexpand(true);
-    let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
+    let approve_device_button = action_button("list-add-symbolic", "Add AppKey", "Add AppKey");
     let reset_invite_button =
         action_button("view-refresh-symbolic", "Reset invite", "Reset invite");
     approve_box.append(&approve_device_button);
     approve_box.append(&reset_invite_button);
     peers_page.append(&approve_box);
 
-    peers_page.append(&field_title("Linked devices"));
+    peers_page.append(&field_title("Linked AppKeys"));
     let peers = gtk::ListBox::new();
     peers.add_css_class("iris-drive-list");
     peers.set_selection_mode(gtk::SelectionMode::None);
@@ -258,14 +258,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
     settings_page.append(&logout_button);
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
-    stack.add_titled(&peers_page, Some("devices"), "Devices");
+    stack.add_titled(&peers_page, Some("devices"), "AppKeys");
     stack.add_titled(&backups_page, Some("backups"), "Backups");
     stack.add_titled(&network_page, Some("network"), "Network");
     stack.add_titled(&settings_page, Some("settings"), "Settings");
 
     let nav_items = [
         ("drive", "drive-harddisk-symbolic", "My Drive"),
-        ("devices", "system-users-symbolic", "Devices"),
+        ("devices", "system-users-symbolic", "AppKeys"),
         ("backups", "security-high-symbolic", "Backups"),
         ("network", "network-workgroup-symbolic", "Network"),
         ("settings", "preferences-system-symbolic", "Settings"),

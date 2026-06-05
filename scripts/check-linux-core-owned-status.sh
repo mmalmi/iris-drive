@@ -55,7 +55,7 @@ require_absent linux/src/render.rs 'admin_count'
 require_absent linux/src/data.rs '"authorization_state"'
 require_absent linux/src/refresh.rs '"authorization_state"'
 require_absent linux/src/data.rs '"local_block_bytes"'
-require_absent linux/src/data.rs '"published_device_roots"'
+require_absent linux/src/data.rs '"published_app_key_roots"'
 require_absent linux/src/data.rs '"roster_connected_peer_count"'
 require_absent linux/src/render.rs "pub(crate) fn fips_state_text"
 require_absent linux/src/render.rs "fn fips_connection_label"

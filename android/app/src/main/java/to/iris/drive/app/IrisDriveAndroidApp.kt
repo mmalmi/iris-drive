@@ -154,7 +154,7 @@ internal enum class MainTab(
     val iconRes: Int,
 ) {
     MyDrive("My Drive", "tabMyDrive", R.drawable.ic_drive),
-    Devices("Devices", "tabDevices", R.drawable.ic_devices),
+    Devices("AppKeys", "tabDevices", R.drawable.ic_devices),
     Backups("Backups", "tabBackups", R.drawable.ic_backup),
     Settings("Settings", "tabSettings", R.drawable.ic_settings),
 }
@@ -257,7 +257,7 @@ internal fun IrisDriveAndroidApp(
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
                     onCopyAppKey = { onCopyText("AppKey", activeProfile.currentAppKeyNpub) },
-                    onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
+                    onCopyDeviceKey = { onCopyText("AppKey", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
                     onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
@@ -305,18 +305,18 @@ private fun RevokedDeviceContent(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             SetupBrand()
-            Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            Text("This device no longer has access to Iris Drive.", color = Muted)
+            Text("AppKey removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            Text("This app install no longer has access to Iris Drive.", color = Muted)
             Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupPrimaryButton(
-                text = "Link this device again",
+                text = "Link this app install again",
                 onClick = onRelink,
                 testTag = "relinkRevokedDevice",
             )
             SetupSecondaryButton(
-                text = "Copy device ID",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                text = "Copy AppKey",
+                onClick = { onCopyText("AppKey", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -351,8 +351,8 @@ private fun AwaitingApprovalContent(
             Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
-                text = "Copy device ID",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                text = "Copy AppKey",
+                onClick = { onCopyText("AppKey", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -587,7 +587,7 @@ private fun SetupContent(
                 SetupRoute.RestoreOptions -> {
                     SetupFormHeader(title = "Restore", onBack = { route = SetupRoute.Welcome })
                     SetupSecondaryButton(
-                        text = "Link device",
+                        text = "Link app install",
                         onClick = { route = SetupRoute.LinkDevice },
                         testTag = "openLinkDevice",
                     )
@@ -717,7 +717,7 @@ private fun SetupContent(
                     )
                 }
                 SetupRoute.LinkDevice -> {
-                    SetupFormHeader(title = "Link device", onBack = { route = SetupRoute.RestoreOptions })
+                    SetupFormHeader(title = "Link app install", onBack = { route = SetupRoute.RestoreOptions })
                     OutlinedTextField(
                         value = linkOwner,
                         onValueChange = {
@@ -726,14 +726,14 @@ private fun SetupContent(
                         },
                         modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
                         singleLine = true,
-                        label = { Text("Owner public key or invite link") },
+                        label = { Text("IrisProfile invite link or admin AppKey") },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = { submitLinkOwner(linkOwner, force = true) },
                         ),
                     )
                     SetupPrimaryButton(
-                        text = "Link device",
+                        text = "Link app install",
                         onClick = { submitLinkOwner(linkOwner, force = true) },
                         enabled = linkOwnerIsComplete,
                         testTag = "linkDeviceSubmit",

@@ -20,7 +20,7 @@ public partial class MainWindow
     {
         var deviceBox = new WpfTextBox
         {
-            Tag = "Device ID",
+            Tag = "AppKey",
             MinHeight = 34,
             MinWidth = 360,
             Margin = new Thickness(0, 4, 0, 10),
@@ -37,7 +37,7 @@ public partial class MainWindow
             Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 12),
-            Text = "Paste the Device ID shown on the other device when you link it manually.",
+            Text = "Paste the AppKey shown by the app install you want to approve.",
         };
         var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
         var add = new WpfButton
@@ -59,7 +59,7 @@ public partial class MainWindow
         var body = new StackPanel { Margin = new Thickness(18), Width = 400 };
         body.Children.Add(new TextBlock
         {
-            Text = "Add a device",
+            Text = "Add an AppKey",
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 10),
@@ -70,7 +70,7 @@ public partial class MainWindow
         {
             body.Children.Add(new TextBlock
             {
-                Text = "Devices asking to join",
+                Text = "AppKeys asking to join",
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 6),
             });
@@ -82,7 +82,7 @@ public partial class MainWindow
         }
 
         body.Children.Add(notice);
-        body.Children.Add(new TextBlock { Text = "Device ID", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(new TextBlock { Text = "AppKey", Style = (Style)FindResource("FieldName") });
         body.Children.Add(deviceBox);
         body.Children.Add(new TextBlock { Text = "Name (optional)", Style = (Style)FindResource("FieldName") });
         body.Children.Add(labelBox);
@@ -90,7 +90,7 @@ public partial class MainWindow
 
         dialog = new Window
         {
-            Title = "Add a device",
+            Title = "Add an AppKey",
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
@@ -114,7 +114,7 @@ public partial class MainWindow
         {
             if (!await service.IsCompleteLinkInputAsync(deviceBox.Text))
             {
-                notice.Text = "Paste the complete Device ID or device invite.";
+                notice.Text = "Paste the complete AppKey or app install invite.";
                 add.IsEnabled = false;
                 return;
             }
@@ -169,7 +169,7 @@ public partial class MainWindow
         var labels = new StackPanel { Orientation = WpfOrientation.Vertical };
         labels.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(request.Label) ? "New device" : request.Label,
+            Text = string.IsNullOrWhiteSpace(request.Label) ? "New AppKey" : request.Label,
             FontWeight = FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
@@ -241,14 +241,14 @@ public partial class MainWindow
         {
             EnsureDaemonRunning(currentStatus);
         }
-        NoticeText.Text = "Device approved";
+        NoticeText.Text = "AppKey approved";
         await RefreshAsync();
     }
 
     private async Task RejectDeviceAsync(string request)
     {
         await service.RejectDeviceAsync(request);
-        NoticeText.Text = "Device request rejected";
+        NoticeText.Text = "AppKey request rejected";
         await RefreshAsync();
     }
 
@@ -275,8 +275,8 @@ public partial class MainWindow
 
         if (WpfMessageBox.Show(
                 this,
-                $"Remove this device from Iris Drive?\n\n{deviceNpub}",
-                "Remove device",
+                $"Remove this AppKey from Iris Drive?\n\n{deviceNpub}",
+                "Remove AppKey",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
         {
@@ -291,7 +291,7 @@ public partial class MainWindow
             {
                 EnsureDaemonRunning(currentStatus);
             }
-            NoticeText.Text = "Device removed";
+            NoticeText.Text = "AppKey removed";
             await RefreshAsync();
         }
         catch (Exception error)
@@ -315,7 +315,7 @@ public partial class MainWindow
             {
                 EnsureDaemonRunning(currentStatus);
             }
-            NoticeText.Text = "Device made admin";
+            NoticeText.Text = "AppKey made admin";
             await RefreshAsync();
         }
         catch (Exception error)

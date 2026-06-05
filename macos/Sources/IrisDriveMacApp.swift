@@ -403,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func copyDeviceKey() {
-        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
+        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "AppKey copied")
     }
 
     private func copyText(_ value: String?, statusMessage: String) {
@@ -435,7 +435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func startSync() {
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("Device removed")
+            updateStatus("AppKey removed")
             setDaemonRunning(false)
             return
         }
@@ -620,14 +620,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func approveDevice(_ device: String, label: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("AppKey required")
             return
         }
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatchNativeAction(
             ["type": "approve_device", "request": device, "label": label],
-            progress: "Approving device",
-            success: "Device approved",
+            progress: "Approving AppKey",
+            success: "AppKey approved",
             restartSyncAfterSuccess: true
         )
     }
@@ -635,13 +635,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func rejectDevice(_ request: String) {
         let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty else {
-            updateStatus("Device request required")
+            updateStatus("AppKey request required")
             return
         }
         dispatchNativeAction(
             ["type": "reject_device", "request": request],
-            progress: "Rejecting device",
-            success: "Device request rejected"
+            progress: "Rejecting AppKey",
+            success: "AppKey request rejected"
         )
     }
 
@@ -656,14 +656,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func deleteDevice(_ device: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("AppKey required")
             return
         }
 
         dispatchNativeAction(
             ["type": "revoke_device", "app_key_pubkey": device],
-            progress: "Removing device",
-            success: "Device removed",
+            progress: "Removing AppKey",
+            success: "AppKey removed",
             restartSyncAfterSuccess: true
         )
     }
@@ -671,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("AppKey required")
             return
         }
 
@@ -681,7 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "app_key_pubkey": device,
             ],
             progress: makeAdmin ? "Making admin" : "Removing admin",
-            success: makeAdmin ? "Device made admin" : "Admin removed",
+            success: makeAdmin ? "AppKey made admin" : "Admin removed",
             restartSyncAfterSuccess: true
         )
     }
@@ -968,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paths = runtimePathsForMenu ?? runtimePaths()
         let status = IrisDriveStatus.shared
         guard localProfileExists(paths: paths), status.setupComplete else {
-            updateStatus(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
+            updateStatus(status.revoked ? "AppKey removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
             return
         }
         guard fileProviderIntegrationEnabled else {
@@ -1060,7 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
         guard daemon == nil else { return }
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("Device removed")
+            updateStatus("AppKey removed")
             setDaemonRunning(false)
             return
         }
@@ -1213,7 +1213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
         guard !userRequestedSyncStop, !externalDaemonMode else { return }
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("Device removed")
+            updateStatus("AppKey removed")
             setDaemonRunning(false)
             return
         }
@@ -1561,7 +1561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     self.setDaemonRunning(false)
                 }
-                self.updateStatus("Device removed")
+                self.updateStatus("AppKey removed")
             }
 
             self.updateLinkMenuState()
@@ -1711,7 +1711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     self.setDaemonRunning(false)
                 }
-                self.updateStatus("Device removed")
+                self.updateStatus("AppKey removed")
             }
 
             self.updateLinkMenuState()

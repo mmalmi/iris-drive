@@ -138,7 +138,7 @@ pub(crate) async fn start_iris_drive_mount(
     let mut visible = primary_merged_root(daemon.tree(), daemon.config())
         .await
         .context("building initial visible mount root")?;
-    if current_device_root_missing(daemon.config()) {
+    if current_app_key_root_missing(daemon.config()) {
         daemon
             .import_visible_root(visible.root_cid.clone())
             .await
@@ -178,13 +178,13 @@ pub(crate) async fn start_iris_drive_mount(
 }
 
 #[cfg(target_os = "linux")]
-fn current_device_root_missing(config: &AppConfig) -> bool {
+fn current_app_key_root_missing(config: &AppConfig) -> bool {
     let Some(account) = config.profile.as_ref() else {
         return false;
     };
     config
         .drive(PRIMARY_DRIVE_ID)
-        .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
+        .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
         .is_none()
 }
 

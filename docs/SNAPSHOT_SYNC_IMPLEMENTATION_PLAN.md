@@ -1,6 +1,6 @@
 # Snapshot-first sync implementation plan
 
-This plan refines the multi-device sync design after comparing Iris Drive with
+This plan refines the multi-AppKey sync design after comparing Iris Drive with
 Syncthing and Perkeep. The direction is snapshot-first, not log-first:
 
 - A signed drive root is the canonical truth.
@@ -14,7 +14,7 @@ Syncthing and Perkeep. The direction is snapshot-first, not log-first:
 
 The existing code already has the right rough pieces, but they are still v1:
 
-- `DeviceRootRef` carries `root_cid`, `published_at`, and `dck_generation`.
+- `AppKeyRootRef` carries `root_cid`, `published_at`, and `dck_generation`.
 - `merge_drives` resolves per-path winners with latest `published_at`.
 - `sync.rs` enumerates both sides and treats different hashes as conflicts.
 - `conflict.rs` has a better base/local/remote resolver, but sync does not
@@ -36,7 +36,7 @@ metadata and durable base state.
    details below that whole-file identity.
 
 3. Causality is attached to root snapshots.
-   Devices should compare root ancestry and per-device sequence observations,
+   AppKeys should compare root ancestry and per-AppKey sequence observations,
    not wall-clock time, to decide whether one root descends from another or is
    concurrent with it.
 
@@ -54,7 +54,7 @@ metadata and durable base state.
 
 ## Target root metadata
 
-Add root-level metadata to each device snapshot. This can live either in the
+Add root-level metadata to each AppKey snapshot. This can live either in the
 signed drive-root event or inside the root under `.hashtree/root.json`. The
 preferred implementation is to put snapshot metadata in `.hashtree/root.json`
 so it travels with the root bytes, then publish/sign the resulting root CID.
@@ -66,19 +66,19 @@ root. The signed publish event already binds the root CID to the publisher.
 {
   "schema": 1,
   "drive_id": "main",
-  "device_id": "<device pubkey>",
-  "device_seq": 42,
+  "app_key_pubkey": "<app key pubkey>",
+  "app_key_seq": 42,
   "dck_generation": 3,
   "parents": [
     {
-      "device_id": "<device pubkey>",
-      "device_seq": 41,
+      "app_key_pubkey": "<app key pubkey>",
+      "app_key_seq": 41,
       "root_cid": "<previous root cid>"
     }
   ],
   "observed": {
-    "<device pubkey>": {
-      "device_seq": 18,
+    "<app key pubkey>": {
+      "app_key_seq": 18,
       "root_cid": "<latest observed root cid>"
     }
   },
@@ -88,16 +88,16 @@ root. The signed publish event already binds the root CID to the publisher.
 
 Field rules:
 
-- `device_seq` is monotonic per device and drive.
+- `app_key_seq` is monotonic per AppKey and drive.
 - `parents` are the roots this root directly replaces or incorporates.
 - `observed` is the compact vector-clock-style view of other authorized
-  devices at publish time.
+  AppKeys at publish time.
 - `created_at` is useful for display, ordering lists, and legacy sorting.
-- The owner/device signature is still the authority for authenticity.
+- The AppKey signature is still the authority for authenticity.
 
 For compatibility, old roots without this metadata are treated as legacy roots
 with unknown causality and use current timestamp behavior until all active
-devices have republished.
+AppKeys have republished.
 
 ## File entry model
 
@@ -148,9 +148,9 @@ Semantics:
 Replace timestamp LWW with causal comparison.
 
 For each path, collect all candidate writes and tombstones from authorized
-device snapshots.
+AppKey snapshots.
 
-1. Discard snapshots from unauthorized devices or stale DCK generations.
+1. Discard snapshots from unauthorized AppKeys or stale DCK generations.
 2. Group candidates by path.
 3. If candidates have identical whole-file hash and size, converge without a
    conflict even if they came from concurrent roots.
@@ -158,7 +158,7 @@ device snapshots.
 5. If a tombstone causally descends from a write, delete the path.
 6. If a write causally descends from a tombstone, restore the path.
 7. If candidates are concurrent and differ, create or update a conflict record.
-8. Use wall-clock time and device id only as deterministic legacy ordering
+8. Use wall-clock time and AppKey id only as deterministic legacy ordering
    for display and stable file naming.
 
 Concurrent write/delete is a conflict. The resolver should preserve the file
@@ -172,7 +172,7 @@ Add a durable local sync database, but treat it as a rebuildable cache.
 Suggested tables:
 
 ```text
-roots(device_id, device_seq, root_cid, dck_generation, observed_json, seen_at)
+roots(app_key_pubkey, app_key_seq, root_cid, dck_generation, observed_json, seen_at)
 path_state(path, root_cid, whole_file_hash, content_cid, size, metadata_json)
 base_state(path, base_root_cid, whole_file_hash, content_cid, size)
 needs(hash_or_cid, source_hint, priority, first_seen_at, last_attempt_at)
@@ -224,7 +224,7 @@ Use hashtree-over-FIPS as a content retrieval layer:
 - Request by hash or CID.
 - Verify every response against the requested hash.
 - Treat silence and timeout as unknown, not as a negative content miss.
-- Hedge requests across devices, local cache, Blossom mirrors, and future
+- Hedge requests across AppKeys, local cache, Blossom mirrors, and future
   relays.
 - Track source quality in `source_availability`.
 - Bound in-flight work per peer and globally.
@@ -244,14 +244,14 @@ Example conflict record:
   "path": "report.pdf",
   "visible_conflict_path": "report (conflict from phone).pdf",
   "local": {
-    "device_id": "laptop",
-    "device_seq": 42,
+    "app_key_pubkey": "laptop-app-key",
+    "app_key_seq": 42,
     "root_cid": "<cid>",
     "whole_file_hash": "<hash>"
   },
   "remote": {
-    "device_id": "phone",
-    "device_seq": 18,
+    "app_key_pubkey": "phone-app-key",
+    "app_key_seq": 18,
     "root_cid": "<cid>",
     "whole_file_hash": "<hash>"
   },
@@ -274,11 +274,11 @@ Prefer e2e-style tests around real provider and hashtree behavior.
 
 Required cases:
 
-- Two devices edit different files while offline, then converge.
-- Two devices edit the same file differently, conflict preserved.
-- Two devices edit same file to identical bytes, no conflict.
-- One device edits while another deletes, conflict preserved.
-- Device clock skew does not change conflict outcome.
+- Two AppKeys edit different files while offline, then converge.
+- Two AppKeys edit the same file differently, conflict preserved.
+- Two AppKeys edit same file to identical bytes, no conflict.
+- One AppKey edits while another deletes, conflict preserved.
+- AppKey clock skew does not change conflict outcome.
 - Nostr event delivery order does not change conflict outcome.
 - Legacy `published_at` roots can still merge during migration.
 - Case-only path conflicts are detected on case-insensitive filesystems.
@@ -294,7 +294,7 @@ Required cases:
 
 - Add `DriveRootMeta` and root metadata read/write helpers.
 - Attach `.hashtree/root.json` during indexing.
-- Extend `DeviceRootRef` with `device_seq`, `parents`, and observed roots.
+- Extend `AppKeyRootRef` with `app_key_seq`, `parents`, and observed roots.
 - Keep `published_at` for display and migration ordering.
 - Add migration tests for old roots.
 

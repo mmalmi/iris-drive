@@ -20,6 +20,7 @@
 - No need to await Nostr publishes.
 - No fallbacks: fix root causes; if impossible, show the error.
 - Don't commit local hostnames or other private things, use env files
+- Don't duplicate logic between native UIs, use rust side helpers where feasible
 
 ## Naming
 

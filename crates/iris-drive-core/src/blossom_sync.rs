@@ -1,8 +1,8 @@
 //! Block replication via Blossom HTTP blob servers.
 //!
 //! The Nostr `relay_sync` layer ships **metadata** (`AppKeys` + drive-root
-//! references) between devices. The actual htree blocks live in each
-//! device's `FsBlobStore` and have to move separately. This module
+//! references) between app installs. The actual htree blocks live in each
+//! app install's `FsBlobStore` and have to move separately. This module
 //! handles that movement over the Blossom protocol — a NIP-98-signed
 //! HTTP blob store sized for content-addressed data.
 //!
@@ -330,7 +330,7 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackBlossomStore<L> {
 /// persisted. Returns counts of fetched vs. already-present blocks.
 ///
 /// Caller's responsibility: only invoke this for roots produced by
-/// authorized devices. Iris-drive's relay-sync apply step has already
+/// authorized `AppKeys`. Iris-drive's relay-sync apply step has already
 /// done the authorization check by the time this is called.
 pub async fn download_tree<L>(
     local_store: Arc<L>,

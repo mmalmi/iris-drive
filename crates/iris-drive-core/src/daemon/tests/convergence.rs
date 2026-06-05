@@ -17,8 +17,8 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -50,9 +50,9 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         ));
     state.app_keys.as_mut().unwrap().normalize();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
+        AppKeyRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
     );
     config.upsert_drive(drive);
     config.save(config_path_in(cfg_dir.path())).unwrap();
@@ -69,10 +69,10 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
-    assert_eq!(root.device_seq, 2);
+    assert_eq!(root.app_key_seq, 2);
     assert!(root.local_only);
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let meta = crate::indexer::read_root_meta(daemon.tree(), &root_cid)
@@ -86,7 +86,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
             .map(|observed| observed.root_cid.clone()),
         Some(remote_root.to_string())
     );
-    let (files, _) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, _) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert_eq!(
@@ -120,7 +120,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .iter_mut()
         .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .remove(&remote);
     converged.save(config_path_in(cfg_dir.path())).unwrap();
 

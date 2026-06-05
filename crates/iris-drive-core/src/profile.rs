@@ -169,6 +169,26 @@ impl ProfileState {
         changed
     }
 
+    /// Adopt the profile UUID carried by local roster evidence when that
+    /// evidence unambiguously belongs to one `IrisProfile`.
+    ///
+    /// Offline restore creates a fresh temporary UUID because the recovery
+    /// secret must not derive identity. Once signed roster ops arrive, their
+    /// embedded `profile_id` is the durable identity breadcrumb.
+    pub fn adopt_single_roster_profile_id(&mut self) -> bool {
+        let Some(profile_id) = single_roster_profile_id(&self.profile_roster_ops) else {
+            return false;
+        };
+        if profile_id == self.profile_id {
+            return false;
+        }
+        self.profile_id = profile_id;
+        self.app_keys = None;
+        self.sync_app_keys_from_profile();
+        self.recompute_authorization();
+        true
+    }
+
     /// Is this install's `AppKey` active in the latest roster projection?
     #[must_use]
     pub fn is_authorized(&self) -> bool {
@@ -332,6 +352,21 @@ impl ProfileState {
 }
 
 #[must_use]
+pub fn single_roster_profile_id(
+    profile_roster_ops: &[SignedIrisProfileRosterOp],
+) -> Option<IrisProfileId> {
+    let mut ids = profile_roster_ops
+        .iter()
+        .map(|op| op.content.profile_id)
+        .collect::<BTreeSet<_>>();
+    if ids.len() == 1 {
+        ids.pop_first()
+    } else {
+        None
+    }
+}
+
+#[must_use]
 pub fn app_keys_from_profile_roster(
     profile_id: IrisProfileId,
     profile_roster_ops: &[SignedIrisProfileRosterOp],
@@ -391,7 +426,7 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// **Create** flow — fresh device saved to the config dir. The device is
+    /// **Create** flow — fresh `AppKey` saved to the config dir. The `AppKey` is
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `IrisProfile` roster op log.
     pub fn create(config_dir: &Path, app_key_label: Option<String>) -> Result<Self, ProfileError> {
@@ -770,7 +805,7 @@ impl Profile {
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
-    /// Rotate the DCK without changing the device roster. Useful for
+    /// Rotate the DCK without changing the `AppKey` roster. Useful for
     /// periodic key freshness ("rotate weekly even with no membership
     /// churn"). Admin-only.
     pub fn rotate_dck(&mut self) -> Result<&AppKeysProjection, ProfileError> {

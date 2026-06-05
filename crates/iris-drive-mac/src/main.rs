@@ -302,7 +302,7 @@ mod tests {
 
         bootstrap_first_launch_with(cfg.path()).unwrap();
 
-        assert!(key_path_in(cfg.path()).exists(), "device key written");
+        assert!(key_path_in(cfg.path()).exists(), "AppKey written");
 
         let config = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
         assert!(config.profile.is_some(), "account stamped");

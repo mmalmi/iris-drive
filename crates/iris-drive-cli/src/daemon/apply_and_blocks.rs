@@ -54,7 +54,7 @@ pub(crate) async fn apply_one_event(
                 .is_some_and(|(app_key_pubkey, _, drive_id, root_ref)| {
                     config
                         .drive(drive_id)
-                        .and_then(|drive| drive.device_roots.get(app_key_pubkey))
+                        .and_then(|drive| drive.app_key_roots.get(app_key_pubkey))
                         .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
                 });
         let parsed_root_cid = parsed
@@ -142,7 +142,7 @@ pub(crate) fn apply_files_root_event(
     let root_cid_to_pull = if was_applied {
         config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-            .and_then(|drive| drive.device_roots.get(&account.state.app_key_pubkey))
+            .and_then(|drive| drive.app_key_roots.get(&account.state.app_key_pubkey))
             .map(|root| root.root_cid.clone())
     } else {
         None
@@ -202,7 +202,7 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
     config
         .drives
         .iter()
-        .flat_map(|drive| drive.device_roots.values())
+        .flat_map(|drive| drive.app_key_roots.values())
         .filter(|root| !root.local_only)
         .filter(|root| !root_has_successful_block_sync(config_dir, &root.root_cid))
         .map(|root| root.root_cid.clone())
@@ -406,7 +406,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .is_some_and(|drive| {
             drive
-                .device_roots
+                .app_key_roots
                 .iter()
                 .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
         })

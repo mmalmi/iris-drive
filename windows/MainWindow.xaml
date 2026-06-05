@@ -84,7 +84,7 @@
           <Button Style="{StaticResource SetupButton}" Click="ShowLink_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE977;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
-              <TextBlock Text="Link device" />
+              <TextBlock Text="Link app install" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="ShowRecoveryPhrase_Click" Margin="0,0,0,10">
@@ -159,11 +159,11 @@
               <TextBlock Text="Back" />
             </StackPanel>
           </Button>
-          <TextBlock Text="Link device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Link app install" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="IrisProfile invite link or admin AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="LinkTargetBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkTargetBox_TextChanged" KeyDown="LinkTargetBox_KeyDown" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="LinkSubmit_Click">
-            <TextBlock Text="Link device" HorizontalAlignment="Center" />
+            <TextBlock Text="Link app install" HorizontalAlignment="Center" />
           </Button>
         </StackPanel>
 
@@ -171,12 +171,12 @@
           <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
           <TextBlock Text="AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="AwaitingAppKeyBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
-          <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBlock Text="Current AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="AwaitingDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingDevice_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Copy device ID" />
+              <TextBlock Text="Copy AppKey" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
@@ -188,25 +188,25 @@
         </StackPanel>
 
         <StackPanel x:Name="RevokedPanel" Visibility="Collapsed">
-          <TextBlock Text="Device removed" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8" />
-          <TextBlock Text="This device no longer has access to Iris Drive."
+          <TextBlock Text="AppKey removed" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8" />
+          <TextBlock Text="This app install no longer has access to Iris Drive."
                      Foreground="{StaticResource IrisMutedBrush}"
                      TextWrapping="Wrap"
                      Margin="0,0,0,12" />
           <TextBlock Text="AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="RevokedAppKeyBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
-          <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBlock Text="Current AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="RevokedDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button x:Name="RevokedRelinkButton" Style="{StaticResource SetupPrimaryButton}" Click="RelinkRevokedDevice_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE977;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Link this device again" />
+              <TextBlock Text="Link this app install again" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="CopyRevokedDevice_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Copy device ID" />
+              <TextBlock Text="Copy AppKey" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
@@ -248,7 +248,7 @@
           <Button x:Name="NavDevicesButton" Tag="Devices" Style="{StaticResource NavButton}" Click="Nav_Click">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE716;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
-              <TextBlock Text="Devices" />
+              <TextBlock Text="AppKeys" />
             </StackPanel>
           </Button>
           <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click">
@@ -355,7 +355,7 @@
                 </Border>
                 <Border Style="{StaticResource PanelBorder}">
                   <StackPanel>
-                    <TextBlock Text="Devices" Style="{StaticResource FieldName}" />
+                    <TextBlock Text="AppKeys" Style="{StaticResource FieldName}" />
                     <TextBlock x:Name="DevicesValue" Text="0/0" FontSize="23" FontWeight="Bold" />
                   </StackPanel>
                 </Border>
@@ -368,7 +368,7 @@
             </StackPanel>
 
             <StackPanel x:Name="DevicesPage" Visibility="Collapsed">
-              <TextBlock Text="Devices" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <TextBlock Text="AppKeys" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
               <Border Style="{StaticResource PanelBorder}" Margin="0,0,0,14">
                 <Grid>
                   <Grid.ColumnDefinitions>
@@ -386,7 +386,7 @@
                   <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyAppKey_Click">
                     <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />
                   </Button>
-                  <TextBlock Grid.Row="1" Text="This device" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
+                  <TextBlock Grid.Row="1" Text="Current AppKey" Style="{StaticResource FieldName}" Margin="0,8,0,0" />
                   <TextBlock x:Name="DeviceValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" />
                   <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyDevice_Click" Margin="0,8,0,0">
                     <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />
@@ -400,7 +400,7 @@
                 <Button Style="{StaticResource PrimaryButton}" Click="ShowAddDevice_Click">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                    <TextBlock Text="Add Device" />
+                    <TextBlock Text="Add AppKey" />
                   </StackPanel>
                 </Button>
                 <Button Click="ResetInvite_Click" Margin="0,8,0,0">
@@ -411,7 +411,7 @@
                 </Button>
               </StackPanel>
 
-              <TextBlock Text="Linked devices" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <TextBlock Text="Linked AppKeys" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
             </StackPanel>
 

@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::config::{AppConfig, DeviceRootRef};
+use crate::config::{AppConfig, AppKeyRootRef};
 use crate::conflict::FileSnapshot;
-use crate::merge::walk_device_tree;
+use crate::merge::walk_app_key_tree;
 
 pub const SOURCE_STATE_AVAILABLE: &str = "available";
 pub const SOURCE_STATE_UNKNOWN: &str = "unknown";
@@ -56,17 +56,20 @@ pub enum SyncCacheError {
     Json(#[from] serde_json::Error),
     #[error("schema version {found} not supported (expected {expected})")]
     SchemaMismatch { found: u32, expected: u32 },
-    #[error("invalid root cid for drive {drive_id} device {device_id}: {root_cid}: {source}")]
+    #[error("invalid root cid for drive {drive_id} AppKey {app_key_pubkey}: {root_cid}: {source}")]
     RootCid {
         drive_id: String,
-        device_id: String,
+        app_key_pubkey: String,
         root_cid: String,
         source: CidParseError,
     },
     #[error("drive not found in config: {0}")]
     DriveMissing(String),
-    #[error("device root not found in config for drive {drive_id} device {device_id}")]
-    DeviceRootMissing { drive_id: String, device_id: String },
+    #[error("AppKey root not found in config for drive {drive_id} AppKey {app_key_pubkey}")]
+    AppKeyRootMissing {
+        drive_id: String,
+        app_key_pubkey: String,
+    },
     #[error("tree: {0}")]
     Tree(#[from] HashTreeError),
 }
@@ -135,29 +138,29 @@ impl SyncCache {
     ) -> Result<Self, SyncCacheError> {
         let mut cache = Self::empty();
         for drive in &config.drives {
-            for (device_id, root) in roots_for_drive(config, drive) {
+            for (app_key_pubkey, root) in roots_for_drive(config, drive) {
                 let root_cid =
                     Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
                         drive_id: drive.drive_id.clone(),
-                        device_id: device_id.clone(),
+                        app_key_pubkey: app_key_pubkey.clone(),
                         root_cid: root.root_cid.clone(),
                         source,
                     })?;
                 cache.roots.push(CachedRoot {
                     drive_id: drive.drive_id.clone(),
-                    device_id: device_id.clone(),
-                    device_seq: root.device_seq,
+                    app_key_pubkey: app_key_pubkey.clone(),
+                    app_key_seq: root.app_key_seq,
                     root_cid: root.root_cid.clone(),
                     dck_generation: root.dck_generation,
                     seen_at,
                     observed_json: serde_json::to_value(&root.observed)?,
                 });
 
-                let (files, _tombstones) = walk_device_tree(tree, &root_cid).await?;
+                let (files, _tombstones) = walk_app_key_tree(tree, &root_cid).await?;
                 for file in files {
                     cache.path_state.push(CachedPathState {
                         drive_id: drive.drive_id.clone(),
-                        device_id: device_id.clone(),
+                        app_key_pubkey: app_key_pubkey.clone(),
                         path: file.path,
                         root_cid: root.root_cid.clone(),
                         whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
@@ -172,17 +175,17 @@ impl SyncCache {
         Ok(cache)
     }
 
-    pub fn set_current_device_base(&mut self, drive_id: &str, device_id: &str) {
+    pub fn set_current_device_base(&mut self, drive_id: &str, app_key_pubkey: &str) {
         let root_cid = self
             .roots
             .iter()
-            .find(|row| row.drive_id == drive_id && row.device_id == device_id)
+            .find(|row| row.drive_id == drive_id && row.app_key_pubkey == app_key_pubkey)
             .map(|row| row.root_cid.clone());
         self.base_state.retain(|row| row.drive_id != drive_id);
         self.base_state.extend(
             self.path_state
                 .iter()
-                .filter(|row| row.drive_id == drive_id && row.device_id == device_id)
+                .filter(|row| row.drive_id == drive_id && row.app_key_pubkey == app_key_pubkey)
                 .map(|row| CachedBaseState {
                     drive_id: row.drive_id.clone(),
                     path: row.path.clone(),
@@ -202,52 +205,50 @@ impl SyncCache {
         self.sort_rows();
     }
 
-    pub async fn replace_device_root_from_config<S: Store>(
+    pub async fn replace_app_key_root_from_config<S: Store>(
         &mut self,
         tree: &HashTree<S>,
         config: &AppConfig,
         drive_id: &str,
-        device_id: &str,
+        app_key_pubkey: &str,
         seen_at: i64,
     ) -> Result<(), SyncCacheError> {
         let drive = config
             .drive(drive_id)
             .ok_or_else(|| SyncCacheError::DriveMissing(drive_id.to_string()))?;
-        let root =
-            drive
-                .device_roots
-                .get(device_id)
-                .ok_or_else(|| SyncCacheError::DeviceRootMissing {
-                    drive_id: drive_id.to_string(),
-                    device_id: device_id.to_string(),
-                })?;
+        let root = drive.app_key_roots.get(app_key_pubkey).ok_or_else(|| {
+            SyncCacheError::AppKeyRootMissing {
+                drive_id: drive_id.to_string(),
+                app_key_pubkey: app_key_pubkey.to_string(),
+            }
+        })?;
         let root_cid = Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
             drive_id: drive_id.to_string(),
-            device_id: device_id.to_string(),
+            app_key_pubkey: app_key_pubkey.to_string(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
 
         self.roots
-            .retain(|row| row.drive_id != drive_id || row.device_id != device_id);
+            .retain(|row| row.drive_id != drive_id || row.app_key_pubkey != app_key_pubkey);
         self.path_state
-            .retain(|row| row.drive_id != drive_id || row.device_id != device_id);
+            .retain(|row| row.drive_id != drive_id || row.app_key_pubkey != app_key_pubkey);
 
         self.roots.push(CachedRoot {
             drive_id: drive_id.to_string(),
-            device_id: device_id.to_string(),
-            device_seq: root.device_seq,
+            app_key_pubkey: app_key_pubkey.to_string(),
+            app_key_seq: root.app_key_seq,
             root_cid: root.root_cid.clone(),
             dck_generation: root.dck_generation,
             seen_at,
             observed_json: serde_json::to_value(&root.observed)?,
         });
 
-        let (files, _tombstones) = walk_device_tree(tree, &root_cid).await?;
+        let (files, _tombstones) = walk_app_key_tree(tree, &root_cid).await?;
         self.path_state
             .extend(files.into_iter().map(|file| CachedPathState {
                 drive_id: drive_id.to_string(),
-                device_id: device_id.to_string(),
+                app_key_pubkey: app_key_pubkey.to_string(),
                 path: file.path,
                 root_cid: root.root_cid.clone(),
                 whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
@@ -255,7 +256,7 @@ impl SyncCache {
                 size: file.size,
                 metadata_json: json!({}),
             }));
-        self.set_current_device_base(drive_id, device_id);
+        self.set_current_device_base(drive_id, app_key_pubkey);
         Ok(())
     }
 
@@ -446,24 +447,30 @@ impl SyncCache {
         self.roots.sort_by(|left, right| {
             (
                 &left.drive_id,
-                &left.device_id,
-                left.device_seq,
+                &left.app_key_pubkey,
+                left.app_key_seq,
                 &left.root_cid,
             )
                 .cmp(&(
                     &right.drive_id,
-                    &right.device_id,
-                    right.device_seq,
+                    &right.app_key_pubkey,
+                    right.app_key_seq,
                     &right.root_cid,
                 ))
         });
         self.path_state.sort_by(|left, right| {
-            (&left.drive_id, &left.path, &left.device_id, &left.root_cid).cmp(&(
-                &right.drive_id,
-                &right.path,
-                &right.device_id,
-                &right.root_cid,
-            ))
+            (
+                &left.drive_id,
+                &left.path,
+                &left.app_key_pubkey,
+                &left.root_cid,
+            )
+                .cmp(&(
+                    &right.drive_id,
+                    &right.path,
+                    &right.app_key_pubkey,
+                    &right.root_cid,
+                ))
         });
         self.base_state.sort_by(|left, right| {
             (&left.drive_id, &left.path, &left.base_root_cid).cmp(&(
@@ -486,8 +493,8 @@ impl SyncCache {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedRoot {
     pub drive_id: String,
-    pub device_id: String,
-    pub device_seq: u64,
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
     pub root_cid: String,
     pub dck_generation: u64,
     pub seen_at: i64,
@@ -497,7 +504,7 @@ pub struct CachedRoot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedPathState {
     pub drive_id: String,
-    pub device_id: String,
+    pub app_key_pubkey: String,
     pub path: String,
     pub root_cid: String,
     pub whole_file_hash: Option<String>,
@@ -568,23 +575,23 @@ pub struct SourceAvailability {
 fn roots_for_drive(
     config: &AppConfig,
     drive: &crate::config::Drive,
-) -> Vec<(String, DeviceRootRef)> {
-    if !drive.device_roots.is_empty() {
+) -> Vec<(String, AppKeyRootRef)> {
+    if !drive.app_key_roots.is_empty() {
         return drive
-            .device_roots
+            .app_key_roots
             .iter()
-            .map(|(device_id, root)| (device_id.clone(), root.clone()))
+            .map(|(app_key_pubkey, root)| (app_key_pubkey.clone(), root.clone()))
             .collect();
     }
 
     let Some(root_cid) = drive.last_root_cid.clone() else {
         return Vec::new();
     };
-    let device_id = config.profile.as_ref().map_or_else(
+    let app_key_pubkey = config.profile.as_ref().map_or_else(
         || "legacy".to_string(),
         |account| account.app_key_pubkey.clone(),
     );
-    vec![(device_id, DeviceRootRef::legacy(root_cid, 0, 0))]
+    vec![(app_key_pubkey, AppKeyRootRef::legacy(root_cid, 0, 0))]
 }
 
 #[cfg(test)]
@@ -695,7 +702,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_device_root_updates_one_device_without_walking_others() {
+    async fn replace_app_key_root_updates_one_app_key_without_walking_others() {
         let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
         let source = tempfile::tempdir().unwrap();
         std::fs::write(source.path().join("local.txt"), b"local").unwrap();
@@ -707,40 +714,44 @@ mod tests {
 
         let mut config = AppConfig::default();
         let mut drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             "device-a".into(),
-            DeviceRootRef::legacy(local_root_string.clone(), 10, 1),
+            AppKeyRootRef::legacy(local_root_string.clone(), 10, 1),
         );
-        drive.device_roots.insert(
+        drive.app_key_roots.insert(
             "device-b".into(),
-            DeviceRootRef::legacy("not-a-local-cid", 11, 1),
+            AppKeyRootRef::legacy("not-a-local-cid", 11, 1),
         );
         config.upsert_drive(drive);
 
         let mut cache = SyncCache::empty();
         cache.roots.push(CachedRoot {
             drive_id: "main".into(),
-            device_id: "device-b".into(),
-            device_seq: 1,
+            app_key_pubkey: "device-b".into(),
+            app_key_seq: 1,
             root_cid: "not-a-local-cid".into(),
             dck_generation: 0,
             seen_at: 9,
             observed_json: serde_json::json!({}),
         });
         cache
-            .replace_device_root_from_config(&tree, &config, "main", "device-a", 12)
+            .replace_app_key_root_from_config(&tree, &config, "main", "device-a", 12)
             .await
             .unwrap();
 
-        assert!(cache.roots.iter().any(|row| row.device_id == "device-b"));
         assert!(
             cache
                 .roots
                 .iter()
-                .any(|row| { row.device_id == "device-a" && row.root_cid == local_root_string })
+                .any(|row| row.app_key_pubkey == "device-b")
+        );
+        assert!(
+            cache.roots.iter().any(|row| {
+                row.app_key_pubkey == "device-a" && row.root_cid == local_root_string
+            })
         );
         assert_eq!(cache.path_state.len(), 1);
-        assert_eq!(cache.path_state[0].device_id, "device-a");
+        assert_eq!(cache.path_state[0].app_key_pubkey, "device-a");
         assert_eq!(cache.path_state[0].path, "local.txt");
         assert_eq!(
             cache.base_anchor_for_drive("main"),

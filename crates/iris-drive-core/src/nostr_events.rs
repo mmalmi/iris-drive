@@ -7,7 +7,7 @@
 //!   d-tag: `"iris-drive/<profile_or_share_id>/<drive_id>/root"`.
 //!   Pubkey = `AppKey` pubkey. Content = JSON root hash/key-wrap metadata,
 //!   DCK generation, and optional causal fields. The event's `created_at`
-//!   doubles as `DeviceRootRef::published_at`.
+//!   doubles as `AppKeyRootRef::published_at`.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::IrisProfileId;
 use crate::app_key_link_transport::AppKeyLinkRequestFrame;
-use crate::config::DeviceRootRef;
+use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for AppKey-signed drive roots.
@@ -68,7 +68,7 @@ pub struct DriveRootEventPreview {
     pub drive_id: String,
     pub published_at: i64,
     pub dck_generation: u64,
-    pub device_seq: u64,
+    pub app_key_seq: u64,
 }
 
 #[derive(Debug, Error)]
@@ -114,7 +114,7 @@ struct DriveRootWireContent {
     root_key_wraps: std::collections::BTreeMap<String, String>,
     dck_generation: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
-    device_seq: u64,
+    app_key_seq: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     parents: Vec<RootParent>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -219,7 +219,7 @@ pub fn build_drive_root_event(
     device_keys: &Keys,
     root_scope_id: &str,
     drive_id: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
 ) -> Result<Event, WireError> {
     build_drive_root_event_at(
@@ -242,7 +242,7 @@ pub fn build_drive_root_publish_event(
     device_keys: &Keys,
     root_scope_id: &str,
     drive_id: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
 ) -> Result<Event, WireError> {
     let stored_ts = if root.published_at > 0 {
@@ -261,7 +261,7 @@ pub fn build_drive_root_publish_event(
     )
 }
 
-fn drive_root_timestamp_from_root(root: &DeviceRootRef) -> u64 {
+fn drive_root_timestamp_from_root(root: &AppKeyRootRef) -> u64 {
     if root.published_at > 0 {
         u64::try_from(root.published_at).unwrap_or(0)
     } else {
@@ -279,7 +279,7 @@ fn build_drive_root_event_at(
     device_keys: &Keys,
     root_scope_id: &str,
     drive_id: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
     created_at: u64,
 ) -> Result<Event, WireError> {
@@ -313,7 +313,7 @@ fn build_drive_root_event_at(
         root_hash: Some(to_hex(&root_cid.hash)),
         root_key_wraps,
         dck_generation: root.dck_generation,
-        device_seq: root.device_seq,
+        app_key_seq: root.app_key_seq,
         parents: root.parents.clone(),
         observed: root.observed.clone(),
     };
@@ -341,7 +341,7 @@ fn build_drive_root_event_at(
 pub fn build_private_hashtree_root_event(
     signer_keys: &Keys,
     tree_name: &str,
-    root: &DeviceRootRef,
+    root: &AppKeyRootRef,
 ) -> Result<Event, WireError> {
     let root_cid =
         Cid::parse(&root.root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
@@ -355,19 +355,19 @@ pub fn build_private_hashtree_root_event(
 }
 
 /// Parse + verify a drive-root event. Returns
-/// `(app_key_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
+/// `(app_key_pubkey_hex, root_scope_id, drive_id, AppKeyRootRef)`.
 /// The `AppKey` pubkey is the event's author; the root scope id and
 /// drive id are extracted from the d-tag.
 pub fn parse_drive_root_event(
     event: &Event,
-) -> Result<(String, String, String, DeviceRootRef), WireError> {
+) -> Result<(String, String, String, AppKeyRootRef), WireError> {
     parse_drive_root_event_inner(event, None)
 }
 
 pub fn parse_drive_root_event_for_device(
     event: &Event,
     device_keys: &Keys,
-) -> Result<(String, String, String, DeviceRootRef), WireError> {
+) -> Result<(String, String, String, AppKeyRootRef), WireError> {
     parse_drive_root_event_inner(event, Some(device_keys))
 }
 
@@ -385,27 +385,27 @@ pub fn parse_drive_root_event_preview(event: &Event) -> Result<DriveRootEventPre
         drive_id,
         published_at,
         dck_generation: content.dck_generation,
-        device_seq: content.device_seq,
+        app_key_seq: content.app_key_seq,
     })
 }
 
 fn parse_drive_root_event_inner(
     event: &Event,
     device_keys: Option<&Keys>,
-) -> Result<(String, String, String, DeviceRootRef), WireError> {
+) -> Result<(String, String, String, AppKeyRootRef), WireError> {
     let (app_key_pubkey_hex, root_scope_id, drive_id, content, published_at) =
         parse_drive_root_event_parts(event)?;
     let root_cid = root_cid_from_wire_content(event, &content, device_keys)?;
-    let device_root = DeviceRootRef {
+    let app_key_root = AppKeyRootRef {
         root_cid,
         published_at,
         dck_generation: content.dck_generation,
-        device_seq: content.device_seq,
+        app_key_seq: content.app_key_seq,
         parents: content.parents,
         observed: content.observed,
         local_only: false,
     };
-    Ok((app_key_pubkey_hex, root_scope_id, drive_id, device_root))
+    Ok((app_key_pubkey_hex, root_scope_id, drive_id, app_key_root))
 }
 
 fn parse_drive_root_event_parts(

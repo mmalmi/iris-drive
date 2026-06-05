@@ -175,7 +175,7 @@ public partial class MainWindow : Window
         RevokedAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         RevokedDeviceBox.Text = status.DeviceNpub ?? "";
         RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.CurrentAppKeyNpub);
-        SetupNotice.Text = notice ?? "Device removed";
+        SetupNotice.Text = notice ?? "AppKey removed";
         UpdateTrayText(false);
     }
 
@@ -259,7 +259,7 @@ public partial class MainWindow : Window
         PeersList.Items.Clear();
         if (status.Peers.Count == 0)
         {
-            PeersList.Items.Add(Row("No devices", "", ""));
+            PeersList.Items.Add(Row("No AppKeys", "", ""));
             return;
         }
 
@@ -364,7 +364,7 @@ public partial class MainWindow : Window
         {
             stack.Children.Add(new TextBlock
             {
-                Text = $"Device ID: {peer.DeviceNpub}",
+                Text = $"AppKey: {peer.DeviceNpub}",
                 Foreground = (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 FontSize = 12,
@@ -411,7 +411,7 @@ public partial class MainWindow : Window
 
         if (peer.CanRevoke)
         {
-            var delete = PeerActionButton("\uE74D", "Remove device", peer.DeviceNpub);
+            var delete = PeerActionButton("\uE74D", "Remove AppKey", peer.DeviceNpub);
             delete.Click += DeleteDevice_Click;
             actions.Children.Add(delete);
         }
@@ -555,7 +555,7 @@ public partial class MainWindow : Window
         if (status.IsRevoked)
         {
             StopDaemon();
-            NoticeText.Text = "Device removed";
+            NoticeText.Text = "AppKey removed";
             return false;
         }
 
@@ -775,7 +775,7 @@ public partial class MainWindow : Window
 
     private void CopyDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.DeviceNpub, "Device key copied");
+        CopyText(currentStatus?.DeviceNpub, "AppKey copied");
     }
 
     private void RecoveryPhrase_Click(object sender, RoutedEventArgs e)
@@ -884,12 +884,12 @@ public partial class MainWindow : Window
 
     private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
+        CopySetupText(currentStatus?.DeviceNpub, "AppKey copied");
     }
 
     private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
+        CopySetupText(currentStatus?.DeviceNpub, "AppKey copied");
     }
 
     private async void RelinkRevokedDevice_Click(object sender, RoutedEventArgs e)
@@ -904,7 +904,7 @@ public partial class MainWindow : Window
         try
         {
             RevokedRelinkButton.IsEnabled = false;
-            SetupNotice.Text = "Linking device";
+            SetupNotice.Text = "Linking app install";
             await service.RelinkDeviceAsync(target);
             await RefreshAsync();
         }

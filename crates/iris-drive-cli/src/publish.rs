@@ -419,7 +419,7 @@ pub(crate) async fn publish_current_state(
     }
 
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        && let Some(root) = publishable_device_root(config_dir, drive, state).await?
+        && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))

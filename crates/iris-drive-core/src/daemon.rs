@@ -17,7 +17,7 @@ use hashtree_fs::FsBlobStore;
 use serde_json::json;
 use thiserror::Error;
 
-use crate::config::{AppConfig, ConfigError, DeviceRootRef};
+use crate::config::{AppConfig, AppKeyRootRef, ConfigError};
 use crate::conflict::ConflictState;
 use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
@@ -237,7 +237,7 @@ impl Daemon {
             .and_then(|account| {
                 self.config
                     .drive(PRIMARY_DRIVE_ID)
-                    .and_then(|d| d.device_roots.get(&account.app_key_pubkey))
+                    .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
             })
             .map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
@@ -277,12 +277,12 @@ impl Daemon {
             .await
     }
 
-    /// Publish this device's causal root for the currently merged drive view.
+    /// Publish this `AppKey`'s causal root for the currently merged drive view.
     ///
-    /// Remote device roots are inputs. Once their blocks are local, this folds
-    /// the merged visible view into this device's own root and records the
+    /// Remote `AppKey` roots are inputs. Once their blocks are local, this folds
+    /// the merged visible view into this `AppKey`'s own root and records the
     /// observed source roots in `.hashtree/root.json`, so later roster changes
-    /// do not make already-accepted files depend on a removed device root.
+    /// do not make already-accepted files depend on a removed `AppKey` root.
     pub async fn materialize_primary_merged_root(
         &mut self,
     ) -> Result<Option<ImportReport>, DaemonError> {
@@ -294,12 +294,12 @@ impl Daemon {
             .drive(PRIMARY_DRIVE_ID)
             .ok_or(DaemonError::PrimaryDriveMissing)?
             .clone();
-        if drive.device_roots.is_empty() {
+        if drive.app_key_roots.is_empty() {
             return Ok(None);
         }
 
         let merged = crate::primary_merged_root(&self.tree, &self.config).await?;
-        if let Some(current) = drive.device_roots.get(&account.app_key_pubkey) {
+        if let Some(current) = drive.app_key_roots.get(&account.app_key_pubkey) {
             let current_cid =
                 Cid::parse(&current.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
             let current_visible =
@@ -368,7 +368,7 @@ impl Daemon {
             .and_then(|account| {
                 self.config
                     .drive(PRIMARY_DRIVE_ID)
-                    .and_then(|d| d.device_roots.get(&account.app_key_pubkey))
+                    .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
             })
             .map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
@@ -470,7 +470,7 @@ impl Daemon {
             .filter(|e| e.name != crate::merge::META_DIR)
             .count();
         let phase = std::time::Instant::now();
-        let (files, _tombstones) = crate::merge::walk_device_tree(&self.tree, &root_cid)
+        let (files, _tombstones) = crate::merge::walk_app_key_tree(&self.tree, &root_cid)
             .await
             .map_err(|e| DaemonError::Store(e.to_string()))?;
         tracing::debug!(
@@ -505,7 +505,7 @@ impl Daemon {
         &mut self,
         conflict_id: &str,
     ) -> Result<ConflictResolveReport, DaemonError> {
-        let previous_root_cid = self.current_device_root_cid()?.to_string();
+        let previous_root_cid = self.current_app_key_root_cid()?.to_string();
         let previous_root =
             Cid::parse(&previous_root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
         let mut records = read_conflict_records(&self.tree, &previous_root).await?;
@@ -549,13 +549,13 @@ impl Daemon {
         })
     }
 
-    fn current_device_root_cid(&self) -> Result<&str, DaemonError> {
+    fn current_app_key_root_cid(&self) -> Result<&str, DaemonError> {
         let drive = self
             .config
             .drive(PRIMARY_DRIVE_ID)
             .ok_or(DaemonError::PrimaryDriveMissing)?;
         if let Some(account) = self.config.profile.as_ref()
-            && let Some(root) = drive.device_roots.get(&account.app_key_pubkey)
+            && let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey)
         {
             return Ok(&root.root_cid);
         }
@@ -596,7 +596,7 @@ impl Daemon {
         let path = sync_cache_path_in(&self.config_dir);
         let mut cache = SyncCache::load(&path).unwrap_or_else(|_| SyncCache::empty());
         if cache
-            .replace_device_root_from_config(
+            .replace_app_key_root_from_config(
                 &self.tree,
                 &self.config,
                 PRIMARY_DRIVE_ID,
@@ -626,21 +626,20 @@ impl Daemon {
         let mut updated = drive;
         updated.last_root_cid = Some(root_cid.to_string());
 
-        // Per-device root entry, keyed by this device's pubkey.
-        // Falls back to no-op when there is no account yet (legacy
-        // installs from before the multi-device split).
+        // Per-AppKey root entry, keyed by this install's AppKey pubkey.
+        // Falls back to no-op when there is no profile yet.
         if let Some(account) = self.config.profile.as_ref() {
             let dck_generation = account
                 .app_keys
                 .as_ref()
                 .map_or(0, |snap| snap.dck_generation);
-            let device_root = root_meta.map_or_else(
-                || DeviceRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
-                |meta| DeviceRootRef::from_meta(root_cid.to_string(), published_at, meta),
+            let app_key_root = root_meta.map_or_else(
+                || AppKeyRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
+                |meta| AppKeyRootRef::from_meta(root_cid.to_string(), published_at, meta),
             );
             updated
-                .device_roots
-                .insert(account.app_key_pubkey.clone(), device_root);
+                .app_key_roots
+                .insert(account.app_key_pubkey.clone(), app_key_root);
         }
 
         self.config.upsert_drive(updated);
@@ -653,7 +652,7 @@ impl Daemon {
         let previous = self.config.profile.as_ref().and_then(|account| {
             self.config
                 .drive(PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
+                .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
         });
         previous.map_or(now, |root| now.max(root.published_at.saturating_add(1)))
     }
@@ -661,25 +660,25 @@ impl Daemon {
     fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
         let account = self.config.profile.as_ref()?;
         let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
-        let previous = drive.device_roots.get(&account.app_key_pubkey);
-        let device_seq = previous.map_or(1, |root| root.device_seq.saturating_add(1).max(1));
+        let previous = drive.app_key_roots.get(&account.app_key_pubkey);
+        let app_key_seq = previous.map_or(1, |root| root.app_key_seq.saturating_add(1).max(1));
         let parents = previous
             .map(|root| RootParent {
-                device_id: account.app_key_pubkey.clone(),
-                device_seq: root.device_seq,
+                app_key_pubkey: account.app_key_pubkey.clone(),
+                app_key_seq: root.app_key_seq,
                 root_cid: root.root_cid.clone(),
             })
             .into_iter()
             .collect();
         let observed = drive
-            .device_roots
+            .app_key_roots
             .iter()
-            .filter(|(_, root)| root.device_seq > 0)
-            .map(|(device_id, root)| {
+            .filter(|(_, root)| root.app_key_seq > 0)
+            .map(|(app_key_pubkey, root)| {
                 (
-                    device_id.clone(),
+                    app_key_pubkey.clone(),
                     RootObservation {
-                        device_seq: root.device_seq,
+                        app_key_seq: root.app_key_seq,
                         root_cid: root.root_cid.clone(),
                     },
                 )
@@ -692,8 +691,8 @@ impl Daemon {
         Some(DriveRootMeta {
             schema: DriveRootMeta::SCHEMA,
             drive_id: drive.drive_id.clone(),
-            device_id: account.app_key_pubkey.clone(),
-            device_seq,
+            app_key_pubkey: account.app_key_pubkey.clone(),
+            app_key_seq,
             dck_generation,
             local_only: false,
             parents,
@@ -712,20 +711,20 @@ async fn current_root_observes_drive_roots(
     let Some(meta) = read_root_meta(tree, current_root).await? else {
         return Ok(false);
     };
-    Ok(drive.device_roots.iter().all(|(device_id, root)| {
-        device_id == current_device
+    Ok(drive.app_key_roots.iter().all(|(app_key_pubkey, root)| {
+        app_key_pubkey == current_device
             || root.local_only
-            || root.device_seq == 0
+            || root.app_key_seq == 0
             || meta
                 .observed
-                .get(device_id)
+                .get(app_key_pubkey)
                 .is_some_and(|observed| root_observation_covers(observed, root))
     }))
 }
 
-fn root_observation_covers(observed: &RootObservation, root: &DeviceRootRef) -> bool {
+fn root_observation_covers(observed: &RootObservation, root: &AppKeyRootRef) -> bool {
     observed.root_cid == root.root_cid
-        || (root.device_seq > 0 && observed.device_seq >= root.device_seq)
+        || (root.app_key_seq > 0 && observed.app_key_seq >= root.app_key_seq)
 }
 
 fn unix_now() -> i64 {

@@ -358,7 +358,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOnline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOffline").assertIsDisplayed()
-        compose.onNodeWithText("Admin | Linked | This device").assertIsDisplayed()
+        compose.onNodeWithText("Admin | Linked | This AppKey").assertIsDisplayed()
         compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
     }
 
@@ -375,7 +375,7 @@ class IrisDriveAndroidGuiFlowTest {
         assertFalse(pixel.isOnline)
 
         render(state = approved)
-        compose.onNodeWithText("0/2 devices", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("0/2 AppKeys", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Pixel"))
         compose.onNodeWithText("Pixel").assertIsDisplayed()
@@ -433,7 +433,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Remove"))
         compose.onNodeWithText("Remove").assertIsDisplayed().activate()
         assertTrue(deletedDevices.isEmpty())
-        compose.onNodeWithText("Delete device?").assertIsDisplayed()
+        compose.onNodeWithText("Remove AppKey?").assertIsDisplayed()
 
         compose.onNodeWithTag("confirmDeleteDevice").assertIsDisplayed().activate()
 
@@ -467,7 +467,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
         compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
-        compose.onNodeWithText("Devices asking to join").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("AppKeys asking to join").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
 
         assertEquals(listOf(requestLink), rejectedRequests)
@@ -612,7 +612,7 @@ class IrisDriveAndroidGuiFlowTest {
         state = "linked",
         stateLabel = "Linked",
         connectionState = if (isCurrentDevice) "local" else "offline",
-        connectionLabel = if (isCurrentDevice) "This device" else "Offline",
+        connectionLabel = if (isCurrentDevice) "This AppKey" else "Offline",
         detail = pubkey,
         isCurrentDevice = isCurrentDevice,
         isOnline = isCurrentDevice,

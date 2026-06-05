@@ -21,7 +21,7 @@ fn drive_root_event_roundtrip() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
     let authorized_app_keys = vec![device.public_key().to_hex()];
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
         // Set an explicit published_at so roundtrip is stable.
         1_700_000_000,
@@ -46,23 +46,23 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
     let parent = RootParent {
-        device_id: device.public_key().to_hex(),
-        device_seq: 2,
+        app_key_pubkey: device.public_key().to_hex(),
+        app_key_seq: 2,
         root_cid: Cid::encrypted([0x20; 32], [0x21; 32]).to_string(),
     };
     let observed_device = Keys::generate().public_key().to_hex();
     let observed = BTreeMap::from([(
         observed_device.clone(),
         RootObservation {
-            device_seq: 9,
+            app_key_seq: 9,
             root_cid: Cid::encrypted([0x30; 32], [0x31; 32]).to_string(),
         },
     )]);
-    let root = DeviceRootRef {
+    let root = AppKeyRootRef {
         root_cid: Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
         published_at: 1_700_000_000,
         dck_generation: 7,
-        device_seq: 3,
+        app_key_seq: 3,
         parents: vec![parent.clone()],
         observed: observed.clone(),
         local_only: false,
@@ -77,7 +77,7 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
     )
     .unwrap();
     let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
-    assert_eq!(parsed_root.device_seq, 3);
+    assert_eq!(parsed_root.app_key_seq, 3);
     assert_eq!(parsed_root.parents, vec![parent]);
     assert_eq!(parsed_root.observed, observed);
 }
@@ -87,7 +87,7 @@ fn drive_root_event_does_not_publish_root_key_in_cleartext() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
     let root_key = [0x44; 32];
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x33; 32], root_key).to_string(),
         1_700_000_000,
         1,
@@ -139,7 +139,7 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x33; 32], [0x44; 32]).to_string(),
         1_700_000_000,
         1,
@@ -256,7 +256,7 @@ fn private_hashtree_root_event_is_files_app_compatible() {
     let owner = Keys::generate();
     let root_key = [0x44; 32];
     let root_hash = [0x33; 32];
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted(root_hash, root_key).to_string(),
         1_700_000_000,
         1,
@@ -285,7 +285,7 @@ fn private_hashtree_root_event_is_files_app_compatible() {
 fn drive_root_event_builder_rejects_unencrypted_root() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
+    let root = AppKeyRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
 
     assert!(
         build_drive_root_event(
@@ -303,7 +303,7 @@ fn drive_root_event_builder_rejects_unencrypted_root() {
 fn drive_root_event_builder_always_wraps_for_signing_device() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
         1_700_000_000,
         1,
@@ -318,7 +318,7 @@ fn drive_root_event_builder_always_wraps_for_signing_device() {
 fn drive_root_event_with_zero_published_at_uses_wall_clock() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         0, // caller has not stamped; use wall-clock time
         1,
@@ -340,7 +340,7 @@ fn drive_root_event_with_zero_published_at_uses_wall_clock() {
 fn drive_root_publish_event_advances_past_stored_root_timestamp() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(
+    let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         1_700_000_000,
         1,
@@ -410,13 +410,13 @@ fn drive_root_event_wrong_kind_rejected() {
 
 #[test]
 fn drive_root_event_attributes_to_device_signer() {
-    // Important property: even if two devices publish for the same
+    // Important property: even if two AppKeys publish for the same
     // root scope + drive, the event's author is the AppKey pubkey, so the
     // merge engine can attribute each root to the right app actor.
     let device_a = Keys::generate();
     let device_b = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let root = DeviceRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
+    let root = AppKeyRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
     let ev_a = build_drive_root_event(
         &device_a,
         &root_scope_id,

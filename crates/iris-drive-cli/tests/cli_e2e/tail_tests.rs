@@ -171,7 +171,7 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     assert_eq!(v["hashtree"]["visible_file_bytes"], 18);
     assert!(v["hashtree"]["local_block_count"].as_u64().unwrap() > 0);
     assert!(v["hashtree"]["local_block_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(v["network"]["published_device_roots"], 1);
+    assert_eq!(v["network"]["published_app_key_roots"], 1);
     assert_eq!(v["peers"][0]["has_root"], true);
     assert_eq!(v["peers"][0]["root_cid"], root_cid);
     assert_eq!(v["peers"][0]["root_private"], true);
@@ -215,8 +215,8 @@ fn list_after_import_shows_merged_view() {
     assert!(out.status.success(), "{out:?}");
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
-    assert_eq!(v["authorized_devices"], 1);
-    assert_eq!(v["device_roots_present"], 1);
+    assert_eq!(v["authorized_app_keys"], 1);
+    assert_eq!(v["app_key_roots_present"], 1);
     let files = v["files"].as_array().unwrap();
     assert_eq!(files.len(), 2);
     let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
@@ -404,8 +404,8 @@ fn list_before_import_is_empty() {
     assert!(out.status.success());
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
-    assert_eq!(v["authorized_devices"], 1);
-    assert_eq!(v["device_roots_present"], 0);
+    assert_eq!(v["authorized_app_keys"], 1);
+    assert_eq!(v["app_key_roots_present"], 0);
     assert_eq!(v["files"].as_array().unwrap().len(), 0);
 }
 

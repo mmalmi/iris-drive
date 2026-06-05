@@ -21,7 +21,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
         app.buttons["openLinkDevice"].tap()
-        XCTAssertTrue(app.navigationBars["Link device"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Link app install"].waitForExistence(timeout: 5))
     }
 
     func testLinkThisDeviceFromWelcome() throws {
@@ -73,8 +73,8 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(value.contains(" online"), "unexpected devices summary: \(value)")
 
         devicesSummary.tap()
-        XCTAssertTrue(app.navigationBars["Devices"].waitForExistence(timeout: 10))
-        XCTAssertTrue(tabButton("Devices", in: app).isSelected)
+        XCTAssertTrue(app.navigationBars["AppKeys"].waitForExistence(timeout: 10))
+        XCTAssertTrue(tabButton("AppKeys", in: app).isSelected)
     }
 
     func testMyDriveFileCountMatchesExpected() throws {
@@ -98,9 +98,9 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 45))
         XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
-        XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
-        tabButton("Devices", in: app).tap()
-        XCTAssertTrue(app.staticTexts["This device"].waitForExistence(timeout: 10))
+        XCTAssertTrue(tabButton("AppKeys", in: app).waitForExistence(timeout: 10))
+        tabButton("AppKeys", in: app).tap()
+        XCTAssertTrue(app.staticTexts["This AppKey"].waitForExistence(timeout: 10))
         XCTAssertTrue(
             waitForLinkedOnlineDeviceRow(in: app, timeout: 10),
             "Expected a linked online device row. Static texts:\n\(staticTextLabels(in: app))"
@@ -112,8 +112,8 @@ final class IrisDriveIOSUITests: XCTestCase {
         let linkedDevice = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
         let app = launchApp()
 
-        XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
-        tabButton("Devices", in: app).tap()
+        XCTAssertTrue(tabButton("AppKeys", in: app).waitForExistence(timeout: 10))
+        tabButton("AppKeys", in: app).tap()
         XCTAssertTrue(app.buttons["addDeviceButton"].waitForExistence(timeout: 10))
         app.buttons["addDeviceButton"].tap()
 

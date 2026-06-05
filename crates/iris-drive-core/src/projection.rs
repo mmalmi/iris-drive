@@ -8,12 +8,12 @@ use hashtree_core::{
 use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
-use crate::config::{AppConfig, DeviceRootRef, Drive};
+use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::conflict::conflict_filename;
 use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
 use crate::merge::{
-    DeviceSnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
-    MergedView, merge_drives, walk_device_tree,
+    AppKeySnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
+    MergedView, merge_drives, walk_app_key_tree,
 };
 use crate::profile::ProfileState;
 
@@ -23,9 +23,9 @@ pub enum ProjectionError {
     NoAccount,
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
     PrimaryDriveMissing,
-    #[error("invalid root cid for device {device_id}: {root_cid}: {source}")]
+    #[error("invalid root cid for AppKey {app_key_pubkey}: {root_cid}: {source}")]
     RootCid {
-        device_id: String,
+        app_key_pubkey: String,
         root_cid: String,
         source: CidParseError,
     },
@@ -40,8 +40,8 @@ pub enum ProjectionError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrimaryMergedView {
     pub view: MergedView,
-    pub authorized_devices: usize,
-    pub device_roots_present: usize,
+    pub authorized_app_keys: usize,
+    pub app_key_roots_present: usize,
 }
 
 impl PrimaryMergedView {
@@ -80,41 +80,41 @@ pub async fn primary_merged_view<S: Store>(
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let authorized = authorized_app_key_pubkeys(account);
-    let merge_devices = merge_app_key_pubkeys(account, drive);
+    let merge_app_keys = merge_app_key_pubkeys(account, drive);
 
     let mut snapshots_data = Vec::new();
-    for app_key_pubkey in &merge_devices {
-        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
+    for app_key_pubkey in &merge_app_keys {
+        let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
         let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-            device_id: app_key_pubkey.clone(),
+            app_key_pubkey: app_key_pubkey.clone(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
-        let (files, tombstones) = walk_device_tree(tree, &cid).await?;
+        let (files, tombstones) = walk_app_key_tree(tree, &cid).await?;
         snapshots_data.push((app_key_pubkey.clone(), root, files, tombstones));
     }
 
-    let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
-    let snapshots: Vec<DeviceSnapshot<'_>> = snapshots_data
+    let merge_app_key_refs: Vec<&str> = merge_app_keys.iter().map(String::as_str).collect();
+    let snapshots: Vec<AppKeySnapshot<'_>> = snapshots_data
         .iter()
-        .map(|(app_key_pubkey, root, files, tombstones)| DeviceSnapshot {
+        .map(|(app_key_pubkey, root, files, tombstones)| AppKeySnapshot {
             app_key_pubkey: app_key_pubkey.as_str(),
             root,
             files: files.clone(),
             tombstones: tombstones.clone(),
         })
         .collect();
-    let mut view = merge_drives(&merge_device_refs, &snapshots);
+    let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
     Ok(PrimaryMergedView {
         view,
-        authorized_devices: authorized.len(),
-        device_roots_present: snapshots.len(),
+        authorized_app_keys: authorized.len(),
+        app_key_roots_present: snapshots.len(),
     })
 }
 
@@ -177,7 +177,7 @@ fn visible_conflict_entry(
     published_at: i64,
     occupied_paths: &mut BTreeSet<String>,
 ) -> Result<MergedEntry, ProjectionError> {
-    let path = next_visible_conflict_path(original_path, &file.device_id, occupied_paths);
+    let path = next_visible_conflict_path(original_path, &file.app_key_pubkey, occupied_paths);
     Ok(MergedEntry {
         path,
         source_path: Some(original_path.to_string()),
@@ -185,13 +185,13 @@ fn visible_conflict_entry(
         size: file.size,
         whole_file_hash: parse_conflict_whole_file_hash(file, original_path)?,
         modified_at: file.modified_at,
-        source_device: file.device_id.clone(),
+        source_app_key_pubkey: file.app_key_pubkey.clone(),
         published_at,
     })
 }
 
 fn conflict_file_matches_entry(file: &MergedConflictFile, entry: &MergedEntry) -> bool {
-    file.device_id == entry.source_device
+    file.app_key_pubkey == entry.source_app_key_pubkey
         && file.content_cid_hash == to_hex(&entry.hash)
         && file.content_hash == entry_identity_hash_hex(entry)
         && file.size == entry.size
@@ -205,14 +205,14 @@ fn entry_identity_hash_hex(entry: &MergedEntry) -> String {
 
 fn next_visible_conflict_path(
     original_path: &str,
-    device_id: &str,
+    app_key_pubkey: &str,
     occupied_paths: &mut BTreeSet<String>,
 ) -> String {
     for index in 1..=256 {
         let label = if index == 1 {
-            device_id.to_string()
+            app_key_pubkey.to_string()
         } else {
-            format!("{device_id} {index}")
+            format!("{app_key_pubkey} {index}")
         };
         let path = conflict_filename(original_path, &label);
         if occupied_paths.insert(path.clone()) {
@@ -220,7 +220,7 @@ fn next_visible_conflict_path(
         }
     }
 
-    conflict_filename(original_path, &format!("{device_id} 257"))
+    conflict_filename(original_path, &format!("{app_key_pubkey} 257"))
 }
 
 fn parse_conflict_hash(hex: &str, path: &str) -> Result<[u8; 32], ProjectionError> {
@@ -257,15 +257,15 @@ pub async fn primary_merged_root<S: Store>(
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
-    let merge_devices = merge_app_key_pubkeys(account, drive);
-    let source_roots = merge_source_roots(tree, drive, &merge_devices).await?;
+    let merge_app_keys = merge_app_key_pubkeys(account, drive);
+    let source_roots = merge_source_roots(tree, drive, &merge_app_keys).await?;
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
     let target_dirs = merged_user_directory_paths(
         tree,
         drive,
-        &merge_devices,
+        &merge_app_keys,
         &merged.view.suppressed_by_tombstone,
     )
     .await?;
@@ -295,11 +295,11 @@ pub async fn primary_merged_root<S: Store>(
 async fn merge_source_roots<S: Store>(
     tree: &HashTree<S>,
     drive: &Drive,
-    merge_devices: &[String],
-) -> Result<BTreeMap<String, DeviceRootRef>, ProjectionError> {
+    merge_app_keys: &[String],
+) -> Result<BTreeMap<String, AppKeyRootRef>, ProjectionError> {
     let mut source_roots = BTreeMap::new();
-    for app_key_pubkey in merge_devices {
-        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
+    for app_key_pubkey in merge_app_keys {
+        let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
         let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
@@ -377,14 +377,14 @@ async fn ensure_visible_dir_segments<S: Store>(
 
 async fn source_entry_for_merged_entry<S: Store>(
     tree: &HashTree<S>,
-    source_roots: &BTreeMap<String, DeviceRootRef>,
+    source_roots: &BTreeMap<String, AppKeyRootRef>,
     entry: &MergedEntry,
 ) -> Result<hashtree_core::TreeEntry, ProjectionError> {
     let root = source_roots
-        .get(&entry.source_device)
-        .ok_or_else(|| HashTreeError::PathNotFound(entry.source_device.clone()))?;
+        .get(&entry.source_app_key_pubkey)
+        .ok_or_else(|| HashTreeError::PathNotFound(entry.source_app_key_pubkey.clone()))?;
     let root = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-        device_id: entry.source_device.clone(),
+        app_key_pubkey: entry.source_app_key_pubkey.clone(),
         root_cid: root.root_cid.clone(),
         source,
     })?;
@@ -487,19 +487,19 @@ fn visible_entry_meta(
 async fn merged_user_directory_paths<S: Store>(
     tree: &HashTree<S>,
     drive: &crate::config::Drive,
-    authorized_devices: &[String],
+    authorized_app_keys: &[String],
     suppressed_paths: &[String],
 ) -> Result<BTreeSet<String>, ProjectionError> {
     let mut dirs = BTreeSet::new();
-    for app_key_pubkey in authorized_devices {
-        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
+    for app_key_pubkey in authorized_app_keys {
+        let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
         let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-            device_id: app_key_pubkey.clone(),
+            app_key_pubkey: app_key_pubkey.clone(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
@@ -521,8 +521,8 @@ fn path_is_suppressed_by_tombstone(path: &str, suppressed_paths: &[String]) -> b
 async fn merge_root_for_device<S: Store>(
     tree: &HashTree<S>,
     app_key_pubkey: &str,
-    root: &DeviceRootRef,
-) -> Result<Option<DeviceRootRef>, ProjectionError> {
+    root: &AppKeyRootRef,
+) -> Result<Option<AppKeyRootRef>, ProjectionError> {
     let mut current = root.clone();
     for _ in 0..32 {
         if !current.local_only {
@@ -532,26 +532,26 @@ async fn merge_root_for_device<S: Store>(
             .parents
             .iter()
             .rev()
-            .find(|parent| parent.device_id == app_key_pubkey)
+            .find(|parent| parent.app_key_pubkey == app_key_pubkey)
         else {
             return Ok(None);
         };
         let parent_cid =
             Cid::parse(&parent.root_cid).map_err(|source| ProjectionError::RootCid {
-                device_id: app_key_pubkey.to_string(),
+                app_key_pubkey: app_key_pubkey.to_string(),
                 root_cid: parent.root_cid.clone(),
                 source,
             })?;
         let Some(meta) = read_root_meta(tree, &parent_cid).await? else {
-            let mut parent_root = DeviceRootRef::legacy(
+            let mut parent_root = AppKeyRootRef::legacy(
                 parent.root_cid.clone(),
                 current.published_at,
                 current.dck_generation,
             );
-            parent_root.device_seq = parent.device_seq;
+            parent_root.app_key_seq = parent.app_key_seq;
             return Ok(Some(parent_root));
         };
-        current = DeviceRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
+        current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
     }
     Ok(None)
 }
@@ -610,7 +610,7 @@ fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
 #[must_use]
 pub fn merge_app_key_pubkeys(account: &ProfileState, drive: &Drive) -> Vec<String> {
     let mut devices = authorized_app_key_pubkeys(account);
-    for app_key_pubkey in drive.device_roots.keys() {
+    for app_key_pubkey in drive.app_key_roots.keys() {
         if !devices.contains(app_key_pubkey) {
             devices.push(app_key_pubkey.clone());
         }
@@ -641,8 +641,8 @@ fn safe_relative_path(path: &str) -> Option<&str> {
 
 #[cfg(test)]
 fn may_replace_destination(
-    _remote_entry: Option<&crate::merge::DeviceFileEntry>,
-    local_entry: Option<&crate::merge::DeviceFileEntry>,
+    _remote_entry: Option<&crate::merge::AppKeyFileEntry>,
+    local_entry: Option<&crate::merge::AppKeyFileEntry>,
     destination_was_imported: bool,
 ) -> bool {
     destination_was_imported || local_entry.is_none()

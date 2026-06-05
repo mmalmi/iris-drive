@@ -372,7 +372,7 @@ where
     let root = hashtree_core::Cid::parse(provider.anchor().await.as_str())
         .context("reading provider root CID")?;
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
-    let publish = publish_current_device_root_best_effort(daemon.config_dir()).await;
+    let publish = publish_current_app_key_root_best_effort(daemon.config_dir()).await;
     Ok(json!({
         "path": changed_path,
         "root_cid": report.root_cid,
@@ -407,10 +407,10 @@ async fn import_provider_root_with_retry(
     }
 }
 
-async fn publish_current_device_root_best_effort(config_dir: &Path) -> serde_json::Value {
+async fn publish_current_app_key_root_best_effort(config_dir: &Path) -> serde_json::Value {
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        publish_current_device_root(config_dir),
+        publish_current_app_key_root(config_dir),
     )
     .await
     {
@@ -420,7 +420,7 @@ async fn publish_current_device_root_best_effort(config_dir: &Path) -> serde_jso
     }
 }
 
-async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_json::Value> {
+async fn publish_current_app_key_root(config_dir: &Path) -> anyhow::Result<serde_json::Value> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(account) = config.profile.as_ref() else {
         return Ok(json!({"published_drive_root": false, "error": "account missing"}));
@@ -428,8 +428,8 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
     let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
         return Ok(json!({"published_drive_root": false, "error": "primary drive missing"}));
     };
-    let Some(root) = drive.device_roots.get(&account.app_key_pubkey) else {
-        return Ok(json!({"published_drive_root": false, "error": "device root missing"}));
+    let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey) else {
+        return Ok(json!({"published_drive_root": false, "error": "AppKey root missing"}));
     };
     let loaded_account =
         Profile::load(account.clone(), config_dir).context("loading profile keys")?;
@@ -440,14 +440,14 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
         config.relays.clone()
     };
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
-    let authorized_devices = authorized_app_key_pubkeys(account);
+    let authorized_app_keys = authorized_app_key_pubkeys(account);
     let result = iris_drive_core::relay_sync::publish_drive_root(
         &client,
         loaded_account.app_key.keys(),
         &account.root_scope_id(),
         &drive.drive_id,
         root,
-        &authorized_devices,
+        &authorized_app_keys,
     )
     .await;
     let _ = client.disconnect().await;

@@ -148,7 +148,7 @@ fn stats_prints_gui_summary_counts() {
     let value = run_json(dir.path(), &["stats"]);
     assert_eq!(value["initialized"], true);
     assert_eq!(value["files"], 0);
-    assert_eq!(value["authorized_devices"], 1);
+    assert_eq!(value["authorized_app_keys"], 1);
     assert_eq!(value["backup_targets"], 0);
     assert_eq!(value["unresolved_conflicts"], 0);
 }
@@ -274,7 +274,7 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives[0]["role"], "owner");
     assert!(drives[0].get("working_dir").is_none());
     assert_eq!(v["network"]["authorized_device_count"], 1);
-    assert_eq!(v["network"]["published_device_roots"], 0);
+    assert_eq!(v["network"]["published_app_key_roots"], 0);
     assert_eq!(v["network"]["fips"]["enabled"], false);
     assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
     assert_eq!(v["network"]["fips"]["roster_connected_peer_count"], 0);
@@ -960,14 +960,14 @@ fn seed_conflict_record(config_dir: &std::path::Path, conflict_id: &str) {
             path: "report.pdf".into(),
             visible_conflict_path: "report (conflict from phone).pdf".into(),
             local: ConflictSide {
-                device_id: "laptop".into(),
-                device_seq: 1,
+                app_key_pubkey: "laptop".into(),
+                app_key_seq: 1,
                 root_cid: root_cid.clone(),
                 whole_file_hash: "hash-local".into(),
             },
             remote: Some(ConflictSide {
-                device_id: "phone".into(),
-                device_seq: 1,
+                app_key_pubkey: "phone".into(),
+                app_key_seq: 1,
                 root_cid: "cid-remote".into(),
                 whole_file_hash: "hash-remote".into(),
             }),
@@ -986,7 +986,7 @@ fn seed_conflict_record(config_dir: &std::path::Path, conflict_id: &str) {
             .unwrap();
         drive.last_root_cid = Some(new_root.to_string());
         drive
-            .device_roots
+            .app_key_roots
             .get_mut(&account_device)
             .unwrap()
             .root_cid = new_root.to_string();

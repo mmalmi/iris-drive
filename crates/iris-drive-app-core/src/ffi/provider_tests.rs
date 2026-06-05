@@ -239,7 +239,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .unwrap();
     let root = drive
-        .device_roots
+        .app_key_roots
         .get(&owner_account_state.app_key_pubkey)
         .unwrap();
     let authorized = owner_account_state

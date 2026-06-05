@@ -584,7 +584,7 @@ fn current_drive_root(config_dir: &Path, drive_id: &str) -> Result<Cid, GatewayE
     let root_cid = config
         .profile
         .as_ref()
-        .and_then(|account| drive.device_roots.get(&account.app_key_pubkey))
+        .and_then(|account| drive.app_key_roots.get(&account.app_key_pubkey))
         .map(|root| root.root_cid.as_str())
         .or(drive.last_root_cid.as_deref())
         .ok_or_else(|| GatewayError::InvalidRequest(format!("drive {drive_id} has no root")))?;

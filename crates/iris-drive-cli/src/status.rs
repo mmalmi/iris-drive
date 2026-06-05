@@ -91,9 +91,9 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 .unwrap_or(false)
         })
         .count();
-    let published_device_roots = config
+    let published_app_key_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .map_or(0, |drive| drive.device_roots.len());
+        .map_or(0, |drive| drive.app_key_roots.len());
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
@@ -122,7 +122,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "root_scope_id": d.root_scope_id,
                 "role": drive_role_label(d.role),
                 "last_root_cid": d.last_root_cid,
-                "device_root_count": d.device_roots.len(),
+                "app_key_root_count": d.app_key_roots.len(),
             })).collect::<Vec<_>>(),
             "hashtree": {
                 "blocks_dir": blocks_dir.display().to_string(),
@@ -146,7 +146,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "backup_target_count": backup_target_count,
                 "backup_targets": backup_targets,
                 "authorized_device_count": authorized_device_count,
-                "published_device_roots": published_device_roots,
+                "published_app_key_roots": published_app_key_roots,
                 "relay_statuses": normalized_relay_statuses(&config, daemon_status.as_ref()),
                 "fips": fips_diagnostics,
             },
@@ -339,7 +339,7 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
         .and_then(|state| {
             config
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&state.app_key_pubkey))
+                .and_then(|drive| drive.app_key_roots.get(&state.app_key_pubkey))
                 .map(|root| root.root_cid.clone())
         })
         .or_else(|| {
@@ -826,7 +826,7 @@ pub(crate) fn root_file_stats(
         .build()
         .ok()?;
     let (files, _tombstones) =
-        runtime.block_on(async { walk_device_tree(daemon.tree(), &cid).await.ok() })?;
+        runtime.block_on(async { walk_app_key_tree(daemon.tree(), &cid).await.ok() })?;
     let top_level_entries = files
         .iter()
         .filter_map(|entry| entry.path.split('/').next())

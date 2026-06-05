@@ -70,15 +70,15 @@ async fn import_visible_root_records_mount_deletions_as_tombstones() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(report.root_cid, root.root_cid);
     assert!(!root.local_only);
-    assert_eq!(root.device_seq, 2);
+    assert_eq!(root.app_key_seq, 2);
 
     let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert_eq!(
@@ -124,8 +124,8 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -145,9 +145,9 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(
+        AppKeyRootRef::from_meta(
             remote_root.to_string(),
             remote_meta.created_at,
             &remote_meta,
@@ -182,11 +182,11 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert!(files.is_empty());
@@ -234,8 +234,8 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -255,9 +255,9 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(
+        AppKeyRootRef::from_meta(
             remote_root.to_string(),
             remote_meta.created_at,
             &remote_meta,
@@ -285,11 +285,11 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert!(files.is_empty());
@@ -336,8 +336,8 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -357,9 +357,9 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(
+        AppKeyRootRef::from_meta(
             remote_root.to_string(),
             remote_meta.created_at,
             &remote_meta,
@@ -406,11 +406,11 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert_eq!(
@@ -454,8 +454,8 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
     let remote_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.into(),
-        device_id: remote.clone(),
-        device_seq: 1,
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
         dck_generation: 1,
         local_only: false,
         parents: Vec::new(),
@@ -475,9 +475,9 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
 
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         remote.clone(),
-        DeviceRootRef::from_meta(
+        AppKeyRootRef::from_meta(
             remote_root.to_string(),
             remote_meta.created_at,
             &remote_meta,
@@ -524,11 +524,11 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
     assert_eq!(
@@ -556,7 +556,7 @@ async fn import_persists_rebuildable_sync_cache_with_base_state() {
             .unwrap();
     assert_eq!(cache.schema, crate::sync_cache::SyncCache::SCHEMA);
     assert_eq!(cache.roots.len(), 1);
-    assert_eq!(cache.roots[0].device_id, account.state.app_key_pubkey);
+    assert_eq!(cache.roots[0].app_key_pubkey, account.state.app_key_pubkey);
     assert_eq!(cache.roots[0].root_cid, report.root_cid);
     assert_eq!(cache.path_state.len(), 1);
     assert_eq!(cache.path_state[0].path, "note.txt");
@@ -606,7 +606,7 @@ async fn corrupt_sync_cache_rebuilds_from_signed_roots() {
 }
 
 #[tokio::test]
-async fn import_records_per_device_root_when_account_present() {
+async fn import_records_per_app_key_root_when_account_present() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());
     let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
@@ -616,20 +616,20 @@ async fn import_records_per_device_root_when_account_present() {
     let report = daemon.import_source_dir(work.path()).await.unwrap();
 
     let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
-    assert_eq!(drive.device_roots.len(), 1);
+    assert_eq!(drive.app_key_roots.len(), 1);
     let entry = drive
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
-        .expect("per-device root for this device");
+        .expect("per-AppKey root for this AppKey");
     assert_eq!(entry.root_cid, report.root_cid);
     assert!(entry.published_at > 0);
     assert_eq!(entry.dck_generation, 1); // create-flow seeds DCK gen 1
-    assert_eq!(entry.device_seq, 1);
+    assert_eq!(entry.app_key_seq, 1);
     assert!(entry.parents.is_empty());
 }
 
 #[tokio::test]
-async fn import_embeds_root_meta_and_advances_device_sequence() {
+async fn import_embeds_root_meta_and_advances_app_key_sequence() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());
     let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
@@ -644,8 +644,8 @@ async fn import_embeds_root_meta_and_advances_device_sequence() {
         .expect("first root metadata");
     assert_eq!(first_meta.schema, crate::DriveRootMeta::SCHEMA);
     assert_eq!(first_meta.drive_id, PRIMARY_DRIVE_ID);
-    assert_eq!(first_meta.device_id, account.state.app_key_pubkey);
-    assert_eq!(first_meta.device_seq, 1);
+    assert_eq!(first_meta.app_key_pubkey, account.state.app_key_pubkey);
+    assert_eq!(first_meta.app_key_seq, 1);
     assert!(first_meta.parents.is_empty());
 
     std::fs::write(work.path().join("note.txt"), b"two").unwrap();
@@ -655,20 +655,20 @@ async fn import_embeds_root_meta_and_advances_device_sequence() {
         .await
         .unwrap()
         .expect("second root metadata");
-    assert_eq!(second_meta.device_seq, 2);
+    assert_eq!(second_meta.app_key_seq, 2);
     assert_eq!(second_meta.parents.len(), 1);
-    assert_eq!(second_meta.parents[0].device_seq, 1);
+    assert_eq!(second_meta.parents[0].app_key_seq, 1);
     assert_eq!(second_meta.parents[0].root_cid, first.root_cid);
 
     let entry = daemon
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, second.root_cid);
-    assert_eq!(entry.device_seq, 2);
+    assert_eq!(entry.app_key_seq, 2);
     assert_eq!(entry.parents, second_meta.parents);
 }
 
@@ -690,7 +690,7 @@ async fn import_publish_timestamps_advance_past_previous_root() {
         .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
         .unwrap();
     drive
-        .device_roots
+        .app_key_roots
         .get_mut(&account.state.app_key_pubkey)
         .unwrap()
         .published_at = future_published_at;
@@ -705,7 +705,7 @@ async fn import_publish_timestamps_advance_past_previous_root() {
         .config()
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.published_at, future_published_at + 1);
@@ -815,14 +815,14 @@ fn conflict_record(conflict_id: &str) -> ConflictRecord {
         path: "report.pdf".into(),
         visible_conflict_path: "report (conflict from phone).pdf".into(),
         local: ConflictSide {
-            device_id: "laptop".into(),
-            device_seq: 2,
+            app_key_pubkey: "laptop".into(),
+            app_key_seq: 2,
             root_cid: "cid-local".into(),
             whole_file_hash: "hash-local".into(),
         },
         remote: Some(ConflictSide {
-            device_id: "phone".into(),
-            device_seq: 7,
+            app_key_pubkey: "phone".into(),
+            app_key_seq: 7,
             root_cid: "cid-remote".into(),
             whole_file_hash: "hash-remote".into(),
         }),

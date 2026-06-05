@@ -59,24 +59,24 @@ fn root_update_debounce_has_fast_floor() {
 }
 
 #[test]
-fn stale_root_apply_followup_detects_superseded_device_root() {
+fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
         root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
-        device_roots: BTreeMap::new(),
+        app_key_roots: BTreeMap::new(),
         last_root_cid: None,
         key_hex: None,
     };
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         "device-a".to_string(),
-        DeviceRootRef::legacy("root-a", 10, 1),
+        AppKeyRootRef::legacy("root-a", 10, 1),
     );
-    drive.device_roots.insert(
+    drive.app_key_roots.insert(
         "device-b".to_string(),
-        DeviceRootRef::legacy("remote-root-a", 11, 1),
+        AppKeyRootRef::legacy("remote-root-a", 11, 1),
     );
     let mut config = AppConfig {
         profile: Some(ProfileState {
@@ -103,7 +103,7 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
         .drives
         .get_mut(0)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get_mut("device-a")
         .unwrap()
         .root_cid = "root-b".to_string();
@@ -119,7 +119,7 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
         .drives
         .get_mut(0)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get_mut("device-b")
         .unwrap()
         .root_cid = "remote-root-b".to_string();

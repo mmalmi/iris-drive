@@ -88,32 +88,32 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let authorized = authorized_app_key_pubkeys(account);
-        let merge_devices = iris_drive_core::projection::merge_app_key_pubkeys(account, drive);
+        let merge_app_keys = iris_drive_core::projection::merge_app_key_pubkeys(account, drive);
 
-        // Fetch each trusted device root's tree + tombstones from htree.
-        // With `--at N`, this device's own root walks back N revisions
-        // via the `.hashtree/prev` chain; other devices' roots stay at their
+        // Fetch each trusted AppKey root's tree + tombstones from htree.
+        // With `--at N`, this AppKey's own root walks back N revisions
+        // via the `.hashtree/prev` chain; other AppKeys' roots stay at their
         // current state.
         let mut snapshots_data = Vec::new();
-        for app_key_pubkey in &merge_devices {
-            let Some(root) = drive.device_roots.get(app_key_pubkey) else {
-                continue; // device hasn't published its root yet
+        for app_key_pubkey in &merge_app_keys {
+            let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
+                continue; // AppKey has not published its root yet
             };
             let mut cid = Cid::parse(&root.root_cid)
-                .with_context(|| format!("parsing root CID for device {app_key_pubkey}"))?;
+                .with_context(|| format!("parsing root CID for AppKey {app_key_pubkey}"))?;
             if at > 0 && *app_key_pubkey == account.app_key_pubkey {
                 cid = iris_drive_core::history::revision_at(daemon.tree(), &cid, at)
                     .await
                     .with_context(|| format!("revision -{at} not in chain"))?;
             }
-            let (files, tombstones) = walk_device_tree(daemon.tree(), &cid).await?;
+            let (files, tombstones) = walk_app_key_tree(daemon.tree(), &cid).await?;
             snapshots_data.push((app_key_pubkey.clone(), root.clone(), files, tombstones));
         }
 
-        let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
-        let snapshots: Vec<DeviceSnapshot> = snapshots_data
+        let merge_app_key_refs: Vec<&str> = merge_app_keys.iter().map(String::as_str).collect();
+        let snapshots: Vec<AppKeySnapshot> = snapshots_data
             .iter()
-            .map(|(pk, root, files, tombs)| DeviceSnapshot {
+            .map(|(pk, root, files, tombs)| AppKeySnapshot {
                 app_key_pubkey: pk.as_str(),
                 root,
                 files: files.clone(),
@@ -121,15 +121,15 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             })
             .collect();
 
-        let view = merge_drives(&merge_device_refs, &snapshots);
+        let view = merge_drives(&merge_app_key_refs, &snapshots);
 
         println!(
             "{}",
             json!({
                 "drive_id": drive.drive_id,
                 "at_revision": at,
-                "authorized_devices": authorized.len(),
-                "device_roots_present": snapshots.len(),
+                "authorized_app_keys": authorized.len(),
+                "app_key_roots_present": snapshots.len(),
                 "files": view
                     .files
                     .iter()
@@ -137,7 +137,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
                         "path": e.path,
                         "size": e.size,
                         "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
-                        "source_device": e.source_device,
+                        "source_app_key_pubkey": e.source_app_key_pubkey,
                         "modified_at": e.modified_at,
                         "published_at": e.published_at,
                     }))

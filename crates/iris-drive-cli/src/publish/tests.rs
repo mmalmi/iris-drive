@@ -148,7 +148,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
         .config()
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .unwrap()
-        .device_roots
+        .app_key_roots
         .get(&account.state.app_key_pubkey)
         .unwrap()
         .clone();
@@ -164,7 +164,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
     )
     .unwrap();
     folder
-        .device_roots
+        .app_key_roots
         .insert(account.state.app_key_pubkey.clone(), root);
     let config = AppConfig {
         profile: Some(account.state.clone()),

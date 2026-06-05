@@ -278,16 +278,16 @@ pub fn build_current_direct_root_events(
         ));
     }
     if let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
-        && let Some(root) = drive.device_roots.get(&state.app_key_pubkey)
+        && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-        let authorized_devices = authorized_app_key_pubkeys(state);
+        let authorized_app_keys = authorized_app_key_pubkeys(state);
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
             &state.root_scope_id(),
             &drive.drive_id,
             root,
-            &authorized_devices,
+            &authorized_app_keys,
         )
         .context("building drive-root event")?;
         events.push(direct_root_event(
@@ -295,9 +295,9 @@ pub fn build_current_direct_root_events(
                 "drive-root:{}:{}:{}:{}:{}",
                 state.app_key_pubkey,
                 drive.drive_id,
-                root.device_seq,
+                root.app_key_seq,
                 root.root_cid,
-                authorized_devices.join(",")
+                authorized_app_keys.join(",")
             ),
             &event,
         ));
@@ -388,7 +388,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
     };
     config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {
         drive
-            .device_roots
+            .app_key_roots
             .iter()
             .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })

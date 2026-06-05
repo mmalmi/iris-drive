@@ -119,7 +119,7 @@ pub async fn sync_once_with_fips(
         }
     }
 
-    let authorized_devices = config
+    let authorized_app_keys = config
         .profile
         .as_ref()
         .map(authorized_app_key_pubkeys)
@@ -129,7 +129,7 @@ pub async fn sync_once_with_fips(
         &client,
         &root_scope_id,
         PRIMARY_DRIVE_ID,
-        &authorized_devices,
+        &authorized_app_keys,
         timeout,
     )
     .await
@@ -184,7 +184,7 @@ pub async fn sync_once_with_fips(
                 if matches!(outcome, relay_sync::FilesRootApply::Applied)
                     && let Some(root_ref) = config
                         .drive(PRIMARY_DRIVE_ID)
-                        .and_then(|drive| drive.device_roots.get(&account.state.app_key_pubkey))
+                        .and_then(|drive| drive.app_key_roots.get(&account.state.app_key_pubkey))
                 {
                     push_unique(&mut root_cids_to_download, root_ref.root_cid.clone());
                 }
@@ -288,7 +288,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
     };
     config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {
         drive
-            .device_roots
+            .app_key_roots
             .iter()
             .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })

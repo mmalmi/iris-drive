@@ -2,7 +2,7 @@
 //!
 //! The signed drive root remains the canonical truth. This metadata
 //! travels inside `.hashtree/root.json` to explain the snapshot's
-//! ancestry and per-device observations without making the drive
+//! ancestry and per-AppKey observations without making the drive
 //! depend on operation-log replay.
 
 use std::collections::BTreeMap;
@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootParent {
-    pub device_id: String,
-    pub device_seq: u64,
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
     pub root_cid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootObservation {
-    pub device_seq: u64,
+    pub app_key_seq: u64,
     pub root_cid: String,
 }
 
@@ -26,11 +26,11 @@ pub struct RootObservation {
 pub struct DriveRootMeta {
     pub schema: u16,
     pub drive_id: String,
-    pub device_id: String,
-    pub device_seq: u64,
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
     pub dck_generation: u64,
     /// Local bookkeeping root that should not be announced as this
-    /// device's own edit.
+    /// `AppKey`'s own edit.
     #[serde(default, skip_serializing_if = "is_false")]
     pub local_only: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

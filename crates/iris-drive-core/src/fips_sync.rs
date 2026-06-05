@@ -1,9 +1,9 @@
 //! Direct block replication over hashtree's FIPS transport.
 //!
-//! Nostr relay events carry Iris Drive metadata: the device roster and
-//! per-device root CIDs. This module moves the actual hashtree blocks directly
-//! between authorized devices. Blossom remains useful as a public remote, but
-//! the local app should first ask peer instances over FIPS.
+//! Nostr relay events carry Iris Drive metadata: the `AppKey` roster and
+//! per-AppKey root CIDs. This module moves the actual hashtree blocks directly
+//! between authorized app installs. Blossom remains useful as a public remote,
+//! but the local app should first ask peer instances over FIPS.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

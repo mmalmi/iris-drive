@@ -12,7 +12,7 @@ async fn publish_provider_root_if_changed(
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<Option<AppConfig>> {
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let current_key = current_device_root_key(&updated_config);
+    let current_key = current_app_key_root_key(&updated_config);
     if current_key == *last_root_key {
         return Ok(None);
     }
@@ -53,10 +53,10 @@ async fn publish_provider_root_if_changed(
     ))?))
 }
 
-fn current_device_root_key(config: &AppConfig) -> Option<String> {
+fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
-    let root = drive.device_roots.get(&state.app_key_pubkey)?;
+    let root = drive.app_key_roots.get(&state.app_key_pubkey)?;
     Some(format!(
         "{}:{}:{}",
         drive.drive_id, state.app_key_pubkey, root.root_cid
@@ -66,26 +66,26 @@ fn current_device_root_key(config: &AppConfig) -> Option<String> {
 fn merged_drive_roots_key(config: &AppConfig) -> Option<String> {
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
     let mut key = format!("drive:{}", drive.drive_id);
-    for (app_key_pubkey, root) in &drive.device_roots {
+    for (app_key_pubkey, root) in &drive.app_key_roots {
         key.push('|');
         key.push_str(app_key_pubkey);
         key.push(':');
         key.push_str(&root.root_cid);
         key.push(':');
-        key.push_str(&root.device_seq.to_string());
+        key.push_str(&root.app_key_seq.to_string());
     }
     Some(key)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RootApplyFollowupKey {
-    DeviceRoots(Vec<(String, String, u64)>),
+    AppKeyRoots(Vec<(String, String, u64)>),
     MergedDriveRoots(String),
 }
 
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
     if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
-        *last_root_key = current_device_root_key(&config);
+        *last_root_key = current_app_key_root_key(&config);
     }
 }
 
@@ -98,13 +98,13 @@ fn root_apply_followup_key(
         && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
     {
         let roots = drive
-            .device_roots
+            .app_key_roots
             .iter()
             .filter(|(_, root)| root.root_cid == root_cid)
-            .map(|(device, root)| (device.clone(), root.root_cid.clone(), root.device_seq))
+            .map(|(device, root)| (device.clone(), root.root_cid.clone(), root.app_key_seq))
             .collect::<Vec<_>>();
         if !roots.is_empty() {
-            return Some(RootApplyFollowupKey::DeviceRoots(roots));
+            return Some(RootApplyFollowupKey::AppKeyRoots(roots));
         }
     }
     if should_refresh_projection {
@@ -124,15 +124,14 @@ fn root_apply_followup_is_stale(
         return false;
     };
     match expected_root_key {
-        RootApplyFollowupKey::DeviceRoots(roots) => {
+        RootApplyFollowupKey::AppKeyRoots(roots) => {
             let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
                 return true;
             };
-            roots.iter().any(|(device, root_cid, device_seq)| {
-                drive
-                    .device_roots
-                    .get(device)
-                    .is_none_or(|root| root.root_cid != *root_cid || root.device_seq != *device_seq)
+            roots.iter().any(|(device, root_cid, app_key_seq)| {
+                drive.app_key_roots.get(device).is_none_or(|root| {
+                    root.root_cid != *root_cid || root.app_key_seq != *app_key_seq
+                })
             })
         }
         RootApplyFollowupKey::MergedDriveRoots(expected) => {

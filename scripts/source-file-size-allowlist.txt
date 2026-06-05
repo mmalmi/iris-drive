@@ -1,13 +1,20 @@
 # path line_limit reason
 windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithic.
 crates/iris-drive-app-core/src/ffi.rs 2600 Legacy app-core FFI runtime pending action/provider/app-key-link split.
+crates/iris-drive-app-core/src/ffi/tests.rs 1200 App-core parity and native action fixtures need a later scenario-module split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1100 Scenario matrix needs a later harness split.
+crates/iris-drive-core/src/iris_profile.rs 2020 IrisProfile authority model needs a later roster-event-projection module split.
+crates/iris-drive-core/src/profile.rs 1600 Profile create, recovery, admission, and DCK flows need a later lifecycle/helper split.
+crates/iris-drive-core/src/profile/tests.rs 1100 Profile recovery and AppKey authority scenarios need a later test-module split.
+crates/iris-drive-core/src/relay_sync/tests.rs 1200 Relay/app-key/share sync coverage needs a later test-module split.
+crates/iris-drive-core/src/sharing.rs 1100 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
 scripts/dev-vm-update-run.sh 2661 Cross-platform VM orchestration needs a later split; VM Cargo build env keeps macOS smoke viable on small disks.
 macos/Sources/IrisDriveMacApp.swift 2500 Legacy macOS shell pending view/runtime split.
 scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
-macos/Sources/IrisDriveControlPanel.swift 1450 Legacy macOS control panel pending view split.
-windows/MainWindow.xaml.cs 1450 Legacy Windows window controller pending view-model split.
-ios/Sources/IrisDriveMobileModel.swift 1040 Legacy iOS model pending FileProvider/model split.
+macos/Sources/IrisDriveControlPanel.swift 1600 Legacy macOS control panel pending view split.
+windows/MainWindow.xaml.cs 1520 Legacy Windows window controller pending view-model split.
+ios/Sources/IrisDriveMobileModel.swift 1060 Legacy iOS model pending FileProvider/model split.
+ios/Sources/IrisDriveRootView.swift 1200 Legacy iOS SwiftUI shell pending view split.

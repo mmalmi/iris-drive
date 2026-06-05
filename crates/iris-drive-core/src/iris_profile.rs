@@ -170,7 +170,7 @@ impl IrisProfileCapabilities {
     pub fn recovery_phrase() -> Self {
         Self {
             can_write_roots: false,
-            can_admin_profile: true,
+            can_admin_profile: false,
             can_recover_app_keys: true,
             can_receive_key_wraps: true,
             can_decrypt_key_epochs: true,
@@ -181,7 +181,7 @@ impl IrisProfileCapabilities {
     pub fn nip46_recovery(can_decrypt_key_epochs: bool) -> Self {
         Self {
             can_write_roots: false,
-            can_admin_profile: true,
+            can_admin_profile: false,
             can_recover_app_keys: true,
             can_receive_key_wraps: can_decrypt_key_epochs,
             can_decrypt_key_epochs,
@@ -1464,24 +1464,52 @@ mod tests {
     }
 
     #[test]
-    fn recovery_phrase_authorizes_fresh_app_key_without_becoming_root_writer() {
+    fn recovery_phrase_authorizes_fresh_app_key_without_becoming_roster_admin_or_root_writer() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
+        let phone = Keys::generate();
         let recovery = Keys::generate();
         let recovered_app = Keys::generate();
+        let phone_pubkey = phone.public_key().to_hex();
         let recovery_pubkey = recovery.public_key().to_hex();
         let recovered_pubkey = recovered_app.public_key().to_hex();
         let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let phone_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    phone_pubkey.clone(),
+                    11,
+                    Some("phone".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            11,
+        );
+        ops.push(phone_op);
         let recovery_op = signed_op_with_parents(
             &admin,
             profile_id,
             iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
+                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 12),
             },
-            11,
+            12,
         );
         ops.push(recovery_op);
+        let forbidden_tombstone = signed_op_with_parents(
+            &recovery,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::TombstoneFacet {
+                pubkey: phone_pubkey.clone(),
+                reason: Some("recovery cannot remove app actors".to_string()),
+            },
+            13,
+        );
+        ops.push(forbidden_tombstone);
         let recovered_op = signed_op_with_parents(
             &recovery,
             profile_id,
@@ -1489,21 +1517,24 @@ mod tests {
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     recovered_pubkey.clone(),
-                    12,
+                    14,
                     Some("restored laptop".to_string()),
                     IrisProfileCapabilities::app_admin(),
                 ),
             },
-            12,
+            14,
         );
         ops.push(recovered_op);
 
         let projection = project(profile_id, ops);
 
         assert!(!projection.can_write_roots(&recovery_pubkey));
-        assert!(projection.can_admin_profile(&recovery_pubkey));
+        assert!(!projection.can_admin_profile(&recovery_pubkey));
+        assert!(projection.active_facets.contains_key(&phone_pubkey));
         assert!(projection.can_write_roots(&recovered_pubkey));
         assert!(projection.can_admin_profile(&recovered_pubkey));
+        assert_eq!(projection.accepted_op_ids.len(), 4);
+        assert_eq!(projection.rejected_op_ids.len(), 1);
     }
 
     #[test]
@@ -1546,7 +1577,7 @@ mod tests {
         let projection = project(profile_id, ops);
 
         assert!(!projection.can_write_roots(&nip46_pubkey));
-        assert!(projection.can_admin_profile(&nip46_pubkey));
+        assert!(!projection.can_admin_profile(&nip46_pubkey));
         assert_eq!(
             projection.key_wrap_status(&nip46_pubkey, 1),
             KeyWrapStatus::Available
@@ -1844,7 +1875,7 @@ mod tests {
         let projection = left.project();
 
         assert!(projection.can_write_roots(&phone.public_key().to_hex()));
-        assert!(projection.can_admin_profile(&recovery.public_key().to_hex()));
+        assert!(!projection.can_admin_profile(&recovery.public_key().to_hex()));
         assert_eq!(projection.accepted_op_ids.len(), 3);
     }
 

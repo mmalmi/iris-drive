@@ -25,7 +25,7 @@ enum IrisDriveBackgroundSyncTask { static let identifier = "to.iris.drive.ios.ba
 final class IrisDriveMobileModel: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var statusTitle = "Ready"
-    @Published var statusDetail = "Waiting for this device to be linked."
+    @Published var statusDetail = "Waiting for this app install to be linked."
     @Published var deviceLabel = UIDevice.current.name
     @Published var profileLinkTarget = ""
     @Published var currentAppKeyNpub = ""
@@ -219,7 +219,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func openDriveFolder() {
         guard isSetupComplete else {
-            showFileProviderError("Link this device before opening Iris Drive in Files.")
+            showFileProviderError("Link this app install before opening Iris Drive in Files.")
             return
         }
         fileProviderError = ""
@@ -759,7 +759,7 @@ final class IrisDriveMobileModel: ObservableObject {
         restoreSecret = ""
         syncRunning = false
         statusTitle = "Ready"
-        statusDetail = "Waiting for this device to be linked."
+        statusDetail = "Waiting for this app install to be linked."
         profileUsername = ""
         profilePhotoName = ""
         persistLocalSettings()
@@ -784,7 +784,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         if canAdminProfile, linkInput.isComplete {
-            approveDevice(request: url.absoluteString, label: "Linked device")
+            approveDevice(request: url.absoluteString, label: "Linked app install")
             return
         }
 
@@ -858,7 +858,7 @@ final class IrisDriveMobileModel: ObservableObject {
             relay = defaultRelay
             syncRunning = false
             statusTitle = "Ready"
-            statusDetail = "Waiting for this device to be linked."
+            statusDetail = "Waiting for this app install to be linked."
             currentProviderSignalKey = ""
             lastProviderSignalKey = ""
             currentProviderDirectoryPaths = []

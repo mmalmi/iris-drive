@@ -574,27 +574,27 @@ fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
 #[test]
 fn startup_root_sync_collects_unsynced_remote_roots() {
     let config_dir = tempfile::tempdir().unwrap();
-    let synced = DeviceRootRef::legacy("already-synced", 10, 1);
-    let needs_sync = DeviceRootRef::legacy("needs-sync", 20, 1);
-    let duplicate = DeviceRootRef::legacy("needs-sync", 21, 1);
-    let mut projected = DeviceRootRef::legacy("local-only", 30, 1);
+    let synced = AppKeyRootRef::legacy("already-synced", 10, 1);
+    let needs_sync = AppKeyRootRef::legacy("needs-sync", 20, 1);
+    let duplicate = AppKeyRootRef::legacy("needs-sync", 21, 1);
+    let mut projected = AppKeyRootRef::legacy("local-only", 30, 1);
     projected.local_only = true;
     let mut drive = Drive {
         root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
-        device_roots: BTreeMap::new(),
+        app_key_roots: BTreeMap::new(),
         last_root_cid: None,
         key_hex: None,
     };
-    drive.device_roots.insert("device-a".to_string(), synced);
+    drive.app_key_roots.insert("device-a".to_string(), synced);
     drive
-        .device_roots
+        .app_key_roots
         .insert("device-b".to_string(), needs_sync);
-    drive.device_roots.insert("device-c".to_string(), duplicate);
+    drive.app_key_roots.insert("device-c".to_string(), duplicate);
     drive
-        .device_roots
+        .app_key_roots
         .insert("device-d".to_string(), projected);
     let mut config = AppConfig::default();
     config.drives.push(drive);

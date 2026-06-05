@@ -371,10 +371,10 @@ async fn append_primary_drive_root_events(
     state: &ProfileState,
 ) -> Result<()> {
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        && let Some(root) = publishable_device_root(config_dir, drive, state).await?
+        && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
-        let authorized_devices = authorized_app_key_pubkeys(state);
+        let authorized_app_keys = authorized_app_key_pubkeys(state);
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_event(
@@ -382,7 +382,7 @@ async fn append_primary_drive_root_events(
             &state.root_scope_id(),
             &drive.drive_id,
             &root,
-            &authorized_devices,
+            &authorized_app_keys,
         )
         .context("building drive-root event")?;
         events.push(direct_root_event(
@@ -390,9 +390,9 @@ async fn append_primary_drive_root_events(
                 "drive-root:{}:{}:{}:{}:{}",
                 state.app_key_pubkey,
                 drive.drive_id,
-                root.device_seq,
+                root.app_key_seq,
                 root.root_cid,
-                authorized_devices.join(",")
+                authorized_app_keys.join(",")
             ),
             &event,
         )?);
@@ -430,7 +430,7 @@ async fn append_share_root_events(
         if !projection.can_write_roots(&state.app_key_pubkey) {
             continue;
         }
-        let Some(root) = folder.device_roots.get(&state.app_key_pubkey) else {
+        let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey) else {
             continue;
         };
         if root.local_only {
@@ -456,7 +456,7 @@ async fn append_share_root_events(
                 "share-root:{}:{}:{}:{}:{}",
                 folder.share_id,
                 state.app_key_pubkey,
-                root.device_seq,
+                root.app_key_seq,
                 root.root_cid,
                 authorized_recipients.join(",")
             ),
@@ -467,12 +467,12 @@ async fn append_share_root_events(
     Ok(())
 }
 
-pub(crate) async fn publishable_device_root(
+pub(crate) async fn publishable_app_key_root(
     config_dir: &Path,
     drive: &Drive,
     state: &ProfileState,
-) -> Result<Option<DeviceRootRef>> {
-    let Some(root) = drive.device_roots.get(&state.app_key_pubkey).cloned() else {
+) -> Result<Option<AppKeyRootRef>> {
+    let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey).cloned() else {
         return Ok(None);
     };
     if !root.local_only {
@@ -484,8 +484,8 @@ pub(crate) async fn publishable_device_root(
 pub(crate) async fn publishable_parent_root(
     config_dir: &Path,
     state: &ProfileState,
-    mut root: DeviceRootRef,
-) -> Result<Option<DeviceRootRef>> {
+    mut root: AppKeyRootRef,
+) -> Result<Option<AppKeyRootRef>> {
     let daemon = Daemon::open(config_dir).context("opening daemon for publishable root lookup")?;
     let mut seen = BTreeSet::new();
     for _ in 0..32 {
@@ -503,7 +503,7 @@ pub(crate) async fn publishable_parent_root(
         let Some(parent) = meta
             .parents
             .iter()
-            .find(|parent| parent.device_id == state.app_key_pubkey)
+            .find(|parent| parent.app_key_pubkey == state.app_key_pubkey)
         else {
             return Ok(None);
         };
@@ -513,12 +513,12 @@ pub(crate) async fn publishable_parent_root(
             .await
             .with_context(|| format!("reading parent root metadata for {}", parent.root_cid))?
         {
-            Some(parent_meta) => DeviceRootRef::from_meta(
+            Some(parent_meta) => AppKeyRootRef::from_meta(
                 parent.root_cid.clone(),
                 parent_meta.created_at,
                 &parent_meta,
             ),
-            None => DeviceRootRef::legacy(
+            None => AppKeyRootRef::legacy(
                 parent.root_cid.clone(),
                 root.published_at,
                 root.dck_generation,
