@@ -39,9 +39,9 @@ pub(crate) enum Command {
     },
     /// Check, download, or install a verified hashtree-published idrive update.
     Update(UpdateArgs),
-    /// **Create** flow: generate a fresh owner key + a fresh device key
-    /// on this machine. Single-device default; this install has owner
-    /// signing authority and the `AppKeys` roster lists this one device.
+    /// **Create** flow: generate a fresh `IrisProfile`, recovery phrase, and
+    /// per-install `AppKey` on this machine. Single-install default; this
+    /// `AppKey` starts with profile admin authority.
     Init {
         /// Don't error if config already exists; print the existing state.
         #[arg(long)]
@@ -56,9 +56,9 @@ pub(crate) enum Command {
         #[arg(long)]
         profile_photo: Option<String>,
     },
-    /// **Restore** flow: import an existing owner `nsec` onto this
-    /// device. A fresh device key is generated; this install has owner
-    /// signing authority.
+    /// **Restore** flow: import an existing admin `nsec` onto this install.
+    /// A fresh local `AppKey` is generated; this install gets profile admin
+    /// authority.
     Restore {
         /// Owner secret key as nsec1... or 64-char hex.
         nsec: String,
@@ -80,10 +80,9 @@ pub(crate) enum Command {
         #[arg(long)]
         label: Option<String>,
     },
-    /// **Link** flow: turn this install into a secondary device under an
-    /// existing owner. Generates a fresh device key; does NOT receive
-    /// the owner key. The device waits in `awaiting_approval` until the
-    /// owner approves it from an owner-capable device.
+    /// **Link** flow: turn this install into a secondary `AppKey` under an
+    /// existing `IrisProfile`. Generates a fresh local `AppKey`; approval
+    /// arrives through signed `IrisProfile` roster ops.
     Link {
         /// Owner pubkey as npub1... or 64-char hex.
         owner: String,
@@ -96,8 +95,8 @@ pub(crate) enum Command {
     },
     /// Log out this local install and remove local account key material.
     Logout,
-    /// Approve a pending device by adding it to the `AppKeys` roster.
-    /// Only usable on admin devices.
+    /// Approve a pending install by adding its `AppKey` to the `IrisProfile`
+    /// roster. Only usable by profile admins.
     Approve {
         /// Device pubkey to authorize (npub1... or 64-char hex).
         device: String,
@@ -105,12 +104,12 @@ pub(crate) enum Command {
         #[arg(long)]
         label: Option<String>,
     },
-    /// Revoke an authorized device and rotate the drive content key.
+    /// Revoke an authorized `AppKey` and rotate the drive content key.
     Revoke {
         /// Device pubkey to revoke (npub1... or 64-char hex).
         device: String,
     },
-    /// Print the current `AppKeys` roster as JSON.
+    /// Print the current IrisProfile/AppKeys roster projection as JSON.
     Roster,
     /// Rotate the drive content key (DCK) without changing the roster.
     /// Useful for periodic key freshness. Admin-only.
@@ -195,9 +194,8 @@ pub(crate) enum Command {
     /// List, add, remove, or sync encrypted backup targets.
     #[command(subcommand)]
     Backups(BackupsCmd),
-    /// Publish current state (`AppKeys` + this device's drive root) to
-    /// all configured relays. Skips `AppKeys` on linked devices that
-    /// lack owner-signing authority.
+    /// Publish signed IrisProfile/share roster ops and this install's drive
+    /// roots to all configured relays.
     Publish {
         /// Override config relays with these URLs.
         #[arg(long)]
@@ -206,9 +204,8 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 10)]
         timeout: u64,
     },
-    /// Pull latest `AppKeys` + drive-root events from relays and apply
-    /// them locally. After this, `idrive list` reflects every
-    /// authorized device's contribution.
+    /// Pull signed IrisProfile/share roster ops and drive-root events from
+    /// relays, then apply them locally.
     Sync {
         /// Override config relays with these URLs.
         #[arg(long)]
@@ -218,8 +215,8 @@ pub(crate) enum Command {
         timeout: u64,
     },
     /// Run a long-running subscriber + publisher. Maintains open
-    /// subscriptions for `AppKeys` + drive-root events, applies each
-    /// event in real time, serves the local gateway, and keeps any active
+    /// subscriptions for `IrisProfile` roster ops and drive-root events, applies
+    /// each event in real time, serves the local gateway, and keeps any active
     /// virtual mount/provider refreshed. Stops on Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
@@ -495,9 +492,6 @@ pub(crate) enum ProviderCmd {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum EventCmd {
-    /// Owner-signed `AppKeys` roster event (kind 30078).
-    /// Requires owner-signing authority on this install.
-    AppKeys,
     /// Device-signed drive-root event (kind 30078) for the primary
     /// drive. Requires a previous `idrive import` so there's a CID
     /// to publish.

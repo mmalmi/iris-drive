@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    Account, AccountState, AppConfig, DeviceIdentity, FsFipsBlockSync, PRIMARY_DRIVE_ID,
+    AccountState, AppConfig, DeviceIdentity, FsFipsBlockSync, PRIMARY_DRIVE_ID,
     authorized_device_pubkeys,
 };
 
@@ -278,28 +278,6 @@ pub fn build_current_direct_root_events(
             &event,
         ));
     }
-    if state.can_manage_devices()
-        && let Some(snapshot) = state.app_keys.as_ref()
-    {
-        let account = Account::load(state.clone(), config_dir).context("loading account")?;
-        let event = crate::nostr_events::build_app_keys_event(account.device.keys(), snapshot)
-            .context("building AppKeys event")?;
-        events.push(direct_root_event(
-            format!(
-                "appkeys:{}:{}:{}:{}",
-                snapshot.owner_pubkey,
-                snapshot.created_at,
-                snapshot.dck_generation,
-                snapshot
-                    .app_actors
-                    .iter()
-                    .map(|device| device.pubkey.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            &event,
-        ));
-    }
     if let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
         && let Some(root) = drive.device_roots.get(&state.device_pubkey)
     {
@@ -347,19 +325,6 @@ pub async fn apply_direct_root_event(
     sync: Option<&FsFipsBlockSync>,
 ) -> Result<bool> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    if crate::nostr_events::is_app_keys_event_coordinate(event) {
-        let outcome = crate::relay_sync::apply_remote_app_keys_event(&mut config, event)?;
-        let changed = matches!(
-            outcome,
-            crate::relay_sync::AppKeysApply::Applied(decision)
-                if decision != crate::ApplyDecision::Rejected
-        );
-        config.save(config_path_in(config_dir))?;
-        if let Some(sync) = sync {
-            sync.refresh_authorized_peers(&config).await;
-        }
-        return Ok(changed);
-    }
     if crate::is_iris_profile_roster_op_event_coordinate(event) {
         let outcome =
             crate::relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;

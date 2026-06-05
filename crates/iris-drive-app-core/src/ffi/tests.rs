@@ -2,7 +2,6 @@ use super::{FfiApp, SentDeviceLinkRequest, device_link_request_send_due, normali
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, DeviceRootRef, Drive};
-use nostr_sdk::JsonUtil;
 use std::path::Path;
 
 #[test]
@@ -676,7 +675,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
         label: "Phone".to_owned(),
     });
     assert!(approved.error.is_empty(), "{}", approved.error);
-    apply_latest_app_keys_event(owner_dir.path(), linked_dir.path());
+    apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
     let authorized = linked_app.refresh();
     let account = authorized.ui.account.as_ref().expect("account exists");
@@ -692,7 +691,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
         device_pubkey: linked_device.clone(),
     });
     assert!(revoked.error.is_empty(), "{}", revoked.error);
-    apply_latest_app_keys_event(owner_dir.path(), linked_dir.path());
+    apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
     let refreshed = linked_app.refresh();
     let account = refreshed.ui.account.as_ref().expect("account exists");
@@ -1054,7 +1053,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
 }
 
 #[test]
-fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
+fn native_profile_roster_ops_refresh_authorized_member_roster() {
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
     let mut owner = iris_drive_core::Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
@@ -1077,11 +1076,6 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
         .approve_device(&linked_pubkey, Some("Phone".into()))
         .unwrap();
 
-    let first_roster_event = iris_drive_core::nostr_events::build_app_keys_event(
-        owner.device.keys(),
-        owner.state.app_keys.as_ref().unwrap(),
-    )
-    .unwrap();
     let mut linked_config = AppConfig {
         account: Some(linked.state.clone()),
         ..AppConfig::default()
@@ -1093,15 +1087,11 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
         owner_pubkey: owner.state.owner_pubkey.clone(),
         admin_device_pubkey: owner.state.device_pubkey.clone(),
         profile_roster_ops: owner.state.profile_roster_ops.clone(),
-        app_keys: owner.state.app_keys.clone().unwrap(),
-        app_keys_event_id: first_roster_event.id.to_hex(),
-        app_keys_event_json: first_roster_event.as_json(),
         sent_at: 456,
     };
     iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut linked_config,
         &first_frame,
-        &first_roster_event,
         &owner.state.device_pubkey,
     )
     .unwrap();
@@ -1113,19 +1103,23 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
     owner
         .approve_device(&third_device, Some("Pixel".into()))
         .unwrap();
-    let updated_roster_event = iris_drive_core::nostr_events::build_app_keys_event(
-        owner.device.keys(),
-        owner.state.app_keys.as_ref().unwrap(),
+    let updated_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: owner.state.profile_id,
+        owner_pubkey: owner.state.owner_pubkey.clone(),
+        admin_device_pubkey: owner.state.device_pubkey.clone(),
+        profile_roster_ops: owner.state.profile_roster_ops.clone(),
+        sent_at: 789,
+    };
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+        &mut linked_config,
+        &updated_frame,
+        &owner.state.device_pubkey,
     )
     .unwrap();
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime
-        .block_on(iris_drive_core::apply_direct_root_event(
-            linked_dir.path(),
-            &updated_roster_event,
-            None,
-        ))
+    linked_config
+        .save(config_path_in(linked_dir.path()))
         .unwrap();
 
     let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
@@ -1139,27 +1133,21 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
     assert!(linked_roster.contains(&third_device));
 }
 
-fn apply_latest_app_keys_event(from: &Path, to: &Path) {
+fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
     let owner_state = owner_config.account.as_ref().unwrap();
-    let app_keys_record = owner_state.app_keys_event.as_ref().unwrap();
-    let app_keys_event = nostr_sdk::Event::from_json(&app_keys_record.event_json).unwrap();
     let frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
         owner_pubkey: owner_state.owner_pubkey.clone(),
         admin_device_pubkey: owner_state.device_pubkey.clone(),
         profile_roster_ops: owner_state.profile_roster_ops.clone(),
-        app_keys: owner_state.app_keys.clone().unwrap(),
-        app_keys_event_id: app_keys_event.id.to_hex(),
-        app_keys_event_json: app_keys_event.as_json(),
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
     iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut linked_config,
         &frame,
-        &app_keys_event,
         &owner_state.device_pubkey,
     )
     .unwrap();

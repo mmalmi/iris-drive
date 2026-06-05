@@ -3,31 +3,23 @@ use crate::NativeAppAction;
 use hashtree_provider::{HashTreeProviderFs, ProviderFs};
 use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
-use nostr_sdk::JsonUtil;
 use std::path::Path;
 
 fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();
     let owner_state = owner_config.account.as_ref().unwrap();
-    let app_keys_event =
-        nostr_sdk::Event::from_json(&owner_state.app_keys_event.as_ref().unwrap().event_json)
-            .unwrap();
     let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
         owner_pubkey: owner_state.owner_pubkey.clone(),
         admin_device_pubkey: owner_state.device_pubkey.clone(),
         profile_roster_ops: owner_state.profile_roster_ops.clone(),
-        app_keys: owner_state.app_keys.clone().unwrap(),
-        app_keys_event_id: app_keys_event.id.to_hex(),
-        app_keys_event_json: app_keys_event.as_json(),
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
     iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut linked_config,
         &roster_frame,
-        &app_keys_event,
         &owner_state.device_pubkey,
     )
     .unwrap();

@@ -175,7 +175,6 @@ fn run_cli() -> ExitCode {
         Command::Provider(command) => cmd_provider(&config_dir, command),
         Command::History { limit } => cmd_history(&config_dir, limit),
         Command::Event(ev) => match ev {
-            EventCmd::AppKeys => cmd_event_app_keys(&config_dir),
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),
         },
         Command::Relays { command } => cmd_relays(&config_dir, command),

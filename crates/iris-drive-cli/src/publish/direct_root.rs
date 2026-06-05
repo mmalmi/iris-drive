@@ -326,7 +326,6 @@ pub(crate) async fn build_current_sync_events(
 
     append_profile_roster_events(&mut events, state)?;
     append_share_roster_events(&mut events, config)?;
-    append_app_keys_event(&mut events, config_dir, state)?;
     append_primary_drive_root_events(&mut events, config_dir, config, state).await?;
     append_share_root_events(&mut events, config_dir, config, state).await?;
 
@@ -361,35 +360,6 @@ fn append_share_roster_events(
                 &event,
             )?);
         }
-    }
-    Ok(())
-}
-
-fn append_app_keys_event(
-    events: &mut Vec<DirectRootEvent>,
-    config_dir: &Path,
-    state: &AccountState,
-) -> Result<()> {
-    if state.can_manage_devices()
-        && let Some(snap) = state.app_keys.as_ref()
-    {
-        let account = Account::load(state.clone(), config_dir).context("loading account")?;
-        let event = iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), snap)
-            .context("building AppKeys event")?;
-        events.push(direct_root_event(
-            format!(
-                "appkeys:{}:{}:{}:{}",
-                snap.owner_pubkey,
-                snap.created_at,
-                snap.dck_generation,
-                snap.app_actors
-                    .iter()
-                    .map(|device| device.pubkey.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            &event,
-        )?);
     }
     Ok(())
 }

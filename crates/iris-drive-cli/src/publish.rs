@@ -39,8 +39,6 @@ pub(crate) fn cmd_publish(
             json!({
                 "relays": relays,
                 "blossom_servers": config.blossom_servers,
-                "published_app_keys": report.published_app_keys,
-                "app_keys_publish_error": report.app_keys_publish_error,
                 "published_profile_roster_ops": report.published_profile_roster_ops,
                 "profile_roster_publish_error": report.profile_roster_publish_error,
                 "published_drive_root": report.published_drive_root,
@@ -66,8 +64,6 @@ pub(crate) fn cmd_publish(
 
 #[derive(Debug, Default)]
 pub(crate) struct PublishStateReport {
-    published_app_keys: bool,
-    app_keys_publish_error: Option<String>,
     published_profile_roster_ops: usize,
     profile_roster_publish_error: Option<String>,
     published_drive_root: bool,
@@ -258,8 +254,6 @@ pub(crate) fn download_report_json(report: &DownloadReport) -> serde_json::Value
 
 pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_json::Value {
     json!({
-        "published_app_keys": report.published_app_keys,
-        "app_keys_publish_error": report.app_keys_publish_error,
         "published_profile_roster_ops": report.published_profile_roster_ops,
         "profile_roster_publish_error": report.profile_roster_publish_error,
         "published_drive_root": report.published_drive_root,
@@ -501,8 +495,6 @@ pub(crate) fn spawn_initial_publish(
                     "{}",
                     json!({
                         "event": "initial_publish",
-                        "published_app_keys": report.published_app_keys,
-                        "app_keys_publish_error": report.app_keys_publish_error,
                         "published_profile_roster_ops": report.published_profile_roster_ops,
                         "profile_roster_publish_error": report.profile_roster_publish_error,
                         "published_drive_root": report.published_drive_root,

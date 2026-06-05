@@ -609,16 +609,12 @@ pub(crate) async fn send_authorized_device_link_rosters(
     }
 
     sync.refresh_authorized_peers(&config).await;
-    let (event_id, event_json) = signed_roster_event_for_state(config_dir, state, app_keys)?;
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: state.profile_id,
         owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
         profile_roster_ops: state.profile_roster_ops.clone(),
-        app_keys: app_keys.clone(),
-        app_keys_event_id: event_id.clone(),
-        app_keys_event_json: event_json,
         sent_at: unix_now_seconds(),
     };
     let bytes = serde_json::to_vec(&frame)?;
@@ -640,31 +636,8 @@ pub(crate) async fn send_authorized_device_link_rosters(
         "recipient_device_npubs": recipients,
         "dck_generation": app_keys.dck_generation,
         "created_at": app_keys.created_at,
-        "app_keys_event_id": event_id,
         "sent_bytes": bytes.len(),
     })))
-}
-
-fn signed_roster_event_for_state(
-    config_dir: &Path,
-    state: &AccountState,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
-) -> Result<(String, String)> {
-    if let Some(record) = state.app_keys_event.as_ref()
-        && record.signer_pubkey == app_keys.signer_pubkey()
-    {
-        return Ok((record.event_id.clone(), record.event_json.clone()));
-    }
-    if app_keys.signer_pubkey() != state.device_pubkey {
-        return Err(anyhow::anyhow!(
-            "cannot send roster: signed event is missing and this device was not the roster signer"
-        ));
-    }
-    let account = Account::load(state.clone(), config_dir).context("loading account")?;
-    let event =
-        iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), app_keys)
-            .context("building AppKeys roster event")?;
-    Ok((event.id.to_hex(), event.as_json()))
 }
 
 fn device_link_roster_fingerprint(
@@ -780,30 +753,13 @@ async fn handle_device_link_roster_app_message(
     if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
         return Ok(true);
     }
-    if frame.app_keys_event_json.is_empty() || frame.app_keys_event_id.is_empty() {
-        return Ok(true);
-    }
-    let roster_event = nostr_sdk::Event::from_json(&frame.app_keys_event_json)
-        .context("parsing signed roster event")?;
-    if roster_event.id.to_hex() != frame.app_keys_event_id {
-        return Ok(true);
-    }
-    let parsed = iris_drive_core::nostr_events::parse_app_keys_event(&roster_event)
-        .context("parsing signed roster AppKeys")?;
-    if roster_event.pubkey.to_hex() != admin_device_hex
-        || parsed.owner_pubkey != state.owner_pubkey
-        || !parsed.is_admin(&admin_device_hex)
-    {
-        return Ok(true);
-    }
 
     let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
         &frame,
-        &roster_event,
         &admin_device_hex,
     )
-    .context("applying signed roster event")?;
+    .context("applying signed profile roster ops")?;
     let accepted = match outcome {
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
@@ -825,7 +781,6 @@ async fn handle_device_link_roster_app_message(
                 .as_ref()
                 .expect("accepted/current app keys")
                 .clone(),
-            roster_event.id.to_hex(),
         ))
     } else {
         None
@@ -845,13 +800,12 @@ async fn handle_device_link_roster_app_message(
             })
         );
     }
-    if let Some((device_pubkey, app_keys, app_keys_event_id)) = ack_data {
+    if let Some((device_pubkey, app_keys)) = ack_data {
         send_device_link_roster_ack(
             fips_blocks,
             &admin_device_hex,
             &owner_hex,
             &device_pubkey,
-            &app_keys_event_id,
             &app_keys,
         )
         .await?;
@@ -908,7 +862,6 @@ fn handle_device_link_roster_ack_app_message(
                         "device_npub": account_npub(&device_hex),
                 "dck_generation": app_keys.dck_generation,
                 "created_at": app_keys.created_at,
-                "app_keys_event_id": frame.app_keys_event_id,
             })
         );
     }
@@ -920,7 +873,6 @@ async fn send_device_link_roster_ack(
     admin_device_hex: &str,
     owner_hex: &str,
     device_hex: &str,
-    app_keys_event_id: &str,
     app_keys: &iris_drive_core::AppKeysSnapshot,
 ) -> Result<()> {
     let Some(sync) = fips_blocks else {
@@ -931,7 +883,6 @@ async fn send_device_link_roster_ack(
         owner_pubkey: owner_hex.to_string(),
         admin_device_pubkey: admin_device_hex.to_string(),
         device_pubkey: device_hex.to_string(),
-        app_keys_event_id: app_keys_event_id.to_string(),
         app_keys_created_at: app_keys.created_at,
         dck_generation: app_keys.dck_generation,
         acknowledged_at: unix_now_seconds(),

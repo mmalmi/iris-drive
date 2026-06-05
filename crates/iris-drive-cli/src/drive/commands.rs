@@ -121,24 +121,6 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
     })
 }
 
-pub(crate) fn cmd_event_app_keys(config_dir: &std::path::Path) -> Result<()> {
-    let state = load_account_state(config_dir)?;
-    let snap = state
-        .app_keys
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no AppKeys snapshot yet (run `idrive init` first)"))?;
-    if !state.can_manage_devices() {
-        return Err(anyhow::anyhow!(
-            "this device is not an admin - only admin devices can publish AppKeys"
-        ));
-    }
-    let account = Account::load(state.clone(), config_dir).context("loading account")?;
-    let event = iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), snap)
-        .context("building AppKeys event")?;
-    println!("{}", serde_json::to_string_pretty(&event)?);
-    Ok(())
-}
-
 pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
     let state = load_account_state(config_dir)?;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;

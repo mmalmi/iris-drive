@@ -38,8 +38,6 @@ use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_i
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
-#[cfg(not(test))]
-use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
@@ -1380,7 +1378,7 @@ async fn send_native_pending_device_link_request(
 
 #[cfg(not(test))]
 async fn send_native_authorized_device_link_rosters(
-    config_dir: &Path,
+    _config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::AccountState,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
@@ -1417,16 +1415,12 @@ async fn send_native_authorized_device_link_rosters(
         return Ok(());
     }
 
-    let (event_id, event_json) = signed_roster_event_for_native_state(config_dir, state, app_keys)?;
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: state.profile_id,
         owner_pubkey: state.owner_pubkey.clone(),
         admin_device_pubkey: state.device_pubkey.clone(),
         profile_roster_ops: state.profile_roster_ops.clone(),
-        app_keys: app_keys.clone(),
-        app_keys_event_id: event_id,
-        app_keys_event_json: event_json,
         sent_at: unix_now_seconds(),
     };
     let bytes = serde_json::to_vec(&frame)
@@ -1456,28 +1450,6 @@ async fn send_native_authorized_device_link_rosters(
         }
     }
     Ok(())
-}
-
-#[cfg(not(test))]
-fn signed_roster_event_for_native_state(
-    config_dir: &Path,
-    state: &iris_drive_core::AccountState,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
-) -> Result<(String, String), String> {
-    if let Some(record) = state.app_keys_event.as_ref()
-        && record.signer_pubkey == app_keys.signer_pubkey()
-    {
-        return Ok((record.event_id.clone(), record.event_json.clone()));
-    }
-    if app_keys.signer_pubkey() != state.device_pubkey {
-        return Err("cannot send roster: missing signed event from this admin device".to_owned());
-    }
-    let account = Account::load(state.clone(), config_dir)
-        .map_err(|error| format!("loading account for roster signing: {error}"))?;
-    let event =
-        iris_drive_core::nostr_events::build_app_keys_event(account.device.keys(), app_keys)
-            .map_err(|error| format!("building device-link roster event: {error}"))?;
-    Ok((event.id.to_hex(), event.as_json()))
 }
 
 #[cfg(not(test))]
@@ -1607,30 +1579,13 @@ async fn handle_native_device_link_roster(
     if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
         return Ok(true);
     }
-    if frame.app_keys_event_json.is_empty() || frame.app_keys_event_id.is_empty() {
-        return Ok(true);
-    }
-    let roster_event = nostr_sdk::Event::from_json(&frame.app_keys_event_json)
-        .map_err(|error| format!("parsing signed device-link roster event: {error}"))?;
-    if roster_event.id.to_hex() != frame.app_keys_event_id {
-        return Ok(true);
-    }
-    let parsed = iris_drive_core::nostr_events::parse_app_keys_event(&roster_event)
-        .map_err(|error| format!("parsing signed device-link AppKeys: {error}"))?;
-    if roster_event.pubkey.to_hex() != admin_device_hex
-        || parsed.owner_pubkey != state.owner_pubkey
-        || !parsed.is_admin(&admin_device_hex)
-    {
-        return Ok(true);
-    }
 
     let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
         &frame,
-        &roster_event,
         &admin_device_hex,
     )
-    .map_err(|error| format!("applying signed device-link roster event: {error}"))?;
+    .map_err(|error| format!("applying signed device-link profile roster ops: {error}"))?;
     let accepted = match outcome {
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
         iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
@@ -1652,7 +1607,6 @@ async fn handle_native_device_link_roster(
                 .as_ref()
                 .expect("accepted/current app keys")
                 .clone(),
-            roster_event.id.to_hex(),
         ))
     } else {
         None
@@ -1668,13 +1622,12 @@ async fn handle_native_device_link_roster(
             "accepted native device-link roster over FIPS"
         );
     }
-    if let Some((device_pubkey, app_keys, app_keys_event_id)) = ack_data {
+    if let Some((device_pubkey, app_keys)) = ack_data {
         send_native_device_link_roster_ack(
             sync,
             &admin_device_hex,
             &owner_hex,
             &device_pubkey,
-            &app_keys_event_id,
             &app_keys,
         )
         .await?;
@@ -1757,7 +1710,6 @@ async fn send_native_device_link_roster_ack(
     admin_device_hex: &str,
     owner_hex: &str,
     device_hex: &str,
-    app_keys_event_id: &str,
     app_keys: &iris_drive_core::AppKeysSnapshot,
 ) -> Result<(), String> {
     let frame = DeviceLinkRosterAckFrame {
@@ -1765,7 +1717,6 @@ async fn send_native_device_link_roster_ack(
         owner_pubkey: owner_hex.to_owned(),
         admin_device_pubkey: admin_device_hex.to_owned(),
         device_pubkey: device_hex.to_owned(),
-        app_keys_event_id: app_keys_event_id.to_owned(),
         app_keys_created_at: app_keys.created_at,
         dck_generation: app_keys.dck_generation,
         acknowledged_at: unix_now_seconds(),

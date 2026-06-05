@@ -30,7 +30,6 @@ const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
 pub struct NetworkSyncReport {
     pub relays: Vec<String>,
     pub blossom_servers: Vec<String>,
-    pub app_keys_event_applied: String,
     pub profile_roster_ops_seen: usize,
     pub profile_roster_ops_applied: usize,
     pub drive_root_events_seen: usize,
@@ -81,7 +80,6 @@ pub async fn sync_once_with_fips(
     let mut report = NetworkSyncReport {
         relays,
         blossom_servers: config.blossom_servers.clone(),
-        app_keys_event_applied: "none".to_string(),
         files_root_event_outcome: "none".to_string(),
         ..NetworkSyncReport::default()
     };

@@ -355,7 +355,7 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
         cfg_a.path(),
         &["publish", "--relay", &relay.url, "--timeout", "2"],
     );
-    assert_eq!(publish_a["published_app_keys"], false);
+    assert!(publish_a.get("published_app_keys").is_none());
     assert!(
         publish_a["published_profile_roster_ops"]
             .as_u64()
@@ -374,7 +374,7 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
         cfg_b.path(),
         &["sync", "--relay", &relay.url, "--timeout", "2"],
     );
-    assert_eq!(sync_b["app_keys_event_applied"], "none");
+    assert!(sync_b.get("app_keys_event_applied").is_none());
     assert_eq!(sync_b["profile_roster_ops_applied"], 0);
     assert_eq!(sync_b["drive_root_events_applied"], 0);
     assert_list_paths(cfg_b.path(), &[]);

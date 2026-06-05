@@ -7,10 +7,11 @@
 //!   `AppConfig` and apply the event's effect onto the config. These are
 //!   pure functions over data, fully covered by unit tests.
 //!
-//! - **Network (live)** — `publish_app_keys`, `publish_drive_root`,
-//!   `fetch_latest_app_keys`, `fetch_drive_roots` wrap nostr-sdk's
-//!   `Client` for actual relay I/O. Tested manually against real relays;
-//!   the wire/apply layers below them are what we cover automatically.
+//! - **Network (live)** — `publish_iris_profile_roster_ops`,
+//!   `publish_drive_root`, `fetch_iris_profile_roster_ops`, and
+//!   `fetch_drive_roots` wrap nostr-sdk's `Client` for actual relay I/O.
+//!   Tested manually against real relays; the wire/apply layers below them
+//!   are what we cover automatically.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -23,11 +24,11 @@ use crate::app_keys::{AppKeysEventRecord, ApplyDecision, apply_snapshot};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
-    KIND_APP_KEYS, KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT,
-    KIND_LEGACY_DRIVE_ROOT, app_keys_d_tag, build_app_keys_event, build_device_link_request_event,
-    build_drive_root_publish_event, build_private_hashtree_root_event, device_link_request_d_tag,
-    drive_root_d_tag, parse_app_keys_event, parse_device_link_request_event,
-    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT,
+    build_device_link_request_event, build_drive_root_publish_event,
+    build_private_hashtree_root_event, device_link_request_d_tag, drive_root_d_tag,
+    parse_app_keys_event, parse_device_link_request_event, parse_drive_root_event,
+    parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 use crate::{
     AppKeysSnapshot, IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
@@ -42,8 +43,6 @@ pub enum RelayError {
     Client(String),
     #[error("config has no account; run `idrive init` first")]
     NoAccount,
-    #[error("this device is not an admin; cannot sign AppKeys events")]
-    NoOwnerAuthority,
     #[error("invalid pubkey: {0}")]
     InvalidPubkey(String),
     #[error("hashtree root: {0}")]
@@ -68,14 +67,14 @@ pub enum AppKeysApply {
     Applied(ApplyDecision),
 }
 
-/// Result of applying an admin roster sent over the direct device-link channel.
+/// Result of applying signed profile roster ops over the direct device-link channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceLinkRosterApply {
-    /// The event is not applicable to this device/account.
+    /// The roster op set is not applicable to this profile/install.
     Ignored,
     /// The local roster already matches this event.
     Current,
-    /// The event was accepted by the `AppKeys` timeline rules.
+    /// The op-log projection changed the local `AppKeys` view.
     Applied(ApplyDecision),
 }
 
@@ -175,25 +174,16 @@ pub fn apply_remote_device_link_request_event(
 pub fn apply_device_link_roster_frame(
     config: &mut AppConfig,
     frame: &DeviceLinkRosterFrame,
-    event: &Event,
     admin_device_pubkey: &str,
 ) -> Result<DeviceLinkRosterApply, RelayError> {
     if frame.schema != 1 {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
-    let snapshot = parse_app_keys_event(event)?;
-    let signer_pubkey = event.pubkey.to_hex();
-    let event_id = event.id.to_hex();
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if frame.app_keys != snapshot
-        || frame.app_keys_event_id != event_id
-        || frame.owner_pubkey != snapshot.owner_pubkey
+    if frame.owner_pubkey != account.owner_pubkey
         || frame.admin_device_pubkey != admin_device_pubkey
-        || snapshot.owner_pubkey != account.owner_pubkey
-        || signer_pubkey != admin_device_pubkey
-        || !snapshot.is_admin(admin_device_pubkey)
     {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
@@ -203,11 +193,11 @@ pub fn apply_device_link_roster_frame(
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
     let projected_snapshot =
-        app_keys_from_profile_roster(&snapshot.owner_pubkey, frame.profile_id, &incoming_ops)
+        app_keys_from_profile_roster(&frame.owner_pubkey, frame.profile_id, &incoming_ops)
             .ok_or_else(|| {
                 RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into())
             })?;
-    if projected_snapshot != snapshot {
+    if !projected_snapshot.is_admin(admin_device_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
@@ -219,11 +209,11 @@ pub fn apply_device_link_roster_frame(
     if !has_current_roster && !pending_from_admin {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
-    if pending_from_admin && !snapshot.contains(&account.device_pubkey) {
+    if pending_from_admin && !projected_snapshot.contains(&account.device_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
-    if account.app_keys.as_ref() == Some(&snapshot)
+    if account.app_keys.as_ref() == Some(&projected_snapshot)
         && account.profile_id == frame.profile_id
         && same_profile_ops(&account.profile_roster_ops, &incoming_ops)
     {
@@ -231,16 +221,11 @@ pub fn apply_device_link_roster_frame(
     }
 
     let mut current = account.app_keys.clone();
-    let decision = apply_snapshot(&mut current, snapshot.clone());
+    let decision = apply_snapshot(&mut current, projected_snapshot.clone());
     if decision == ApplyDecision::Rejected {
         return Ok(DeviceLinkRosterApply::Applied(decision));
     }
 
-    let record = AppKeysEventRecord {
-        event_id,
-        signer_pubkey,
-        event_json: event.as_json(),
-    };
     let root_scope_id = {
         let Some(account) = config.account.as_mut() else {
             return Err(RelayError::NoAccount);
@@ -251,8 +236,8 @@ pub fn apply_device_link_roster_frame(
             incoming_ops
         };
         account.profile_id = frame.profile_id;
-        account.app_keys = Some(snapshot);
-        account.app_keys_event = Some(record);
+        account.app_keys = Some(projected_snapshot);
+        account.app_keys_event = None;
         account.recompute_authorization();
         account.root_scope_id()
     };
@@ -313,47 +298,6 @@ pub fn apply_remote_iris_profile_roster_op_event(
     }
     shared_folder.roster_ops = merge_profile_roster_ops(&shared_folder.roster_ops, &[op]);
     Ok(IrisProfileRosterOpApply::Applied)
-}
-
-pub fn apply_device_link_roster_event(
-    config: &mut AppConfig,
-    event: &Event,
-    admin_device_pubkey: &str,
-) -> Result<DeviceLinkRosterApply, RelayError> {
-    let snapshot = parse_app_keys_event(event)?;
-    let signer_pubkey = event.pubkey.to_hex();
-    let Some(account) = config.account.as_ref() else {
-        return Err(RelayError::NoAccount);
-    };
-    if snapshot.owner_pubkey != account.owner_pubkey
-        || signer_pubkey != admin_device_pubkey
-        || !snapshot.is_admin(admin_device_pubkey)
-    {
-        return Ok(DeviceLinkRosterApply::Ignored);
-    }
-
-    if account.app_keys.as_ref() == Some(&snapshot) {
-        return Ok(DeviceLinkRosterApply::Current);
-    }
-
-    let has_current_roster = account.app_keys.is_some();
-    let pending_from_admin = account
-        .outbound_device_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_pubkey);
-    if !has_current_roster && !pending_from_admin {
-        return Ok(DeviceLinkRosterApply::Ignored);
-    }
-    if pending_from_admin && !snapshot.contains(&account.device_pubkey) {
-        return Ok(DeviceLinkRosterApply::Ignored);
-    }
-
-    match apply_remote_app_keys_event(config, event)? {
-        AppKeysApply::Applied(decision) => Ok(DeviceLinkRosterApply::Applied(decision)),
-        AppKeysApply::NotOurOwner | AppKeysApply::UnauthorizedSigner => {
-            Ok(DeviceLinkRosterApply::Ignored)
-        }
-    }
 }
 
 fn verified_profile_roster_ops(
@@ -653,20 +597,6 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
     Ok(client)
 }
 
-/// Publish a signed `AppKeys` event for the current snapshot.
-pub async fn publish_app_keys(
-    client: &Client,
-    admin_keys: &Keys,
-    snapshot: &AppKeysSnapshot,
-) -> Result<nostr_sdk::EventId, RelayError> {
-    let event = build_app_keys_event(admin_keys, snapshot)?;
-    let output = client
-        .send_event(event)
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
-    Ok(*output.id())
-}
-
 /// Publish a signed device-link request from the requesting device.
 pub async fn publish_device_link_request(
     client: &Client,
@@ -742,46 +672,6 @@ pub async fn publish_files_root(
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     Ok(*output.id())
-}
-
-/// Fetch the latest `AppKeys` event for `owner_pubkey_hex` across all
-/// connected relays. Kept for compatibility experiments; production sync
-/// publishes and fetches `IrisProfile` roster ops instead of legacy
-/// `AppKeys` snapshots.
-pub async fn fetch_latest_app_keys(
-    client: &Client,
-    owner_pubkey_hex: &str,
-    timeout: Duration,
-) -> Result<Option<Event>, RelayError> {
-    let filter = Filter::new()
-        .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
-        .identifier(app_keys_d_tag(owner_pubkey_hex));
-    let legacy_filter = PublicKey::from_hex(owner_pubkey_hex)
-        .map(|owner| {
-            Filter::new()
-                .author(owner)
-                .kind(nostr_sdk::Kind::from(KIND_APP_KEYS))
-                .identifier(crate::nostr_events::D_TAG_APP_KEYS)
-        })
-        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
-    let events = client
-        .get_events_of(
-            vec![filter, legacy_filter],
-            nostr_sdk::EventSource::relays(Some(timeout)),
-        )
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
-    // Among returned events, pick the newest one that actually claims this
-    // account id. Admin authorization is checked when applying because it
-    // depends on the local roster.
-    let latest = events
-        .into_iter()
-        .filter(|event| {
-            parse_app_keys_event(event)
-                .is_ok_and(|snapshot| snapshot.owner_pubkey == owner_pubkey_hex)
-        })
-        .max_by_key(|e| e.created_at.as_u64());
-    Ok(latest)
 }
 
 /// Fetch the latest standard hashtree root for `owner_pubkey_hex/tree_name`.

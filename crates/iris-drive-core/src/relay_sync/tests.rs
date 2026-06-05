@@ -123,8 +123,6 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     admin
         .approve_device(&linked_pubkey, Some("phone".into()))
         .unwrap();
-    let first_event =
-        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
     let mut cfg = AppConfig {
         account: Some(linked.state.clone()),
         ..AppConfig::default()
@@ -137,18 +135,10 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
-        app_keys: admin.state.app_keys.clone().unwrap(),
-        app_keys_event_id: first_event.id.to_hex(),
-        app_keys_event_json: first_event.as_json(),
         sent_at: 456,
     };
-    let initial = apply_device_link_roster_frame(
-        &mut cfg,
-        &first_frame,
-        &first_event,
-        &admin.state.device_pubkey,
-    )
-    .unwrap();
+    let initial =
+        apply_device_link_roster_frame(&mut cfg, &first_frame, &admin.state.device_pubkey).unwrap();
     assert!(matches!(
         initial,
         DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
@@ -170,8 +160,6 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     admin
         .approve_device(&third_device, Some("tablet".into()))
         .unwrap();
-    let newer_event =
-        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
 
     let newer_frame = DeviceLinkRosterFrame {
         schema: 1,
@@ -179,18 +167,10 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
-        app_keys: admin.state.app_keys.clone().unwrap(),
-        app_keys_event_id: newer_event.id.to_hex(),
-        app_keys_event_json: newer_event.as_json(),
         sent_at: 789,
     };
-    let update = apply_device_link_roster_frame(
-        &mut cfg,
-        &newer_frame,
-        &newer_event,
-        &admin.state.device_pubkey,
-    )
-    .unwrap();
+    let update =
+        apply_device_link_roster_frame(&mut cfg, &newer_frame, &admin.state.device_pubkey).unwrap();
     assert!(matches!(
         update,
         DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)

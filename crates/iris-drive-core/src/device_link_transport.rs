@@ -28,11 +28,6 @@ pub struct DeviceLinkRosterFrame {
     pub owner_pubkey: String,
     pub admin_device_pubkey: String,
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
-    pub app_keys: crate::AppKeysSnapshot,
-    #[serde(default)]
-    pub app_keys_event_id: String,
-    #[serde(default)]
-    pub app_keys_event_json: String,
     pub sent_at: u64,
 }
 
@@ -42,8 +37,6 @@ pub struct DeviceLinkRosterAckFrame {
     pub owner_pubkey: String,
     pub admin_device_pubkey: String,
     pub device_pubkey: String,
-    #[serde(default)]
-    pub app_keys_event_id: String,
     pub app_keys_created_at: i64,
     pub dck_generation: u64,
     pub acknowledged_at: u64,

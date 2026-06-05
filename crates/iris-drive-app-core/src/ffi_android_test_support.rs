@@ -24,23 +24,23 @@ fn native_apply_owner_snapshot_for_test(
     let linked_dir = Path::new(linked_data_dir);
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir))?;
-    let app_keys_event = nostr_sdk::Event::from_json(
-        &owner_config
-            .account
-            .as_ref()
-            .context("owner account missing")?
-            .app_keys_event
-            .as_ref()
-            .context("owner app keys event missing")?
-            .event_json,
-    )
-    .context("parsing owner app keys event")?;
+    let owner_account_state = owner_config
+        .account
+        .as_ref()
+        .context("owner account missing")?;
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir))?;
-    iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut linked_config, &app_keys_event)
-        .context("applying owner app keys event")?;
+    for op in &owner_account_state.profile_roster_ops {
+        let event =
+            nostr_sdk::Event::from_json(&op.event_json).context("parsing profile roster op")?;
+        iris_drive_core::relay_sync::apply_remote_iris_profile_roster_op_event(
+            &mut linked_config,
+            &event,
+        )
+        .context("applying owner profile roster op")?;
+    }
     linked_config
         .save(config_path_in(linked_dir))
-        .context("saving linked config after app keys")?;
+        .context("saving linked config after profile roster ops")?;
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir))?;
     let owner_account_state = owner_config
