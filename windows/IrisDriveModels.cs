@@ -9,7 +9,7 @@ public sealed class IrisDriveStatusData
 {
     public bool Initialized { get; init; }
     public string DriveName { get; init; } = "My Drive";
-    public string? OwnerNpub { get; init; }
+    public string? CurrentAppKeyNpub { get; init; }
     public string? DeviceNpub { get; init; }
     public bool CanAdminProfile { get; init; }
     public bool CanExportRecoveryPhrase { get; init; }
@@ -67,7 +67,7 @@ public sealed class IrisDriveStatusData
         {
             Initialized = profile.HasValue,
             DriveName = NativeDriveName(ui),
-            OwnerNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
+            CurrentAppKeyNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
             DeviceNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
             CanAdminProfile =
                 profile.HasValue && Bool(profile.Value, "can_admin_profile"),
@@ -83,7 +83,7 @@ public sealed class IrisDriveStatusData
             PrimaryStatus = String(ui, "primary_status") ?? "not_setup",
             PrimaryStatusLabel = String(ui, "primary_status_label") ?? "Ready",
             DeviceLinkRequestUrl = profile.HasValue
-                ? EmptyToNull(String(profile.Value, "device_link_request"))
+                ? EmptyToNull(String(profile.Value, "app_key_link_request"))
                 : null,
             DeviceLinkRequests = profile.HasValue
                 ? NativeDeviceLinkRequests(profile.Value)
@@ -161,7 +161,7 @@ public sealed class IrisDriveStatusData
 
     private static IReadOnlyList<DeviceLinkRequestRow> NativeDeviceLinkRequests(JsonElement account)
     {
-        if (!account.TryGetProperty("inbound_device_link_requests", out var requests) ||
+        if (!account.TryGetProperty("inbound_app_key_link_requests", out var requests) ||
             requests.ValueKind != JsonValueKind.Array)
         {
             return Array.Empty<DeviceLinkRequestRow>();
@@ -170,7 +170,7 @@ public sealed class IrisDriveStatusData
         var rows = new List<DeviceLinkRequestRow>();
         foreach (var request in requests.EnumerateArray())
         {
-            var device = String(request, "device_pubkey") ?? "";
+            var device = String(request, "app_key_pubkey") ?? "";
             rows.Add(new DeviceLinkRequestRow(
                 device,
                 String(request, "label") ?? "",

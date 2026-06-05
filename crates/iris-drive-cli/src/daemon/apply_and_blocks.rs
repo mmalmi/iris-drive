@@ -10,12 +10,12 @@ pub(crate) async fn apply_one_event(
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
-    if iris_drive_core::nostr_events::is_device_link_request_event_coordinate(event) {
-        let outcome = relay_sync::apply_remote_device_link_request_event(&mut config, event)?;
+    if iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_app_key_link_request_event(&mut config, event)?;
         emit_daemon_status_event(
             config_dir,
             json!({
-                "event": "device_link_request",
+                "event": "app_key_link_request",
                 "event_id": event.id.to_hex(),
                 "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
@@ -51,10 +51,10 @@ pub(crate) async fn apply_one_event(
         let stale_current_root = matches!(outcome, relay_sync::DriveRootApply::StaleTimestamp)
             && parsed
                 .as_ref()
-                .is_some_and(|(device_pubkey, _, drive_id, root_ref)| {
+                .is_some_and(|(app_key_pubkey, _, drive_id, root_ref)| {
                     config
                         .drive(drive_id)
-                        .and_then(|drive| drive.device_roots.get(device_pubkey))
+                        .and_then(|drive| drive.device_roots.get(app_key_pubkey))
                         .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
                 });
         let parsed_root_cid = parsed
@@ -142,7 +142,7 @@ pub(crate) fn apply_files_root_event(
     let root_cid_to_pull = if was_applied {
         config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-            .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+            .and_then(|drive| drive.device_roots.get(&account.state.app_key_pubkey))
             .map(|root| root.root_cid.clone())
     } else {
         None
@@ -408,7 +408,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
             drive
                 .device_roots
                 .iter()
-                .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+                .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
         })
 }
 

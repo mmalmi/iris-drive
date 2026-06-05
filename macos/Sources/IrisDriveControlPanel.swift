@@ -89,9 +89,9 @@ struct IrisDriveControlPanel: View {
     @State private var setupSecret = ""
     @State private var setupRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var setupRecoveryWordIndex = 0
-    @State private var setupOwner = ""
-    @State var submittedSetupOwner = ""
-    @State private var setupOwnerLinkInputIsComplete = false
+    @State private var setupLinkTarget = ""
+    @State var submittedSetupLinkTarget = ""
+    @State private var setupLinkTargetInputIsComplete = false
     @State private var approveDeviceKey = ""
     @State private var approveDeviceKeyIsComplete = false
     @State private var approveDeviceLabel = ""
@@ -147,21 +147,21 @@ struct IrisDriveControlPanel: View {
         }
     }
 
-    private func refreshSetupOwnerLinkInput(_ value: String) {
+    private func refreshSetupLinkTargetInput(_ value: String) {
         let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        setupOwnerLinkInputIsComplete = false
+        setupLinkTargetInputIsComplete = false
         guard !query.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard setupOwner.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+            guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
                 return
             }
             controller.classifyLinkInput(query) { input, isComplete in
-                guard setupOwner.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
+                guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
                     return
                 }
-                setupOwnerLinkInputIsComplete = isComplete
+                setupLinkTargetInputIsComplete = isComplete
                 if isComplete {
-                    submitSetupOwner(input, force: false, inputIsComplete: true)
+                    submitSetupLinkTarget(input, force: false, inputIsComplete: true)
                 }
             }
         }
@@ -348,29 +348,29 @@ struct IrisDriveControlPanel: View {
             }
         case .link:
             setupForm(title: "Link device", backTarget: .restoreOptions) {
-                TextField("Owner public key or invite link", text: $setupOwner)
-                    .accessibilityLabel("Owner public key or invite link")
+                TextField("IrisProfile invite link or admin AppKey", text: $setupLinkTarget)
+                    .accessibilityLabel("IrisProfile invite link or admin AppKey")
                     .onSubmit {
-                        submitSetupOwner(
-                            setupOwner,
+                        submitSetupLinkTarget(
+                            setupLinkTarget,
                             force: true,
-                            inputIsComplete: setupOwnerLinkInputIsComplete
+                            inputIsComplete: setupLinkTargetInputIsComplete
                         )
                     }
-                    .onChange(of: setupOwner) { _, newValue in
-                        refreshSetupOwnerLinkInput(newValue)
+                    .onChange(of: setupLinkTarget) { _, newValue in
+                        refreshSetupLinkTargetInput(newValue)
                     }
                     .onAppear {
-                        refreshSetupOwnerLinkInput(setupOwner)
+                        refreshSetupLinkTargetInput(setupLinkTarget)
                     }
                 setupSubmit("Link device") {
-                    submitSetupOwner(
-                        setupOwner,
+                    submitSetupLinkTarget(
+                        setupLinkTarget,
                         force: true,
-                        inputIsComplete: setupOwnerLinkInputIsComplete
+                        inputIsComplete: setupLinkTargetInputIsComplete
                     )
                 }
-                .disabled(!setupOwnerLinkInputIsComplete)
+                .disabled(!setupLinkTargetInputIsComplete)
             }
         }
         }
@@ -643,7 +643,7 @@ struct IrisDriveControlPanel: View {
             HStack {
                 SectionTitle("Devices")
                 Spacer()
-                if status.hasOwnerSigningAuthority {
+                if status.canAdminProfile {
                     Button {
                         showAddDevice = true
                     } label: {
@@ -658,7 +658,7 @@ struct IrisDriveControlPanel: View {
                 ForEach(status.peers) { peer in
                     PeerRow(
                         peer: peer,
-                        canManageDevices: status.hasOwnerSigningAuthority,
+                        canManageDevices: status.canAdminProfile,
                         adminCount: adminCount,
                         controller: controller
                     )
@@ -843,8 +843,8 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Account") {
-                AccountKeyRow(title: "Owner", value: status.ownerNpub) {
-                    controller.copyOwnerKey()
+                AccountKeyRow(title: "AppKey", value: status.currentAppKeyNpub) {
+                    controller.copyAppKey()
                 }
                 AccountKeyRow(title: "This device", value: status.deviceNpub) {
                     controller.copyDeviceKey()

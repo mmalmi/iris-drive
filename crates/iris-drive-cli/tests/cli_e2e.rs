@@ -40,8 +40,8 @@ fn current_app_key_npub(value: &serde_json::Value) -> &str {
     value["current_app_key_npub"].as_str().unwrap()
 }
 
-fn device_link_invite_url(value: &serde_json::Value) -> &str {
-    value["device_link_invite"]["url"].as_str().unwrap()
+fn app_key_link_invite_url(value: &serde_json::Value) -> &str {
+    value["app_key_link_invite"]["url"].as_str().unwrap()
 }
 
 fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
@@ -665,7 +665,7 @@ fn status_reports_fips_latency_for_direct_peer() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_invite = device_link_invite_url(&owner).to_string();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
@@ -731,7 +731,7 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_invite = device_link_invite_url(&owner).to_string();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
@@ -781,7 +781,7 @@ fn status_drops_stale_fips_mesh_peers() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_invite = device_link_invite_url(&owner).to_string();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
@@ -978,7 +978,7 @@ fn seed_conflict_record(config_dir: &std::path::Path, conflict_id: &str) {
         let new_root = iris_drive_core::layer_conflict_records(&tree, root, &[record])
             .await
             .unwrap();
-        let account_device = config.profile.as_ref().unwrap().device_pubkey.clone();
+        let account_device = config.profile.as_ref().unwrap().app_key_pubkey.clone();
         let drive = config
             .drives
             .iter_mut()

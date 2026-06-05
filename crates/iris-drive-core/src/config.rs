@@ -277,7 +277,7 @@ impl AppConfig {
                 }
             }
             if let Some(account) = self.profile.as_ref()
-                && let Some(root) = drive.device_roots.get(&account.device_pubkey)
+                && let Some(root) = drive.device_roots.get(&account.app_key_pubkey)
             {
                 drive.last_root_cid = Some(root.root_cid.clone());
             }
@@ -376,7 +376,7 @@ pub struct Drive {
     pub drive_id: String,
     pub display_name: String,
     pub role: DriveRole,
-    /// Per-device drive roots, keyed by `device_pubkey` (hex). Every
+    /// Per-device drive roots, keyed by `app_key_pubkey` (hex). Every
     /// authorized device publishes its own root tree; the merged view
     /// is computed causally across all entries, with timestamp ordering
     /// for legacy roots (see [`crate::merge::merge_drives`]).
@@ -386,7 +386,7 @@ pub struct Drive {
     /// Deprecated: this device's most-recent root CID. Retained as a
     /// flat scalar for compatibility with existing tooling that hasn't
     /// learned `device_roots` yet. New code should read
-    /// `device_roots[my_device_pubkey].root_cid`.
+    /// `device_roots[my_app_key_pubkey].root_cid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_root_cid: Option<String>,
     /// Symmetric key for encrypted drives, hex-encoded.
@@ -560,8 +560,8 @@ schema_version = {CONFIG_SCHEMA_VERSION}
 
 [account]
 profile_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
-device_pubkey = "device-a"
-device_link_secret = "link-secret"
+app_key_pubkey = "device-a"
+app_key_link_secret = "link-secret"
 authorization_state = "authorized"
 "#
         );
@@ -661,14 +661,14 @@ dck_generation = 1
         let mut newer = AppConfig {
             profile: Some(ProfileState {
                 profile_id: crate::IrisProfileId::new_v4(),
-                device_pubkey: "device-a".into(),
+                app_key_pubkey: "device-a".into(),
                 profile_roster_ops: Vec::new(),
-                device_link_secret: "link-secret".into(),
-                authorization_state: crate::profile::DeviceAuthorizationState::Authorized,
-                device_label: None,
+                app_key_link_secret: "link-secret".into(),
+                authorization_state: crate::profile::AppKeyAuthorizationState::Authorized,
+                app_key_label: None,
                 app_keys: None,
-                outbound_device_link_request: None,
-                inbound_device_link_requests: Vec::new(),
+                outbound_app_key_link_request: None,
+                inbound_app_key_link_requests: Vec::new(),
             }),
             ..AppConfig::default()
         };

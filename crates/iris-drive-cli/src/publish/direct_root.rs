@@ -374,7 +374,7 @@ async fn append_primary_drive_root_events(
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
-        let authorized_devices = authorized_device_pubkeys(state);
+        let authorized_devices = authorized_app_key_pubkeys(state);
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_event(
@@ -388,7 +388,7 @@ async fn append_primary_drive_root_events(
         events.push(direct_root_event(
             format!(
                 "drive-root:{}:{}:{}:{}:{}",
-                state.device_pubkey,
+                state.app_key_pubkey,
                 drive.drive_id,
                 root.device_seq,
                 root.root_cid,
@@ -408,7 +408,7 @@ async fn append_primary_drive_root_events(
             events.push(direct_root_event(
                 format!(
                     "files-root:{}:{}:{}",
-                    state.device_pubkey, drive.drive_id, root.root_cid
+                    state.app_key_pubkey, drive.drive_id, root.root_cid
                 ),
                 &event,
             )?);
@@ -427,10 +427,10 @@ async fn append_share_root_events(
         .context("loading app key")?;
     for folder in &config.shared_folders {
         let projection = folder.projection();
-        if !projection.can_write_roots(&state.device_pubkey) {
+        if !projection.can_write_roots(&state.app_key_pubkey) {
             continue;
         }
-        let Some(root) = folder.device_roots.get(&state.device_pubkey) else {
+        let Some(root) = folder.device_roots.get(&state.app_key_pubkey) else {
             continue;
         };
         if root.local_only {
@@ -455,7 +455,7 @@ async fn append_share_root_events(
             format!(
                 "share-root:{}:{}:{}:{}:{}",
                 folder.share_id,
-                state.device_pubkey,
+                state.app_key_pubkey,
                 root.device_seq,
                 root.root_cid,
                 authorized_recipients.join(",")
@@ -472,7 +472,7 @@ pub(crate) async fn publishable_device_root(
     drive: &Drive,
     state: &ProfileState,
 ) -> Result<Option<DeviceRootRef>> {
-    let Some(root) = drive.device_roots.get(&state.device_pubkey).cloned() else {
+    let Some(root) = drive.device_roots.get(&state.app_key_pubkey).cloned() else {
         return Ok(None);
     };
     if !root.local_only {
@@ -503,7 +503,7 @@ pub(crate) async fn publishable_parent_root(
         let Some(parent) = meta
             .parents
             .iter()
-            .find(|parent| parent.device_id == state.device_pubkey)
+            .find(|parent| parent.device_id == state.app_key_pubkey)
         else {
             return Ok(None);
         };

@@ -372,9 +372,8 @@ struct NativeLinkInputClassification: Codable {
     var isComplete: Bool = false
     var isValid: Bool = false
     var normalizedInput: String = ""
-    var ownerPubkey: String = ""
-    var devicePubkey: String = ""
-    var adminDevicePubkey: String = ""
+    var appKeyPubkey: String = ""
+    var adminAppKeyPubkey: String = ""
     var hasLinkSecret: Bool = false
     var error: String = ""
 
@@ -387,9 +386,8 @@ struct NativeLinkInputClassification: Codable {
         case isComplete = "is_complete"
         case isValid = "is_valid"
         case normalizedInput = "normalized_input"
-        case ownerPubkey = "owner_pubkey"
-        case devicePubkey = "device_pubkey"
-        case adminDevicePubkey = "admin_device_pubkey"
+        case appKeyPubkey = "app_key_pubkey"
+        case adminAppKeyPubkey = "admin_app_key_pubkey"
         case hasLinkSecret = "has_link_secret"
         case error
     }
@@ -430,16 +428,15 @@ struct NativeProfile: Codable {
     var currentAppKeyPubkey: String
     var currentAppKeyNpub: String
     var currentAppKeyLabel: String
-    var deviceLabel: String
+    var appKeyLabel: String
     var authorizationState: String
     var canAdminProfile: Bool
     var canWriteRoots: Bool
     var canExportRecoveryPhrase: Bool
-    var deviceLinkRequest: String
-    var deviceLinkInvite: String
-    var inboundDeviceLinkRequests: [NativeDeviceLinkRequest]
+    var appKeyLinkRequest: String
+    var appKeyLinkInvite: String
+    var inboundAppKeyLinkRequests: [NativeDeviceLinkRequest]
 
-    var ownerPubkey: String { currentAppKeyNpub }
     var devicePubkey: String { currentAppKeyNpub }
 
     enum CodingKeys: String, CodingKey {
@@ -447,14 +444,14 @@ struct NativeProfile: Codable {
         case currentAppKeyPubkey = "current_app_key_pubkey"
         case currentAppKeyNpub = "current_app_key_npub"
         case currentAppKeyLabel = "current_app_key_label"
-        case deviceLabel = "device_label"
+        case appKeyLabel = "app_key_label"
         case authorizationState = "authorization_state"
         case canAdminProfile = "can_admin_profile"
         case canWriteRoots = "can_write_roots"
         case canExportRecoveryPhrase = "can_export_recovery_phrase"
-        case deviceLinkRequest = "device_link_request"
-        case deviceLinkInvite = "device_link_invite"
-        case inboundDeviceLinkRequests = "inbound_device_link_requests"
+        case appKeyLinkRequest = "app_key_link_request"
+        case appKeyLinkInvite = "app_key_link_invite"
+        case inboundAppKeyLinkRequests = "inbound_app_key_link_requests"
     }
 }
 
@@ -481,7 +478,7 @@ struct NativeDeviceLinkRequest: Codable {
     var requestLink: String
 
     enum CodingKeys: String, CodingKey {
-        case devicePubkey = "device_pubkey"
+        case devicePubkey = "app_key_pubkey"
         case label
         case requestedAt = "requested_at"
         case requestLink = "request_link"

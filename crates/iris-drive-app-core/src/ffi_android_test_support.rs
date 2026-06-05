@@ -54,7 +54,7 @@ fn native_apply_owner_snapshot_for_test(
         .context("owner primary drive missing")?;
     let root = drive
         .device_roots
-        .get(&owner_account_state.device_pubkey)
+        .get(&owner_account_state.app_key_pubkey)
         .context("owner device root missing")?;
     let authorized = owner_account_state
         .app_keys

@@ -64,7 +64,7 @@ require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPan
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "device.displayLabel"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "device.roleLabel"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "device.stateLabel"
-require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Copy owner key"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Copy AppKey"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Open in Files"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "View on drive.iris.to"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Reset relay"

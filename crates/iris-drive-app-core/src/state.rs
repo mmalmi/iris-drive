@@ -63,7 +63,7 @@ pub struct UiProfile {
     pub current_app_key_pubkey: String,
     pub current_app_key_npub: String,
     pub current_app_key_label: String,
-    pub device_label: String,
+    pub app_key_label: String,
     pub authorization_state: String,
     pub can_admin_profile: bool,
     pub can_write_roots: bool,
@@ -75,14 +75,14 @@ pub struct UiProfile {
     pub social_profile_facet_count: u64,
     pub missing_key_wraps: Vec<String>,
     pub can_export_recovery_phrase: bool,
-    pub device_link_request: String,
-    pub device_link_invite: String,
-    pub inbound_device_link_requests: Vec<UiDeviceLinkRequest>,
+    pub app_key_link_request: String,
+    pub app_key_link_invite: String,
+    pub inbound_app_key_link_requests: Vec<UiAppKeyLinkRequest>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UiDeviceLinkRequest {
-    pub device_pubkey: String,
+pub struct UiAppKeyLinkRequest {
+    pub app_key_pubkey: String,
     pub label: String,
     pub requested_at: u64,
     pub request_link: String,

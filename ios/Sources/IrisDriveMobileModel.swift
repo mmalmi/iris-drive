@@ -27,7 +27,8 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var statusTitle = "Ready"
     @Published var statusDetail = "Waiting for this device to be linked."
     @Published var deviceLabel = UIDevice.current.name
-    @Published var ownerPublicKey = ""
+    @Published var profileLinkTarget = ""
+    @Published var currentAppKeyNpub = ""
     @Published var devicePublicKey = "local-device"
     @Published var restoreSecret = ""
     @Published var profileUsername = ""
@@ -114,16 +115,16 @@ final class IrisDriveMobileModel: ObservableObject {
         lastState?.ui.snapshotLink ?? ""
     }
 
-    var deviceLinkRequest: String {
-        lastState?.ui.profile?.deviceLinkRequest ?? ""
+    var appKeyLinkRequest: String {
+        lastState?.ui.profile?.appKeyLinkRequest ?? ""
     }
 
-    var deviceLinkInvite: String {
-        lastState?.ui.profile?.deviceLinkInvite ?? ""
+    var appKeyLinkInvite: String {
+        lastState?.ui.profile?.appKeyLinkInvite ?? ""
     }
 
     var hasLocalProfile: Bool {
-        !ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !currentAppKeyNpub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var isSetupComplete: Bool {
@@ -142,7 +143,7 @@ final class IrisDriveMobileModel: ObservableObject {
         syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
-    var hasOwnerAuthority: Bool {
+    var canAdminProfile: Bool {
         lastState?.ui.profile?.canAdminProfile ?? false
     }
 
@@ -368,12 +369,12 @@ final class IrisDriveMobileModel: ObservableObject {
     private var fileProviderRegistrationIdentity: String {
         guard isSetupComplete,
               let account = lastState?.ui.profile,
-              !account.ownerPubkey.isEmpty,
+              !account.currentAppKeyNpub.isEmpty,
               !account.devicePubkey.isEmpty
         else {
             return ""
         }
-        return "\(account.ownerPubkey):\(account.devicePubkey)"
+        return "\(account.currentAppKeyNpub):\(account.devicePubkey)"
     }
 
     private func shouldRepairFileProviderRegistration(_ domain: NSFileProviderDomain) -> Bool {
@@ -490,7 +491,7 @@ final class IrisDriveMobileModel: ObservableObject {
         self.profilePhotoName = profileUsername.isEmpty ? "" : profilePhotoName
         dispatch([
             "type": "create_profile",
-            "device_label": deviceLabel,
+            "app_key_label": deviceLabel,
         ])
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
@@ -512,7 +513,7 @@ final class IrisDriveMobileModel: ObservableObject {
         dispatch([
             "type": "restore_profile",
             "recovery_secret": recoverySecret,
-            "device_label": deviceLabel,
+            "app_key_label": deviceLabel,
         ])
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
@@ -524,18 +525,18 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func linkDevice() {
-        let owner = ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !owner.isEmpty else {
+        let target = profileLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
             return
         }
-        ownerPublicKey = owner
+        profileLinkTarget = target
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.dispatchInBackground(
                 [
                     "type": "link_device",
-                    "link_target": owner,
-                    "device_label": self.deviceLabel,
+                    "link_target": target,
+                    "app_key_label": self.deviceLabel,
                 ],
                 invalidatePendingState: true
             )
@@ -580,21 +581,21 @@ final class IrisDriveMobileModel: ObservableObject {
     func deleteDevice(id: String) {
         dispatch([
             "type": "delete_device",
-            "device_pubkey": id,
+            "app_key_pubkey": id,
         ])
     }
 
     func appointAdmin(id: String) {
         dispatch([
             "type": "appoint_admin",
-            "device_pubkey": id,
+            "app_key_pubkey": id,
         ])
     }
 
     func demoteAdmin(id: String) {
         dispatch([
             "type": "demote_admin",
-            "device_pubkey": id,
+            "app_key_pubkey": id,
         ])
     }
 
@@ -636,8 +637,8 @@ final class IrisDriveMobileModel: ObservableObject {
         scheduleBackgroundSyncIfNeeded()
     }
 
-    func copyOwnerKey() {
-        UIPasteboard.general.string = ownerPublicKey
+    func copyAppKey() {
+        UIPasteboard.general.string = currentAppKeyNpub
     }
 
     func copyDeviceKey() {
@@ -645,11 +646,11 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func copyLinkRequest() {
-        UIPasteboard.general.string = deviceLinkRequest
+        UIPasteboard.general.string = appKeyLinkRequest
     }
 
     func copyLinkInvite() {
-        UIPasteboard.general.string = deviceLinkInvite
+        UIPasteboard.general.string = appKeyLinkInvite
     }
 
     func qrMatrix(for value: String) -> QrMatrix {
@@ -768,13 +769,13 @@ final class IrisDriveMobileModel: ObservableObject {
     func handle(url: URL) {
         let linkInput = IrisDriveNativeLinkInput.classify(url.absoluteString)
         if linkInput.kind == "invite" {
-            ownerPublicKey = url.absoluteString
+            profileLinkTarget = url.absoluteString
             linkDevice()
             ensureFileProviderDomainIfProfileExists()
             return
         }
 
-        guard linkInput.kind == "device_approval" else {
+        guard linkInput.kind == "app_key_approval" else {
             statusTitle = "Iris link opened"
             statusDetail = url.absoluteString
             persist()
@@ -782,27 +783,27 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        if hasOwnerAuthority, linkInput.isComplete {
+        if canAdminProfile, linkInput.isComplete {
             approveDevice(request: url.absoluteString, label: "Linked device")
             return
         }
 
-        statusTitle = hasOwnerAuthority ? "Invalid device invite" : "Open on an owner device"
-        statusDetail = hasOwnerAuthority
+        statusTitle = canAdminProfile ? "Invalid AppKey invite" : "Open on a profile admin"
+        statusDetail = canAdminProfile
             ? (linkInput.error.isEmpty ? url.absoluteString : linkInput.error)
-            : "Open this request on an owner device, or scan an invite link to join."
+            : "Open this request on a profile admin install, or scan an invite link to join."
     }
 
     func handleDebugLaunchEnvironment() {
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
         guard environment["IRIS_DRIVE_DEBUG_ACTION"] == "link-device",
-              let owner = environment["IRIS_DRIVE_DEBUG_OWNER"],
-              !owner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              let target = environment["IRIS_DRIVE_DEBUG_OWNER"],
+              !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return
         }
-        ownerPublicKey = owner
+        profileLinkTarget = target
         linkDevice()
         #endif
     }
@@ -832,8 +833,8 @@ final class IrisDriveMobileModel: ObservableObject {
         [
             "approvedDevices",
             "devicePublicKey",
-            "hasOwnerAuthority",
-            "ownerPublicKey",
+            "canAdminProfile",
+            "profileLinkTarget",
             "relay",
             "relays",
             "statusDetail",
@@ -844,7 +845,8 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func rebuildDerivedState() {
         guard let state = lastState else {
-            ownerPublicKey = ""
+            profileLinkTarget = ""
+            currentAppKeyNpub = ""
             devicePublicKey = "local-device"
             authorizationState = "Not linked"
             devices = []
@@ -864,10 +866,10 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        ownerPublicKey = state.ui.profile?.ownerPubkey ?? ""
+        currentAppKeyNpub = state.ui.profile?.currentAppKeyNpub ?? ""
         devicePublicKey = state.ui.profile?.devicePubkey ?? "local-device"
-        deviceLabel = state.ui.profile?.deviceLabel.isEmpty == false
-            ? state.ui.profile?.deviceLabel ?? deviceLabel
+        deviceLabel = state.ui.profile?.appKeyLabel.isEmpty == false
+            ? state.ui.profile?.appKeyLabel ?? deviceLabel
             : deviceLabel
         syncRunning = state.ui.sync.running
         authorizationState = state.ui.setupLabel
@@ -895,7 +897,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 canDemoteAdmin: device.canDemoteAdmin
             )
         }
-        inboundDeviceLinkRequests = state.ui.profile?.inboundDeviceLinkRequests.map { request in
+        inboundDeviceLinkRequests = state.ui.profile?.inboundAppKeyLinkRequests.map { request in
             IrisDriveDeviceLinkRequest(
                 devicePubkey: request.devicePubkey,
                 label: request.label,
@@ -1041,9 +1043,9 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func deviceKey(from request: String) -> String {
         let linkInput = IrisDriveNativeLinkInput.classify(request)
-        guard linkInput.kind == "device_approval", !linkInput.devicePubkey.isEmpty else {
+        guard linkInput.kind == "app_key_approval", !linkInput.appKeyPubkey.isEmpty else {
             return request
         }
-        return linkInput.devicePubkey
+        return linkInput.appKeyPubkey
     }
 }

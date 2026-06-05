@@ -74,9 +74,9 @@ class MainActivity : ComponentActivity() {
                         ::autoStartSyncIfNeeded,
                     )
                 },
-                onLinkDevice = { ownerPubkey, deviceLabel ->
+                onLinkDevice = { linkTarget, deviceLabel ->
                     dispatch(
-                        NativeActions.linkDevice(ownerPubkey, resolveDeviceLabel(deviceLabel)),
+                        NativeActions.linkDevice(linkTarget, resolveDeviceLabel(deviceLabel)),
                         ::autoStartSyncIfNeeded,
                     )
                 },
@@ -277,7 +277,7 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data
         if (uri != null) {
             when (NativeCore.classifyLinkInputKind(uri.toString())) {
-                "device_approval" -> {
+                "app_key_approval" -> {
                     dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
                 }
 

@@ -12,11 +12,11 @@ final class IrisDriveStatus: ObservableObject {
     @Published var localNhashResolverEnabled = true
     @Published var initialized = false
     @Published var driveName = "My Drive"
-    @Published var ownerNpub: String?
+    @Published var currentAppKeyNpub: String?
     @Published var deviceNpub: String?
     @Published var deviceLinkInviteURL: String?
     @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
-    @Published var hasOwnerSigningAuthority = false
+    @Published var canAdminProfile = false
     @Published var canExportRecoveryPhrase = false
     @Published var setupState = "not_configured"
     @Published var setupComplete = false
@@ -67,7 +67,7 @@ struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
     init(json: [String: Any]) {
         deviceNpub =
             json["device_npub"] as? String
-            ?? json["device_pubkey"] as? String
+            ?? json["app_key_pubkey"] as? String
             ?? UUID().uuidString
         id = deviceNpub
         label = json["label"] as? String
@@ -310,7 +310,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
 
     init(json: [String: Any]) {
         let pubkey =
-            json["device_pubkey"] as? String
+            json["app_key_pubkey"] as? String
             ?? json["pubkey"] as? String
             ?? UUID().uuidString
         let labelValue = json["label"] as? String

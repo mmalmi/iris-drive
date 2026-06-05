@@ -40,7 +40,7 @@ pub(crate) fn cmd_daemon(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     state.recompute_authorization();
-    if state.authorization_state == iris_drive_core::DeviceAuthorizationState::Revoked {
+    if state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Revoked {
         write_daemon_status(config_dir, json!({
             "event": "revoked",
             "error": "device removed",
@@ -57,7 +57,7 @@ pub(crate) fn cmd_daemon(
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
     let filters = relay_sync::subscription_filters_for_shared_roots(
-        &state.device_pubkey,
+        &state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &share_ids,
@@ -236,7 +236,7 @@ pub(crate) fn cmd_daemon(
         let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
-                "current_app_key_npub": pubkey_npub(&state.device_pubkey),
+                "current_app_key_npub": pubkey_npub(&state.app_key_pubkey),
                 "provider_update_mode": "event_driven",
                 "watch_debounce_ms": watch_debounce_ms,
                 "root_update_throttle_ms": root_update_debounce.as_millis(),
@@ -304,7 +304,7 @@ pub(crate) fn cmd_daemon(
             std::time::Duration::from_millis(DEVICE_LINK_TICK_MILLIS),
         );
         device_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut sent_device_link_requests = BTreeMap::new();
+        let mut sent_app_key_link_requests = BTreeMap::new();
         let mut sent_device_link_rosters = BTreeMap::new();
         let mut acked_device_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_device_root_key(&config);
@@ -624,11 +624,11 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = device_link_timer.tick() => {
-                    match send_pending_device_link_request(
+                    match send_pending_app_key_link_request(
                         config_dir,
                         &client,
                         fips_blocks.as_deref(),
-                        &mut sent_device_link_requests,
+                        &mut sent_app_key_link_requests,
                     )
                     .await
                     {
@@ -636,7 +636,7 @@ pub(crate) fn cmd_daemon(
                         Ok(None) => {}
                         Err(error) => println!(
                             "{}",
-                            json!({"event": "device_link_request_send_error", "error": format!("{error:#}")})
+                            json!({"event": "app_key_link_request_send_error", "error": format!("{error:#}")})
                         ),
                     }
                     match send_authorized_device_link_rosters(
@@ -677,7 +677,7 @@ pub(crate) fn cmd_daemon(
                                 Err(error) => {
                                     println!(
                                         "{}",
-                                        json!({"event": "device_link_request_receive_error", "error": format!("{error:#}")})
+                                        json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
                                     );
                                     continue;
                                 }

@@ -2,7 +2,7 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_device_link_request_reaches_admin_quickly() {
+async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
@@ -12,7 +12,7 @@ async fn live_daemons_device_link_request_reaches_admin_quickly() {
     configure_local_blossom(linked_cfg.path(), &blossom.url);
 
     let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
-    let invite_url = owner["device_link_invite"]["url"].as_str().unwrap();
+    let invite_url = owner["app_key_link_invite"]["url"].as_str().unwrap();
     let _linked = run_json(
         linked_cfg.path(),
         &["link", invite_url, "--label", "iphone"],
@@ -36,7 +36,7 @@ async fn live_daemons_device_link_request_reaches_admin_quickly() {
     let fast_window = Duration::from_secs(6);
     while started_at.elapsed() < fast_window {
         let status = run_json(owner_cfg.path(), &["status"]);
-        if status["profile"]["inbound_device_link_requests"]
+        if status["profile"]["inbound_app_key_link_requests"]
             .as_array()
             .is_some_and(|requests| !requests.is_empty())
         {

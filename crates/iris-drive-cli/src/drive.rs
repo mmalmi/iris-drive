@@ -87,34 +87,34 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .profile
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
-        let authorized = authorized_device_pubkeys(account);
-        let merge_devices = iris_drive_core::projection::merge_device_pubkeys(account, drive);
+        let authorized = authorized_app_key_pubkeys(account);
+        let merge_devices = iris_drive_core::projection::merge_app_key_pubkeys(account, drive);
 
         // Fetch each trusted device root's tree + tombstones from htree.
         // With `--at N`, this device's own root walks back N revisions
         // via the `.hashtree/prev` chain; other devices' roots stay at their
         // current state.
         let mut snapshots_data = Vec::new();
-        for device_pubkey in &merge_devices {
-            let Some(root) = drive.device_roots.get(device_pubkey) else {
+        for app_key_pubkey in &merge_devices {
+            let Some(root) = drive.device_roots.get(app_key_pubkey) else {
                 continue; // device hasn't published its root yet
             };
             let mut cid = Cid::parse(&root.root_cid)
-                .with_context(|| format!("parsing root CID for device {device_pubkey}"))?;
-            if at > 0 && *device_pubkey == account.device_pubkey {
+                .with_context(|| format!("parsing root CID for device {app_key_pubkey}"))?;
+            if at > 0 && *app_key_pubkey == account.app_key_pubkey {
                 cid = iris_drive_core::history::revision_at(daemon.tree(), &cid, at)
                     .await
                     .with_context(|| format!("revision -{at} not in chain"))?;
             }
             let (files, tombstones) = walk_device_tree(daemon.tree(), &cid).await?;
-            snapshots_data.push((device_pubkey.clone(), root.clone(), files, tombstones));
+            snapshots_data.push((app_key_pubkey.clone(), root.clone(), files, tombstones));
         }
 
         let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
         let snapshots: Vec<DeviceSnapshot> = snapshots_data
             .iter()
             .map(|(pk, root, files, tombs)| DeviceSnapshot {
-                device_pubkey: pk.as_str(),
+                app_key_pubkey: pk.as_str(),
                 root,
                 files: files.clone(),
                 tombstones: tombs.clone(),

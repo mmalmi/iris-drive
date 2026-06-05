@@ -85,7 +85,7 @@ private struct RevokedDeviceSetupView: View {
 
                 Section("Device removed") {
                     Text("This device no longer has access to Iris Drive.")
-                    LabeledContent("Owner", value: model.ownerPublicKey)
+                    LabeledContent("AppKey", value: model.currentAppKeyNpub)
                     LabeledContent("This device", value: model.devicePublicKey)
                     Button {
                         model.relinkDevice()
@@ -139,7 +139,7 @@ private struct AwaitingApprovalSetupView: View {
                 }
 
                 Section("Waiting for approval") {
-                    LabeledContent("Owner", value: model.ownerPublicKey)
+                    LabeledContent("AppKey", value: model.currentAppKeyNpub)
                     LabeledContent("This device", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
@@ -469,35 +469,35 @@ private struct RestoreSecretKeySetupView: View {
 
 private struct LinkDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var ownerPublicKey = ""
-    @State private var submittedOwnerPublicKey = ""
+    @State private var linkTarget = ""
+    @State private var submittedLinkTarget = ""
     @State private var scannerPresented = false
 
     init(model: IrisDriveMobileModel) {
         self.model = model
-        _ownerPublicKey = State(initialValue: iosUiTestValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
+        _linkTarget = State(initialValue: iosUiTestValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
     }
 
     var body: some View {
         Form {
             Section {
-                TextField("Owner public key or invite link", text: $ownerPublicKey)
+                TextField("IrisProfile invite link or admin AppKey", text: $linkTarget)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .accessibilityIdentifier("linkOwnerInput")
+                    .accessibilityIdentifier("linkTargetInput")
                     .onSubmit {
-                        submitLinkDevice(ownerPublicKey, force: true)
+                        submitLinkDevice(linkTarget, force: true)
                     }
-                    .onChange(of: ownerPublicKey) { _, newValue in
+                    .onChange(of: linkTarget) { _, newValue in
                         submitLinkDevice(newValue, force: false)
                     }
                 Button {
-                    submitLinkDevice(ownerPublicKey, force: true)
+                    submitLinkDevice(linkTarget, force: true)
                 } label: {
                     Label("Link device", systemImage: "link")
                 }
                 .accessibilityIdentifier("linkDeviceSubmit")
-                .disabled(!IrisDriveNativeLinkInput.isComplete(ownerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)))
+                .disabled(!IrisDriveNativeLinkInput.isComplete(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines)))
                 Button {
                     scannerPresented = true
                 } label: {
@@ -508,11 +508,11 @@ private struct LinkDeviceSetupView: View {
         .navigationTitle("Link this device")
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
-            submitLinkDevice(ownerPublicKey, force: false)
+            submitLinkDevice(linkTarget, force: false)
         }
         .sheet(isPresented: $scannerPresented) {
             QRCodeScannerSheet { code in
-                ownerPublicKey = code
+                linkTarget = code
                 submitLinkDevice(code, force: false)
             }
         }
@@ -522,9 +522,9 @@ private struct LinkDeviceSetupView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard IrisDriveNativeLinkInput.isComplete(trimmed) else { return }
-        guard submittedOwnerPublicKey != trimmed else { return }
-        submittedOwnerPublicKey = trimmed
-        model.ownerPublicKey = trimmed
+        guard submittedLinkTarget != trimmed else { return }
+        submittedLinkTarget = trimmed
+        model.profileLinkTarget = trimmed
         model.linkDevice()
     }
 }
@@ -712,7 +712,7 @@ private struct DevicesView: View {
         }
         .navigationTitle("Devices")
         .toolbar {
-            if model.hasOwnerAuthority {
+            if model.canAdminProfile {
                 Button {
                     showingAddDevice = true
                 } label: {
@@ -766,12 +766,12 @@ private struct AddDeviceSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if !model.deviceLinkInvite.isEmpty {
+                if !model.appKeyLinkInvite.isEmpty {
                     Section("Invite device") {
-                        QrCodeView(matrix: model.qrMatrix(for: model.deviceLinkInvite))
+                        QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
                             .frame(width: 260, height: 260)
                             .frame(maxWidth: .infinity, alignment: .center)
-                        Text(model.deviceLinkInvite)
+                        Text(model.appKeyLinkInvite)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -1036,12 +1036,12 @@ private struct SettingsView: View {
             Section("Account") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
-                LabeledContent("Owner", value: model.ownerPublicKey)
+                LabeledContent("AppKey", value: model.currentAppKeyNpub)
                 LabeledContent("Device", value: model.devicePublicKey)
                 Button {
-                    model.copyOwnerKey()
+                    model.copyAppKey()
                 } label: {
-                    Label("Copy owner key", systemImage: "doc.on.doc")
+                    Label("Copy AppKey", systemImage: "doc.on.doc")
                 }
                 Button {
                     model.copyDeviceKey()

@@ -11,7 +11,7 @@ fn configured_backup_targets_use_shared_summary_rows() {
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
 
     let _ = app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "Pixel".to_owned(),
+        app_key_label: "Pixel".to_owned(),
     });
 
     let config_path = config_path_in(dir.path());
@@ -74,7 +74,7 @@ fn backup_actions_manage_blossom_targets_through_app_core() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let _ = app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "Pixel".to_owned(),
+        app_key_label: "Pixel".to_owned(),
     });
 
     let added = app.dispatch(NativeAppAction::AddBackupTarget {

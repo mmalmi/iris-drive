@@ -184,7 +184,7 @@ fn current_device_root_missing(config: &AppConfig) -> bool {
     };
     config
         .drive(PRIMARY_DRIVE_ID)
-        .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
+        .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
         .is_none()
 }
 

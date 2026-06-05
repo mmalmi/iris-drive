@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
     private bool quitRequested;
-    private string submittedLinkOwner = "";
+    private string submittedLinkTarget = "";
     private const int RecoveryPhraseWordCount = 12;
     private readonly string[] recoveryWords = new string[RecoveryPhraseWordCount];
     private int recoveryWordIndex;
@@ -150,7 +150,7 @@ public partial class MainWindow : Window
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = "";
-        OwnerValue.Text = "-";
+        AppKeyValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
     }
@@ -162,7 +162,7 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(AwaitingPanel);
-        AwaitingOwnerBox.Text = status.OwnerNpub ?? "";
+        AwaitingAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? "";
         SetupNotice.Text = notice ?? status.PrimaryStatusLabel;
     }
@@ -172,9 +172,9 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(RevokedPanel);
-        RevokedOwnerBox.Text = status.OwnerNpub ?? "";
+        RevokedAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         RevokedDeviceBox.Text = status.DeviceNpub ?? "";
-        RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.OwnerNpub);
+        RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.CurrentAppKeyNpub);
         SetupNotice.Text = notice ?? "Device removed";
         UpdateTrayText(false);
     }
@@ -196,7 +196,7 @@ public partial class MainWindow : Window
         StartButton.Visibility = syncRunning ? Visibility.Collapsed : Visibility.Visible;
         StopButton.Visibility = syncRunning ? Visibility.Visible : Visibility.Collapsed;
 
-        OwnerValue.Text = status.OwnerNpub ?? "-";
+        AppKeyValue.Text = status.CurrentAppKeyNpub ?? "-";
         DeviceValue.Text = status.DeviceNpub ?? "-";
         AuthValue.Text = status.SetupLabel;
         RecoveryPhraseButton.Visibility =
@@ -229,7 +229,7 @@ public partial class MainWindow : Window
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = message;
-        OwnerValue.Text = "-";
+        AppKeyValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
@@ -768,9 +768,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CopyOwner_Click(object sender, RoutedEventArgs e)
+    private void CopyAppKey_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.OwnerNpub, "Owner key copied");
+        CopyText(currentStatus?.CurrentAppKeyNpub, "AppKey copied");
     }
 
     private void CopyDevice_Click(object sender, RoutedEventArgs e)
@@ -894,10 +894,10 @@ public partial class MainWindow : Window
 
     private async void RelinkRevokedDevice_Click(object sender, RoutedEventArgs e)
     {
-        var owner = currentStatus?.OwnerNpub;
-        if (string.IsNullOrWhiteSpace(owner))
+        var target = currentStatus?.CurrentAppKeyNpub;
+        if (string.IsNullOrWhiteSpace(target))
         {
-            SetupNotice.Text = "Owner key unavailable";
+            SetupNotice.Text = "AppKey unavailable";
             return;
         }
 
@@ -905,7 +905,7 @@ public partial class MainWindow : Window
         {
             RevokedRelinkButton.IsEnabled = false;
             SetupNotice.Text = "Linking device";
-            await service.RelinkDeviceAsync(owner);
+            await service.RelinkDeviceAsync(target);
             await RefreshAsync();
         }
         catch (Exception error)
@@ -1286,7 +1286,7 @@ public partial class MainWindow : Window
     private void ShowLink_Click(object sender, RoutedEventArgs e)
     {
         ShowSetupPanel(LinkPanel);
-        LinkOwnerBox.Focus();
+        LinkTargetBox.Focus();
     }
 
     private void ShowRecoveryPhrase_Click(object sender, RoutedEventArgs e)

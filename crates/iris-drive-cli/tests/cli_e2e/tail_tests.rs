@@ -338,10 +338,10 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
     configure_local_blossom(cfg_b.path(), &blossom.url);
 
     let init_a = run_json(cfg_a.path(), &["init", "--label", "device-a"]);
-    let owner_invite = init_a["device_link_invite"]["url"].as_str().unwrap();
+    let owner_invite = init_a["app_key_link_invite"]["url"].as_str().unwrap();
 
     let linked_b = run_json(cfg_b.path(), &["link", owner_invite, "--label", "device-b"]);
-    let device_b_request = linked_b["device_link_request"]["url"]
+    let device_b_request = linked_b["app_key_link_request"]["url"]
         .as_str()
         .unwrap()
         .to_string();

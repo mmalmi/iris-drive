@@ -14,12 +14,12 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let recovered_dir = tempdir().unwrap();
     let recovered = Profile::restore(recovered_dir.path(), &phrase, Some("browser".into()))
         .expect("restore from recovery phrase");
-    let recovered_pubkey = recovered.state.device_pubkey.clone();
+    let recovered_pubkey = recovered.state.app_key_pubkey.clone();
     let mut awaiting_state = recovered.state.clone();
     awaiting_state.profile_roster_ops = owner.state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
     awaiting_state.authorization_state =
-        iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
+        iris_drive_core::AppKeyAuthorizationState::AwaitingApproval;
     let mut config = AppConfig {
         profile: Some(awaiting_state),
         ..AppConfig::default()
@@ -33,9 +33,9 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let state = saved.profile.expect("recovered state saved");
     assert_eq!(
         state.authorization_state,
-        iris_drive_core::DeviceAuthorizationState::Authorized
+        iris_drive_core::AppKeyAuthorizationState::Authorized
     );
-    assert!(state.can_manage_devices());
+    assert!(state.can_admin_profile());
     assert_eq!(
         state.profile_roster_ops.len(),
         owner.state.profile_roster_ops.len() + 2
@@ -72,15 +72,15 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
-    let link_secret = account.state.device_link_secret.clone();
+    let link_secret = account.state.app_key_link_secret.clone();
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
-        device_pubkey: linked_device.clone(),
+        app_key_pubkey: linked_device.clone(),
         link_secret: link_secret.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
-        url: encode_device_approval_request(
+        url: encode_app_key_approval_request(
             account.state.profile_id,
             &linked_device,
             &link_secret,
@@ -100,9 +100,9 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     );
 
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-    let inbound = &saved.profile.unwrap().inbound_device_link_requests;
+    let inbound = &saved.profile.unwrap().inbound_app_key_link_requests;
     assert_eq!(inbound.len(), 1);
-    assert_eq!(inbound[0].device_pubkey, linked_device);
+    assert_eq!(inbound[0].app_key_pubkey, linked_device);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
     assert_eq!(inbound[0].requested_at, 123);
 }
@@ -122,11 +122,11 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     let frame = DeviceLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
-        device_pubkey: linked_device.clone(),
+        app_key_pubkey: linked_device.clone(),
         link_secret: "wrong-secret".into(),
         label: Some("phone".into()),
         requested_at: 123,
-        url: encode_device_approval_request(
+        url: encode_app_key_approval_request(
             account.state.profile_id,
             &linked_device,
             "wrong-secret",
@@ -150,7 +150,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
         saved
             .profile
             .unwrap()
-            .inbound_device_link_requests
+            .inbound_app_key_link_requests
             .is_empty()
     );
 }
@@ -164,24 +164,24 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let joiner = Profile::link_to_profile(
         joiner_dir.path(),
         admin.state.profile_id,
-        admin.state.device_pubkey.clone(),
+        admin.state.app_key_pubkey.clone(),
         Some("laptop".into()),
     )
     .unwrap();
-    let joiner_pubkey = joiner.state.device_pubkey.clone();
+    let joiner_pubkey = joiner.state.app_key_pubkey.clone();
     admin
-        .approve_device(&joiner_pubkey, Some("laptop".into()))
+        .approve_app_key(&joiner_pubkey, Some("laptop".into()))
         .unwrap();
 
     let frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
         sent_at: 456,
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: pubkey_npub(&admin.state.device_pubkey),
+        peer_id: pubkey_npub(&admin.state.app_key_pubkey),
         topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
@@ -202,15 +202,15 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let state = saved.profile.unwrap();
     assert_eq!(
         state.authorization_state,
-        iris_drive_core::DeviceAuthorizationState::AwaitingApproval
+        iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
     );
     assert!(state.app_keys.is_none());
 
     let mut requested = joiner.state.clone();
     requested
-        .queue_outbound_device_link_request(
-            admin.state.device_pubkey.clone(),
-            &admin.state.device_link_secret,
+        .queue_outbound_app_key_link_request(
+            admin.state.app_key_pubkey.clone(),
+            &admin.state.app_key_link_secret,
             123,
         )
         .unwrap();
@@ -237,24 +237,24 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let state = saved.profile.unwrap();
     assert_eq!(
         state.authorization_state,
-        iris_drive_core::DeviceAuthorizationState::Authorized
+        iris_drive_core::AppKeyAuthorizationState::Authorized
     );
-    assert!(state.outbound_device_link_request.is_none());
+    assert!(state.outbound_app_key_link_request.is_none());
     assert!(state.app_keys.as_ref().unwrap().contains(&joiner_pubkey));
 
     let third_device = nostr_sdk::Keys::generate().public_key().to_hex();
     admin
-        .approve_device(&third_device, Some("tablet".into()))
+        .approve_app_key(&third_device, Some("tablet".into()))
         .unwrap();
     let updated_frame = DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
         profile_roster_ops: admin.state.profile_roster_ops.clone(),
         sent_at: 789,
     };
     let updated_message = iris_drive_core::FipsAppMessage {
-        peer_id: pubkey_npub(&admin.state.device_pubkey),
+        peer_id: pubkey_npub(&admin.state.app_key_pubkey),
         topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&updated_frame).unwrap(),
     };
@@ -280,7 +280,7 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
     admin
-        .approve_device(&joiner_pubkey, Some("laptop".into()))
+        .approve_app_key(&joiner_pubkey, Some("laptop".into()))
         .unwrap();
     let mut config = AppConfig {
         profile: Some(admin.state.clone()),
@@ -291,8 +291,8 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
 
     let frame = DeviceLinkRosterAckFrame {
         schema: 1,
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
-        device_pubkey: joiner_pubkey.clone(),
+        admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
+        app_key_pubkey: joiner_pubkey.clone(),
         roster_fingerprint: device_link_roster_fingerprint(
             &joiner_pubkey,
             admin.state.profile_id,
@@ -321,19 +321,19 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
 }
 
 #[test]
-fn device_link_request_retry_uses_startup_burst_before_steady_interval() {
+fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     let now = std::time::Instant::now();
-    assert!(device_link_request_send_due(None, now));
+    assert!(app_key_link_request_send_due(None, now));
 
     let first = SentDeviceLinkRequest {
         last_sent: now,
         attempts: 1,
     };
-    assert!(!device_link_request_send_due(
+    assert!(!app_key_link_request_send_due(
         Some(first),
         now + std::time::Duration::from_millis(249)
     ));
-    assert!(device_link_request_send_due(
+    assert!(app_key_link_request_send_due(
         Some(first),
         now + std::time::Duration::from_millis(250)
     ));
@@ -342,11 +342,11 @@ fn device_link_request_retry_uses_startup_burst_before_steady_interval() {
         last_sent: now,
         attempts: 40,
     };
-    assert!(!device_link_request_send_due(
+    assert!(!app_key_link_request_send_due(
         Some(steady),
         now + std::time::Duration::from_secs(9)
     ));
-    assert!(device_link_request_send_due(
+    assert!(app_key_link_request_send_due(
         Some(steady),
         now + std::time::Duration::from_secs(10)
     ));

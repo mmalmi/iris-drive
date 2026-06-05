@@ -6,10 +6,10 @@ use crate::iris_profile::{
     build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
 };
 use crate::nostr_events::{
-    build_device_link_request_event, build_drive_root_event, build_private_hashtree_root_event,
-    device_link_request_d_tag,
+    app_key_link_request_d_tag, build_app_key_link_request_event, build_drive_root_event,
+    build_private_hashtree_root_event,
 };
-use crate::profile::{DeviceAuthorizationState, Profile};
+use crate::profile::{AppKeyAuthorizationState, Profile};
 use crate::sharing::{ShareRecipient, ShareRole};
 use hashtree_core::Cid;
 use tempfile::tempdir;
@@ -61,7 +61,7 @@ fn roster_frame(
     DeviceLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
         profile_roster_ops,
         sent_at,
     }
@@ -74,22 +74,22 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
     let mut linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
-        admin.state.device_pubkey.clone(),
+        admin.state.app_key_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
-    let linked_pubkey = linked.state.device_pubkey.clone();
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
     linked
         .state
-        .queue_outbound_device_link_request(
-            admin.state.device_pubkey.clone(),
-            &admin.state.device_link_secret,
+        .queue_outbound_app_key_link_request(
+            admin.state.app_key_pubkey.clone(),
+            &admin.state.app_key_link_secret,
             123,
         )
         .unwrap();
 
     admin
-        .approve_device(&linked_pubkey, Some("phone".into()))
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
         .unwrap();
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
@@ -99,14 +99,15 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
 
     let first_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
     let initial =
-        apply_device_link_roster_frame(&mut cfg, &first_frame, &admin.state.device_pubkey).unwrap();
+        apply_device_link_roster_frame(&mut cfg, &first_frame, &admin.state.app_key_pubkey)
+            .unwrap();
     assert!(matches!(
         initial,
         DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
     ));
     assert_eq!(
         cfg.profile.as_ref().unwrap().authorization_state,
-        DeviceAuthorizationState::Authorized
+        AppKeyAuthorizationState::Authorized
     );
     assert_eq!(
         cfg.profile.as_ref().unwrap().profile_id,
@@ -125,21 +126,22 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 
     let third_device = Keys::generate().public_key().to_hex();
     admin
-        .approve_device(&third_device, Some("tablet".into()))
+        .approve_app_key(&third_device, Some("tablet".into()))
         .unwrap();
 
     let newer_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
     let update =
-        apply_device_link_roster_frame(&mut cfg, &newer_frame, &admin.state.device_pubkey).unwrap();
+        apply_device_link_roster_frame(&mut cfg, &newer_frame, &admin.state.app_key_pubkey)
+            .unwrap();
     assert!(matches!(
         update,
         DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
     ));
     let linked_state = cfg.profile.as_ref().unwrap();
     let linked_roster = linked_state.app_keys.as_ref().unwrap();
-    assert!(linked_roster.contains(&linked_state.device_pubkey));
+    assert!(linked_roster.contains(&linked_state.app_key_pubkey));
     assert!(linked_roster.contains(&third_device));
-    assert!(linked_state.outbound_device_link_request.is_none());
+    assert!(linked_state.outbound_app_key_link_request.is_none());
 }
 
 #[test]
@@ -150,21 +152,21 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let mut linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
-        admin.state.device_pubkey.clone(),
+        admin.state.app_key_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
-    let linked_pubkey = linked.state.device_pubkey.clone();
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
     linked
         .state
-        .queue_outbound_device_link_request(
-            admin.state.device_pubkey.clone(),
-            &admin.state.device_link_secret,
+        .queue_outbound_app_key_link_request(
+            admin.state.app_key_pubkey.clone(),
+            &admin.state.app_key_link_secret,
             123,
         )
         .unwrap();
     admin
-        .approve_device(&linked_pubkey, Some("phone".into()))
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
         .unwrap();
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
@@ -174,7 +176,7 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
 
     let outcome =
-        apply_device_link_roster_frame(&mut cfg, &frame, &admin.state.device_pubkey).unwrap();
+        apply_device_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
 
     assert!(matches!(
         outcome,
@@ -224,7 +226,7 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
     let current_epoch = admin.state.app_keys.as_ref().unwrap().dck_generation;
     let current_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
     assert!(matches!(
-        apply_device_link_roster_frame(&mut cfg, &current_frame, &admin.state.device_pubkey)
+        apply_device_link_roster_frame(&mut cfg, &current_frame, &admin.state.app_key_pubkey)
             .unwrap(),
         DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
     ));
@@ -239,7 +241,7 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 
     let branch_frame = roster_frame(&admin, branch_ops, 999);
     assert!(matches!(
-        apply_device_link_roster_frame(&mut cfg, &branch_frame, &admin.state.device_pubkey)
+        apply_device_link_roster_frame(&mut cfg, &branch_frame, &admin.state.app_key_pubkey)
             .unwrap(),
         DeviceLinkRosterApply::Applied(ApplyDecision::Merged)
     ));
@@ -258,23 +260,23 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 }
 
 #[test]
-fn subscription_filters_match_device_link_requests_for_profile() {
+fn subscription_filters_match_app_key_link_requests_for_profile() {
     let device = Keys::generate();
     let profile_id = IrisProfileId::new_v4();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id,
-        device_pubkey: device.public_key().to_hex(),
+        app_key_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
         label: Some("phone".to_string()),
         requested_at: 123,
-        url: "iris-drive://device-link?device=example".to_string(),
+        url: "iris-drive://app-key-link?app_key=example".to_string(),
     };
-    let event = build_device_link_request_event(&device, &frame).unwrap();
+    let event = build_app_key_link_request_event(&device, &frame).unwrap();
 
     assert_eq!(
         event.identifier(),
-        Some(device_link_request_d_tag(profile_id).as_str())
+        Some(app_key_link_request_d_tag(profile_id).as_str())
     );
     assert!(
         subscription_filters(
@@ -295,7 +297,7 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
 
     assert!(
         subscription_filters(
-            &acct.state.device_pubkey,
+            &acct.state.app_key_pubkey,
             &acct.state.root_scope_id(),
             crate::PRIMARY_DRIVE_ID,
         )
@@ -454,14 +456,14 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
         crate::PRIMARY_DRIVE_ID,
         &root,
         &[
-            owner.state.device_pubkey.clone(),
+            owner.state.app_key_pubkey.clone(),
             reader.public_key().to_hex(),
         ],
     )
     .unwrap();
 
     let filters = subscription_filters_for_shared_roots(
-        &owner.state.device_pubkey,
+        &owner.state.app_key_pubkey,
         &owner.state.root_scope_id(),
         crate::PRIMARY_DRIVE_ID,
         &[folder.share_id],
@@ -533,7 +535,7 @@ fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
         .collect::<std::collections::BTreeSet<_>>();
 
     let new_app = Keys::generate().public_key().to_hex();
-    acct.approve_device(&new_app, Some("web app".to_string()))
+    acct.approve_app_key(&new_app, Some("web app".to_string()))
         .unwrap();
     for op in acct
         .state
@@ -628,38 +630,38 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
 }
 
 #[test]
-fn apply_device_link_request_event_records_admin_inbound_request() {
+fn apply_app_key_link_request_event_records_admin_inbound_request() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let linked = Profile::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
-        admin.state.device_pubkey.clone(),
+        admin.state.app_key_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        device_pubkey: linked.state.device_pubkey.clone(),
-        link_secret: admin.state.device_link_secret.clone(),
+        app_key_pubkey: linked.state.app_key_pubkey.clone(),
+        link_secret: admin.state.app_key_link_secret.clone(),
         label: Some("phone".to_string()),
         requested_at: 123,
-        url: "iris-drive://device-link?device=example".to_string(),
+        url: "iris-drive://app-key-link?app_key=example".to_string(),
     };
-    let event = build_device_link_request_event(linked.app_key.keys(), &frame).unwrap();
+    let event = build_app_key_link_request_event(linked.app_key.keys(), &frame).unwrap();
     let mut cfg = AppConfig {
         profile: Some(admin.state.clone()),
         ..AppConfig::default()
     };
 
-    let outcome = apply_remote_device_link_request_event(&mut cfg, &event).unwrap();
+    let outcome = apply_remote_app_key_link_request_event(&mut cfg, &event).unwrap();
 
     assert_eq!(outcome, DeviceLinkRequestApply::Recorded);
-    let inbound = &cfg.profile.as_ref().unwrap().inbound_device_link_requests;
+    let inbound = &cfg.profile.as_ref().unwrap().inbound_app_key_link_requests;
     assert_eq!(inbound.len(), 1);
-    assert_eq!(inbound[0].device_pubkey, linked.state.device_pubkey);
+    assert_eq!(inbound[0].app_key_pubkey, linked.state.app_key_pubkey);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
 }
 
@@ -671,7 +673,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
     // Approve a second device whose Keys we control end-to-end.
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(&device_b_hex, None).unwrap();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
 
     // Device B publishes a drive-root event.
@@ -681,7 +683,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
         &acct.state.root_scope_id(),
         "main",
         &root,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
     let outcome =
@@ -703,13 +705,13 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
     owner_acct
-        .approve_device(&device_b_hex, Some("old-phone".into()))
+        .approve_app_key(&device_b_hex, Some("old-phone".into()))
         .unwrap();
 
     let linked = Profile::link_to_profile(
         linked_dir.path(),
         owner_acct.state.profile_id,
-        owner_acct.state.device_pubkey.clone(),
+        owner_acct.state.app_key_pubkey.clone(),
         Some("new-laptop".into()),
     )
     .unwrap();
@@ -728,7 +730,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
         &owner_acct.state.root_scope_id(),
         "main",
         &root,
-        &[owner_acct.state.device_pubkey.clone(), device_b_hex],
+        &[owner_acct.state.app_key_pubkey.clone(), device_b_hex],
     )
     .unwrap();
     let outcome =
@@ -753,7 +755,7 @@ fn apply_files_root_event_from_current_app_key_maps_to_current_device() {
         .drive("main")
         .unwrap()
         .device_roots
-        .get(&acct.state.device_pubkey)
+        .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
     assert_eq!(entry.dck_generation, 0);
@@ -770,7 +772,7 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
     let native_root = causal_encrypted_root(0x5b, 100, 1, 4);
     cfg.drives[0]
         .device_roots
-        .insert(acct.state.device_pubkey.clone(), native_root.clone());
+        .insert(acct.state.app_key_pubkey.clone(), native_root.clone());
     let legacy_root = encrypted_root(0x5c, 1_700_000_000, 0);
     let event =
         build_private_hashtree_root_event(acct.app_key.keys(), "main", &legacy_root).unwrap();
@@ -783,7 +785,7 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
         .drive("main")
         .unwrap()
         .device_roots
-        .get(&acct.state.device_pubkey)
+        .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, native_root.root_cid);
     assert_eq!(entry.device_seq, 4);
@@ -813,7 +815,7 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
         .drive("main")
         .unwrap()
         .device_roots
-        .get(&acct.state.device_pubkey)
+        .get(&acct.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
     assert_eq!(entry.published_at, 100);
@@ -841,7 +843,7 @@ fn apply_drive_root_event_from_unauthorized_device_ignored() {
 
     let root = encrypted_root(0xee, 0, 99);
     let owner_hex = cfg.profile.as_ref().unwrap().root_scope_id();
-    let recipient = cfg.profile.as_ref().unwrap().device_pubkey.clone();
+    let recipient = cfg.profile.as_ref().unwrap().app_key_pubkey.clone();
     let outcome = {
         let event =
             build_drive_root_event(&stranger, &owner_hex, "main", &root, &[recipient]).unwrap();
@@ -863,7 +865,7 @@ fn apply_drive_root_event_for_foreign_owner_ignored() {
         &other_owner,
         "main",
         &root,
-        &[cfg.profile.as_ref().unwrap().device_pubkey.clone()],
+        &[cfg.profile.as_ref().unwrap().app_key_pubkey.clone()],
     )
     .unwrap();
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, None).unwrap();
@@ -884,7 +886,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
         Some("Owner".into()),
         vec![ShareRecipient {
             profile_id: reader.state.profile_id,
-            app_pubkey: reader.state.device_pubkey.clone(),
+            app_pubkey: reader.state.app_key_pubkey.clone(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
         }],
@@ -921,7 +923,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
         .shared_folder(folder.share_id)
         .unwrap()
         .device_roots
-        .get(&owner.state.device_pubkey)
+        .get(&owner.state.app_key_pubkey)
         .expect("owner share root stored");
     assert_eq!(stored.root_cid, root.root_cid);
     assert_eq!(stored.device_seq, 7);
@@ -941,7 +943,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
         Some("Owner".into()),
         vec![ShareRecipient {
             profile_id: reader.state.profile_id,
-            app_pubkey: reader.state.device_pubkey.clone(),
+            app_pubkey: reader.state.app_key_pubkey.clone(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
         }],
@@ -988,7 +990,7 @@ fn apply_drive_root_event_for_unknown_drive_ignored() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(&device_b_hex, None).unwrap();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
     let root = encrypted_root(0x44, 0, 1);
     let event = build_drive_root_event(
@@ -996,7 +998,7 @@ fn apply_drive_root_event_for_unknown_drive_ignored() {
         &acct.state.root_scope_id(),
         "nonexistent",
         &root,
-        &[acct.state.device_pubkey.clone(), device_b_hex],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex],
     )
     .unwrap();
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, None).unwrap();
@@ -1009,7 +1011,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(&device_b_hex, None).unwrap();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
 
     // First publish — applied.
@@ -1019,7 +1021,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
         &acct.state.root_scope_id(),
         "main",
         &root_1,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
     assert_eq!(
@@ -1066,7 +1068,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(&device_b_hex, None).unwrap();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
 
     let mut root = encrypted_root(0x13, 100, 1);
@@ -1075,7 +1077,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
         &acct.state.root_scope_id(),
         "main",
         &root,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
     assert_eq!(
@@ -1089,7 +1091,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
         &acct.state.root_scope_id(),
         "main",
         &root,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
 
@@ -1113,7 +1115,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();
     let device_b_hex = device_b.public_key().to_hex();
-    acct.approve_device(&device_b_hex, None).unwrap();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
 
     let root_1 = causal_encrypted_root(0x21, 300, 1, 1);
@@ -1122,7 +1124,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
         &acct.state.root_scope_id(),
         "main",
         &root_1,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
     assert_eq!(
@@ -1136,7 +1138,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
         &acct.state.root_scope_id(),
         "main",
         &root_2,
-        &[acct.state.device_pubkey.clone(), device_b_hex.clone()],
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
     )
     .unwrap();
     assert_eq!(

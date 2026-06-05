@@ -514,7 +514,7 @@ mod daemon_lock_tests {
             .clone();
         drive
             .device_roots
-            .get_mut(&state.device_pubkey)
+            .get_mut(&state.app_key_pubkey)
             .unwrap()
             .local_only = true;
         config.upsert_drive(drive);
@@ -554,7 +554,7 @@ mod daemon_lock_tests {
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
             .device_roots
-            .get(&daemon.config().profile.as_ref().unwrap().device_pubkey)
+            .get(&daemon.config().profile.as_ref().unwrap().app_key_pubkey)
             .unwrap()
             .clone();
 
@@ -565,12 +565,12 @@ mod daemon_lock_tests {
         let meta = iris_drive_core::DriveRootMeta {
             schema: iris_drive_core::DriveRootMeta::SCHEMA,
             drive_id: iris_drive_core::PRIMARY_DRIVE_ID.to_string(),
-            device_id: account.device_pubkey.clone(),
+            device_id: account.app_key_pubkey.clone(),
             device_seq: first_root.device_seq + 1,
             dck_generation: first_root.dck_generation,
             local_only: true,
             parents: vec![iris_drive_core::RootParent {
-                device_id: account.device_pubkey.clone(),
+                device_id: account.app_key_pubkey.clone(),
                 device_seq: first_root.device_seq,
                 root_cid: first.root_cid.clone(),
             }],
@@ -592,7 +592,7 @@ mod daemon_lock_tests {
             .unwrap()
             .clone();
         drive.device_roots.insert(
-            account.device_pubkey.clone(),
+            account.app_key_pubkey.clone(),
             DeviceRootRef::from_meta(second.to_string(), second_time, &meta),
         );
         config.upsert_drive(drive);
@@ -637,7 +637,7 @@ mod daemon_lock_tests {
             .clone();
         let missing_root = Cid::encrypted([0x42; 32], [0x24; 32]).to_string();
         drive.device_roots.insert(
-            account.device_pubkey.clone(),
+            account.app_key_pubkey.clone(),
             DeviceRootRef::legacy(missing_root.clone(), 1, 1),
         );
         config.upsert_drive(drive);

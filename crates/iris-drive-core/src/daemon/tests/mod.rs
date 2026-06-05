@@ -71,7 +71,7 @@ async fn import_visible_root_records_mount_deletions_as_tombstones() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(report.root_cid, root.root_cid);
     assert!(!root.local_only);
@@ -183,7 +183,7 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
@@ -286,7 +286,7 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
@@ -407,7 +407,7 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
@@ -525,7 +525,7 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     let root_cid = Cid::parse(&root.root_cid).unwrap();
     let (files, tombstones) = crate::merge::walk_device_tree(daemon.tree(), &root_cid)
@@ -556,7 +556,7 @@ async fn import_persists_rebuildable_sync_cache_with_base_state() {
             .unwrap();
     assert_eq!(cache.schema, crate::sync_cache::SyncCache::SCHEMA);
     assert_eq!(cache.roots.len(), 1);
-    assert_eq!(cache.roots[0].device_id, account.state.device_pubkey);
+    assert_eq!(cache.roots[0].device_id, account.state.app_key_pubkey);
     assert_eq!(cache.roots[0].root_cid, report.root_cid);
     assert_eq!(cache.path_state.len(), 1);
     assert_eq!(cache.path_state[0].path, "note.txt");
@@ -619,7 +619,7 @@ async fn import_records_per_device_root_when_account_present() {
     assert_eq!(drive.device_roots.len(), 1);
     let entry = drive
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .expect("per-device root for this device");
     assert_eq!(entry.root_cid, report.root_cid);
     assert!(entry.published_at > 0);
@@ -644,7 +644,7 @@ async fn import_embeds_root_meta_and_advances_device_sequence() {
         .expect("first root metadata");
     assert_eq!(first_meta.schema, crate::DriveRootMeta::SCHEMA);
     assert_eq!(first_meta.drive_id, PRIMARY_DRIVE_ID);
-    assert_eq!(first_meta.device_id, account.state.device_pubkey);
+    assert_eq!(first_meta.device_id, account.state.app_key_pubkey);
     assert_eq!(first_meta.device_seq, 1);
     assert!(first_meta.parents.is_empty());
 
@@ -665,7 +665,7 @@ async fn import_embeds_root_meta_and_advances_device_sequence() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.root_cid, second.root_cid);
     assert_eq!(entry.device_seq, 2);
@@ -691,7 +691,7 @@ async fn import_publish_timestamps_advance_past_previous_root() {
         .unwrap();
     drive
         .device_roots
-        .get_mut(&account.state.device_pubkey)
+        .get_mut(&account.state.app_key_pubkey)
         .unwrap()
         .published_at = future_published_at;
 
@@ -706,7 +706,7 @@ async fn import_publish_timestamps_advance_past_previous_root() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(entry.published_at, future_published_at + 1);
 

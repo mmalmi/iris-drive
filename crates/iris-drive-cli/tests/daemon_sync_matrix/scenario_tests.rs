@@ -78,12 +78,12 @@ async fn live_daemons_running_device_link_approval_clears_waiting_quickly() {
     configure_local_blossom(linked_cfg.path(), &blossom.url);
 
     let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
-    let owner_invite = owner["device_link_invite"]["url"].as_str().unwrap();
+    let owner_invite = owner["app_key_link_invite"]["url"].as_str().unwrap();
     let linked = run_json(
         linked_cfg.path(),
         &["link", owner_invite, "--label", "iphone"],
     );
-    let request = linked["device_link_request"]["url"]
+    let request = linked["app_key_link_request"]["url"]
         .as_str()
         .unwrap()
         .to_string();

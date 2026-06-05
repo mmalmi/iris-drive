@@ -24,10 +24,10 @@ use crate::app_keys::{AppKeysSnapshot, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
-    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_device_link_request_event,
-    build_drive_root_publish_event, build_private_hashtree_root_event, device_link_request_d_tag,
-    drive_root_d_tag, parse_device_link_request_event, parse_drive_root_event,
-    parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
+    build_app_key_link_request_event, build_drive_root_publish_event,
+    build_private_hashtree_root_event, drive_root_d_tag, parse_app_key_link_request_event,
+    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 use crate::profile::app_keys_from_profile_projection;
 use crate::{
@@ -107,28 +107,28 @@ pub enum DeviceLinkRequestApply {
 }
 
 /// Apply a signed device-link request delivered by relay.
-pub fn apply_remote_device_link_request_event(
+pub fn apply_remote_app_key_link_request_event(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<DeviceLinkRequestApply, RelayError> {
-    let frame = parse_device_link_request_event(event)?;
+    let frame = parse_app_key_link_request_event(event)?;
     let Some(account) = config.profile.as_mut() else {
         return Err(RelayError::NoAccount);
     };
     if frame.profile_id != account.profile_id {
         return Ok(DeviceLinkRequestApply::NotOurProfile);
     }
-    if !account.can_manage_devices() {
+    if !account.can_admin_profile() {
         return Ok(DeviceLinkRequestApply::NotAdmin);
     }
-    let expected_secret = account.device_link_secret.trim();
+    let expected_secret = account.app_key_link_secret.trim();
     if !expected_secret.is_empty() && frame.link_secret.trim() != expected_secret {
         return Ok(DeviceLinkRequestApply::InvalidSecret);
     }
 
-    let changed = account.record_inbound_device_link_request(
+    let changed = account.record_inbound_app_key_link_request(
         frame.profile_id,
-        &frame.device_pubkey,
+        &frame.app_key_pubkey,
         frame.label,
         &frame.link_secret,
         frame.requested_at,
@@ -149,7 +149,7 @@ pub fn apply_remote_device_link_request_event(
 pub fn apply_device_link_roster_frame(
     config: &mut AppConfig,
     frame: &DeviceLinkRosterFrame,
-    admin_device_pubkey: &str,
+    admin_app_key_pubkey: &str,
 ) -> Result<DeviceLinkRosterApply, RelayError> {
     if frame.schema != 1 {
         return Ok(DeviceLinkRosterApply::Ignored);
@@ -157,7 +157,7 @@ pub fn apply_device_link_roster_frame(
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if frame.admin_device_pubkey != admin_device_pubkey {
+    if frame.admin_app_key_pubkey != admin_app_key_pubkey {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
     if !account.profile_roster_ops.is_empty() && account.profile_id != frame.profile_id {
@@ -168,19 +168,19 @@ pub fn apply_device_link_roster_frame(
     let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
     let incoming_snapshot = app_keys_from_profile_projection(&incoming_projection)
         .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
-    if !incoming_snapshot.is_admin(admin_device_pubkey) {
+    if !incoming_snapshot.is_admin(admin_app_key_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
     let has_current_roster = account.app_keys.is_some() || !account.profile_roster_ops.is_empty();
     let pending_from_admin = account
-        .outbound_device_link_request
+        .outbound_app_key_link_request
         .as_ref()
-        .is_some_and(|pending| pending.admin_device_pubkey == admin_device_pubkey);
+        .is_some_and(|pending| pending.admin_app_key_pubkey == admin_app_key_pubkey);
     if !has_current_roster && !pending_from_admin {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
-    if pending_from_admin && !incoming_projection.can_write_roots(&account.device_pubkey) {
+    if pending_from_admin && !incoming_projection.can_write_roots(&account.app_key_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
@@ -400,7 +400,7 @@ pub fn apply_remote_drive_root_event(
     device_keys: Option<&Keys>,
 ) -> Result<DriveRootApply, RelayError> {
     let preview = parse_drive_root_event_preview(event)?;
-    let device_hex = preview.device_pubkey_hex.clone();
+    let app_key_hex = preview.app_key_pubkey_hex.clone();
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
@@ -410,7 +410,7 @@ pub fn apply_remote_drive_root_event(
             .as_ref()
             .map(|s| s.app_actors.iter().map(|d| d.pubkey.clone()).collect())
             .unwrap_or_default();
-        if !authorized.contains(&device_hex) {
+        if !authorized.contains(&app_key_hex) {
             return Ok(DriveRootApply::UnauthorizedDevice);
         }
         let Some(drive) = config
@@ -436,7 +436,7 @@ pub fn apply_remote_drive_root_event(
     else {
         return Ok(DriveRootApply::NotOurOwner);
     };
-    if !shared_folder.projection().can_write_roots(&device_hex) {
+    if !shared_folder.projection().can_write_roots(&app_key_hex) {
         return Ok(DriveRootApply::UnauthorizedDevice);
     }
     apply_root_to_device_roots(
@@ -453,8 +453,8 @@ fn apply_root_to_device_roots(
     device_keys: Option<&Keys>,
     preview: &crate::nostr_events::DriveRootEventPreview,
 ) -> Result<DriveRootApply, RelayError> {
-    let device_hex = preview.device_pubkey_hex.clone();
-    if let Some(existing) = device_roots.get(&device_hex)
+    let app_key_hex = preview.app_key_pubkey_hex.clone();
+    if let Some(existing) = device_roots.get(&app_key_hex)
         && incoming_root_is_stale(existing, preview.device_seq, preview.published_at)
     {
         return Ok(DriveRootApply::StaleTimestamp);
@@ -471,12 +471,12 @@ fn apply_root_to_device_roots(
         parse_drive_root_event(event)?
     };
     if device_roots
-        .get(&device_hex)
+        .get(&app_key_hex)
         .is_some_and(|existing| existing.root_cid == incoming_root.root_cid)
     {
         return Ok(DriveRootApply::StaleTimestamp);
     }
-    device_roots.insert(device_hex, incoming_root);
+    device_roots.insert(app_key_hex, incoming_root);
     Ok(DriveRootApply::Applied)
 }
 
@@ -517,10 +517,10 @@ pub fn apply_remote_files_root_event(
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if parsed.event.pubkey != account.device_pubkey {
+    if parsed.event.pubkey != account.app_key_pubkey {
         return Ok(FilesRootApply::NotOurAppKey);
     }
-    let device_pubkey = account.device_pubkey.clone();
+    let app_key_pubkey = account.app_key_pubkey.clone();
     let Some(drive) = config
         .drives
         .iter_mut()
@@ -528,7 +528,7 @@ pub fn apply_remote_files_root_event(
     else {
         return Ok(FilesRootApply::UnknownDrive);
     };
-    if let Some(existing) = drive.device_roots.get(&device_pubkey) {
+    if let Some(existing) = drive.device_roots.get(&app_key_pubkey) {
         if existing.root_cid == incoming_root.root_cid {
             return Ok(FilesRootApply::StaleTimestamp);
         }
@@ -540,7 +540,7 @@ pub fn apply_remote_files_root_event(
         }
     }
     drive.last_root_cid = Some(incoming_root.root_cid.clone());
-    drive.device_roots.insert(device_pubkey, incoming_root);
+    drive.device_roots.insert(app_key_pubkey, incoming_root);
     Ok(FilesRootApply::Applied)
 }
 
@@ -580,12 +580,12 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
 }
 
 /// Publish a signed device-link request from the requesting `AppKey`.
-pub async fn publish_device_link_request(
+pub async fn publish_app_key_link_request(
     client: &Client,
     device_keys: &Keys,
     frame: &crate::device_link_transport::DeviceLinkRequestFrame,
 ) -> Result<nostr_sdk::EventId, RelayError> {
-    let event = build_device_link_request_event(device_keys, frame)?;
+    let event = build_app_key_link_request_event(device_keys, frame)?;
     let output = client
         .send_event(event)
         .await
@@ -625,14 +625,14 @@ pub async fn publish_drive_root(
     root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
-    authorized_device_pubkeys: &[String],
+    authorized_app_key_pubkeys: &[String],
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_drive_root_publish_event(
         device_keys,
         root_scope_id,
         drive_id,
         root,
-        authorized_device_pubkeys,
+        authorized_app_key_pubkeys,
     )?;
     let output = client
         .send_event(event)
@@ -871,7 +871,7 @@ pub fn subscription_filters_for_shared_roots(
                 .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
                 .custom_tag(
                     SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                    [device_link_request_d_tag(profile_id)],
+                    [app_key_link_request_d_tag(profile_id)],
                 ),
         );
     }

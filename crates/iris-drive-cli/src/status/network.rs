@@ -39,7 +39,7 @@ fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
     snapshot
         .app_actors
         .iter()
-        .filter(|device| device.pubkey != account.device_pubkey)
+        .filter(|device| device.pubkey != account.app_key_pubkey)
         .map(|device| pubkey_npub(&device.pubkey))
         .collect::<BTreeSet<_>>()
         .into_iter()

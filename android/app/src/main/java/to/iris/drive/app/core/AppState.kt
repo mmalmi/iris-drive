@@ -62,15 +62,15 @@ internal data class AppState(
 }
 
 internal data class ProfileState(
-    val ownerPubkey: String,
+    val currentAppKeyNpub: String,
     val devicePubkey: String,
-    val deviceLabel: String,
+    val appKeyLabel: String,
     val authorizationState: String,
     val canAdminProfile: Boolean,
     val canExportRecoveryPhrase: Boolean = false,
-    val deviceLinkRequest: String,
-    val deviceLinkInvite: String,
-    val inboundDeviceLinkRequests: List<DeviceLinkRequestState>,
+    val appKeyLinkRequest: String,
+    val appKeyLinkInvite: String,
+    val inboundAppKeyLinkRequests: List<DeviceLinkRequestState>,
 )
 
 internal data class RecoverySecretExport(
@@ -175,21 +175,21 @@ internal object NativeActions {
     fun createProfile(deviceLabel: String): String =
         JSONObject()
             .put("type", "create_profile")
-            .put("device_label", deviceLabel)
+            .put("app_key_label", deviceLabel)
             .toString()
 
     fun restoreProfile(recoverySecret: String, deviceLabel: String): String =
         JSONObject()
             .put("type", "restore_profile")
             .put("recovery_secret", recoverySecret)
-            .put("device_label", deviceLabel)
+            .put("app_key_label", deviceLabel)
             .toString()
 
     fun linkDevice(linkTarget: String, deviceLabel: String): String =
         JSONObject()
             .put("type", "link_device")
             .put("link_target", linkTarget)
-            .put("device_label", deviceLabel)
+            .put("app_key_label", deviceLabel)
             .toString()
 
     fun logout(): String = JSONObject().put("type", "logout").toString()
@@ -212,25 +212,25 @@ internal object NativeActions {
     fun revokeDevice(devicePubkey: String): String =
         JSONObject()
             .put("type", "revoke_device")
-            .put("device_pubkey", devicePubkey)
+            .put("app_key_pubkey", devicePubkey)
             .toString()
 
     fun deleteDevice(devicePubkey: String): String =
         JSONObject()
             .put("type", "delete_device")
-            .put("device_pubkey", devicePubkey)
+            .put("app_key_pubkey", devicePubkey)
             .toString()
 
     fun appointAdmin(devicePubkey: String): String =
         JSONObject()
             .put("type", "appoint_admin")
-            .put("device_pubkey", devicePubkey)
+            .put("app_key_pubkey", devicePubkey)
             .toString()
 
     fun demoteAdmin(devicePubkey: String): String =
         JSONObject()
             .put("type", "demote_admin")
-            .put("device_pubkey", devicePubkey)
+            .put("app_key_pubkey", devicePubkey)
             .toString()
 
     fun addRelay(url: String): String =
@@ -306,15 +306,15 @@ internal object NativeActions {
 
 private fun JSONObject.toProfile(): ProfileState =
     ProfileState(
-        ownerPubkey = optString("current_app_key_npub"),
+        currentAppKeyNpub = optString("current_app_key_npub"),
         devicePubkey = optString("current_app_key_npub"),
-        deviceLabel = optString("device_label"),
+        appKeyLabel = optString("app_key_label"),
         authorizationState = optString("authorization_state"),
         canAdminProfile = optBoolean("can_admin_profile"),
         canExportRecoveryPhrase = optBoolean("can_export_recovery_phrase"),
-        deviceLinkRequest = optString("device_link_request"),
-        deviceLinkInvite = optString("device_link_invite"),
-        inboundDeviceLinkRequests = optJSONArray("inbound_device_link_requests").toDeviceLinkRequests(),
+        appKeyLinkRequest = optString("app_key_link_request"),
+        appKeyLinkInvite = optString("app_key_link_invite"),
+        inboundAppKeyLinkRequests = optJSONArray("inbound_app_key_link_requests").toDeviceLinkRequests(),
     )
 
 internal fun recoverySecretExportFromJson(text: String): RecoverySecretExport =
@@ -347,7 +347,7 @@ private fun JSONArray?.toDeviceLinkRequests(): List<DeviceLinkRequestState> {
             val item = optJSONObject(index) ?: continue
             add(
                 DeviceLinkRequestState(
-                    devicePubkey = item.optString("device_pubkey"),
+                    devicePubkey = item.optString("app_key_pubkey"),
                     label = item.optString("label"),
                     requestedAt = item.optLong("requested_at"),
                     requestLink = item.optString("request_link"),

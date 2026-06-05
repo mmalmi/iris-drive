@@ -440,7 +440,7 @@ pub(crate) async fn publish_current_state(
             &state.root_scope_id(),
             &drive.drive_id,
             &root,
-            &authorized_device_pubkeys(state),
+            &authorized_app_key_pubkeys(state),
         ))
         .await
         {

@@ -307,7 +307,7 @@ pub fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
         .and_then(|state| {
             config
                 .drive(crate::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&state.device_pubkey))
+                .and_then(|drive| drive.device_roots.get(&state.app_key_pubkey))
                 .map(|root| root.root_cid.clone())
         })
         .or_else(|| {

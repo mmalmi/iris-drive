@@ -10,13 +10,13 @@ use nostr_sdk::nips::nip19::FromBech32;
 use serde::{Deserialize, Serialize};
 
 use crate::IrisProfileId;
-use crate::device_link_invite::{
-    DEVICE_LINK_INVITE_PREFIX, DEVICE_LINK_INVITE_WEB_PREFIX, parse_device_link_invite,
+use crate::app_key_link_invite::{
+    APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
-use crate::device_link_transport::{device_approval_query, parse_device_approval_request};
+use crate::device_link_transport::{app_key_approval_query, parse_app_key_approval_request};
 use crate::device_summary::pubkey_npub;
 
-const DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
+const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual AppKey linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,9 +25,8 @@ pub struct LinkInputClassification {
     pub is_complete: bool,
     pub is_valid: bool,
     pub normalized_input: String,
-    pub owner_pubkey: String,
-    pub device_pubkey: String,
-    pub admin_device_pubkey: String,
+    pub app_key_pubkey: String,
+    pub admin_app_key_pubkey: String,
     pub has_link_secret: bool,
     pub error: String,
 }
@@ -56,7 +55,7 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return classification;
     }
 
-    if let Some(result) = classify_device_approval_link_input(trimmed) {
+    if let Some(result) = classify_app_key_approval_link_input(trimmed) {
         return result;
     }
     if let Some(result) = classify_invite_link_input(trimmed) {
@@ -69,10 +68,10 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
             match normalize_app_key_pubkey(trimmed) {
                 Ok(app_key_hex) => {
                     classification.is_valid = true;
-                    classification.admin_device_pubkey = pubkey_npub(&app_key_hex);
+                    classification.admin_app_key_pubkey = pubkey_npub(&app_key_hex);
                     classification
                         .normalized_input
-                        .clone_from(&classification.admin_device_pubkey);
+                        .clone_from(&classification.admin_app_key_pubkey);
                 }
                 Err(error) => {
                     classification.error = error.to_string();
@@ -91,7 +90,7 @@ pub fn resolve_app_key_link_target(
     input: &str,
     manual_admin_app_key: Option<&str>,
 ) -> Result<AppKeyLinkTarget> {
-    if let Some(invite) = parse_device_link_invite(input)? {
+    if let Some(invite) = parse_app_key_link_invite(input)? {
         if manual_admin_app_key.is_some() {
             return Err(anyhow!(
                 "--admin-app-key is only valid with a manual IrisProfile UUID, not an invite URL"
@@ -102,7 +101,7 @@ pub fn resolve_app_key_link_target(
             .ok_or_else(|| anyhow!("AppKey invite is missing IrisProfile id"))?;
         return Ok(AppKeyLinkTarget {
             profile_id,
-            admin_app_key_hex: invite.admin_device_hex,
+            admin_app_key_hex: invite.admin_app_key_hex,
             link_secret: invite.link_secret,
         });
     }
@@ -141,28 +140,28 @@ pub fn normalize_app_key_pubkey(input: &str) -> Result<String> {
     ))
 }
 
-fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassification> {
-    let query = device_approval_query(input)?;
+fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassification> {
+    let query = app_key_approval_query(input)?;
     let profile =
         raw_query_value(query, "profile").or_else(|| raw_query_value(query, "profile_id"));
-    let device = raw_query_value(query, "device");
+    let app_key = raw_query_value(query, "app_key").or_else(|| raw_query_value(query, "appKey"));
     let is_complete = profile
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
-        && device
+        && app_key
             .as_deref()
             .is_some_and(app_key_pubkey_input_is_complete);
     let mut classification = LinkInputClassification {
-        kind: "device_approval".to_owned(),
+        kind: "app_key_approval".to_owned(),
         normalized_input: input.to_owned(),
         is_complete,
         ..LinkInputClassification::default()
     };
     if is_complete {
-        match parse_device_approval_request(input) {
+        match parse_app_key_approval_request(input) {
             Ok(Some(request)) => {
                 classification.is_valid = true;
-                classification.device_pubkey = pubkey_npub(&request.device_hex);
+                classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
             }
             Ok(None) => {
                 "AppKey-link request was not recognized".clone_into(&mut classification.error);
@@ -170,7 +169,7 @@ fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassific
             Err(error) => classification.error = error.to_string(),
         }
     }
-    classification.has_link_secret = parse_device_approval_request(input)
+    classification.has_link_secret = parse_app_key_approval_request(input)
         .ok()
         .flatten()
         .is_some_and(|request| !request.link_secret.trim().is_empty());
@@ -180,9 +179,9 @@ fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassific
 fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
     let lower = input.to_ascii_lowercase();
     let is_canonical = [
-        DEVICE_LINK_INVITE_PREFIX,
-        DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX,
-        DEVICE_LINK_INVITE_WEB_PREFIX,
+        APP_KEY_LINK_INVITE_PREFIX,
+        APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX,
+        APP_KEY_LINK_INVITE_WEB_PREFIX,
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
@@ -200,16 +199,14 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
         is_complete: invite_link_input_is_complete(input),
         ..LinkInputClassification::default()
     };
-    match parse_device_link_invite(input) {
+    match parse_app_key_link_invite(input) {
         Ok(Some(invite)) => {
             classification.is_complete = true;
             classification.is_valid = true;
-            classification.admin_device_pubkey = pubkey_npub(&invite.admin_device_hex);
+            classification.admin_app_key_pubkey = pubkey_npub(&invite.admin_app_key_hex);
             classification.has_link_secret = !invite.link_secret.trim().is_empty();
         }
-        Ok(None) => {
-            "device invite was not recognized".clone_into(&mut classification.error);
-        }
+        Ok(None) => "AppKey invite was not recognized".clone_into(&mut classification.error),
         Err(error) if classification.is_complete => {
             classification.error = error.to_string();
         }
@@ -228,9 +225,9 @@ fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool
 fn invite_link_input_is_complete(input: &str) -> bool {
     let lower = input.to_ascii_lowercase();
     for prefix in [
-        DEVICE_LINK_INVITE_PREFIX,
-        DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX,
-        DEVICE_LINK_INVITE_WEB_PREFIX,
+        APP_KEY_LINK_INVITE_PREFIX,
+        APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX,
+        APP_KEY_LINK_INVITE_WEB_PREFIX,
     ] {
         if lower.starts_with(prefix) {
             return input[prefix.len()..].len() >= 32;
@@ -263,8 +260,8 @@ fn raw_query_value(query: &str, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device_link_invite::encode_device_link_invite;
-    use crate::device_link_transport::encode_device_approval_request;
+    use crate::app_key_link_invite::encode_app_key_link_invite;
+    use crate::device_link_transport::encode_app_key_approval_request;
     use nostr_sdk::Keys;
     use nostr_sdk::nips::nip19::ToBech32;
 
@@ -273,18 +270,17 @@ mod tests {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
         let invite =
-            encode_device_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
+            encode_app_key_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
 
         let invite_classification = classify_link_input(&invite);
         assert_eq!(invite_classification.kind, "invite");
         assert!(invite_classification.is_complete);
         assert!(invite_classification.is_valid);
         assert_eq!(
-            invite_classification.admin_device_pubkey,
+            invite_classification.admin_app_key_pubkey,
             admin.to_bech32().expect("npub")
         );
         assert!(invite_classification.has_link_secret);
-        assert!(invite_classification.owner_pubkey.is_empty());
 
         let app_key_npub = admin.to_bech32().expect("npub");
         let app_key = classify_link_input(&app_key_npub);
@@ -292,19 +288,19 @@ mod tests {
         assert!(app_key.is_complete);
         assert!(app_key.is_valid);
         assert_eq!(app_key.normalized_input, app_key_npub);
-        assert_eq!(app_key.admin_device_pubkey, app_key_npub);
+        assert_eq!(app_key.admin_app_key_pubkey, app_key_npub);
 
         let short_app_key = classify_link_input("npub1short");
         assert_eq!(short_app_key.kind, "app_key_pubkey");
         assert!(!short_app_key.is_complete);
         assert!(!short_app_key.is_valid);
 
-        let request = encode_device_approval_request(profile_id, &admin.to_hex(), "secret", None);
+        let request = encode_app_key_approval_request(profile_id, &admin.to_hex(), "secret", None);
         let approval = classify_link_input(&request);
-        assert_eq!(approval.kind, "device_approval");
+        assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
         assert!(approval.is_valid);
-        assert_eq!(approval.device_pubkey, app_key_npub);
+        assert_eq!(approval.app_key_pubkey, app_key_npub);
         assert!(approval.has_link_secret);
     }
 
@@ -315,7 +311,7 @@ mod tests {
         assert!(!short.is_complete);
         assert!(!short.is_valid);
 
-        let unrelated = classify_link_input("https://drive.iris.to/device-linker?owner=npub1x");
+        let unrelated = classify_link_input("https://drive.iris.to/app-key-linker?owner=npub1x");
         assert_eq!(unrelated.kind, "unknown");
     }
 
@@ -324,7 +320,7 @@ mod tests {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
         let invite =
-            encode_device_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
+            encode_app_key_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
 
         let from_invite = resolve_app_key_link_target(&invite, None).expect("invite target");
         assert_eq!(from_invite.profile_id, profile_id);

@@ -141,7 +141,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
 
     if let Ok(state) = desktop_state() {
         if let Some(requests) = profile(&state)
-            .map(|account| account.inbound_device_link_requests.as_slice())
+            .map(|account| account.inbound_app_key_link_requests.as_slice())
             .filter(|requests| !requests.is_empty())
         {
             let heading = gtk::Label::new(Some("Devices asking to join"));
@@ -155,7 +155,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
                 } else {
                     request.label.clone()
                 };
-                let request_device = request.device_pubkey.clone();
+                let request_device = request.app_key_pubkey.clone();
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
                 row.set_valign(gtk::Align::Center);
                 let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
@@ -397,7 +397,7 @@ pub(crate) fn copy_snapshot_link(model: &AppRef) {
 pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
-            let message = if key == "owner_npub" || key == "current_app_key_npub" {
+            let message = if key == "app_key_npub" || key == "current_app_key_npub" {
                 "AppKey copied"
             } else {
                 "Device key copied"
@@ -563,7 +563,7 @@ pub(crate) fn current_account_value(key: &str) -> Result<String, String> {
     let state = desktop_state()?;
     let account = profile(&state).ok_or_else(|| "No account key available".to_string())?;
     match key {
-        "owner_npub" | "current_app_key_npub" => Ok(account.current_app_key_npub.clone()),
+        "app_key_npub" | "current_app_key_npub" => Ok(account.current_app_key_npub.clone()),
         "device_npub" => Ok(account.current_app_key_npub.clone()),
         _ => Err("No account key available".to_string()),
     }

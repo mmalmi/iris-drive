@@ -2,16 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app_keys::{AppActorEntry, AppActorRole};
 use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
-use crate::profile::{DeviceAuthorizationState, ProfileState};
+use crate::profile::{AppKeyAuthorizationState, ProfileState};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 
 #[must_use]
-pub fn authorization_state_key(state: DeviceAuthorizationState) -> &'static str {
+pub fn authorization_state_key(state: AppKeyAuthorizationState) -> &'static str {
     match state {
-        DeviceAuthorizationState::Authorized => "authorized",
-        DeviceAuthorizationState::AwaitingApproval => "awaiting_approval",
-        DeviceAuthorizationState::Revoked => "revoked",
+        AppKeyAuthorizationState::Authorized => "authorized",
+        AppKeyAuthorizationState::AwaitingApproval => "awaiting_approval",
+        AppKeyAuthorizationState::Revoked => "revoked",
     }
 }
 
@@ -160,15 +160,15 @@ pub struct DeviceManagementActions {
 
 #[must_use]
 pub fn device_management_actions(
-    can_manage_devices: bool,
+    can_admin_profile: bool,
     is_current_device: bool,
     is_admin: bool,
     admin_count: usize,
 ) -> DeviceManagementActions {
     DeviceManagementActions {
-        can_revoke: can_manage_devices && !is_current_device,
-        can_appoint_admin: can_manage_devices && !is_current_device && !is_admin,
-        can_demote_admin: can_manage_devices && !is_current_device && is_admin && admin_count > 1,
+        can_revoke: can_admin_profile && !is_current_device,
+        can_appoint_admin: can_admin_profile && !is_current_device && !is_admin,
+        can_demote_admin: can_admin_profile && !is_current_device && is_admin && admin_count > 1,
     }
 }
 
@@ -241,7 +241,7 @@ pub fn pubkey_npub(hex: &str) -> String {
 #[must_use]
 pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
     let projection = state.profile_projection();
-    let current_facet = projection.active_facets.get(&state.device_pubkey);
+    let current_facet = projection.active_facets.get(&state.app_key_pubkey);
     let current_key_epoch = projection
         .key_epochs
         .keys()
@@ -269,17 +269,17 @@ pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
 
     IrisProfileSummary {
         profile_id: state.profile_id.to_string(),
-        current_app_key_pubkey_hex: state.device_pubkey.clone(),
-        current_app_key_npub: pubkey_npub(&state.device_pubkey),
+        current_app_key_pubkey_hex: state.app_key_pubkey.clone(),
+        current_app_key_npub: pubkey_npub(&state.app_key_pubkey),
         current_app_key_label: current_facet
             .and_then(|facet| facet.label.clone())
-            .or_else(|| state.device_label.clone()),
+            .or_else(|| state.app_key_label.clone()),
         authorization_state: authorization_state_key(state.authorization_state).to_owned(),
         can_write_roots: state.can_write_roots(),
         can_admin_profile: if projection.active_facets.is_empty() {
-            state.can_manage_devices()
+            state.can_admin_profile()
         } else {
-            projection.can_admin_profile(&state.device_pubkey)
+            projection.can_admin_profile(&state.app_key_pubkey)
         },
         active_app_key_count: if projection.active_facets.is_empty() {
             state
@@ -318,8 +318,8 @@ fn facet_count_for_purpose(
 #[must_use]
 pub fn device_roster_rows(
     app_actors: &[AppActorEntry],
-    current_device_pubkey: &str,
-    can_manage_devices: bool,
+    current_app_key_pubkey: &str,
+    can_admin_profile: bool,
     current_device_online: bool,
     connectivity: &DeviceConnectivity,
 ) -> Vec<DeviceRosterRow> {
@@ -332,7 +332,7 @@ pub fn device_roster_rows(
         .iter()
         .map(|device| {
             let npub = pubkey_npub(&device.pubkey);
-            let is_current_device = device.pubkey == current_device_pubkey;
+            let is_current_device = device.pubkey == current_app_key_pubkey;
             let is_direct = !is_current_device && connectivity.direct_devices.contains(&npub);
             let is_mesh = !is_current_device && connectivity.mesh_devices.contains(&npub);
             let is_online = if is_current_device {
@@ -348,7 +348,7 @@ pub fn device_roster_rows(
             let transport_type = connection.and_then(|status| status.transport_type.clone());
             let srtt_ms = connection.and_then(|status| status.srtt_ms);
             let actions = device_management_actions(
-                can_manage_devices,
+                can_admin_profile,
                 is_current_device,
                 device.role == AppActorRole::Admin,
                 admin_count,
@@ -409,21 +409,21 @@ fn device_online_via(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppActorRole, DeviceAuthorizationState, Profile};
+    use crate::{AppActorRole, AppKeyAuthorizationState, Profile};
     use tempfile::tempdir;
 
     #[test]
     fn shared_device_summary_labels_match_native_clients() {
         assert_eq!(
-            authorization_state_key(DeviceAuthorizationState::Authorized),
+            authorization_state_key(AppKeyAuthorizationState::Authorized),
             "authorized"
         );
         assert_eq!(
-            authorization_state_key(DeviceAuthorizationState::AwaitingApproval),
+            authorization_state_key(AppKeyAuthorizationState::AwaitingApproval),
             "awaiting_approval"
         );
         assert_eq!(
-            authorization_state_key(DeviceAuthorizationState::Revoked),
+            authorization_state_key(AppKeyAuthorizationState::Revoked),
             "revoked"
         );
 
@@ -559,10 +559,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut account = Profile::create(dir.path(), Some("Native".to_owned())).unwrap();
         let profile_id = account.state.profile_id.to_string();
-        let current_app_key = account.state.device_pubkey.clone();
+        let current_app_key = account.state.app_key_pubkey.clone();
         let remote = nostr_sdk::Keys::generate().public_key().to_hex();
         account
-            .approve_device(&remote, Some("Web".to_owned()))
+            .approve_app_key(&remote, Some("Web".to_owned()))
             .expect("approve app key");
         let latest_created_at = account
             .state

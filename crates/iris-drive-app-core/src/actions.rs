@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 pub enum NativeAppAction {
     Refresh,
     CreateProfile {
-        device_label: String,
+        app_key_label: String,
     },
     RestoreProfile {
         recovery_secret: String,
-        device_label: String,
+        app_key_label: String,
     },
     AdmitAppKeyWithRecoveryPhrase {
         recovery_phrase: String,
@@ -17,7 +17,7 @@ pub enum NativeAppAction {
     },
     LinkDevice {
         link_target: String,
-        device_label: String,
+        app_key_label: String,
     },
     Logout,
     ApproveDevice {
@@ -30,13 +30,13 @@ pub enum NativeAppAction {
     ResetInvite,
     #[serde(alias = "delete_device")]
     RevokeDevice {
-        device_pubkey: String,
+        app_key_pubkey: String,
     },
     AppointAdmin {
-        device_pubkey: String,
+        app_key_pubkey: String,
     },
     DemoteAdmin {
-        device_pubkey: String,
+        app_key_pubkey: String,
     },
     AddRelay {
         url: String,

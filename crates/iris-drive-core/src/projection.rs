@@ -79,31 +79,31 @@ pub async fn primary_merged_view<S: Store>(
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
-    let authorized = authorized_device_pubkeys(account);
-    let merge_devices = merge_device_pubkeys(account, drive);
+    let authorized = authorized_app_key_pubkeys(account);
+    let merge_devices = merge_app_key_pubkeys(account, drive);
 
     let mut snapshots_data = Vec::new();
-    for device_pubkey in &merge_devices {
-        let Some(root) = drive.device_roots.get(device_pubkey) else {
+    for app_key_pubkey in &merge_devices {
+        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-            device_id: device_pubkey.clone(),
+            device_id: app_key_pubkey.clone(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
         let (files, tombstones) = walk_device_tree(tree, &cid).await?;
-        snapshots_data.push((device_pubkey.clone(), root, files, tombstones));
+        snapshots_data.push((app_key_pubkey.clone(), root, files, tombstones));
     }
 
     let merge_device_refs: Vec<&str> = merge_devices.iter().map(String::as_str).collect();
     let snapshots: Vec<DeviceSnapshot<'_>> = snapshots_data
         .iter()
-        .map(|(device_pubkey, root, files, tombstones)| DeviceSnapshot {
-            device_pubkey: device_pubkey.as_str(),
+        .map(|(app_key_pubkey, root, files, tombstones)| DeviceSnapshot {
+            app_key_pubkey: app_key_pubkey.as_str(),
             root,
             files: files.clone(),
             tombstones: tombstones.clone(),
@@ -257,7 +257,7 @@ pub async fn primary_merged_root<S: Store>(
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
-    let merge_devices = merge_device_pubkeys(account, drive);
+    let merge_devices = merge_app_key_pubkeys(account, drive);
     let source_roots = merge_source_roots(tree, drive, &merge_devices).await?;
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
@@ -298,14 +298,14 @@ async fn merge_source_roots<S: Store>(
     merge_devices: &[String],
 ) -> Result<BTreeMap<String, DeviceRootRef>, ProjectionError> {
     let mut source_roots = BTreeMap::new();
-    for device_pubkey in merge_devices {
-        let Some(root) = drive.device_roots.get(device_pubkey) else {
+    for app_key_pubkey in merge_devices {
+        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
             continue;
         };
-        source_roots.insert(device_pubkey.clone(), root);
+        source_roots.insert(app_key_pubkey.clone(), root);
     }
     Ok(source_roots)
 }
@@ -491,15 +491,15 @@ async fn merged_user_directory_paths<S: Store>(
     suppressed_paths: &[String],
 ) -> Result<BTreeSet<String>, ProjectionError> {
     let mut dirs = BTreeSet::new();
-    for device_pubkey in authorized_devices {
-        let Some(root) = drive.device_roots.get(device_pubkey) else {
+    for app_key_pubkey in authorized_devices {
+        let Some(root) = drive.device_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, device_pubkey, root).await? else {
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-            device_id: device_pubkey.clone(),
+            device_id: app_key_pubkey.clone(),
             root_cid: root.root_cid.clone(),
             source,
         })?;
@@ -520,7 +520,7 @@ fn path_is_suppressed_by_tombstone(path: &str, suppressed_paths: &[String]) -> b
 
 async fn merge_root_for_device<S: Store>(
     tree: &HashTree<S>,
-    device_pubkey: &str,
+    app_key_pubkey: &str,
     root: &DeviceRootRef,
 ) -> Result<Option<DeviceRootRef>, ProjectionError> {
     let mut current = root.clone();
@@ -532,13 +532,13 @@ async fn merge_root_for_device<S: Store>(
             .parents
             .iter()
             .rev()
-            .find(|parent| parent.device_id == device_pubkey)
+            .find(|parent| parent.device_id == app_key_pubkey)
         else {
             return Ok(None);
         };
         let parent_cid =
             Cid::parse(&parent.root_cid).map_err(|source| ProjectionError::RootCid {
-                device_id: device_pubkey.to_string(),
+                device_id: app_key_pubkey.to_string(),
                 root_cid: parent.root_cid.clone(),
                 source,
             })?;
@@ -590,7 +590,7 @@ fn collect_user_directory_paths<'a, S: Store>(
     })
 }
 
-fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
+fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
@@ -601,18 +601,18 @@ fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    if !app_actors.contains(&state.device_pubkey) {
-        app_actors.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.app_key_pubkey) {
+        app_actors.push(state.app_key_pubkey.clone());
     }
     app_actors
 }
 
 #[must_use]
-pub fn merge_device_pubkeys(account: &ProfileState, drive: &Drive) -> Vec<String> {
-    let mut devices = authorized_device_pubkeys(account);
-    for device_pubkey in drive.device_roots.keys() {
-        if !devices.contains(device_pubkey) {
-            devices.push(device_pubkey.clone());
+pub fn merge_app_key_pubkeys(account: &ProfileState, drive: &Drive) -> Vec<String> {
+    let mut devices = authorized_app_key_pubkeys(account);
+    for app_key_pubkey in drive.device_roots.keys() {
+        if !devices.contains(app_key_pubkey) {
+            devices.push(app_key_pubkey.clone());
         }
     }
     devices

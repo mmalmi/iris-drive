@@ -32,10 +32,10 @@ private func currentFileProviderRegistrationIdentity() -> String {
         return ""
     }
 
-    let owner = (status.ownerNpub ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let appKey = (status.currentAppKeyNpub ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let device = (status.deviceNpub ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    if !owner.isEmpty && !device.isEmpty {
-        return "\(owner):\(device)"
+    if !appKey.isEmpty && !device.isEmpty {
+        return "\(appKey):\(device)"
     }
 
     let configDirectory = (status.configDirectory ?? "")

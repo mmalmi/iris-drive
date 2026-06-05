@@ -72,7 +72,7 @@ fn snap<'a>(
     tombstones: Vec<DeviceTombstone>,
 ) -> DeviceSnapshot<'a> {
     DeviceSnapshot {
-        device_pubkey: device,
+        app_key_pubkey: device,
         root,
         files,
         tombstones,

@@ -273,7 +273,7 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     owner
-        .approve_device(&linked_device, Some("Phone".into()))
+        .approve_app_key(&linked_device, Some("Phone".into()))
         .unwrap();
     let mut config = AppConfig {
         profile: Some(owner.state.clone()),
@@ -387,7 +387,7 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
     let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     owner
-        .approve_device(&linked_device, Some("Phone".into()))
+        .approve_app_key(&linked_device, Some("Phone".into()))
         .unwrap();
     let config = AppConfig {
         profile: Some(owner.state.clone()),
@@ -428,7 +428,7 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
     let root_cid = Cid::encrypted([0x11; 32], [0x22; 32]).to_string();
     let mut drive = Drive::primary(owner.state.root_scope_id());
     drive.device_roots.insert(
-        owner.state.device_pubkey.clone(),
+        owner.state.app_key_pubkey.clone(),
         DeviceRootRef::legacy(&root_cid, 10, 1),
     );
     let config = AppConfig {

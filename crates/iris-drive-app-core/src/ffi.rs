@@ -18,15 +18,15 @@ use iris_drive_core::backup_ops::{
 };
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+use iris_drive_core::device_link_transport::{
+    AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
+};
 #[cfg(not(test))]
 use iris_drive_core::device_link_transport::{
     DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
     DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
     device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
-    device_link_roster_recipients, pending_device_link_request_frame,
-};
-use iris_drive_core::device_link_transport::{
-    DeviceApprovalRequest, encode_device_approval_request, parse_device_approval_request,
+    device_link_roster_recipients, pending_app_key_link_request_frame,
 };
 use iris_drive_core::device_summary::{
     DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
@@ -41,7 +41,7 @@ use iris_drive_core::fips_status::{
 use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
-use iris_drive_core::{AppConfig, BackupTarget, DeviceAuthorizationState, Drive, Profile};
+use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ pub(crate) use crate::native_provider::{
     native_provider_resolve_path_json, native_provider_write_json,
 };
 use crate::state::{
-    NativeAppState, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus, UiFipsStatus,
+    NativeAppState, UiAppKeyLinkRequest, UiBackup, UiDevice, UiFipsPeerStatus, UiFipsStatus,
     UiPaths, UiProfile, UiRelayStatus, UiShare, UiState, UiSyncRoot, UiSyncStatus,
 };
 
@@ -108,17 +108,17 @@ struct SentDeviceLinkRequest {
     attempts: u8,
 }
 
-fn device_link_request_send_due(
+fn app_key_link_request_send_due(
     sent: Option<SentDeviceLinkRequest>,
     now: std::time::Instant,
 ) -> bool {
     let Some(sent) = sent else {
         return true;
     };
-    now.duration_since(sent.last_sent) >= device_link_request_retry_interval(sent.attempts)
+    now.duration_since(sent.last_sent) >= app_key_link_request_retry_interval(sent.attempts)
 }
 
-fn device_link_request_retry_interval(attempts: u8) -> std::time::Duration {
+fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
         std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
@@ -132,9 +132,8 @@ pub struct LinkInputClassification {
     pub is_complete: bool,
     pub is_valid: bool,
     pub normalized_input: String,
-    pub owner_pubkey: String,
-    pub device_pubkey: String,
-    pub admin_device_pubkey: String,
+    pub app_key_pubkey: String,
+    pub admin_app_key_pubkey: String,
     pub has_link_secret: bool,
     pub error: String,
 }
@@ -146,9 +145,8 @@ impl From<iris_drive_core::LinkInputClassification> for LinkInputClassification 
             is_complete: value.is_complete,
             is_valid: value.is_valid,
             normalized_input: value.normalized_input,
-            owner_pubkey: value.owner_pubkey,
-            device_pubkey: value.device_pubkey,
-            admin_device_pubkey: value.admin_device_pubkey,
+            app_key_pubkey: value.app_key_pubkey,
+            admin_app_key_pubkey: value.admin_app_key_pubkey,
             has_link_secret: value.has_link_secret,
             error: value.error,
         }
@@ -265,14 +263,14 @@ impl NativeAppRuntime {
         self.state.error.clear();
         match action {
             NativeAppAction::Refresh => {}
-            NativeAppAction::CreateProfile { device_label } => {
-                self.create_profile(&device_label);
+            NativeAppAction::CreateProfile { app_key_label } => {
+                self.create_profile(&app_key_label);
             }
             NativeAppAction::RestoreProfile {
                 recovery_secret,
-                device_label,
+                app_key_label,
             } => {
-                self.restore_profile(&recovery_secret, &device_label);
+                self.restore_profile(&recovery_secret, &app_key_label);
             }
             NativeAppAction::AdmitAppKeyWithRecoveryPhrase {
                 recovery_phrase,
@@ -282,26 +280,26 @@ impl NativeAppRuntime {
             }
             NativeAppAction::LinkDevice {
                 link_target,
-                device_label,
+                app_key_label,
             } => {
-                self.link_device(&link_target, &device_label);
+                self.link_device(&link_target, &app_key_label);
             }
             NativeAppAction::Logout => self.logout(),
             NativeAppAction::ApproveDevice { request, label } => {
-                self.approve_device(&request, &label);
+                self.approve_app_key(&request, &label);
             }
             NativeAppAction::RejectDevice { request } => {
                 self.reject_device(&request);
             }
             NativeAppAction::ResetInvite => self.reset_invite(),
-            NativeAppAction::RevokeDevice { device_pubkey } => {
-                self.revoke_device(&device_pubkey);
+            NativeAppAction::RevokeDevice { app_key_pubkey } => {
+                self.revoke_app_key(&app_key_pubkey);
             }
-            NativeAppAction::AppointAdmin { device_pubkey } => {
-                self.set_device_admin_role(&device_pubkey, true);
+            NativeAppAction::AppointAdmin { app_key_pubkey } => {
+                self.set_device_admin_role(&app_key_pubkey, true);
             }
-            NativeAppAction::DemoteAdmin { device_pubkey } => {
-                self.set_device_admin_role(&device_pubkey, false);
+            NativeAppAction::DemoteAdmin { app_key_pubkey } => {
+                self.set_device_admin_role(&app_key_pubkey, false);
             }
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
@@ -339,12 +337,13 @@ impl NativeAppRuntime {
         self.start_device_link_exchange_if_needed();
     }
 
-    fn create_profile(&mut self, device_label: &str) {
+    fn create_profile(&mut self, app_key_label: &str) {
         if self.initialized() {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let account = match Profile::create(Path::new(&self.data_dir), label_option(device_label)) {
+        let account = match Profile::create(Path::new(&self.data_dir), label_option(app_key_label))
+        {
             Ok(account) => account,
             Err(error) => {
                 self.state.error = format!("creating profile: {error}");
@@ -358,7 +357,7 @@ impl NativeAppRuntime {
         }
     }
 
-    fn restore_profile(&mut self, recovery_secret: &str, device_label: &str) {
+    fn restore_profile(&mut self, recovery_secret: &str, app_key_label: &str) {
         if recovery_secret.trim().is_empty() {
             "recovery phrase or secret key is required".clone_into(&mut self.state.error);
             return;
@@ -370,7 +369,7 @@ impl NativeAppRuntime {
         let account = match Profile::restore(
             Path::new(&self.data_dir),
             recovery_secret.trim(),
-            label_option(device_label),
+            label_option(app_key_label),
         ) {
             Ok(account) => account,
             Err(error) => {
@@ -431,8 +430,8 @@ impl NativeAppRuntime {
         }
     }
 
-    fn link_device(&mut self, link_target: &str, device_label: &str) {
-        let target = match resolve_device_link_target(link_target) {
+    fn link_device(&mut self, link_target: &str, app_key_label: &str) {
+        let target = match resolve_app_key_link_target(link_target) {
             Ok(target) => target,
             Err(error) => {
                 self.state.error = error;
@@ -447,21 +446,21 @@ impl NativeAppRuntime {
             Path::new(&self.data_dir),
             target.profile_id,
             target.admin_app_key_hex.clone(),
-            label_option(device_label),
+            label_option(app_key_label),
         );
         let mut account = match link_result {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("linking device: {error}");
+                self.state.error = format!("linking AppKey: {error}");
                 return;
             }
         };
         let link_secret = if target.link_secret.trim().is_empty() {
-            account.state.device_link_secret.clone()
+            account.state.app_key_link_secret.clone()
         } else {
             target.link_secret
         };
-        if let Err(error) = account.state.queue_outbound_device_link_request(
+        if let Err(error) = account.state.queue_outbound_app_key_link_request(
             target.admin_app_key_hex,
             &link_secret,
             unix_now_seconds(),
@@ -490,13 +489,13 @@ impl NativeAppRuntime {
         }
     }
 
-    fn approve_device(&mut self, request: &str, label: &str) {
+    fn approve_app_key(&mut self, request: &str, label: &str) {
         let request = request.trim();
         if request.is_empty() {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let request = match decode_device_approval_request(request) {
+        let request = match decode_app_key_approval_request(request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
@@ -511,11 +510,11 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.clone() else {
-            "owner profile is required to approve devices".clone_into(&mut self.state.error);
+            "profile admin is required to approve AppKeys".clone_into(&mut self.state.error);
             return;
         };
-        if !state.can_manage_devices() {
-            "owner profile is required to approve devices".clone_into(&mut self.state.error);
+        if !state.can_admin_profile() {
+            "profile admin is required to approve AppKeys".clone_into(&mut self.state.error);
             return;
         }
         if request
@@ -533,8 +532,8 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.approve_device(&request.device_hex, label) {
-            self.state.error = format!("approving device: {error}");
+        if let Err(error) = account.approve_app_key(&request.app_key_hex, label) {
+            self.state.error = format!("approving AppKey: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -552,14 +551,14 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.as_mut() else {
-            "owner profile is required to reset invites".clone_into(&mut self.state.error);
+            "profile admin is required to reset invites".clone_into(&mut self.state.error);
             return;
         };
-        if !state.can_manage_devices() {
-            "owner profile is required to reset invites".clone_into(&mut self.state.error);
+        if !state.can_admin_profile() {
+            "profile admin is required to reset invites".clone_into(&mut self.state.error);
             return;
         }
-        state.reset_device_link_secret();
+        state.reset_app_key_link_secret();
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
             self.state.error = format!("saving config: {error}");
         }
@@ -571,7 +570,7 @@ impl NativeAppRuntime {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let request = match decode_device_approval_request(request) {
+        let request = match decode_app_key_approval_request(request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
@@ -586,11 +585,11 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.as_mut() else {
-            "owner profile is required to reject devices".clone_into(&mut self.state.error);
+            "profile admin is required to reject AppKeys".clone_into(&mut self.state.error);
             return;
         };
-        if !state.can_manage_devices() {
-            "owner profile is required to reject devices".clone_into(&mut self.state.error);
+        if !state.can_admin_profile() {
+            "profile admin is required to reject AppKeys".clone_into(&mut self.state.error);
             return;
         }
         if request
@@ -600,8 +599,8 @@ impl NativeAppRuntime {
             "device request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
-        if let Err(error) = state.reject_inbound_device_link_request(&request.device_hex) {
-            self.state.error = format!("rejecting device: {error}");
+        if let Err(error) = state.reject_inbound_app_key_link_request(&request.app_key_hex) {
+            self.state.error = format!("rejecting AppKey: {error}");
             return;
         }
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
@@ -609,8 +608,8 @@ impl NativeAppRuntime {
         }
     }
 
-    fn revoke_device(&mut self, device_pubkey: &str) {
-        let device_pubkey = match normalize_pubkey(device_pubkey) {
+    fn revoke_app_key(&mut self, app_key_pubkey: &str) {
+        let app_key_pubkey = match normalize_pubkey(app_key_pubkey) {
             Ok(pubkey) => pubkey,
             Err(error) => {
                 self.state.error = error;
@@ -625,11 +624,11 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.clone() else {
-            "owner profile is required to revoke devices".clone_into(&mut self.state.error);
+            "profile admin is required to revoke AppKeys".clone_into(&mut self.state.error);
             return;
         };
-        if state.device_pubkey == device_pubkey {
-            "cannot revoke this device from itself".clone_into(&mut self.state.error);
+        if state.app_key_pubkey == app_key_pubkey {
+            "cannot revoke this AppKey from itself".clone_into(&mut self.state.error);
             return;
         }
         let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
@@ -639,8 +638,8 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.revoke_device(&device_pubkey) {
-            self.state.error = format!("revoking device: {error}");
+        if let Err(error) = account.revoke_app_key(&app_key_pubkey) {
+            self.state.error = format!("revoking AppKey: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -649,8 +648,8 @@ impl NativeAppRuntime {
         }
     }
 
-    fn set_device_admin_role(&mut self, device_pubkey: &str, make_admin: bool) {
-        let device_pubkey = match normalize_pubkey(device_pubkey) {
+    fn set_device_admin_role(&mut self, app_key_pubkey: &str, make_admin: bool) {
+        let app_key_pubkey = match normalize_pubkey(app_key_pubkey) {
             Ok(pubkey) => pubkey,
             Err(error) => {
                 self.state.error = error;
@@ -676,9 +675,9 @@ impl NativeAppRuntime {
             }
         };
         let result = if make_admin {
-            account.appoint_admin(&device_pubkey)
+            account.appoint_admin(&app_key_pubkey)
         } else {
-            account.demote_admin(&device_pubkey)
+            account.demote_admin(&app_key_pubkey)
         };
         if let Err(error) = result {
             self.state.error = format!("updating device role: {error}");
@@ -831,7 +830,7 @@ impl NativeAppRuntime {
                 .is_some()
     }
 
-    fn current_authorization_state(&self) -> Option<DeviceAuthorizationState> {
+    fn current_authorization_state(&self) -> Option<AppKeyAuthorizationState> {
         let mut account = self.load_config().ok()?.profile?;
         account.recompute_authorization();
         Some(account.authorization_state)
@@ -843,7 +842,7 @@ impl NativeAppRuntime {
             .profile
             .as_ref()
             .is_some_and(|account| account.authorization_state == "revoked")
-            || self.current_authorization_state() == Some(DeviceAuthorizationState::Revoked)
+            || self.current_authorization_state() == Some(AppKeyAuthorizationState::Revoked)
     }
 
     fn load_config(&self) -> Result<AppConfig, String> {
@@ -963,7 +962,7 @@ impl NativeAppRuntime {
             current_app_key_pubkey: profile.current_app_key_pubkey_hex,
             current_app_key_npub: profile.current_app_key_npub,
             current_app_key_label: profile.current_app_key_label.unwrap_or_default(),
-            device_label: account.device_label.clone().unwrap_or_default(),
+            app_key_label: account.app_key_label.clone().unwrap_or_default(),
             authorization_state: profile.authorization_state,
             can_admin_profile: profile.can_admin_profile,
             can_write_roots: profile.can_write_roots,
@@ -975,12 +974,12 @@ impl NativeAppRuntime {
             social_profile_facet_count: profile.social_profile_facet_count as u64,
             missing_key_wraps: profile.missing_key_wrap_npubs,
             can_export_recovery_phrase: recovery_phrase_path_in(Path::new(&self.data_dir)).exists(),
-            device_link_request: device_link_request_url(&account),
-            device_link_invite: device_link_invite_url(&account),
-            inbound_device_link_requests: inbound_device_link_requests(&account),
+            app_key_link_request: app_key_link_request_url(&account),
+            app_key_link_invite: app_key_link_invite_url(&account),
+            inbound_app_key_link_requests: inbound_app_key_link_requests(&account),
         });
-        self.state.ui.shares = ui_shares_for_config(&config, &account.device_pubkey);
-        if account.authorization_state == DeviceAuthorizationState::Revoked {
+        self.state.ui.shares = ui_shares_for_config(&config, &account.app_key_pubkey);
+        if account.authorization_state == AppKeyAuthorizationState::Revoked {
             self.set_sync_running(false);
             self.state.ui.roots.clear();
             self.state.ui.shares.clear();
@@ -1191,7 +1190,7 @@ async fn run_device_link_exchange_async(
         .expect("account checked above");
     let root_scope_id = account_state.root_scope_id();
     let relay_filters = iris_drive_core::relay_sync::subscription_filters(
-        &account_state.device_pubkey,
+        &account_state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );
@@ -1283,7 +1282,7 @@ async fn run_device_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
-                        if let Err(error) = handle_native_device_link_request_event(config_dir, &event) {
+                        if let Err(error) = handle_native_app_key_link_request_event(config_dir, &event) {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native device-link relay request failed");
                         }
                     }
@@ -1320,7 +1319,7 @@ async fn drive_device_link_exchange_tick(
     };
 
     sync.refresh_authorized_peers(&config).await;
-    send_native_pending_device_link_request(relay_client, device_keys, sync, state, sent_requests)
+    send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
         .await?;
     send_native_authorized_device_link_rosters(
         config_dir,
@@ -1337,34 +1336,37 @@ async fn drive_device_link_exchange_tick(
 }
 
 #[cfg(not(test))]
-async fn send_native_pending_device_link_request(
+async fn send_native_pending_app_key_link_request(
     relay_client: &nostr_sdk::Client,
     device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::ProfileState,
     sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
 ) -> Result<(), String> {
-    let Some(frame) = pending_device_link_request_frame(state) else {
+    let Some(frame) = pending_app_key_link_request_frame(state) else {
         return Ok(());
     };
-    let Some(pending) = state.outbound_device_link_request.as_ref() else {
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(());
     };
     let fingerprint = format!(
         "{}:{}:{}",
-        pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
+        pending.admin_app_key_pubkey, state.app_key_pubkey, pending.requested_at
     );
     let now = std::time::Instant::now();
-    if !device_link_request_send_due(sent_requests.get(&fingerprint).copied(), now) {
+    if !app_key_link_request_send_due(sent_requests.get(&fingerprint).copied(), now) {
         return Ok(());
     }
-    let admin_npub = pubkey_npub(&pending.admin_device_pubkey);
+    let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link request: {error}"))?;
-    let relay_event_id =
-        iris_drive_core::relay_sync::publish_device_link_request(relay_client, device_keys, &frame)
-            .await
-            .map_err(|error| format!("publishing device link request relay event: {error}"))?;
+    let relay_event_id = iris_drive_core::relay_sync::publish_app_key_link_request(
+        relay_client,
+        device_keys,
+        &frame,
+    )
+    .await
+    .map_err(|error| format!("publishing device link request relay event: {error}"))?;
     let attempts = sent_requests
         .get(&fingerprint)
         .map_or(1, |sent| sent.attempts.saturating_add(1));
@@ -1405,13 +1407,13 @@ async fn send_native_authorized_device_link_rosters(
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<(), String> {
-    if !state.can_manage_devices() {
+    if !state.can_admin_profile() {
         return Ok(());
     }
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Ok(());
     };
-    if !app_keys.contains(&state.device_pubkey) {
+    if !app_keys.contains(&state.app_key_pubkey) {
         return Ok(());
     }
 
@@ -1440,7 +1442,7 @@ async fn send_native_authorized_device_link_rosters(
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link roster: {error}"))?;
     for recipient in due_devices {
-        let recipient_npub = pubkey_npub(&recipient.device_pubkey);
+        let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
         match sync
             .send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
             .await
@@ -1471,7 +1473,7 @@ async fn handle_native_device_link_app_message(
     acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool, String> {
     match message.topic.as_str() {
-        DEVICE_LINK_REQUEST_APP_TOPIC => handle_native_device_link_request(config_dir, message),
+        DEVICE_LINK_REQUEST_APP_TOPIC => handle_native_app_key_link_request(config_dir, message),
         DEVICE_LINK_ROSTER_APP_TOPIC => {
             handle_native_device_link_roster(config_dir, sync, message).await
         }
@@ -1483,7 +1485,7 @@ async fn handle_native_device_link_app_message(
 }
 
 #[cfg(not(test))]
-fn handle_native_device_link_request(
+fn handle_native_app_key_link_request(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool, String> {
@@ -1495,9 +1497,9 @@ fn handle_native_device_link_request(
             frame.schema
         ));
     }
-    let device_hex = normalize_pubkey(&frame.device_pubkey)?;
+    let app_key_hex = normalize_pubkey(&frame.app_key_pubkey)?;
     let link_secret = if frame.link_secret.trim().is_empty() {
-        device_approval_link_secret(&frame.url)
+        app_key_approval_link_secret(&frame.url)
     } else {
         frame.link_secret
     };
@@ -1508,9 +1510,9 @@ fn handle_native_device_link_request(
         return Ok(true);
     };
     let changed = state
-        .record_inbound_device_link_request(
+        .record_inbound_app_key_link_request(
             frame.profile_id,
-            &device_hex,
+            &app_key_hex,
             frame.label,
             &link_secret,
             frame.requested_at,
@@ -1522,7 +1524,7 @@ fn handle_native_device_link_request(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
-            device_npub = pubkey_npub(&device_hex),
+            device_npub = pubkey_npub(&app_key_hex),
             requested_at = frame.requested_at,
             "received native device-link request over FIPS"
         );
@@ -1531,17 +1533,17 @@ fn handle_native_device_link_request(
 }
 
 #[cfg(not(test))]
-fn handle_native_device_link_request_event(
+fn handle_native_app_key_link_request_event(
     config_dir: &Path,
     event: &nostr_sdk::Event,
 ) -> Result<bool, String> {
-    if !iris_drive_core::nostr_events::is_device_link_request_event_coordinate(event) {
+    if !iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
         return Ok(false);
     }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
     let outcome =
-        iris_drive_core::relay_sync::apply_remote_device_link_request_event(&mut config, event)
+        iris_drive_core::relay_sync::apply_remote_app_key_link_request_event(&mut config, event)
             .map_err(|error| format!("applying device link request relay event: {error}"))?;
     if matches!(
         outcome,
@@ -1574,7 +1576,7 @@ async fn handle_native_device_link_roster(
             frame.schema
         ));
     }
-    let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
+    let admin_app_key_hex = normalize_pubkey(&frame.admin_app_key_pubkey)?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
@@ -1582,17 +1584,17 @@ async fn handle_native_device_link_roster(
     let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
-    if state.can_manage_devices() {
+    if state.can_admin_profile() {
         return Ok(true);
     }
-    if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
+    if sender_hex.as_deref() != Some(admin_app_key_hex.as_str()) {
         return Ok(true);
     }
 
     let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
         &frame,
-        &admin_device_hex,
+        &admin_app_key_hex,
     )
     .map_err(|error| format!("applying signed device-link profile roster ops: {error}"))?;
     let accepted = match outcome {
@@ -1609,7 +1611,7 @@ async fn handle_native_device_link_roster(
     );
     let state = config.profile.as_ref().expect("account still present");
     let ack_frame = if accepted {
-        device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
+        device_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {
         None
     };
@@ -1619,7 +1621,7 @@ async fn handle_native_device_link_roster(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
-            admin_device_npub = pubkey_npub(&admin_device_hex),
+            admin_app_key_npub = pubkey_npub(&admin_app_key_hex),
             apply_outcome = ?outcome,
             "accepted native device-link roster over FIPS"
         );
@@ -1670,9 +1672,9 @@ fn handle_native_device_link_roster_ack(
             frame.schema
         ));
     }
-    let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
-    let device_hex = normalize_pubkey(&frame.device_pubkey)?;
-    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
+    let admin_app_key_hex = normalize_pubkey(&frame.admin_app_key_pubkey)?;
+    let app_key_hex = normalize_pubkey(&frame.app_key_pubkey)?;
+    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(app_key_hex.as_str()) {
         return Ok(true);
     }
 
@@ -1681,8 +1683,8 @@ fn handle_native_device_link_roster_ack(
     let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
-    if admin_device_hex != frame.admin_device_pubkey
-        || device_hex != frame.device_pubkey
+    if admin_app_key_hex != frame.admin_app_key_pubkey
+        || app_key_hex != frame.app_key_pubkey
         || !device_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
@@ -1698,7 +1700,7 @@ async fn send_native_device_link_roster_ack(
     frame: &DeviceLinkRosterAckFrame,
 ) -> Result<(), String> {
     sync.send_app_message(
-        &pubkey_npub(&frame.admin_device_pubkey),
+        &pubkey_npub(&frame.admin_app_key_pubkey),
         DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
         serde_json::to_vec(frame)
             .map_err(|error| format!("encoding device-link roster ack: {error}"))?,
@@ -2098,7 +2100,7 @@ fn devices_from_account(
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
-    let current_device_npub = pubkey_npub(&state.device_pubkey);
+    let current_device_npub = pubkey_npub(&state.app_key_pubkey);
     let current_device_online = fips_status.fresh
         && (fips_status.endpoint_npub.is_empty()
             || fips_status.endpoint_npub == current_device_npub);
@@ -2106,8 +2108,8 @@ fn devices_from_account(
 
     device_roster_rows(
         &app_keys.app_actors,
-        &state.device_pubkey,
-        state.can_manage_devices(),
+        &state.app_key_pubkey,
+        state.can_admin_profile(),
         current_device_online,
         &connectivity,
     )
@@ -2204,52 +2206,54 @@ fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceCon
     }
 }
 
-fn device_link_request_url(state: &iris_drive_core::ProfileState) -> String {
-    if state.can_manage_devices()
-        || state.authorization_state != DeviceAuthorizationState::AwaitingApproval
+fn app_key_link_request_url(state: &iris_drive_core::ProfileState) -> String {
+    if state.can_admin_profile()
+        || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
     {
         return String::new();
     }
-    encode_device_approval_request(
+    encode_app_key_approval_request(
         state.profile_id,
-        &state.device_pubkey,
+        &state.app_key_pubkey,
         state
-            .outbound_device_link_request
+            .outbound_app_key_link_request
             .as_ref()
             .and_then(|request| {
                 (!request.link_secret.trim().is_empty()).then_some(request.link_secret.as_str())
             })
-            .unwrap_or(state.device_link_secret.as_str()),
-        state.device_label.as_deref(),
+            .unwrap_or(state.app_key_link_secret.as_str()),
+        state.app_key_label.as_deref(),
     )
 }
 
-fn device_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
-    if !state.can_manage_devices() {
+fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
+    if !state.can_admin_profile() {
         return String::new();
     }
-    iris_drive_core::device_link_invite::encode_device_link_invite(
+    iris_drive_core::app_key_link_invite::encode_app_key_link_invite(
         state.profile_id,
-        &state.device_pubkey,
-        &state.device_link_secret,
+        &state.app_key_pubkey,
+        &state.app_key_link_secret,
     )
     .unwrap_or_default()
 }
 
-fn inbound_device_link_requests(state: &iris_drive_core::ProfileState) -> Vec<UiDeviceLinkRequest> {
-    if !state.can_manage_devices() {
+fn inbound_app_key_link_requests(
+    state: &iris_drive_core::ProfileState,
+) -> Vec<UiAppKeyLinkRequest> {
+    if !state.can_admin_profile() {
         return Vec::new();
     }
     state
-        .inbound_device_link_requests
+        .inbound_app_key_link_requests
         .iter()
-        .map(|request| UiDeviceLinkRequest {
-            device_pubkey: pubkey_npub(&request.device_pubkey),
+        .map(|request| UiAppKeyLinkRequest {
+            app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
             label: request.label.clone().unwrap_or_default(),
             requested_at: request.requested_at,
-            request_link: encode_device_approval_request(
+            request_link: encode_app_key_approval_request(
                 state.profile_id,
-                &request.device_pubkey,
+                &request.app_key_pubkey,
                 &request.link_secret,
                 request.label.as_deref(),
             ),
@@ -2257,7 +2261,7 @@ fn inbound_device_link_requests(state: &iris_drive_core::ProfileState) -> Vec<Ui
         .collect()
 }
 
-fn resolve_device_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
+fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
     iris_drive_core::resolve_app_key_link_target(input, None).map_err(|error| {
         if error.to_string().contains("IrisProfile UUID") {
             "paste an IrisProfile invite URL to link this AppKey".to_owned()
@@ -2267,24 +2271,24 @@ fn resolve_device_link_target(input: &str) -> Result<iris_drive_core::AppKeyLink
     })
 }
 
-fn decode_device_approval_request(request: &str) -> Result<DeviceApprovalRequest, String> {
+fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalRequest, String> {
     if let Some(request) =
-        parse_device_approval_request(request).map_err(|error| error.to_string())?
+        parse_app_key_approval_request(request).map_err(|error| error.to_string())?
     {
         return Ok(request);
     }
     let device = normalize_pubkey(request)?;
-    Ok(DeviceApprovalRequest {
+    Ok(AppKeyApprovalRequest {
         profile_id: None,
-        device_hex: device,
+        app_key_hex: device,
         link_secret: String::new(),
         label: None,
     })
 }
 
 #[cfg(not(test))]
-fn device_approval_link_secret(request: &str) -> String {
-    parse_device_approval_request(request)
+fn app_key_approval_link_secret(request: &str) -> String {
+    parse_app_key_approval_request(request)
         .ok()
         .flatten()
         .map(|request| request.link_secret)
@@ -2312,7 +2316,7 @@ fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
         .and_then(|account| {
             config
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
+                .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
                 .map(|root| root.root_cid.clone())
         })
         .or_else(|| {

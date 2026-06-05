@@ -54,22 +54,20 @@ pub enum ProfileError {
     CurrentAppKeyTombstoned,
     #[error("invalid AppKey pubkey: {0}")]
     InvalidAppKeyPubkey(String),
-    #[error("invalid device pubkey: {0}")]
-    InvalidDevicePubkey(String),
     #[error("this AppKey is not an admin")]
     NoAdminAuthority,
-    #[error("device already authorized")]
-    AlreadyAuthorized,
-    #[error("device not in roster")]
-    DeviceNotInRoster,
+    #[error("AppKey already authorized")]
+    AppKeyAlreadyAuthorized,
+    #[error("AppKey not in roster")]
+    AppKeyNotInRoster,
     #[error("cannot remove the last admin AppKey")]
     CannotRemoveLastAdmin,
     #[error("no AppKeys snapshot yet")]
     NoCurrentSnapshot,
     #[error("AppKeys snapshot is missing an explicit signing AppKey")]
     MissingSnapshotSigner,
-    #[error("no DCK wrap for this device (revoked or never authorized)")]
-    NoWrapForThisDevice,
+    #[error("no DCK wrap for this AppKey (revoked or never authorized)")]
+    NoWrapForThisAppKey,
     #[error("current AppKey cannot repair key epoch signed by {signed_by_pubkey}")]
     CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey: String },
     #[error("failed to wrap DCK: {0}")]
@@ -84,25 +82,24 @@ pub enum ProfileError {
     Io(#[from] std::io::Error),
 }
 
-/// Per-device authorization status relative to the owner's `AppKeys` roster.
+/// Current `AppKey` authorization status relative to the `IrisProfile` roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DeviceAuthorizationState {
-    /// This device is in the latest `AppKeys` snapshot.
+pub enum AppKeyAuthorizationState {
+    /// This `AppKey` is active in the latest roster projection.
     Authorized,
-    /// This device is not yet in the latest `AppKeys` snapshot; the user
-    /// must approve it from an owner-capable device.
+    /// This `AppKey` is waiting for a roster admin or recovery authority to admit it.
     AwaitingApproval,
-    /// This device was previously authorized and has since been removed.
+    /// This `AppKey` was previously authorized and has since been removed.
     Revoked,
 }
 
-pub const MAX_INBOUND_DEVICE_LINK_REQUESTS: usize = 32;
+pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct PendingDeviceLinkRequest {
-    pub admin_device_pubkey: String,
+pub struct PendingAppKeyLinkRequest {
+    pub admin_app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub link_secret: String,
     pub requested_at: u64,
@@ -110,8 +107,8 @@ pub struct PendingDeviceLinkRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct InboundDeviceLinkRequest {
-    pub device_pubkey: String,
+pub struct InboundAppKeyLinkRequest {
+    pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -124,21 +121,21 @@ pub struct InboundDeviceLinkRequest {
 #[serde(deny_unknown_fields)]
 pub struct ProfileState {
     pub profile_id: IrisProfileId,
-    pub device_pubkey: String,
+    pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
-    #[serde(default = "default_device_link_secret")]
-    pub device_link_secret: String,
-    pub authorization_state: DeviceAuthorizationState,
+    #[serde(default = "default_app_key_link_secret")]
+    pub app_key_link_secret: String,
+    pub authorization_state: AppKeyAuthorizationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_label: Option<String>,
+    pub app_key_label: Option<String>,
     /// Runtime projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
     pub app_keys: Option<AppKeysSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outbound_device_link_request: Option<PendingDeviceLinkRequest>,
+    pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub inbound_device_link_requests: Vec<InboundDeviceLinkRequest>,
+    pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,26 +171,26 @@ impl ProfileState {
         changed
     }
 
-    /// Has the latest `AppKeys` snapshot included this device?
+    /// Is this install's `AppKey` active in the latest roster projection?
     #[must_use]
     pub fn is_authorized(&self) -> bool {
         matches!(
             self.authorization_state,
-            DeviceAuthorizationState::Authorized
+            AppKeyAuthorizationState::Authorized
         )
     }
 
-    /// Can this device add/remove other devices in the roster?
+    /// Can this install's `AppKey` administer the `IrisProfile` roster?
     #[must_use]
-    pub fn can_manage_devices(&self) -> bool {
+    pub fn can_admin_profile(&self) -> bool {
         if !self.profile_roster_ops.is_empty() {
             return self
                 .profile_projection()
-                .can_admin_profile(&self.device_pubkey);
+                .can_admin_profile(&self.app_key_pubkey);
         }
         self.app_keys
             .as_ref()
-            .is_some_and(|snap| snap.is_admin(&self.device_pubkey))
+            .is_some_and(|snap| snap.is_admin(&self.app_key_pubkey))
     }
 
     /// Can this `AppKey` publish mutable roots for this profile?
@@ -202,7 +199,7 @@ impl ProfileState {
         if !self.profile_roster_ops.is_empty() {
             return self
                 .profile_projection()
-                .can_write_roots(&self.device_pubkey);
+                .can_write_roots(&self.app_key_pubkey);
         }
         self.is_authorized()
     }
@@ -211,87 +208,89 @@ impl ProfileState {
     pub fn recompute_authorization(&mut self) {
         if !self.profile_roster_ops.is_empty() {
             let projection = self.profile_projection();
-            self.authorization_state = if projection.can_write_roots(&self.device_pubkey) {
-                DeviceAuthorizationState::Authorized
-            } else if projection.tombstones.contains_key(&self.device_pubkey)
-                || self.authorization_state == DeviceAuthorizationState::Authorized
+            self.authorization_state = if projection.can_write_roots(&self.app_key_pubkey) {
+                AppKeyAuthorizationState::Authorized
+            } else if projection.tombstones.contains_key(&self.app_key_pubkey)
+                || self.authorization_state == AppKeyAuthorizationState::Authorized
             {
-                DeviceAuthorizationState::Revoked
+                AppKeyAuthorizationState::Revoked
             } else {
                 self.authorization_state
             };
-            if self.authorization_state == DeviceAuthorizationState::Authorized {
-                self.outbound_device_link_request = None;
+            if self.authorization_state == AppKeyAuthorizationState::Authorized {
+                self.outbound_app_key_link_request = None;
             }
             return;
         }
         self.authorization_state = match &self.app_keys {
-            Some(snap) if snap.contains(&self.device_pubkey) => {
-                DeviceAuthorizationState::Authorized
+            Some(snap) if snap.contains(&self.app_key_pubkey) => {
+                AppKeyAuthorizationState::Authorized
             }
             Some(_) => {
                 // Previously authorized → Revoked; never authorized → AwaitingApproval.
                 match self.authorization_state {
-                    DeviceAuthorizationState::Authorized => DeviceAuthorizationState::Revoked,
+                    AppKeyAuthorizationState::Authorized => AppKeyAuthorizationState::Revoked,
                     other => other,
                 }
             }
             None => self.authorization_state,
         };
-        if self.authorization_state == DeviceAuthorizationState::Authorized {
-            self.outbound_device_link_request = None;
+        if self.authorization_state == AppKeyAuthorizationState::Authorized {
+            self.outbound_app_key_link_request = None;
         }
     }
 
-    pub fn queue_outbound_device_link_request(
+    pub fn queue_outbound_app_key_link_request(
         &mut self,
-        admin_device_pubkey: String,
+        admin_app_key_pubkey: String,
         link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
-        if !is_pubkey_hex(&admin_device_pubkey) {
-            return Err(ProfileError::InvalidDevicePubkey(admin_device_pubkey));
+        if !is_pubkey_hex(&admin_app_key_pubkey) {
+            return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_pubkey));
         }
-        if self.device_pubkey == admin_device_pubkey {
+        if self.app_key_pubkey == admin_app_key_pubkey {
             return Ok(false);
         }
-        let next = PendingDeviceLinkRequest {
-            admin_device_pubkey,
+        let next = PendingAppKeyLinkRequest {
+            admin_app_key_pubkey,
             link_secret: link_secret.trim().to_string(),
             requested_at,
         };
-        let changed = self.outbound_device_link_request.as_ref() != Some(&next);
-        self.outbound_device_link_request = Some(next);
+        let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
+        self.outbound_app_key_link_request = Some(next);
         Ok(changed)
     }
 
-    pub fn record_inbound_device_link_request(
+    pub fn record_inbound_app_key_link_request(
         &mut self,
         profile_id: IrisProfileId,
-        device_pubkey: &str,
+        app_key_pubkey: &str,
         label: Option<String>,
         link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
-        if profile_id != self.profile_id || !self.can_manage_devices() {
+        if profile_id != self.profile_id || !self.can_admin_profile() {
             return Ok(false);
         }
         let link_secret = link_secret.trim();
-        let expected_secret = self.device_link_secret.trim();
+        let expected_secret = self.app_key_link_secret.trim();
         if !expected_secret.is_empty() && link_secret != expected_secret {
             return Ok(false);
         }
-        if !is_pubkey_hex(device_pubkey) {
-            return Err(ProfileError::InvalidDevicePubkey(device_pubkey.to_string()));
+        if !is_pubkey_hex(app_key_pubkey) {
+            return Err(ProfileError::InvalidAppKeyPubkey(
+                app_key_pubkey.to_string(),
+            ));
         }
-        if device_pubkey == self.device_pubkey
+        if app_key_pubkey == self.app_key_pubkey
             || self
                 .app_keys
                 .as_ref()
-                .is_some_and(|snap| snap.contains(device_pubkey))
+                .is_some_and(|snap| snap.contains(app_key_pubkey))
         {
-            self.inbound_device_link_requests
-                .retain(|request| request.device_pubkey != device_pubkey);
+            self.inbound_app_key_link_requests
+                .retain(|request| request.app_key_pubkey != app_key_pubkey);
             return Ok(false);
         }
 
@@ -301,9 +300,9 @@ impl ProfileState {
         });
         let mut changed = false;
         if let Some(existing) = self
-            .inbound_device_link_requests
+            .inbound_app_key_link_requests
             .iter_mut()
-            .find(|request| request.device_pubkey == device_pubkey)
+            .find(|request| request.app_key_pubkey == app_key_pubkey)
         {
             let next_requested_at = existing.requested_at.max(requested_at);
             if existing.requested_at != next_requested_at
@@ -316,9 +315,9 @@ impl ProfileState {
                 changed = true;
             }
         } else {
-            self.inbound_device_link_requests
-                .push(InboundDeviceLinkRequest {
-                    device_pubkey: device_pubkey.to_string(),
+            self.inbound_app_key_link_requests
+                .push(InboundAppKeyLinkRequest {
+                    app_key_pubkey: app_key_pubkey.to_string(),
                     label,
                     link_secret: link_secret.to_string(),
                     requested_at,
@@ -326,38 +325,40 @@ impl ProfileState {
             changed = true;
         }
 
-        if self.inbound_device_link_requests.len() > MAX_INBOUND_DEVICE_LINK_REQUESTS {
-            self.inbound_device_link_requests
+        if self.inbound_app_key_link_requests.len() > MAX_INBOUND_APP_KEY_LINK_REQUESTS {
+            self.inbound_app_key_link_requests
                 .sort_by_key(|request| request.requested_at);
-            while self.inbound_device_link_requests.len() > MAX_INBOUND_DEVICE_LINK_REQUESTS {
-                self.inbound_device_link_requests.remove(0);
+            while self.inbound_app_key_link_requests.len() > MAX_INBOUND_APP_KEY_LINK_REQUESTS {
+                self.inbound_app_key_link_requests.remove(0);
             }
             changed = true;
         }
-        self.inbound_device_link_requests
-            .sort_by(|left, right| left.device_pubkey.cmp(&right.device_pubkey));
+        self.inbound_app_key_link_requests
+            .sort_by(|left, right| left.app_key_pubkey.cmp(&right.app_key_pubkey));
         Ok(changed)
     }
 
-    pub fn reject_inbound_device_link_request(
+    pub fn reject_inbound_app_key_link_request(
         &mut self,
-        device_pubkey: &str,
+        app_key_pubkey: &str,
     ) -> Result<bool, ProfileError> {
-        if !is_pubkey_hex(device_pubkey) {
-            return Err(ProfileError::InvalidDevicePubkey(device_pubkey.to_string()));
+        if !is_pubkey_hex(app_key_pubkey) {
+            return Err(ProfileError::InvalidAppKeyPubkey(
+                app_key_pubkey.to_string(),
+            ));
         }
-        let before = self.inbound_device_link_requests.len();
-        self.inbound_device_link_requests
-            .retain(|request| request.device_pubkey != device_pubkey);
-        Ok(before != self.inbound_device_link_requests.len())
+        let before = self.inbound_app_key_link_requests.len();
+        self.inbound_app_key_link_requests
+            .retain(|request| request.app_key_pubkey != app_key_pubkey);
+        Ok(before != self.inbound_app_key_link_requests.len())
     }
 
-    pub fn reset_device_link_secret(&mut self) -> bool {
-        let previous = self.device_link_secret.clone();
-        self.device_link_secret = default_device_link_secret();
-        let had_requests = !self.inbound_device_link_requests.is_empty();
-        self.inbound_device_link_requests.clear();
-        had_requests || self.device_link_secret != previous
+    pub fn reset_app_key_link_secret(&mut self) -> bool {
+        let previous = self.app_key_link_secret.clone();
+        self.app_key_link_secret = default_app_key_link_secret();
+        let had_requests = !self.inbound_app_key_link_requests.is_empty();
+        self.inbound_app_key_link_requests.clear();
+        had_requests || self.app_key_link_secret != previous
     }
 }
 
@@ -424,29 +425,29 @@ impl Profile {
     /// **Create** flow — fresh device saved to the config dir. The device is
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `AppKeys` snapshot.
-    pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, ProfileError> {
+    pub fn create(config_dir: &Path, app_key_label: Option<String>) -> Result<Self, ProfileError> {
         let recovery_phrase = generate_recovery_phrase()?;
         let profile_id = IrisProfileId::new_v4();
         let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)?;
-        let device_label = resolve_device_label(device_label, &device.pubkey_hex());
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
 
         let mut state = ProfileState {
             profile_id,
-            device_pubkey: device.pubkey_hex(),
+            app_key_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
-            device_link_secret: default_device_link_secret(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: device_label.clone(),
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: app_key_label.clone(),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         };
 
         let now = current_unix_seconds();
-        let app_actor = AppActorEntry::admin(state.device_pubkey.clone(), now, device_label);
+        let app_actor = AppActorEntry::admin(state.app_key_pubkey.clone(), now, app_key_label);
         let dck = generate_dck();
         let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
@@ -471,7 +472,7 @@ impl Profile {
     pub fn restore(
         config_dir: &Path,
         recovery_secret: &str,
-        device_label: Option<String>,
+        app_key_label: Option<String>,
     ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
@@ -485,22 +486,22 @@ impl Profile {
         if let Some(phrase) = recovery_phrase.as_deref() {
             save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
         }
-        let device_label = resolve_device_label(device_label, &device.pubkey_hex());
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
 
         let mut state = ProfileState {
             profile_id,
-            device_pubkey: device.pubkey_hex(),
+            app_key_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
-            device_link_secret: default_device_link_secret(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: device_label.clone(),
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: app_key_label.clone(),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         };
 
         let now = current_unix_seconds();
-        let app_actor = AppActorEntry::admin(state.device_pubkey.clone(), now, device_label);
+        let app_actor = AppActorEntry::admin(state.app_key_pubkey.clone(), now, app_key_label);
         let dck = generate_dck();
         let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
@@ -529,7 +530,7 @@ impl Profile {
         recovery_secret: &str,
         profile_id: IrisProfileId,
         profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
-        device_label: Option<String>,
+        app_key_label: Option<String>,
     ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
@@ -552,17 +553,17 @@ impl Profile {
         if let Some(phrase) = recovery_phrase.as_deref() {
             save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
         }
-        let device_label = resolve_device_label(device_label, &device.pubkey_hex());
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
         let mut state = ProfileState {
             profile_id,
-            device_pubkey: device.pubkey_hex(),
+            app_key_pubkey: device.pubkey_hex(),
             profile_roster_ops,
-            device_link_secret: default_device_link_secret(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: device_label.clone(),
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: app_key_label.clone(),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         };
         state.sync_app_keys_from_profile();
 
@@ -573,7 +574,7 @@ impl Profile {
         profile.admit_current_app_key_with_authority_keys(
             recovery_key.keys(),
             expected_purpose,
-            device_label,
+            app_key_label,
         )?;
         Ok(profile)
     }
@@ -648,15 +649,15 @@ impl Profile {
         self.state.profile_id = profile_id;
         self.state.profile_roster_ops = profile_roster_ops;
         self.state.app_keys = None;
-        self.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
-        self.state.outbound_device_link_request = None;
-        self.state.inbound_device_link_requests.clear();
+        self.state.authorization_state = AppKeyAuthorizationState::AwaitingApproval;
+        self.state.outbound_app_key_link_request = None;
+        self.state.inbound_app_key_link_requests.clear();
         self.state.sync_app_keys_from_profile();
 
         if self
             .state
             .profile_projection()
-            .can_write_roots(&self.state.device_pubkey)
+            .can_write_roots(&self.state.app_key_pubkey)
         {
             return self
                 .state
@@ -685,25 +686,25 @@ impl Profile {
         config_dir: &Path,
         profile_id: IrisProfileId,
         admin_app_key_hex: String,
-        device_label: Option<String>,
+        app_key_label: Option<String>,
     ) -> Result<Self, ProfileError> {
         if !is_pubkey_hex(&admin_app_key_hex) {
             return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_hex));
         }
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
-        let device_label = resolve_device_label(device_label, &device.pubkey_hex());
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
 
         let state = ProfileState {
             profile_id,
-            device_pubkey: device.pubkey_hex(),
+            app_key_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
-            device_link_secret: default_device_link_secret(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label,
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label,
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         };
 
         Ok(Self {
@@ -725,28 +726,28 @@ impl Profile {
         })
     }
 
-    /// Approve a new device by appending it to the `AppKeys` snapshot
-    /// and rotating the DCK so the new device gets a fresh wrap.
+    /// Approve a new `AppKey` by appending it to the roster
+    /// and rotating the DCK so the new `AppKey` gets a fresh wrap.
     /// Bumps `created_at` and `dck_generation`. Callers should fan the
     /// new snapshot out over Nostr.
-    pub fn approve_device(
+    pub fn approve_app_key(
         &mut self,
-        device_pubkey_hex: &str,
+        app_key_pubkey_hex: &str,
         label: Option<String>,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
-        if !self.state.can_manage_devices() {
+        if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
         if let Some(snap) = &self.state.app_keys
-            && snap.contains(device_pubkey_hex)
+            && snap.contains(app_key_pubkey_hex)
         {
-            return Err(ProfileError::AlreadyAuthorized);
+            return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
-                    device_pubkey_hex.to_string(),
+                    app_key_pubkey_hex.to_string(),
                     now,
                     label,
                     IrisProfileCapabilities::app_writer(),
@@ -758,30 +759,30 @@ impl Profile {
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
         self.state
-            .inbound_device_link_requests
-            .retain(|request| request.device_pubkey != device_pubkey_hex);
+            .inbound_app_key_link_requests
+            .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
-    /// Revoke a device from the roster and rotate the DCK so the
-    /// revoked device cannot decrypt any subsequent content. Bumps
+    /// Revoke an `AppKey` from the roster and rotate the DCK so the
+    /// revoked `AppKey` cannot decrypt any subsequent content. Bumps
     /// `created_at` and `dck_generation`.
-    pub fn revoke_device(
+    pub fn revoke_app_key(
         &mut self,
-        device_pubkey_hex: &str,
+        app_key_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
-        if !self.state.can_manage_devices() {
+        if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
             .state
             .app_keys
             .as_ref()
-            .ok_or(ProfileError::DeviceNotInRoster)?;
-        if !snap.contains(device_pubkey_hex) {
-            return Err(ProfileError::DeviceNotInRoster);
+            .ok_or(ProfileError::AppKeyNotInRoster)?;
+        if !snap.contains(app_key_pubkey_hex) {
+            return Err(ProfileError::AppKeyNotInRoster);
         }
-        if snap.is_admin(device_pubkey_hex)
+        if snap.is_admin(app_key_pubkey_hex)
             && snap.app_actors.iter().filter(|d| d.is_admin()).count() <= 1
         {
             return Err(ProfileError::CannotRemoveLastAdmin);
@@ -789,7 +790,7 @@ impl Profile {
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
             IrisProfileRosterOp::TombstoneFacet {
-                pubkey: device_pubkey_hex.to_string(),
+                pubkey: app_key_pubkey_hex.to_string(),
                 reason: None,
             },
             now,
@@ -804,7 +805,7 @@ impl Profile {
     /// periodic key freshness ("rotate weekly even with no membership
     /// churn"). Owner-only.
     pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, ProfileError> {
-        if !self.state.can_manage_devices() {
+        if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
@@ -828,14 +829,14 @@ impl Profile {
         label: Option<String>,
         can_decrypt_key_epochs: bool,
     ) -> Result<(), ProfileError> {
-        if !self.state.can_manage_devices() {
+        if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
         PublicKey::from_hex(nip46_pubkey_hex)
-            .map_err(|e| ProfileError::InvalidDevicePubkey(e.to_string()))?;
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let projection = self.state.profile_projection();
         if projection.active_facets.contains_key(nip46_pubkey_hex) {
-            return Err(ProfileError::AlreadyAuthorized);
+            return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         if projection.tombstones.contains_key(nip46_pubkey_hex) {
             return Err(ProfileError::CurrentAppKeyTombstoned);
@@ -914,12 +915,12 @@ impl Profile {
         }
         if projection
             .tombstones
-            .contains_key(&self.state.device_pubkey)
+            .contains_key(&self.state.app_key_pubkey)
         {
             return Err(ProfileError::CurrentAppKeyTombstoned);
         }
-        if projection.can_write_roots(&self.state.device_pubkey) {
-            return Err(ProfileError::AlreadyAuthorized);
+        if projection.can_write_roots(&self.state.app_key_pubkey) {
+            return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         let should_rotate_epoch = authority_facet.capabilities.can_decrypt_key_epochs;
         if should_rotate_epoch {
@@ -931,14 +932,14 @@ impl Profile {
 
         let now = next_profile_timestamp(&self.state);
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
-        let label = label.or_else(|| self.state.device_label.clone());
+        let label = label.or_else(|| self.state.app_key_label.clone());
         let add_op = signed_profile_roster_op_with_parents(
             authority_keys,
             self.state.profile_id,
             parents,
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
-                    self.state.device_pubkey.clone(),
+                    self.state.app_key_pubkey.clone(),
                     now,
                     label,
                     IrisProfileCapabilities::app_admin(),
@@ -958,24 +959,24 @@ impl Profile {
 
     pub fn appoint_admin(
         &mut self,
-        device_pubkey_hex: &str,
+        app_key_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
-        self.set_device_role(device_pubkey_hex, AppActorRole::Admin)
+        self.set_device_role(app_key_pubkey_hex, AppActorRole::Admin)
     }
 
     pub fn demote_admin(
         &mut self,
-        device_pubkey_hex: &str,
+        app_key_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
-        self.set_device_role(device_pubkey_hex, AppActorRole::Member)
+        self.set_device_role(app_key_pubkey_hex, AppActorRole::Member)
     }
 
     fn set_device_role(
         &mut self,
-        device_pubkey_hex: &str,
+        app_key_pubkey_hex: &str,
         role: AppActorRole,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
-        if !self.state.can_manage_devices() {
+        if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
         let snap = self
@@ -984,8 +985,8 @@ impl Profile {
             .as_ref()
             .ok_or(ProfileError::NoCurrentSnapshot)?;
         let current = snap
-            .app_actor(device_pubkey_hex)
-            .ok_or(ProfileError::DeviceNotInRoster)?;
+            .app_actor(app_key_pubkey_hex)
+            .ok_or(ProfileError::AppKeyNotInRoster)?;
         if current.role == role {
             return Ok(self.state.app_keys.as_ref().expect("checked above"));
         }
@@ -1007,7 +1008,7 @@ impl Profile {
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
             IrisProfileRosterOp::SetCapabilities {
-                pubkey: device_pubkey_hex.to_string(),
+                pubkey: app_key_pubkey_hex.to_string(),
                 capabilities,
             },
             now,
@@ -1083,12 +1084,12 @@ impl Profile {
         let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
             return Err(ProfileError::NoCurrentSnapshot);
         };
-        if key_epoch.signed_by_pubkey != self.state.device_pubkey {
+        if key_epoch.signed_by_pubkey != self.state.app_key_pubkey {
             return Err(ProfileError::CurrentAppKeyCannotRepairKeyEpoch {
                 signed_by_pubkey: key_epoch.signed_by_pubkey.clone(),
             });
         }
-        let Some(current_facet) = projection.active_facets.get(&self.state.device_pubkey) else {
+        let Some(current_facet) = projection.active_facets.get(&self.state.app_key_pubkey) else {
             return Err(ProfileError::NoAdminAuthority);
         };
         if !current_facet.capabilities.can_change_key_epochs() {
@@ -1141,8 +1142,8 @@ impl Profile {
         })
     }
 
-    /// Decrypt this device's DCK wrap from the current snapshot. Errors
-    /// with `NoWrapForThisDevice` if the device has been revoked or
+    /// Decrypt this `AppKey`'s DCK wrap from the current snapshot. Errors
+    /// with `NoWrapForThisAppKey` if the `AppKey` has been revoked or
     /// never authorized.
     pub fn current_dck(&self) -> Result<[u8; 32], ProfileError> {
         if !self.state.profile_roster_ops.is_empty() {
@@ -1154,8 +1155,8 @@ impl Profile {
                 .ok_or(ProfileError::NoCurrentSnapshot)?;
             let wrap = key_epoch
                 .wrapped_dck
-                .get(&self.state.device_pubkey)
-                .ok_or(ProfileError::NoWrapForThisDevice)?;
+                .get(&self.state.app_key_pubkey)
+                .ok_or(ProfileError::NoWrapForThisAppKey)?;
             let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
                 .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
             let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
@@ -1173,8 +1174,8 @@ impl Profile {
             .ok_or(ProfileError::NoCurrentSnapshot)?;
         let wrap = snap
             .wrapped_dck
-            .get(&self.state.device_pubkey)
-            .ok_or(ProfileError::NoWrapForThisDevice)?;
+            .get(&self.state.app_key_pubkey)
+            .ok_or(ProfileError::NoWrapForThisAppKey)?;
         let signer_pubkey = snap
             .signer_pubkey()
             .ok_or(ProfileError::MissingSnapshotSigner)?;
@@ -1226,7 +1227,7 @@ impl Profile {
         let wrap = key_epoch
             .wrapped_dck
             .get(&authority_pubkey)
-            .ok_or(ProfileError::NoWrapForThisDevice)?;
+            .ok_or(ProfileError::NoWrapForThisAppKey)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
@@ -1247,7 +1248,7 @@ fn generate_dck() -> [u8; 32] {
     out
 }
 
-fn default_device_link_secret() -> String {
+fn default_app_key_link_secret() -> String {
     URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
 }
 
@@ -1413,20 +1414,20 @@ fn next_profile_timestamp(state: &ProfileState) -> i64 {
         + 1
 }
 
-fn resolve_device_label(label: Option<String>, pubkey_hex: &str) -> Option<String> {
+fn resolve_app_key_label(label: Option<String>, pubkey_hex: &str) -> Option<String> {
     let hostname = detected_hostname();
-    resolve_device_label_with_hostname(label, hostname.as_deref(), pubkey_hex)
+    resolve_app_key_label_with_hostname(label, hostname.as_deref(), pubkey_hex)
 }
 
-fn resolve_device_label_with_hostname(
+fn resolve_app_key_label_with_hostname(
     label: Option<String>,
     hostname: Option<&str>,
     pubkey_hex: &str,
 ) -> Option<String> {
     label
-        .and_then(|value| normalize_device_label(&value))
+        .and_then(|value| normalize_app_key_label(&value))
         .or_else(|| hostname.and_then(normalize_hostname_label))
-        .or_else(|| Some(default_device_label_for_pubkey(pubkey_hex)))
+        .or_else(|| Some(default_app_key_label_for_pubkey(pubkey_hex)))
 }
 
 fn detected_hostname() -> Option<String> {
@@ -1452,7 +1453,7 @@ fn normalize_hostname_label(hostname: &str) -> Option<String> {
         .trim()
         .trim_matches('.')
         .split('.')
-        .find_map(normalize_device_label)?;
+        .find_map(normalize_app_key_label)?;
     let lower = first_label.to_ascii_lowercase();
     if lower == "localhost" || looks_like_generated_hex_label(&lower) {
         return None;
@@ -1460,7 +1461,7 @@ fn normalize_hostname_label(hostname: &str) -> Option<String> {
     Some(first_label)
 }
 
-fn normalize_device_label(value: &str) -> Option<String> {
+fn normalize_app_key_label(value: &str) -> Option<String> {
     let normalized = value
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -1474,7 +1475,7 @@ fn normalize_device_label(value: &str) -> Option<String> {
     Some(normalized.chars().take(64).collect())
 }
 
-fn default_device_label_for_pubkey(pubkey_hex: &str) -> String {
+fn default_app_key_label_for_pubkey(pubkey_hex: &str) -> String {
     let suffix = pubkey_hex.chars().take(8).collect::<String>();
     if suffix.is_empty() {
         "device".to_string()

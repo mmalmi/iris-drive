@@ -26,7 +26,7 @@ fn cmd_shares_list(config_dir: &Path) -> Result<()> {
         .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
-        .device_pubkey
+        .app_key_pubkey
         .clone();
     let views = iris_drive_core::shared_folder_views(
         &config.shared_folders,
@@ -52,7 +52,7 @@ fn cmd_shares_shortcut(
         .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
-        .device_pubkey
+        .app_key_pubkey
         .clone();
     let folder = config
         .shared_folder(share_id)

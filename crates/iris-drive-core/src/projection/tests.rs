@@ -46,7 +46,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
         local_only: false,
@@ -64,7 +64,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
     );
     config.upsert_drive(drive);
@@ -117,7 +117,7 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
         local_only: false,
@@ -132,7 +132,7 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
     );
     config.upsert_drive(drive);
@@ -190,7 +190,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let local_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
         local_only: false,
@@ -236,7 +236,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(local_root.to_string(), 101, &local_meta),
     );
     drive.device_roots.insert(
@@ -273,7 +273,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
     let meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 1,
         dck_generation: 1,
         local_only: false,
@@ -303,7 +303,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
     );
     config.upsert_drive(drive);
@@ -326,11 +326,11 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     account
-        .approve_device(&old_pixel, Some("Pixel".into()))
+        .approve_app_key(&old_pixel, Some("Pixel".into()))
         .unwrap();
     let owner_root = index_device_file_root(
         &tree,
-        &account.state.device_pubkey,
+        &account.state.app_key_pubkey,
         "mac.txt",
         b"from mac",
         1,
@@ -340,9 +340,9 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
     let old_pixel_root =
         index_device_file_root(&tree, &old_pixel, "pixel.txt", b"from old pixel", 1, 11).await;
 
-    account.revoke_device(&old_pixel).unwrap();
+    account.revoke_app_key(&old_pixel).unwrap();
     account
-        .approve_device(&new_pixel, Some("Pixel".into()))
+        .approve_app_key(&new_pixel, Some("Pixel".into()))
         .unwrap();
 
     let mut config = AppConfig {
@@ -351,7 +351,7 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
     );
     drive.device_roots.insert(
@@ -379,7 +379,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     let owner_root =
-        index_device_note_root(&tree, &account.state.device_pubkey, b"owner edit", 1, 10).await;
+        index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner edit", 1, 10).await;
     let peer_root = index_device_note_root(&tree, &peer_device, b"peer edit", 1, 11).await;
 
     let mut account_state = account.state.clone();
@@ -400,7 +400,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
     );
     drive.device_roots.insert(
@@ -471,7 +471,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let owner_edit_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 2,
         dck_generation: 1,
         local_only: false,
@@ -527,7 +527,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(owner_edit_root.to_string(), 10, &owner_edit_meta),
     );
     drive.device_roots.insert(
@@ -586,17 +586,17 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     let owner_source =
-        index_device_note_root(&tree, &account.state.device_pubkey, b"owner source", 1, 10).await;
+        index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner source", 1, 10).await;
     let peer_source = index_device_note_root(&tree, &peer_device, b"peer source", 1, 11).await;
     let owner_mirror_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 2,
         dck_generation: 1,
         local_only: true,
         parents: vec![RootParent {
-            device_id: account.state.device_pubkey.clone(),
+            device_id: account.state.app_key_pubkey.clone(),
             device_seq: 1,
             root_cid: owner_source.0.to_string(),
         }],
@@ -629,7 +629,7 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
     );
     drive.device_roots.insert(
@@ -657,17 +657,17 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
 
     let owner_source =
-        index_device_note_root(&tree, &account.state.device_pubkey, b"owner source", 1, 10).await;
+        index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner source", 1, 10).await;
     let peer_source = index_device_note_root(&tree, &peer_device, b"peer source", 1, 11).await;
     let owner_mirror_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
         drive_id: PRIMARY_DRIVE_ID.to_string(),
-        device_id: account.state.device_pubkey.clone(),
+        device_id: account.state.app_key_pubkey.clone(),
         device_seq: 2,
         dck_generation: 1,
         local_only: true,
         parents: vec![RootParent {
-            device_id: account.state.device_pubkey.clone(),
+            device_id: account.state.app_key_pubkey.clone(),
             device_seq: 1,
             root_cid: owner_source.0.to_string(),
         }],
@@ -696,7 +696,7 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
-        account.state.device_pubkey.clone(),
+        account.state.app_key_pubkey.clone(),
         DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
     );
     drive.device_roots.insert(

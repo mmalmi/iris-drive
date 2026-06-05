@@ -68,7 +68,7 @@ pub fn provider_refresh_key(current_root_cid: Option<&str>, peers: &[serde_json:
     for peer in peers {
         let label = non_empty_json_str(peer, "label")
             .or_else(|| non_empty_json_str(peer, "device_npub"))
-            .or_else(|| non_empty_json_str(peer, "device_pubkey"))
+            .or_else(|| non_empty_json_str(peer, "app_key_pubkey"))
             .unwrap_or("peer");
         let root_cid = non_empty_json_str(peer, "root_cid").unwrap_or("no-root");
         let sync_state = peer

@@ -26,7 +26,7 @@ enum IrisDriveScreenshotFixtures {
         status.daemonRunning = true
         status.initialized = true
         status.driveName = "My Drive"
-        status.ownerNpub = fakeNpub("owner")
+        status.currentAppKeyNpub = fakeNpub("appkey")
         status.deviceNpub = fakeNpub("mac")
         status.deviceLinkInviteURL = "https://drive.iris.to/invite/demo-device-link"
         status.inboundDeviceLinkRequests = [
@@ -37,7 +37,7 @@ enum IrisDriveScreenshotFixtures {
                 "url": "iris-drive://device-link?owner=demo&device=ipad",
             ])
         ]
-        status.hasOwnerSigningAuthority = true
+        status.canAdminProfile = true
         status.setupState = "authorized"
         status.setupComplete = true
         status.setupLabel = "Linked"
@@ -179,7 +179,7 @@ enum IrisDriveScreenshotFixtures {
         let connectionState = current ? "local" : (online ? "direct" : "offline")
         let connectionLabel = current ? "This device" : (online ? "Online" : "Offline")
         return IrisDrivePeerStatus(json: [
-            "device_pubkey": "fixture-\(id)",
+            "app_key_pubkey": "fixture-\(id)",
             "device_npub": fakeNpub(id),
             "label": label,
             "display_label": current ? "This device" : label,

@@ -28,13 +28,13 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.append(&header);
 
     let account = profile(state);
-    let owner = readonly_entry(
+    let link_target = readonly_entry(
         account
             .map(|account| account.current_app_key_npub.as_str())
             .unwrap_or("-"),
     );
-    container.append(&field_title("Owner"));
-    container.append(&owner);
+    container.append(&field_title("AppKey"));
+    container.append(&link_target);
 
     let device = readonly_entry(
         account
@@ -102,11 +102,11 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     container.append(&detail);
 
     let account = profile(state);
-    let owner_npub = account
+    let app_key_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
-    container.append(&field_title("Owner"));
-    container.append(&readonly_entry(owner_npub));
+    container.append(&field_title("AppKey"));
+    container.append(&readonly_entry(app_key_npub));
 
     let device_npub = account
         .map(|account| account.current_app_key_npub.as_str())
@@ -120,15 +120,15 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     let relink = primary_button("Link this device again");
     {
         let model = Rc::clone(model);
-        let owner = owner_npub.to_string();
+        let link_target = app_key_npub.to_string();
         let notice = notice.clone();
         relink.connect_clicked(move |button| {
-            if owner.trim().is_empty() || owner == "-" {
-                notice.set_text("Owner key unavailable");
+            if link_target.trim().is_empty() || link_target == "-" {
+                notice.set_text("AppKey unavailable");
                 return;
             }
             button.set_sensitive(false);
-            match relink_device(&owner) {
+            match relink_device(&link_target) {
                 Ok(()) => refresh(&model),
                 Err(error) => {
                     notice.set_text(&error);
@@ -525,60 +525,60 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
 
 pub(crate) fn render_link_device(model: &AppRef) {
     let container = setup_container(model, "Link this device");
-    let owner = setup_entry("Owner public key or invite link");
-    container.append(&owner);
+    let link_target = setup_entry("IrisProfile invite link or admin AppKey");
+    container.append(&link_target);
 
     let notice = setup_notice();
     let submit = primary_button("Link device");
-    let submitted_owner = Rc::new(RefCell::new(String::new()));
+    let submitted_link_target = Rc::new(RefCell::new(String::new()));
     {
         let model = Rc::clone(model);
         let notice = notice.clone();
         let submit = submit.clone();
-        let submitted_owner = Rc::clone(&submitted_owner);
-        owner.connect_changed(move |entry| {
-            let owner_value = entry.text().trim().to_string();
-            if !link_owner_input_is_complete(&owner_value)
-                || *submitted_owner.borrow() == owner_value
+        let submitted_link_target = Rc::clone(&submitted_link_target);
+        link_target.connect_changed(move |entry| {
+            let link_target_value = entry.text().trim().to_string();
+            if !link_target_input_is_complete(&link_target_value)
+                || *submitted_link_target.borrow() == link_target_value
             {
                 return;
             }
-            submitted_owner.replace(owner_value);
+            submitted_link_target.replace(link_target_value);
             submit_link_device(&model, entry, &notice, &submit);
         });
     }
     {
         let model = Rc::clone(model);
-        let owner = owner.clone();
+        let link_target = link_target.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
-            submit_link_device(&model, &owner, &notice, button);
+            submit_link_device(&model, &link_target, &notice, button);
         });
     }
     {
         let submit = submit.clone();
-        owner.connect_activate(move |_| submit.emit_clicked());
+        link_target.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
     container.append(&notice);
     append_centered_setup(model, &container);
 
-    owner.grab_focus();
+    link_target.grab_focus();
 }
 
 fn submit_link_device(
     model: &AppRef,
-    owner: &gtk::Entry,
+    link_target: &gtk::Entry,
     notice: &gtk::Label,
     button: &gtk::Button,
 ) {
-    let owner_value = owner.text().trim().to_string();
-    if owner_value.is_empty() {
-        notice.set_text("Owner public key or invite link is required.");
+    let link_target_value = link_target.text().trim().to_string();
+    if link_target_value.is_empty() {
+        notice.set_text("IrisProfile invite link or admin AppKey is required.");
         return;
     }
     button.set_sensitive(false);
-    match link_device(&owner_value) {
+    match link_device(&link_target_value) {
         Ok(()) => {
             *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
             refresh(model);
@@ -590,7 +590,7 @@ fn submit_link_device(
     }
 }
 
-fn link_owner_input_is_complete(value: &str) -> bool {
+fn link_target_input_is_complete(value: &str) -> bool {
     iris_drive_app_core::validate_link_input(value.to_string()).is_complete
 }
 
@@ -774,17 +774,17 @@ pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
     run_idrive_owned(&["restore".to_string(), recovery_secret.to_string()])
 }
 
-pub(crate) fn link_device(owner: &str) -> Result<(), String> {
-    run_idrive_owned(&["link".to_string(), owner.to_string()])
+pub(crate) fn link_device(link_target: &str) -> Result<(), String> {
+    run_idrive_owned(&["link".to_string(), link_target.to_string()])
 }
 
-pub(crate) fn relink_device(owner: &str) -> Result<(), String> {
-    run_idrive_owned(&["link".to_string(), owner.to_string(), "--force".to_string()])
+pub(crate) fn relink_device(link_target: &str) -> Result<(), String> {
+    run_idrive_owned(&["link".to_string(), link_target.to_string(), "--force".to_string()])
 }
 
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {
     dispatch_desktop_action(NativeAppAction::RevokeDevice {
-        device_pubkey: device.to_string(),
+        app_key_pubkey: device.to_string(),
     })
     .map(|_| ())
 }
@@ -802,14 +802,14 @@ pub(crate) fn reject_device(request: &str) -> Result<(), String> {
 
 pub(crate) fn appoint_admin(device: &str) -> Result<(), String> {
     dispatch_desktop_action(NativeAppAction::AppointAdmin {
-        device_pubkey: device.to_string(),
+        app_key_pubkey: device.to_string(),
     })
     .map(|_| ())
 }
 
 pub(crate) fn demote_admin(device: &str) -> Result<(), String> {
     dispatch_desktop_action(NativeAppAction::DemoteAdmin {
-        device_pubkey: device.to_string(),
+        app_key_pubkey: device.to_string(),
     })
     .map(|_| ())
 }

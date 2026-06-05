@@ -237,7 +237,7 @@ impl Daemon {
             .and_then(|account| {
                 self.config
                     .drive(PRIMARY_DRIVE_ID)
-                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
+                    .and_then(|d| d.device_roots.get(&account.app_key_pubkey))
             })
             .map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
@@ -299,7 +299,7 @@ impl Daemon {
         }
 
         let merged = crate::primary_merged_root(&self.tree, &self.config).await?;
-        if let Some(current) = drive.device_roots.get(&account.device_pubkey) {
+        if let Some(current) = drive.device_roots.get(&account.app_key_pubkey) {
             let current_cid =
                 Cid::parse(&current.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
             let current_visible =
@@ -308,7 +308,7 @@ impl Daemon {
                 && current_root_observes_drive_roots(
                     &self.tree,
                     &current_cid,
-                    &account.device_pubkey,
+                    &account.app_key_pubkey,
                     &drive,
                 )
                 .await?
@@ -368,7 +368,7 @@ impl Daemon {
             .and_then(|account| {
                 self.config
                     .drive(PRIMARY_DRIVE_ID)
-                    .and_then(|d| d.device_roots.get(&account.device_pubkey))
+                    .and_then(|d| d.device_roots.get(&account.app_key_pubkey))
             })
             .map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
@@ -555,7 +555,7 @@ impl Daemon {
             .drive(PRIMARY_DRIVE_ID)
             .ok_or(DaemonError::PrimaryDriveMissing)?;
         if let Some(account) = self.config.profile.as_ref()
-            && let Some(root) = drive.device_roots.get(&account.device_pubkey)
+            && let Some(root) = drive.device_roots.get(&account.app_key_pubkey)
         {
             return Ok(&root.root_cid);
         }
@@ -600,14 +600,14 @@ impl Daemon {
                 &self.tree,
                 &self.config,
                 PRIMARY_DRIVE_ID,
-                &account.device_pubkey,
+                &account.app_key_pubkey,
                 unix_now(),
             )
             .await
             .is_err()
         {
             cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
-            cache.set_current_device_base(PRIMARY_DRIVE_ID, &account.device_pubkey);
+            cache.set_current_device_base(PRIMARY_DRIVE_ID, &account.app_key_pubkey);
         }
         cache.save(sync_cache_path_in(&self.config_dir))?;
         Ok(())
@@ -640,7 +640,7 @@ impl Daemon {
             );
             updated
                 .device_roots
-                .insert(account.device_pubkey.clone(), device_root);
+                .insert(account.app_key_pubkey.clone(), device_root);
         }
 
         self.config.upsert_drive(updated);
@@ -653,7 +653,7 @@ impl Daemon {
         let previous = self.config.profile.as_ref().and_then(|account| {
             self.config
                 .drive(PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&account.device_pubkey))
+                .and_then(|drive| drive.device_roots.get(&account.app_key_pubkey))
         });
         previous.map_or(now, |root| now.max(root.published_at.saturating_add(1)))
     }
@@ -661,11 +661,11 @@ impl Daemon {
     fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
         let account = self.config.profile.as_ref()?;
         let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
-        let previous = drive.device_roots.get(&account.device_pubkey);
+        let previous = drive.device_roots.get(&account.app_key_pubkey);
         let device_seq = previous.map_or(1, |root| root.device_seq.saturating_add(1).max(1));
         let parents = previous
             .map(|root| RootParent {
-                device_id: account.device_pubkey.clone(),
+                device_id: account.app_key_pubkey.clone(),
                 device_seq: root.device_seq,
                 root_cid: root.root_cid.clone(),
             })
@@ -692,7 +692,7 @@ impl Daemon {
         Some(DriveRootMeta {
             schema: DriveRootMeta::SCHEMA,
             drive_id: drive.drive_id.clone(),
-            device_id: account.device_pubkey.clone(),
+            device_id: account.app_key_pubkey.clone(),
             device_seq,
             dck_generation,
             local_only: false,

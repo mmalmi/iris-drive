@@ -160,8 +160,8 @@
             </StackPanel>
           </Button>
           <TextBlock Text="Link device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
-          <TextBlock Text="Owner public key or invite link" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="LinkOwnerBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkOwnerBox_TextChanged" KeyDown="LinkOwnerBox_KeyDown" />
+          <TextBlock Text="IrisProfile invite link or admin AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="LinkTargetBox" Tag="npub1... or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkTargetBox_TextChanged" KeyDown="LinkTargetBox_KeyDown" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="LinkSubmit_Click">
             <TextBlock Text="Link device" HorizontalAlignment="Center" />
           </Button>
@@ -169,8 +169,8 @@
 
         <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
           <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
-          <TextBlock Text="Owner" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="AwaitingOwnerBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBlock Text="AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="AwaitingAppKeyBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="AwaitingDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingDevice_Click" Margin="0,0,0,10">
@@ -193,8 +193,8 @@
                      Foreground="{StaticResource IrisMutedBrush}"
                      TextWrapping="Wrap"
                      Margin="0,0,0,12" />
-          <TextBlock Text="Owner" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="RevokedOwnerBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBlock Text="AppKey" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RevokedAppKeyBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <TextBlock Text="This device" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="RevokedDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button x:Name="RevokedRelinkButton" Style="{StaticResource SetupPrimaryButton}" Click="RelinkRevokedDevice_Click" Margin="0,0,0,10">
@@ -381,9 +381,9 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <TextBlock Text="Owner" Style="{StaticResource FieldName}" />
-                  <TextBlock x:Name="OwnerValue" Grid.Column="1" Style="{StaticResource ValueText}" />
-                  <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyOwner_Click">
+                  <TextBlock Text="AppKey" Style="{StaticResource FieldName}" />
+                  <TextBlock x:Name="AppKeyValue" Grid.Column="1" Style="{StaticResource ValueText}" />
+                  <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyAppKey_Click">
                     <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />
                   </Button>
                   <TextBlock Grid.Row="1" Text="This device" Style="{StaticResource FieldName}" Margin="0,8,0,0" />

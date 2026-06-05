@@ -7,42 +7,42 @@ namespace IrisDrive.WindowsShell;
 
 public partial class MainWindow
 {
-    private async void LinkOwnerBox_TextChanged(object sender, TextChangedEventArgs e)
+    private async void LinkTargetBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        await TrySubmitLinkOwnerAsync();
+        await TrySubmitLinkTargetAsync();
     }
 
     private async void LinkSubmit_Click(object sender, RoutedEventArgs e)
     {
-        await TrySubmitLinkOwnerAsync();
+        await TrySubmitLinkTargetAsync();
     }
 
-    private async void LinkOwnerBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    private async void LinkTargetBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
         {
             return;
         }
         e.Handled = true;
-        await TrySubmitLinkOwnerAsync();
+        await TrySubmitLinkTargetAsync();
     }
 
-    private async Task TrySubmitLinkOwnerAsync()
+    private async Task TrySubmitLinkTargetAsync()
     {
-        var owner = LinkOwnerBox.Text.Trim();
-        if (string.IsNullOrEmpty(owner))
+        var target = LinkTargetBox.Text.Trim();
+        if (string.IsNullOrEmpty(target))
         {
             return;
         }
-        if (!await service.IsCompleteLinkInputAsync(owner))
+        if (!await service.IsCompleteLinkInputAsync(target))
         {
             return;
         }
-        if (submittedLinkOwner == owner)
+        if (submittedLinkTarget == target)
         {
             return;
         }
-        submittedLinkOwner = owner;
-        await RunSetupAsync(() => service.LinkDeviceAsync(owner));
+        submittedLinkTarget = target;
+        await RunSetupAsync(() => service.LinkDeviceAsync(target));
     }
 }

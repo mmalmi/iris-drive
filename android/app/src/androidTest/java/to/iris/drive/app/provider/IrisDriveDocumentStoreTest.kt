@@ -128,7 +128,7 @@ class IrisDriveDocumentStoreTest {
                 handle,
                 JSONObject()
                     .put("type", "create_profile")
-                    .put("device_label", "Android provider test")
+                    .put("app_key_label", "Android provider test")
                     .toString(),
             )
         } finally {

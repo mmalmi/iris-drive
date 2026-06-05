@@ -149,7 +149,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap()
         .clone();
     assert_eq!(root.root_cid, report.root_cid);
@@ -165,7 +165,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
     .unwrap();
     folder
         .device_roots
-        .insert(account.state.device_pubkey.clone(), root);
+        .insert(account.state.app_key_pubkey.clone(), root);
     let config = AppConfig {
         profile: Some(account.state.clone()),
         shared_folders: vec![folder.clone()],

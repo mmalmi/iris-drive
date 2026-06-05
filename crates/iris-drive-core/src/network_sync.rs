@@ -122,7 +122,7 @@ pub async fn sync_once_with_fips(
     let authorized_devices = config
         .profile
         .as_ref()
-        .map(authorized_device_pubkeys)
+        .map(authorized_app_key_pubkeys)
         .unwrap_or_default();
     let root_scope_id = state.root_scope_id();
     let drive_root_events = relay_sync::fetch_drive_roots(
@@ -164,7 +164,7 @@ pub async fn sync_once_with_fips(
     if let Some(account_state) = config.profile.clone().filter(ProfileState::can_write_roots) {
         match relay_sync::fetch_latest_files_root(
             &client,
-            &account_state.device_pubkey,
+            &account_state.app_key_pubkey,
             PRIMARY_DRIVE_ID,
             timeout,
         )
@@ -184,7 +184,7 @@ pub async fn sync_once_with_fips(
                 if matches!(outcome, relay_sync::FilesRootApply::Applied)
                     && let Some(root_ref) = config
                         .drive(PRIMARY_DRIVE_ID)
-                        .and_then(|drive| drive.device_roots.get(&account.state.device_pubkey))
+                        .and_then(|drive| drive.device_roots.get(&account.state.app_key_pubkey))
                 {
                     push_unique(&mut root_cids_to_download, root_ref.root_cid.clone());
                 }
@@ -253,14 +253,14 @@ pub fn apply_drive_root_events(
 }
 
 #[must_use]
-pub fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
+pub fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
         .map(|snap| snap.app_actors.iter().map(|d| d.pubkey.clone()).collect())
         .unwrap_or_default();
-    if !app_actors.contains(&state.device_pubkey) {
-        app_actors.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.app_key_pubkey) {
+        app_actors.push(state.app_key_pubkey.clone());
     }
     app_actors
 }
@@ -290,7 +290,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
         drive
             .device_roots
             .iter()
-            .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+            .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })
 }
 

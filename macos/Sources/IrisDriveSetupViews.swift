@@ -5,25 +5,25 @@ struct RevokedDeviceSetupView: View {
     let controller: AppDelegate
 
     var body: some View {
-        let owner = status.ownerNpub ?? ""
+        let target = status.currentAppKeyNpub ?? ""
         VStack(alignment: .leading, spacing: 12) {
             Text("Device removed")
                 .font(.title2.weight(.semibold))
             Text("This device no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
-            if !owner.isEmpty {
-                keyedValue("Owner", owner)
+            if !target.isEmpty {
+                keyedValue("AppKey", target)
             }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("This device", device)
             }
             Button {
-                controller.linkDevice(owner: owner)
+                controller.linkDevice(target: target)
             } label: {
                 buttonLabel("Link this device again", systemImage: "link")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(owner.isEmpty)
+            .disabled(target.isEmpty)
             if status.deviceNpub?.isEmpty == false {
                 Button {
                     controller.copyDeviceKey()
@@ -72,8 +72,8 @@ struct AwaitingApprovalSetupView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
-            if let owner = status.ownerNpub, !owner.isEmpty {
-                keyedValue("Owner", owner)
+            if let appKey = status.currentAppKeyNpub, !appKey.isEmpty {
+                keyedValue("AppKey", appKey)
             }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("This device", device)

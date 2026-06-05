@@ -145,14 +145,14 @@ class AppStateTest {
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
             profile = ProfileState(
-                ownerPubkey = "owner",
+                currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
-                deviceLabel = "Pixel",
+                appKeyLabel = "Pixel",
                 authorizationState = "authorized",
                 canAdminProfile = true,
-                deviceLinkRequest = "",
-                deviceLinkInvite = "iris-drive://invite/test",
-                inboundDeviceLinkRequests = emptyList(),
+                appKeyLinkRequest = "",
+                appKeyLinkInvite = "iris-drive://invite/test",
+                inboundAppKeyLinkRequests = emptyList(),
             ),
             roots = listOf(
                 SyncRoot(
@@ -215,14 +215,14 @@ class AppStateTest {
     fun pendingApprovalDoesNotCompleteSetup() {
         val state = AppState(
             profile = ProfileState(
-                ownerPubkey = "owner",
+                currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
-                deviceLabel = "Pixel",
+                appKeyLabel = "Pixel",
                 authorizationState = "awaiting_approval",
                 canAdminProfile = false,
-                deviceLinkRequest = "iris-drive://device-link?device=device-a",
-                deviceLinkInvite = "",
-                inboundDeviceLinkRequests = emptyList(),
+                appKeyLinkRequest = "iris-drive://app-key-link?app_key=device-a",
+                appKeyLinkInvite = "",
+                inboundAppKeyLinkRequests = emptyList(),
             ),
             setupState = "awaiting_approval",
             isAwaitingApproval = true,
@@ -237,14 +237,14 @@ class AppStateTest {
     fun revokedDeviceDoesNotCompleteSetup() {
         val state = AppState(
             profile = ProfileState(
-                ownerPubkey = "owner",
+                currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
-                deviceLabel = "Pixel",
+                appKeyLabel = "Pixel",
                 authorizationState = "revoked",
                 canAdminProfile = false,
-                deviceLinkRequest = "",
-                deviceLinkInvite = "",
-                inboundDeviceLinkRequests = emptyList(),
+                appKeyLinkRequest = "",
+                appKeyLinkInvite = "",
+                inboundAppKeyLinkRequests = emptyList(),
             ),
             setupState = "revoked",
             isRevoked = true,
@@ -260,6 +260,6 @@ class AppStateTest {
         val action = JSONObject(NativeActions.deleteDevice("device-b"))
 
         assertEquals("delete_device", action.getString("type"))
-        assertEquals("device-b", action.getString("device_pubkey"))
+        assertEquals("device-b", action.getString("app_key_pubkey"))
     }
 }

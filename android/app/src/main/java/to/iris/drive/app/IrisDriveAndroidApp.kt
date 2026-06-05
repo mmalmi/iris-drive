@@ -218,8 +218,8 @@ internal fun IrisDriveAndroidApp(
                         state = state,
                         onCopyText = onCopyText,
                         onRelink = {
-                            val label = profile.deviceLabel.ifBlank { "Android" }
-                            onLinkDevice(profile.ownerPubkey, label)
+                            val label = profile.appKeyLabel.ifBlank { "Android" }
+                            onLinkDevice(profile.currentAppKeyNpub, label)
                         },
                         onLogout = onLogout,
                     )
@@ -256,11 +256,11 @@ internal fun IrisDriveAndroidApp(
                     state = state,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyOwnerKey = { onCopyText("Owner key", activeProfile.ownerPubkey) },
+                    onCopyAppKey = { onCopyText("AppKey", activeProfile.currentAppKeyNpub) },
                     onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
-                    onCopyLinkInvite = { onCopyText("Invite link", activeProfile.deviceLinkInvite) },
+                    onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
@@ -307,7 +307,7 @@ private fun RevokedDeviceContent(
             SetupBrand()
             Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
             Text("This device no longer has access to Iris Drive.", color = Muted)
-            Text(profile.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupPrimaryButton(
                 text = "Link this device again",
@@ -348,7 +348,7 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            Text(profile.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
                 text = "Copy device ID",

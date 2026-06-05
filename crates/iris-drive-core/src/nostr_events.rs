@@ -36,7 +36,7 @@ pub const KIND_HASHTREE_ROOT: u16 = 30_078;
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 #[must_use]
-pub fn device_link_request_d_tag(profile_id: IrisProfileId) -> String {
+pub fn app_key_link_request_d_tag(profile_id: IrisProfileId) -> String {
     format!("iris-drive/{profile_id}/device-link-request")
 }
 
@@ -54,16 +54,16 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
 }
 
 #[must_use]
-pub fn is_device_link_request_event_coordinate(event: &Event) -> bool {
+pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_DEVICE_LINK_REQUEST
         && event
             .identifier()
-            .is_some_and(|d_tag| parse_device_link_request_d_tag(d_tag).is_ok())
+            .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriveRootEventPreview {
-    pub device_pubkey_hex: String,
+    pub app_key_pubkey_hex: String,
     pub owner_pubkey_hex: String,
     pub drive_id: String,
     pub published_at: i64,
@@ -128,18 +128,20 @@ fn is_zero(value: &u64) -> bool {
 
 /// Build a signed device-link request event. Signed by the requesting `AppKey`;
 /// the profile-scoped d-tag routes the request to admins for that `IrisProfile`.
-pub fn build_device_link_request_event(
+pub fn build_app_key_link_request_event(
     device_keys: &Keys,
     frame: &DeviceLinkRequestFrame,
 ) -> Result<Event, WireError> {
-    PublicKey::from_hex(&frame.device_pubkey)
+    PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     let content_json =
         serde_json::to_string(frame).map_err(|e| WireError::BadContent(e.to_string()))?;
     let builder = EventBuilder::new(
         Kind::from(KIND_DEVICE_LINK_REQUEST),
         content_json,
-        [Tag::identifier(device_link_request_d_tag(frame.profile_id))],
+        [Tag::identifier(app_key_link_request_d_tag(
+            frame.profile_id,
+        ))],
     );
     builder
         .to_event(device_keys)
@@ -147,7 +149,9 @@ pub fn build_device_link_request_event(
 }
 
 /// Parse + verify a signed device-link request event.
-pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkRequestFrame, WireError> {
+pub fn parse_app_key_link_request_event(
+    event: &Event,
+) -> Result<DeviceLinkRequestFrame, WireError> {
     let kind = event.kind.as_u16();
     if kind != KIND_DEVICE_LINK_REQUEST {
         return Err(WireError::WrongKind {
@@ -156,13 +160,13 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
         });
     }
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
-    let d_tag_profile = parse_device_link_request_d_tag(d_tag)?;
+    let d_tag_profile = parse_app_key_link_request_d_tag(d_tag)?;
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let frame: DeviceLinkRequestFrame =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
-    PublicKey::from_hex(&frame.device_pubkey)
+    PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     if d_tag_profile != frame.profile_id {
         return Err(WireError::DeviceLinkProfileMismatch {
@@ -171,16 +175,16 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
         });
     }
     let signer = event.pubkey.to_hex();
-    if signer != frame.device_pubkey {
+    if signer != frame.app_key_pubkey {
         return Err(WireError::DeviceLinkSignerMismatch {
             signer,
-            device: frame.device_pubkey,
+            device: frame.app_key_pubkey,
         });
     }
     Ok(frame)
 }
 
-fn parse_device_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireError> {
+fn parse_app_key_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireError> {
     let rest = d_tag
         .strip_prefix("iris-drive/")
         .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
@@ -216,14 +220,14 @@ pub fn build_drive_root_event(
     root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
-    authorized_device_pubkeys: &[String],
+    authorized_app_key_pubkeys: &[String],
 ) -> Result<Event, WireError> {
     build_drive_root_event_at(
         device_keys,
         root_scope_id,
         drive_id,
         root,
-        authorized_device_pubkeys,
+        authorized_app_key_pubkeys,
         drive_root_timestamp_from_root(root),
     )
 }
@@ -239,7 +243,7 @@ pub fn build_drive_root_publish_event(
     root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
-    authorized_device_pubkeys: &[String],
+    authorized_app_key_pubkeys: &[String],
 ) -> Result<Event, WireError> {
     let stored_ts = if root.published_at > 0 {
         u64::try_from(root.published_at).unwrap_or(0)
@@ -252,7 +256,7 @@ pub fn build_drive_root_publish_event(
         root_scope_id,
         drive_id,
         root,
-        authorized_device_pubkeys,
+        authorized_app_key_pubkeys,
         ts,
     )
 }
@@ -276,7 +280,7 @@ fn build_drive_root_event_at(
     root_scope_id: &str,
     drive_id: &str,
     root: &DeviceRootRef,
-    authorized_device_pubkeys: &[String],
+    authorized_app_key_pubkeys: &[String],
     created_at: u64,
 ) -> Result<Event, WireError> {
     let root_cid =
@@ -289,7 +293,7 @@ fn build_drive_root_event_at(
     let root_key_hex = hex::encode(root_key);
     let mut root_key_wraps = std::collections::BTreeMap::new();
     let mut recipients: std::collections::BTreeSet<String> =
-        authorized_device_pubkeys.iter().cloned().collect();
+        authorized_app_key_pubkeys.iter().cloned().collect();
     recipients.insert(device_keys.public_key().to_hex());
     for recipient in recipients {
         let recipient_pk =
@@ -351,7 +355,7 @@ pub fn build_private_hashtree_root_event(
 }
 
 /// Parse + verify a drive-root event. Returns
-/// `(device_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
+/// `(app_key_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
 /// The device pubkey is the event's author; the root scope id and
 /// drive id are extracted from the d-tag.
 pub fn parse_drive_root_event(
@@ -368,16 +372,16 @@ pub fn parse_drive_root_event_for_device(
 }
 
 pub fn parse_drive_root_event_header(event: &Event) -> Result<(String, String, String), WireError> {
-    let (device_pubkey_hex, owner_pubkey_hex, drive_id, _, _) =
+    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, _, _) =
         parse_drive_root_event_parts(event)?;
-    Ok((device_pubkey_hex, owner_pubkey_hex, drive_id))
+    Ok((app_key_pubkey_hex, owner_pubkey_hex, drive_id))
 }
 
 pub fn parse_drive_root_event_preview(event: &Event) -> Result<DriveRootEventPreview, WireError> {
-    let (device_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
         parse_drive_root_event_parts(event)?;
     Ok(DriveRootEventPreview {
-        device_pubkey_hex,
+        app_key_pubkey_hex,
         owner_pubkey_hex,
         drive_id,
         published_at,
@@ -390,7 +394,7 @@ fn parse_drive_root_event_inner(
     event: &Event,
     device_keys: Option<&Keys>,
 ) -> Result<(String, String, String, DeviceRootRef), WireError> {
-    let (device_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
         parse_drive_root_event_parts(event)?;
     let root_cid = root_cid_from_wire_content(event, &content, device_keys)?;
     let device_root = DeviceRootRef {
@@ -402,7 +406,7 @@ fn parse_drive_root_event_inner(
         observed: content.observed,
         local_only: false,
     };
-    Ok((device_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
+    Ok((app_key_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
 }
 
 fn parse_drive_root_event_parts(
@@ -422,10 +426,10 @@ fn parse_drive_root_event_parts(
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let content: DriveRootWireContent =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
-    let device_pubkey_hex = event.pubkey.to_hex();
+    let app_key_pubkey_hex = event.pubkey.to_hex();
     let published_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
     Ok((
-        device_pubkey_hex,
+        app_key_pubkey_hex,
         owner_pubkey_hex,
         drive_id,
         content,

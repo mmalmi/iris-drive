@@ -57,16 +57,16 @@ pub type SyncBaseState = BTreeMap<String, FileSnapshot>;
 
 /// Run one full bidirectional sync.
 ///
-/// `device_label` is used in the conflict filename. The peer's label is
+/// `app_key_label` is used in the conflict filename. The peer's label is
 /// always rendered as `"peer"` in local-side renames, since the peer's
 /// own label is unknown here.
-pub async fn sync<L, R>(local: &L, remote: &R, device_label: &str) -> Result<SyncReport, SyncError>
+pub async fn sync<L, R>(local: &L, remote: &R, app_key_label: &str) -> Result<SyncReport, SyncError>
 where
     L: ProviderFs<ItemId = String>,
     R: ProviderFs<ItemId = String>,
 {
     let base = SyncBaseState::new();
-    let _ = device_label;
+    let _ = app_key_label;
     sync_with_base(local, remote, &base, "peer").await
 }
 
@@ -436,14 +436,14 @@ fn reserve_present_changes(
 
 fn next_conflict_filename(
     original_path: &str,
-    device_label: &str,
+    app_key_label: &str,
     occupied_paths: &BTreeSet<String>,
 ) -> Result<String, SyncError> {
     for copy_index in 1..=MAX_CONFLICT_COPIES_PER_PATH {
         let label = if copy_index == 1 {
-            device_label.to_string()
+            app_key_label.to_string()
         } else {
-            format!("{device_label} {copy_index}")
+            format!("{app_key_label} {copy_index}")
         };
         let candidate = conflict_filename(original_path, &label);
         if !occupied_paths.contains(&candidate) {

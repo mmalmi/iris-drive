@@ -428,7 +428,7 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
     let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
         return Ok(json!({"published_drive_root": false, "error": "primary drive missing"}));
     };
-    let Some(root) = drive.device_roots.get(&account.device_pubkey) else {
+    let Some(root) = drive.device_roots.get(&account.app_key_pubkey) else {
         return Ok(json!({"published_drive_root": false, "error": "device root missing"}));
     };
     let loaded_account =
@@ -440,7 +440,7 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
         config.relays.clone()
     };
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
-    let authorized_devices = authorized_device_pubkeys(account);
+    let authorized_devices = authorized_app_key_pubkeys(account);
     let result = iris_drive_core::relay_sync::publish_drive_root(
         &client,
         loaded_account.app_key.keys(),
@@ -497,7 +497,7 @@ pub(crate) fn native_sync_status_label(
     }
 }
 
-fn authorized_device_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
+fn authorized_app_key_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
@@ -508,8 +508,8 @@ fn authorized_device_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<Strin
                 .collect()
         })
         .unwrap_or_default();
-    if !app_actors.contains(&state.device_pubkey) {
-        app_actors.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.app_key_pubkey) {
+        app_actors.push(state.app_key_pubkey.clone());
     }
     app_actors
 }

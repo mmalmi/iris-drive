@@ -311,7 +311,7 @@ pub(crate) enum AppKeysCmd {
         invite_or_profile: String,
         /// Admin `AppKey` pubkey for manual pairing when no invite URL is available.
         #[arg(long = "admin-app-key", alias = "admin-device", alias = "admin")]
-        admin_device: Option<String>,
+        admin_app_key: Option<String>,
         /// Human-readable app install label.
         #[arg(long)]
         label: Option<String>,

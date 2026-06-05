@@ -7,12 +7,12 @@ pub(crate) fn cmd_app_keys(config_dir: &std::path::Path, command: AppKeysCmd) ->
         AppKeysCmd::ResetInvite => cmd_app_keys_reset_invite(config_dir),
         AppKeysCmd::Request {
             invite_or_profile,
-            admin_device,
+            admin_app_key,
             label,
-        } => cmd_link_with_admin_device(
+        } => cmd_link_with_admin_app_key(
             config_dir,
             &invite_or_profile,
-            admin_device.as_deref(),
+            admin_app_key.as_deref(),
             false,
             label,
         ),
@@ -33,7 +33,7 @@ pub(crate) fn cmd_app_keys_invite(config_dir: &std::path::Path) -> Result<()> {
         .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let invite = device_link_invite_json(state);
+    let invite = app_key_link_invite_json(state);
     if invite.is_null() {
         return Err(anyhow::anyhow!(
             "AppKey link invites require an admin AppKey"
@@ -51,15 +51,15 @@ pub(crate) fn cmd_app_keys_reset_invite(config_dir: &std::path::Path) -> Result<
             .profile
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-        if !state.can_manage_devices() {
+        if !state.can_admin_profile() {
             return Err(anyhow::anyhow!(
                 "AppKey link invites require an admin AppKey"
             ));
         }
-        state.reset_device_link_secret();
+        state.reset_app_key_link_secret();
         (
-            device_link_invite_json(state),
-            inbound_device_link_requests_json(state),
+            app_key_link_invite_json(state),
+            inbound_app_key_link_requests_json(state),
         )
     };
     config.save(&config_path)?;
@@ -67,8 +67,8 @@ pub(crate) fn cmd_app_keys_reset_invite(config_dir: &std::path::Path) -> Result<
         "{}",
         json!({
             "reset": true,
-            "device_link_invite": invite,
-            "inbound_device_link_requests": inbound_requests,
+            "app_key_link_invite": invite,
+            "inbound_app_key_link_requests": inbound_requests,
         })
     );
     Ok(())
@@ -83,8 +83,8 @@ pub(crate) fn cmd_app_keys_requests(config_dir: &std::path::Path) -> Result<()> 
     println!(
         "{}",
         json!({
-            "outbound": device_link_request_json(state),
-            "inbound": inbound_device_link_requests_json(state),
+            "outbound": app_key_link_request_json(state),
+            "inbound": inbound_app_key_link_requests_json(state),
         })
     );
     Ok(())

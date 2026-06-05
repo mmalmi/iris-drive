@@ -11,7 +11,7 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
     let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
-        admin_device_pubkey: owner_state.device_pubkey.clone(),
+        admin_app_key_pubkey: owner_state.app_key_pubkey.clone(),
         profile_roster_ops: owner_state.profile_roster_ops.clone(),
         sent_at: 123,
     };
@@ -19,7 +19,7 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
     iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut linked_config,
         &roster_frame,
-        &owner_state.device_pubkey,
+        &owner_state.app_key_pubkey,
     )
     .unwrap();
     linked_config.save(config_path_in(linked_dir)).unwrap();
@@ -30,7 +30,7 @@ fn import_file_action_writes_shared_file_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let _ = app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "iPhone".to_owned(),
+        app_key_label: "iPhone".to_owned(),
     });
 
     let source = dir.path().join("share-source.txt");
@@ -64,7 +64,7 @@ fn provider_list_includes_summary_and_change_key() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let _ = app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "iPhone".to_owned(),
+        app_key_label: "iPhone".to_owned(),
     });
     let source = dir.path().join("nested.txt");
     std::fs::write(&source, b"nested bytes").unwrap();
@@ -125,7 +125,7 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let _ = app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "iPhone".to_owned(),
+        app_key_label: "iPhone".to_owned(),
     });
     let source = dir.path().join("shared.txt");
     std::fs::write(&source, b"first").unwrap();
@@ -204,7 +204,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
     let owner_state = owner_app.dispatch(NativeAppAction::CreateProfile {
-        device_label: "Mac".to_owned(),
+        app_key_label: "Mac".to_owned(),
     });
     let owner_account = owner_state.ui.profile.unwrap();
 
@@ -219,12 +219,12 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        link_target: owner_account.device_link_invite,
-        device_label: "Phone".to_owned(),
+        link_target: owner_account.app_key_link_invite,
+        app_key_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.profile.unwrap();
     let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.device_link_request,
+        request: linked_account.app_key_link_request,
         label: "Phone".to_owned(),
     });
     assert!(approved.error.is_empty(), "{}", approved.error);
@@ -240,7 +240,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         .unwrap();
     let root = drive
         .device_roots
-        .get(&owner_account_state.device_pubkey)
+        .get(&owner_account_state.app_key_pubkey)
         .unwrap();
     let authorized = owner_account_state
         .app_keys

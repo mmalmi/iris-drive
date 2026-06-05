@@ -98,7 +98,7 @@ pub struct DeviceTombstone {
 /// What a single device contributes to a merge.
 #[derive(Debug, Clone)]
 pub struct DeviceSnapshot<'a> {
-    pub device_pubkey: &'a str,
+    pub app_key_pubkey: &'a str,
     pub root: &'a DeviceRootRef,
     pub files: Vec<DeviceFileEntry>,
     pub tombstones: Vec<DeviceTombstone>,
@@ -182,14 +182,14 @@ pub struct MergedView {
 #[derive(Debug, Clone)]
 struct WriteCandidate {
     entry: MergedEntry,
-    device_pubkey: String,
+    app_key_pubkey: String,
     root: DeviceRootRef,
 }
 
 #[derive(Debug, Clone)]
 struct TombstoneCandidate {
     tombstoned_at: i64,
-    device_pubkey: String,
+    app_key_pubkey: String,
     root: DeviceRootRef,
 }
 
@@ -203,7 +203,7 @@ enum RootRelation {
 
 /// Merge across all authorized device snapshots. `authorized_devices`
 /// is the device-pubkey allowlist from the current `AppKeys` roster;
-/// any snapshot whose `device_pubkey` is not in the allowlist is
+/// any snapshot whose `app_key_pubkey` is not in the allowlist is
 /// silently ignored.
 ///
 /// Conflict resolution per path:
@@ -225,7 +225,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
 
     for snap in snapshots {
-        if !allow.contains(snap.device_pubkey) {
+        if !allow.contains(snap.app_key_pubkey) {
             continue;
         }
         for f in &snap.files {
@@ -239,12 +239,12 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
                 size: f.size,
                 whole_file_hash: f.whole_file_hash,
                 modified_at: f.modified_at,
-                source_device: snap.device_pubkey.to_string(),
+                source_device: snap.app_key_pubkey.to_string(),
                 published_at: snap.root.published_at,
             };
             let candidate = WriteCandidate {
                 entry: candidate,
-                device_pubkey: snap.device_pubkey.to_string(),
+                app_key_pubkey: snap.app_key_pubkey.to_string(),
                 root: snap.root.clone(),
             };
             if snap.root.local_only {
@@ -264,7 +264,7 @@ pub fn merge_drives(authorized_devices: &[&str], snapshots: &[DeviceSnapshot<'_>
             }
             let candidate = TombstoneCandidate {
                 tombstoned_at: t.tombstoned_at,
-                device_pubkey: snap.device_pubkey.to_string(),
+                app_key_pubkey: snap.app_key_pubkey.to_string(),
                 root: snap.root.clone(),
             };
             if snap.root.local_only {
@@ -394,7 +394,7 @@ fn record_write_delete_conflict(
     detail.kind = MergedConflictKind::WriteDelete;
     insert_conflict_file(&mut detail.files, conflict_file_side(write));
     detail.tombstone = Some(MergedConflictTombstone {
-        device_id: tombstone.device_pubkey.clone(),
+        device_id: tombstone.app_key_pubkey.clone(),
         device_seq: tombstone.root.device_seq,
         root_cid: tombstone.root.root_cid.clone(),
         tombstoned_at: tombstone.tombstoned_at,
@@ -421,7 +421,7 @@ fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflic
 
 fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
     MergedConflictFile {
-        device_id: write.device_pubkey.clone(),
+        device_id: write.app_key_pubkey.clone(),
         device_seq: write.root.device_seq,
         root_cid: write.root.root_cid.clone(),
         content_hash: to_hex(&identity_hash(&write.entry)),
@@ -433,45 +433,45 @@ fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
 
 fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
     match root_relation(
-        &candidate.device_pubkey,
+        &candidate.app_key_pubkey,
         &candidate.root,
-        &existing.device_pubkey,
+        &existing.app_key_pubkey,
         &existing.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
         RootRelation::Concurrent => legacy_order_newer(
             candidate.entry.published_at,
-            &candidate.device_pubkey,
+            &candidate.app_key_pubkey,
             existing.entry.published_at,
-            &existing.device_pubkey,
+            &existing.app_key_pubkey,
         ),
     }
 }
 
 fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &TombstoneCandidate) -> bool {
     match root_relation(
-        &candidate.device_pubkey,
+        &candidate.app_key_pubkey,
         &candidate.root,
-        &existing.device_pubkey,
+        &existing.app_key_pubkey,
         &existing.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
         RootRelation::Concurrent => legacy_order_newer(
             candidate.tombstoned_at,
-            &candidate.device_pubkey,
+            &candidate.app_key_pubkey,
             existing.tombstoned_at,
-            &existing.device_pubkey,
+            &existing.app_key_pubkey,
         ),
     }
 }
 
 fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandidate) -> bool {
     match root_relation(
-        &tombstone.device_pubkey,
+        &tombstone.app_key_pubkey,
         &tombstone.root,
-        &write.device_pubkey,
+        &write.app_key_pubkey,
         &write.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
@@ -488,9 +488,9 @@ fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandid
         && roots_are_causal(&existing.root)
         && matches!(
             root_relation(
-                &candidate.device_pubkey,
+                &candidate.app_key_pubkey,
                 &candidate.root,
-                &existing.device_pubkey,
+                &existing.app_key_pubkey,
                 &existing.root,
             ),
             RootRelation::Concurrent
@@ -513,9 +513,9 @@ fn should_mark_write_delete_conflict(
         && roots_are_causal(&tombstone.root)
         && matches!(
             root_relation(
-                &write.device_pubkey,
+                &write.app_key_pubkey,
                 &write.root,
-                &tombstone.device_pubkey,
+                &tombstone.app_key_pubkey,
                 &tombstone.root,
             ),
             RootRelation::Concurrent

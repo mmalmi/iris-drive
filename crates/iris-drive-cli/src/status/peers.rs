@@ -63,12 +63,12 @@ pub(crate) fn peer_statuses(
     let block_sync_by_root = daemon_status
         .and_then(|status| status.get("block_sync_by_root"))
         .filter(|value| value.is_object());
-    let can_manage_devices = account.can_manage_devices();
+    let can_admin_profile = account.can_admin_profile();
 
     device_roster_rows(
         &snapshot.app_actors,
-        &account.device_pubkey,
-        can_manage_devices,
+        &account.app_key_pubkey,
+        can_admin_profile,
         daemon_running,
         &connectivity,
     )
@@ -94,7 +94,7 @@ pub(crate) fn peer_statuses(
             root.map(|root| root.dck_generation),
         );
         json!({
-            "device_pubkey": device.pubkey_hex,
+            "app_key_pubkey": device.pubkey_hex,
             "device_npub": device.npub,
             "label": device.label,
             "display_label": device.display_label,

@@ -380,14 +380,14 @@ fn discovery_scope_uses_iris_drive_overlay() {
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id: crate::IrisProfileId::new_v4(),
-            device_pubkey: "bb".repeat(32),
+            app_key_pubkey: "bb".repeat(32),
             profile_roster_ops: Vec::new(),
-            device_link_secret: "link-secret".into(),
-            authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
-            device_label: None,
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: None,
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         }),
         ..Default::default()
     };
@@ -464,11 +464,11 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id,
-            device_pubkey: "dd".repeat(32),
+            app_key_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
-            device_link_secret: "link-secret".into(),
-            authorization_state: crate::DeviceAuthorizationState::Authorized,
-            device_label: None,
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
             app_keys: Some(crate::app_keys::AppKeysSnapshot {
                 profile_id: profile_id.to_string(),
                 signed_by_pubkey: Some("dd".repeat(32)),
@@ -488,8 +488,8 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
                 dck_generation: 0,
                 wrapped_dck: std::collections::BTreeMap::default(),
             }),
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         }),
         ..Default::default()
     };
@@ -519,18 +519,18 @@ fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id: crate::IrisProfileId::new_v4(),
-            device_pubkey: "dd".repeat(32),
+            app_key_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
-            device_link_secret: "link-secret".into(),
-            authorization_state: crate::DeviceAuthorizationState::AwaitingApproval,
-            device_label: None,
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: None,
             app_keys: None,
-            outbound_device_link_request: Some(crate::profile::PendingDeviceLinkRequest {
-                admin_device_pubkey: admin_pubkey,
+            outbound_app_key_link_request: Some(crate::profile::PendingAppKeyLinkRequest {
+                admin_app_key_pubkey: admin_pubkey,
                 link_secret: "link-secret".into(),
                 requested_at: 42,
             }),
-            inbound_device_link_requests: Vec::new(),
+            inbound_app_key_link_requests: Vec::new(),
         }),
         ..Default::default()
     };
@@ -565,17 +565,17 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 }
 
 #[test]
-fn admin_endpoint_options_allow_open_device_link_requests() {
+fn admin_endpoint_options_allow_open_app_key_link_requests() {
     let settings = FipsTransportSettings::default();
     let profile_id = crate::IrisProfileId::new_v4();
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id,
-            device_pubkey: "aa".repeat(32),
+            app_key_pubkey: "aa".repeat(32),
             profile_roster_ops: Vec::new(),
-            device_link_secret: "link-secret".into(),
-            authorization_state: crate::DeviceAuthorizationState::Authorized,
-            device_label: None,
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
             app_keys: Some(crate::app_keys::AppKeysSnapshot {
                 profile_id: profile_id.to_string(),
                 signed_by_pubkey: Some("aa".repeat(32)),
@@ -588,8 +588,8 @@ fn admin_endpoint_options_allow_open_device_link_requests() {
                 dck_generation: 0,
                 wrapped_dck: std::collections::BTreeMap::default(),
             }),
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         }),
         ..Default::default()
     };

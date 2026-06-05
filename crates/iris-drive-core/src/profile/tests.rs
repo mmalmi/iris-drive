@@ -12,11 +12,11 @@ fn create_yields_admin_authorized_account() {
     .unwrap();
     let recovery_keys =
         RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery")).unwrap();
-    assert!(acct.state.can_manage_devices());
+    assert!(acct.state.can_admin_profile());
     assert!(acct.state.is_authorized());
     assert!(acct.state.can_write_roots());
     assert_ne!(
-        acct.state.device_pubkey,
+        acct.state.app_key_pubkey,
         recovery_keys.pubkey_hex(),
         "the 12-word recovery phrase must not be the app key"
     );
@@ -28,21 +28,21 @@ fn create_yields_admin_authorized_account() {
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.profile_id, acct.state.profile_id.to_string());
     assert_eq!(snap.app_actors.len(), 1);
-    assert_eq!(snap.app_actors[0].pubkey, acct.state.device_pubkey);
+    assert_eq!(snap.app_actors[0].pubkey, acct.state.app_key_pubkey);
     assert!(snap.app_actors[0].is_admin());
     assert_eq!(
         snap.signer_pubkey(),
-        Some(acct.state.device_pubkey.as_str())
+        Some(acct.state.app_key_pubkey.as_str())
     );
     assert!(!acct.state.profile_roster_ops.is_empty());
     assert!(acct.state.profile_roster_ops.iter().all(|op| {
-        op.signer_pubkey == acct.state.device_pubkey
+        op.signer_pubkey == acct.state.app_key_pubkey
             || op.signer_pubkey == recovery_keys.pubkey_hex()
     }));
 
     let projection = acct.state.profile_projection();
-    assert!(projection.can_write_roots(&acct.state.device_pubkey));
-    assert!(projection.can_admin_profile(&acct.state.device_pubkey));
+    assert!(projection.can_write_roots(&acct.state.app_key_pubkey));
+    assert!(projection.can_admin_profile(&acct.state.app_key_pubkey));
     assert!(!projection.can_write_roots(&recovery_keys.pubkey_hex()));
     assert!(projection.can_admin_profile(&recovery_keys.pubkey_hex()));
     assert_eq!(projection.key_epochs.len(), 1);
@@ -53,7 +53,7 @@ fn create_yields_admin_authorized_account() {
 }
 
 #[test]
-fn default_device_label_prefers_hostname() {
+fn default_app_key_label_prefers_hostname() {
     assert_eq!(
         normalize_hostname_label("Example Mac mini.local").as_deref(),
         Some("Example Mac mini")
@@ -66,10 +66,10 @@ fn default_device_label_prefers_hostname() {
 }
 
 #[test]
-fn empty_device_label_uses_pubkey_label() {
+fn empty_app_key_label_uses_pubkey_label() {
     let pubkey = "abcdef12".to_string() + &"34".repeat(28);
     assert_eq!(
-        resolve_device_label_with_hostname(Some("   ".into()), None, &pubkey).as_deref(),
+        resolve_app_key_label_with_hostname(Some("   ".into()), None, &pubkey).as_deref(),
         Some("device abcdef12")
     );
 }
@@ -83,18 +83,18 @@ fn restore_from_raw_secret_creates_fresh_profile_with_fresh_app_key() {
     let dir_b = tempdir().unwrap();
     let restored = Profile::restore(dir_b.path(), &nsec, None).unwrap();
     assert_ne!(
-        restored.state.device_pubkey, original.state.device_pubkey,
+        restored.state.app_key_pubkey, original.state.app_key_pubkey,
         "nsec restore creates a fresh AppKey instead of cloning the supplied key"
     );
     assert_ne!(restored.state.profile_id, original.state.profile_id);
-    assert!(restored.state.can_manage_devices());
+    assert!(restored.state.can_admin_profile());
     assert!(
         restored
             .state
             .app_keys
             .as_ref()
             .unwrap()
-            .is_admin(&restored.state.device_pubkey)
+            .is_admin(&restored.state.app_key_pubkey)
     );
     assert!(dir_b.path().join("key").exists());
     assert!(!dir_b.path().join("recovery_phrase").exists());
@@ -114,7 +114,7 @@ fn offline_restore_from_recovery_phrase_creates_fresh_profile_and_export_phrase(
     let restored = Profile::restore(dir_b.path(), &phrase, None).unwrap();
     assert_ne!(restored.state.profile_id, original.state.profile_id);
     assert_ne!(
-        restored.state.device_pubkey, original.state.device_pubkey,
+        restored.state.app_key_pubkey, original.state.app_key_pubkey,
         "recovery creates a fresh app key instead of cloning the old one"
     );
     assert_eq!(
@@ -146,11 +146,11 @@ fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_deriva
     .unwrap();
 
     assert_eq!(restored.state.profile_id, owner.state.profile_id);
-    assert_ne!(restored.state.device_pubkey, owner.state.device_pubkey);
+    assert_ne!(restored.state.app_key_pubkey, owner.state.app_key_pubkey);
     assert!(restored.state.is_authorized());
-    assert!(restored.state.can_manage_devices());
+    assert!(restored.state.can_admin_profile());
     assert_eq!(
-        restored.state.device_label.as_deref(),
+        restored.state.app_key_label.as_deref(),
         Some("restored laptop")
     );
     assert_eq!(
@@ -161,8 +161,8 @@ fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_deriva
         phrase
     );
     let projection = restored.state.profile_projection();
-    assert!(projection.can_write_roots(&restored.state.device_pubkey));
-    assert!(projection.can_admin_profile(&restored.state.device_pubkey));
+    assert!(projection.can_write_roots(&restored.state.app_key_pubkey));
+    assert!(projection.can_admin_profile(&restored.state.app_key_pubkey));
     assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
 }
 
@@ -177,7 +177,7 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
     let fallback_dir = tempdir().unwrap();
     let mut fallback = Profile::restore(fallback_dir.path(), &phrase, Some("fallback".into()))
         .expect("fallback restore");
-    let fallback_app_key = fallback.state.device_pubkey.clone();
+    let fallback_app_key = fallback.state.app_key_pubkey.clone();
     assert_ne!(fallback.state.profile_id, owner.state.profile_id);
 
     let snapshot = fallback
@@ -190,11 +190,11 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
         .unwrap();
 
     assert_eq!(fallback.state.profile_id, owner.state.profile_id);
-    assert_eq!(fallback.state.device_pubkey, fallback_app_key);
+    assert_eq!(fallback.state.app_key_pubkey, fallback_app_key);
     assert!(snapshot.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
-    assert!(fallback.state.can_manage_devices());
-    assert_eq!(fallback.state.device_label.as_deref(), Some("fallback"));
+    assert!(fallback.state.can_admin_profile());
+    assert_eq!(fallback.state.app_key_label.as_deref(), Some("fallback"));
     let reconciled_actor = snapshot.app_actor(&fallback_app_key).unwrap();
     assert_eq!(reconciled_actor.label.as_deref(), Some("reconciled"));
 }
@@ -210,7 +210,7 @@ fn fallback_nsec_restore_can_reconcile_with_recovery_roster_evidence() {
     let recovery_nsec = crate::recovery_phrase::recovery_phrase_to_nsec(&phrase).unwrap();
     let fallback_dir = tempdir().unwrap();
     let mut fallback = Profile::restore(fallback_dir.path(), &recovery_nsec, None).unwrap();
-    let fallback_app_key = fallback.state.device_pubkey.clone();
+    let fallback_app_key = fallback.state.app_key_pubkey.clone();
 
     let snapshot = fallback
         .reconcile_with_profile_roster_ops(
@@ -241,7 +241,7 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
         None,
     )
     .unwrap();
-    let fallback_app_key = fallback.state.device_pubkey.clone();
+    let fallback_app_key = fallback.state.app_key_pubkey.clone();
 
     let snapshot = fallback
         .reconcile_with_profile_roster_ops_using_nip46_keys(
@@ -253,7 +253,7 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
         .unwrap();
 
     assert_eq!(fallback.state.profile_id, owner.state.profile_id);
-    assert_eq!(fallback.state.device_pubkey, fallback_app_key);
+    assert_eq!(fallback.state.app_key_pubkey, fallback_app_key);
     assert!(snapshot.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
     assert_ne!(
@@ -288,14 +288,14 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let mut recovered = Profile {
         state: ProfileState {
             profile_id: owner.state.profile_id,
-            device_pubkey: recovered_pubkey.clone(),
+            app_key_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
-            device_link_secret: "recover-secret".into(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: Some("web app".into()),
+            app_key_link_secret: "recover-secret".into(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: Some("web app".into()),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -310,7 +310,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
         Some(recovery_key.pubkey_hex().as_str())
     );
     assert!(recovered.state.is_authorized());
-    assert!(recovered.state.can_manage_devices());
+    assert!(recovered.state.can_admin_profile());
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert!(projection.can_admin_profile(&recovered_pubkey));
@@ -370,14 +370,14 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     let mut recovered = Profile {
         state: ProfileState {
             profile_id: owner.state.profile_id,
-            device_pubkey: recovered_pubkey.clone(),
+            app_key_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
-            device_link_secret: "recover-secret".into(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: Some("web app".into()),
+            app_key_link_secret: "recover-secret".into(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: Some("web app".into()),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -389,7 +389,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     assert!(snap.is_admin(&recovered_pubkey));
     assert_eq!(snap.signer_pubkey(), Some(nip46_pubkey.as_str()));
     assert!(recovered.state.is_authorized());
-    assert!(recovered.state.can_manage_devices());
+    assert!(recovered.state.can_admin_profile());
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert!(projection.can_admin_profile(&recovered_pubkey));
@@ -420,14 +420,14 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     let mut recovered = Profile {
         state: ProfileState {
             profile_id: owner.state.profile_id,
-            device_pubkey: recovered_pubkey.clone(),
+            app_key_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
-            device_link_secret: "recover-secret".into(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: Some("web app".into()),
+            app_key_link_secret: "recover-secret".into(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: Some("web app".into()),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -439,7 +439,7 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     assert!(snap.contains(&recovered_pubkey));
     assert_eq!(
         snap.signer_pubkey(),
-        Some(owner.state.device_pubkey.as_str())
+        Some(owner.state.app_key_pubkey.as_str())
     );
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
@@ -450,7 +450,7 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     );
     assert!(matches!(
         recovered.current_dck(),
-        Err(ProfileError::NoWrapForThisDevice)
+        Err(ProfileError::NoWrapForThisAppKey)
     ));
 }
 
@@ -475,14 +475,14 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
     let mut recovered = Profile {
         state: ProfileState {
             profile_id: owner.state.profile_id,
-            device_pubkey: recovered_pubkey.clone(),
+            app_key_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
-            device_link_secret: "recover-secret".into(),
-            authorization_state: DeviceAuthorizationState::AwaitingApproval,
-            device_label: Some("web app".into()),
+            app_key_link_secret: "recover-secret".into(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label: Some("web app".into()),
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -522,7 +522,7 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
 fn link_starts_awaiting_approval_without_recovery_phrase() {
     let dir = tempdir().unwrap();
     let profile_id = IrisProfileId::new_v4();
-    let admin_app_key = fresh_device_pubkey();
+    let admin_app_key = fresh_app_key_pubkey();
     let acct = Profile::link_to_profile(
         dir.path(),
         profile_id,
@@ -531,27 +531,27 @@ fn link_starts_awaiting_approval_without_recovery_phrase() {
     )
     .unwrap();
     assert_eq!(acct.state.profile_id, profile_id);
-    assert_ne!(acct.state.device_pubkey, admin_app_key);
-    assert!(!acct.state.can_manage_devices());
+    assert_ne!(acct.state.app_key_pubkey, admin_app_key);
+    assert!(!acct.state.can_admin_profile());
     assert_eq!(
         acct.state.authorization_state,
-        DeviceAuthorizationState::AwaitingApproval
+        AppKeyAuthorizationState::AwaitingApproval
     );
     // Link-only installs do not create local recovery material.
     assert!(!dir.path().join("recovery_phrase").exists());
 }
 
 #[test]
-fn inbound_device_link_requests_are_deduped_and_bounded() {
+fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let link_secret = acct.state.device_link_secret.clone();
-    let device = fresh_device_pubkey();
+    let link_secret = acct.state.app_key_link_secret.clone();
+    let device = fresh_app_key_pubkey();
 
     assert!(
         acct.state
-            .record_inbound_device_link_request(
+            .record_inbound_app_key_link_request(
                 profile_id,
                 &device,
                 Some(" phone ".to_string()),
@@ -560,16 +560,16 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
             )
             .unwrap()
     );
-    assert_eq!(acct.state.inbound_device_link_requests.len(), 1);
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
     assert_eq!(
-        acct.state.inbound_device_link_requests[0].label.as_deref(),
+        acct.state.inbound_app_key_link_requests[0].label.as_deref(),
         Some("phone")
     );
 
     assert!(
         !acct
             .state
-            .record_inbound_device_link_request(
+            .record_inbound_app_key_link_request(
                 profile_id,
                 &device,
                 Some("phone".to_string()),
@@ -580,7 +580,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     );
     assert!(
         acct.state
-            .record_inbound_device_link_request(
+            .record_inbound_app_key_link_request(
                 profile_id,
                 &device,
                 Some("tablet".to_string()),
@@ -589,24 +589,24 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
             )
             .unwrap()
     );
-    assert_eq!(acct.state.inbound_device_link_requests.len(), 1);
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
     assert_eq!(
-        acct.state.inbound_device_link_requests[0].label.as_deref(),
+        acct.state.inbound_app_key_link_requests[0].label.as_deref(),
         Some("tablet")
     );
 }
 
 #[test]
-fn inbound_device_link_request_requires_link_secret() {
+fn inbound_app_key_link_request_requires_link_secret() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let device = fresh_device_pubkey();
+    let device = fresh_app_key_pubkey();
 
     assert!(
         !acct
             .state
-            .record_inbound_device_link_request(
+            .record_inbound_app_key_link_request(
                 profile_id,
                 &device,
                 Some("phone".to_string()),
@@ -615,19 +615,19 @@ fn inbound_device_link_request_requires_link_secret() {
             )
             .unwrap()
     );
-    assert!(acct.state.inbound_device_link_requests.is_empty());
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
 }
 
 #[test]
-fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
+fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let old_secret = acct.state.device_link_secret.clone();
-    let device = fresh_device_pubkey();
+    let old_secret = acct.state.app_key_link_secret.clone();
+    let device = fresh_app_key_pubkey();
 
     acct.state
-        .record_inbound_device_link_request(
+        .record_inbound_app_key_link_request(
             profile_id,
             &device,
             Some("phone".to_string()),
@@ -636,16 +636,16 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
         )
         .unwrap();
 
-    assert!(acct.state.reset_device_link_secret());
-    assert_ne!(acct.state.device_link_secret, old_secret);
-    assert!(acct.state.inbound_device_link_requests.is_empty());
+    assert!(acct.state.reset_app_key_link_secret());
+    assert_ne!(acct.state.app_key_link_secret, old_secret);
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
 
     assert!(
         !acct
             .state
-            .record_inbound_device_link_request(
+            .record_inbound_app_key_link_request(
                 profile_id,
-                &fresh_device_pubkey(),
+                &fresh_app_key_pubkey(),
                 Some("old".to_string()),
                 &old_secret,
                 11,
@@ -672,7 +672,7 @@ fn link_with_invalid_pubkey_errors() {
 /// Helper: produce a valid secp256k1 x-only pubkey hex for tests.
 /// Random fake hex strings often fail NIP-44 because only ~half of
 /// 32-byte values lie on the curve.
-fn fresh_device_pubkey() -> String {
+fn fresh_app_key_pubkey() -> String {
     Keys::generate().public_key().to_hex()
 }
 
@@ -680,9 +680,9 @@ fn fresh_device_pubkey() -> String {
 fn approve_adds_device_to_roster() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let new_device = fresh_device_pubkey();
+    let new_device = fresh_app_key_pubkey();
     let snap = acct
-        .approve_device(&new_device, Some("phone".into()))
+        .approve_app_key(&new_device, Some("phone".into()))
         .unwrap();
     assert_eq!(snap.app_actors.len(), 2);
     assert!(snap.contains(&new_device));
@@ -700,10 +700,10 @@ fn approve_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
     // Use a real x-only pubkey hex; the test only ever fails on the authority
     // check before reaching crypto, so this is fine.
-    let admin_app_key = fresh_device_pubkey();
+    let admin_app_key = fresh_app_key_pubkey();
     let mut acct =
         Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
-    match acct.approve_device(&fresh_device_pubkey(), None) {
+    match acct.approve_app_key(&fresh_app_key_pubkey(), None) {
         Err(ProfileError::NoAdminAuthority) => {}
         _ => panic!("expected NoAdminAuthority"),
     }
@@ -713,10 +713,10 @@ fn approve_without_admin_authority_errors() {
 fn approving_already_authorized_device_errors() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let current = acct.state.device_pubkey.clone();
-    match acct.approve_device(&current, None) {
-        Err(ProfileError::AlreadyAuthorized) => {}
-        _ => panic!("expected AlreadyAuthorized"),
+    let current = acct.state.app_key_pubkey.clone();
+    match acct.approve_app_key(&current, None) {
+        Err(ProfileError::AppKeyAlreadyAuthorized) => {}
+        _ => panic!("expected AppKeyAlreadyAuthorized"),
     }
 }
 
@@ -724,9 +724,9 @@ fn approving_already_authorized_device_errors() {
 fn revoke_removes_device_from_roster() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let target = fresh_device_pubkey();
-    acct.approve_device(&target, None).unwrap();
-    let snap = acct.revoke_device(&target).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, None).unwrap();
+    let snap = acct.revoke_app_key(&target).unwrap();
     assert!(!snap.contains(&target));
 
     let projection = acct.state.profile_projection();
@@ -739,10 +739,10 @@ fn revoke_missing_device_errors() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     // Pubkey is well-formed but not in the roster.
-    let stranger = fresh_device_pubkey();
-    match acct.revoke_device(&stranger) {
-        Err(ProfileError::DeviceNotInRoster) => {}
-        _ => panic!("expected DeviceNotInRoster"),
+    let stranger = fresh_app_key_pubkey();
+    match acct.revoke_app_key(&stranger) {
+        Err(ProfileError::AppKeyNotInRoster) => {}
+        _ => panic!("expected AppKeyNotInRoster"),
     }
 }
 
@@ -750,9 +750,9 @@ fn revoke_missing_device_errors() {
 fn appoint_and_demote_admin_updates_roster_roles() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let current = acct.state.device_pubkey.clone();
-    let target = fresh_device_pubkey();
-    acct.approve_device(&target, None).unwrap();
+    let current = acct.state.app_key_pubkey.clone();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, None).unwrap();
 
     let snap = acct.appoint_admin(&target).unwrap();
     assert!(snap.is_admin(&target));
@@ -771,7 +771,7 @@ fn appoint_and_demote_admin_updates_roster_roles() {
 fn cannot_demote_last_admin() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let current = acct.state.device_pubkey.clone();
+    let current = acct.state.app_key_pubkey.clone();
     match acct.demote_admin(&current) {
         Err(ProfileError::CannotRemoveLastAdmin) => {}
         other => panic!("expected CannotRemoveLastAdmin, got {:?}", other.is_ok()),
@@ -788,7 +788,7 @@ fn create_seeds_dck_generation_one_with_self_wrap() {
     assert_eq!(snap.dck_generation, 1);
     // One wrap, for the current device.
     assert_eq!(snap.wrapped_dck.len(), 1);
-    assert!(snap.wrapped_dck.contains_key(&acct.state.device_pubkey));
+    assert!(snap.wrapped_dck.contains_key(&acct.state.app_key_pubkey));
 }
 
 #[test]
@@ -816,15 +816,15 @@ fn authorization_recomputes_from_profile_without_snapshot_adapter() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     acct.state.app_keys = None;
-    acct.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
+    acct.state.authorization_state = AppKeyAuthorizationState::AwaitingApproval;
 
     acct.state.recompute_authorization();
 
     assert_eq!(
         acct.state.authorization_state,
-        DeviceAuthorizationState::Authorized
+        AppKeyAuthorizationState::Authorized
     );
-    assert!(acct.state.can_manage_devices());
+    assert!(acct.state.can_admin_profile());
 }
 
 #[test]
@@ -832,9 +832,9 @@ fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
-    let new_device = fresh_device_pubkey();
+    let new_device = fresh_app_key_pubkey();
     let snap = acct
-        .approve_device(&new_device, Some("phone".into()))
+        .approve_app_key(&new_device, Some("phone".into()))
         .unwrap();
     assert!(snap.dck_generation > gen_before);
     // Every authorized device has a wrap.
@@ -848,16 +848,16 @@ fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
 fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let target = fresh_device_pubkey();
-    let own_device_pubkey = acct.state.device_pubkey.clone();
-    acct.approve_device(&target, None).unwrap();
+    let target = fresh_app_key_pubkey();
+    let own_app_key_pubkey = acct.state.app_key_pubkey.clone();
+    acct.approve_app_key(&target, None).unwrap();
     let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
-    let snap = acct.revoke_device(&target).unwrap();
+    let snap = acct.revoke_app_key(&target).unwrap();
     assert!(snap.dck_generation > gen_before);
     // Revoked device no longer has a wrap.
     assert!(!snap.wrapped_dck.contains_key(&target));
     // Remaining device(s) still have wraps.
-    assert!(snap.wrapped_dck.contains_key(&own_device_pubkey));
+    assert!(snap.wrapped_dck.contains_key(&own_app_key_pubkey));
 }
 
 #[test]
@@ -874,8 +874,8 @@ fn dck_changes_after_rotation() {
 fn rotate_dck_preserves_roster() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
-    let new_device = fresh_device_pubkey();
-    acct.approve_device(&new_device, None).unwrap();
+    let new_device = fresh_app_key_pubkey();
+    acct.approve_app_key(&new_device, None).unwrap();
     let devices_before: Vec<_> = acct
         .state
         .app_keys
@@ -921,7 +921,7 @@ fn rotate_dck_preserves_roster() {
 #[test]
 fn rotate_dck_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
-    let admin_app_key = fresh_device_pubkey();
+    let admin_app_key = fresh_app_key_pubkey();
     let mut acct =
         Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.rotate_dck() {
@@ -933,7 +933,7 @@ fn rotate_dck_without_admin_authority_errors() {
 #[test]
 fn current_dck_without_snapshot_errors() {
     let dir = tempdir().unwrap();
-    let admin_app_key = fresh_device_pubkey();
+    let admin_app_key = fresh_app_key_pubkey();
     let acct =
         Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.current_dck() {
@@ -959,7 +959,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
 
     // Owner approves the device's pubkey.
     owner_acct
-        .approve_device(&linked_pubkey, Some("phone".into()))
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
         .unwrap();
     let owner_dck = owner_acct.current_dck().unwrap();
 
@@ -969,14 +969,14 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     let snapshot_for_linked = owner_acct.state.app_keys.clone();
     let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
-        device_pubkey: linked_pubkey.clone(),
+        app_key_pubkey: linked_pubkey.clone(),
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
-        device_link_secret: "linked-secret".into(),
-        authorization_state: DeviceAuthorizationState::Authorized,
-        device_label: Some("phone".into()),
+        app_key_link_secret: "linked-secret".into(),
+        authorization_state: AppKeyAuthorizationState::Authorized,
+        app_key_label: Some("phone".into()),
         app_keys: snapshot_for_linked,
-        outbound_device_link_request: None,
-        inbound_device_link_requests: Vec::new(),
+        outbound_app_key_link_request: None,
+        inbound_app_key_link_requests: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,
@@ -1002,27 +1002,27 @@ fn revoked_device_cannot_decrypt_new_dck() {
     linked_device.save().unwrap();
     let linked_pubkey = linked_device.pubkey_hex();
 
-    owner_acct.approve_device(&linked_pubkey, None).unwrap();
-    owner_acct.revoke_device(&linked_pubkey).unwrap();
+    owner_acct.approve_app_key(&linked_pubkey, None).unwrap();
+    owner_acct.revoke_app_key(&linked_pubkey).unwrap();
 
     let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
-        device_pubkey: linked_pubkey,
+        app_key_pubkey: linked_pubkey,
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
-        device_link_secret: "linked-secret".into(),
-        authorization_state: DeviceAuthorizationState::Revoked,
-        device_label: None,
+        app_key_link_secret: "linked-secret".into(),
+        authorization_state: AppKeyAuthorizationState::Revoked,
+        app_key_label: None,
         app_keys: owner_acct.state.app_keys.clone(),
-        outbound_device_link_request: None,
-        inbound_device_link_requests: Vec::new(),
+        outbound_app_key_link_request: None,
+        inbound_app_key_link_requests: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,
         app_key: linked_device,
     };
     match linked_acct.current_dck() {
-        Err(ProfileError::NoWrapForThisDevice) => {}
-        other => panic!("expected NoWrapForThisDevice, got {:?}", other.is_ok()),
+        Err(ProfileError::NoWrapForThisAppKey) => {}
+        other => panic!("expected NoWrapForThisAppKey, got {:?}", other.is_ok()),
     }
 }
 
@@ -1036,7 +1036,7 @@ fn external_revocation_marks_state_revoked() {
         acct.state.profile_id,
         iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
         IrisProfileRosterOp::TombstoneFacet {
-            pubkey: acct.state.device_pubkey.clone(),
+            pubkey: acct.state.app_key_pubkey.clone(),
             reason: Some("external revocation".to_owned()),
         },
         next_profile_timestamp(&acct.state),
@@ -1048,7 +1048,7 @@ fn external_revocation_marks_state_revoked() {
 
     assert_eq!(
         acct.state.authorization_state,
-        DeviceAuthorizationState::Revoked
+        AppKeyAuthorizationState::Revoked
     );
 }
 
@@ -1065,7 +1065,7 @@ fn load_round_trips_account_state() {
 #[test]
 fn load_for_linked_device_uses_only_app_key() {
     let dir = tempdir().unwrap();
-    let admin_app_key = fresh_device_pubkey();
+    let admin_app_key = fresh_app_key_pubkey();
     let linked =
         Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     let state = linked.state.clone();

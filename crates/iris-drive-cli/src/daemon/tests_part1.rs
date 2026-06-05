@@ -81,14 +81,14 @@ fn stale_root_apply_followup_detects_superseded_device_root() {
     let mut config = AppConfig {
         profile: Some(ProfileState {
             profile_id: iris_drive_core::IrisProfileId::new_v4(),
-            device_pubkey: "device-a".to_string(),
+            app_key_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),
-            device_link_secret: "link-secret".to_string(),
-            authorization_state: iris_drive_core::DeviceAuthorizationState::Authorized,
-            device_label: None,
+            app_key_link_secret: "link-secret".to_string(),
+            authorization_state: iris_drive_core::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
             app_keys: None,
-            outbound_device_link_request: None,
-            inbound_device_link_requests: Vec::new(),
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
         }),
         drives: vec![drive],
         ..AppConfig::default()

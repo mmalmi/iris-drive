@@ -83,19 +83,19 @@ impl SyncCluster {
         }
 
         let init = run_json(windows_cfg.path(), &["init", "--label", "windows-peer"]);
-        let owner_invite = init["device_link_invite"]["url"].as_str().unwrap();
+        let owner_invite = init["app_key_link_invite"]["url"].as_str().unwrap();
         let linked = run_json(
             ubuntu_cfg.path(),
             &["link", owner_invite, "--label", "linux-peer"],
         );
-        let request = linked["device_link_request"]["url"].as_str().unwrap();
+        let request = linked["app_key_link_request"]["url"].as_str().unwrap();
         run_json(windows_cfg.path(), &["approve", request]);
         if let Some(config) = macos_cfg.as_ref() {
             let linked = run_json(
                 config.path(),
                 &["link", owner_invite, "--label", "macos-peer"],
             );
-            let request = linked["device_link_request"]["url"].as_str().unwrap();
+            let request = linked["app_key_link_request"]["url"].as_str().unwrap();
             run_json(windows_cfg.path(), &["approve", request]);
         }
 

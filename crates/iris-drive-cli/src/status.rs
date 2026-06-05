@@ -104,7 +104,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "current_app_key_npub": config.profile.as_ref().map(|s| pubkey_npub(&s.device_pubkey)),
+            "current_app_key_npub": config.profile.as_ref().map(|s| pubkey_npub(&s.app_key_pubkey)),
             "profile": profile_block,
             "summary": status_summary(
                 initialized,
@@ -317,16 +317,16 @@ pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
             }),
         );
         output.insert(
-            "device_link_request".to_string(),
-            device_link_request_json(&state),
+            "app_key_link_request".to_string(),
+            app_key_link_request_json(&state),
         );
         output.insert(
-            "device_link_invite".to_string(),
-            device_link_invite_json(&state),
+            "app_key_link_invite".to_string(),
+            app_key_link_invite_json(&state),
         );
         output.insert(
-            "inbound_device_link_requests".to_string(),
-            json!(inbound_device_link_requests_json(&state)),
+            "inbound_app_key_link_requests".to_string(),
+            json!(inbound_app_key_link_requests_json(&state)),
         );
         Value::Object(output)
     })
@@ -339,7 +339,7 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
         .and_then(|state| {
             config
                 .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.device_roots.get(&state.device_pubkey))
+                .and_then(|drive| drive.device_roots.get(&state.app_key_pubkey))
                 .map(|root| root.root_cid.clone())
         })
         .or_else(|| {
@@ -539,8 +539,8 @@ fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, 
         .unwrap_or(false);
     let rows = device_roster_rows(
         &snapshot.app_actors,
-        &account.device_pubkey,
-        account.can_manage_devices(),
+        &account.app_key_pubkey,
+        account.can_admin_profile(),
         daemon_running,
         &connectivity,
     );

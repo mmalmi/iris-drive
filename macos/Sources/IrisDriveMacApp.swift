@@ -398,8 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLog("Iris Drive drive.iris.to link copied")
     }
 
-    @objc func copyOwnerKey() {
-        copyText(IrisDriveStatus.shared.ownerNpub, statusMessage: "Owner key copied")
+    @objc func copyAppKey() {
+        copyText(IrisDriveStatus.shared.currentAppKeyNpub, statusMessage: "AppKey copied")
     }
 
     @objc func copyDeviceKey() {
@@ -579,13 +579,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    func linkDevice(owner: String) {
-        let owner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !owner.isEmpty else {
-            updateStatus("Owner key required")
+    func linkDevice(target: String) {
+        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
+            updateStatus("IrisProfile invite or admin AppKey required")
             return
         }
-        let args = setupArguments(command: "link", label: "", extra: [owner, "--force"])
+        let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
         finishSetup(arguments: args)
     }
 
@@ -661,7 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         dispatchNativeAction(
-            ["type": "revoke_device", "device_pubkey": device],
+            ["type": "revoke_device", "app_key_pubkey": device],
             progress: "Removing device",
             success: "Device removed",
             restartSyncAfterSuccess: true
@@ -678,7 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dispatchNativeAction(
             [
                 "type": makeAdmin ? "appoint_admin" : "demote_admin",
-                "device_pubkey": device,
+                "app_key_pubkey": device,
             ],
             progress: makeAdmin ? "Making admin" : "Removing admin",
             success: makeAdmin ? "Device made admin" : "Admin removed",
@@ -1483,7 +1483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let ui = state["ui"] as? [String: Any] ?? [:]
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
-            let account = ui["account"] as? [String: Any]
+            let account = ui["profile"] as? [String: Any]
             let paths = ui["paths"] as? [String: Any] ?? [:]
             status.initialized = account != nil
             status.configDirectory =
@@ -1492,23 +1492,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.blocksDirectory = paths["blocks_dir"] as? String
 
             if let account {
-                status.ownerNpub = account["owner_pubkey"] as? String
-                status.deviceNpub = account["device_pubkey"] as? String
-                status.hasOwnerSigningAuthority =
-                    account["has_owner_signing_authority"] as? Bool ?? false
+                status.currentAppKeyNpub = account["current_app_key_npub"] as? String
+                status.deviceNpub = account["current_app_key_npub"] as? String
+                status.canAdminProfile =
+                    account["can_admin_profile"] as? Bool ?? false
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool ?? false
-                let invite = account["device_link_invite"] as? String ?? ""
+                let invite = account["app_key_link_invite"] as? String ?? ""
                 status.deviceLinkInviteURL = invite.isEmpty ? nil : invite
                 status.inboundDeviceLinkRequests =
-                    (account["inbound_device_link_requests"] as? [[String: Any]] ?? [])
+                    (account["inbound_app_key_link_requests"] as? [[String: Any]] ?? [])
                     .map(IrisDriveDeviceLinkRequestStatus.init(json:))
             } else {
-                status.ownerNpub = nil
+                status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
                 status.deviceLinkInviteURL = nil
                 status.inboundDeviceLinkRequests = []
-                status.hasOwnerSigningAuthority = false
+                status.canAdminProfile = false
                 status.canExportRecoveryPhrase = false
             }
 
@@ -1623,25 +1623,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.initialized = json["initialized"] as? Bool ?? false
             status.configDirectory = json["config_dir"] as? String
 
-            if let account = json["account"] as? [String: Any] {
-                status.ownerNpub = account["owner_npub"] as? String
-                status.deviceNpub = account["device_npub"] as? String
-                status.hasOwnerSigningAuthority =
-                    account["has_owner_signing_authority"] as? Bool ?? false
+            if let account = json["profile"] as? [String: Any] {
+                status.currentAppKeyNpub = account["current_app_key_npub"] as? String
+                status.deviceNpub = account["current_app_key_npub"] as? String
+                status.canAdminProfile =
+                    account["can_admin_profile"] as? Bool ?? false
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool
-                    ?? (status.ownerNpub == status.deviceNpub && status.ownerNpub != nil)
+                    ?? (status.currentAppKeyNpub == status.deviceNpub && status.currentAppKeyNpub != nil)
                 status.deviceLinkInviteURL =
-                    (account["device_link_invite"] as? [String: Any])?["url"] as? String
+                    account["app_key_link_invite"] as? String
+                    ?? (account["app_key_link_invite"] as? [String: Any])?["url"] as? String
                 status.inboundDeviceLinkRequests =
-                    (account["inbound_device_link_requests"] as? [[String: Any]] ?? [])
+                    (account["inbound_app_key_link_requests"] as? [[String: Any]] ?? [])
                     .map(IrisDriveDeviceLinkRequestStatus.init(json:))
             } else {
-                status.ownerNpub = nil
+                status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
                 status.deviceLinkInviteURL = nil
                 status.inboundDeviceLinkRequests = []
-                status.hasOwnerSigningAuthority = false
+                status.canAdminProfile = false
                 status.canExportRecoveryPhrase = false
             }
 

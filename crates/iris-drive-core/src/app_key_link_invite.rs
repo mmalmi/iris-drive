@@ -11,39 +11,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::IrisProfileId;
 
-pub const DEVICE_LINK_INVITE_PREFIX: &str = "iris-drive://invite/";
-const DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
-pub const DEVICE_LINK_INVITE_WEB_PREFIX: &str = "https://drive.iris.to/invite/";
-pub const DEVICE_LINK_INVITE_VERSION: u8 = 1;
+pub const APP_KEY_LINK_INVITE_PREFIX: &str = "iris-drive://invite/";
+const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
+pub const APP_KEY_LINK_INVITE_WEB_PREFIX: &str = "https://drive.iris.to/invite/";
+pub const APP_KEY_LINK_INVITE_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceLinkInvitePayload {
+struct AppKeyLinkInvitePayload {
     v: u8,
     #[serde(alias = "profile", alias = "profile_id")]
     profile_id: IrisProfileId,
     #[serde(alias = "admin")]
-    admin_device_npub: String,
+    admin_app_key_npub: String,
     #[serde(alias = "secret", alias = "link_secret")]
     link_secret: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedDeviceLinkInvite {
+pub struct ParsedAppKeyLinkInvite {
     pub profile_id: Option<IrisProfileId>,
-    pub admin_device_hex: String,
+    pub admin_app_key_hex: String,
     pub link_secret: String,
 }
 
-pub fn encode_device_link_invite(
+pub fn encode_app_key_link_invite(
     profile_id: IrisProfileId,
-    admin_device_hex: &str,
+    admin_app_key_hex: &str,
     link_secret: &str,
 ) -> Result<String> {
-    let payload = DeviceLinkInvitePayload {
-        v: DEVICE_LINK_INVITE_VERSION,
+    let payload = AppKeyLinkInvitePayload {
+        v: APP_KEY_LINK_INVITE_VERSION,
         profile_id,
-        admin_device_npub: pubkey_to_npub(admin_device_hex)
+        admin_app_key_npub: pubkey_to_npub(admin_app_key_hex)
             .context("encoding invite admin AppKey")?,
         link_secret: link_secret.trim().to_string(),
     };
@@ -52,12 +52,12 @@ pub fn encode_device_link_invite(
     }
     let bytes = serde_json::to_vec(&payload).context("encoding device link invite JSON")?;
     Ok(format!(
-        "{DEVICE_LINK_INVITE_PREFIX}{}",
+        "{APP_KEY_LINK_INVITE_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(bytes)
     ))
 }
 
-pub fn parse_device_link_invite(input: &str) -> Result<Option<ParsedDeviceLinkInvite>> {
+pub fn parse_app_key_link_invite(input: &str) -> Result<Option<ParsedAppKeyLinkInvite>> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -74,12 +74,12 @@ pub fn parse_device_link_invite(input: &str) -> Result<Option<ParsedDeviceLinkIn
         let decoded = URL_SAFE_NO_PAD
             .decode(payload)
             .context("decoding device link invite payload")?;
-        let invite: DeviceLinkInvitePayload =
+        let invite: AppKeyLinkInvitePayload =
             serde_json::from_slice(&decoded).context("parsing device link invite payload")?;
         return normalize_invite_payload(&invite).map(Some);
     }
     if trimmed.starts_with('{') {
-        let invite: DeviceLinkInvitePayload =
+        let invite: AppKeyLinkInvitePayload =
             serde_json::from_str(trimmed).context("parsing device link invite JSON")?;
         return normalize_invite_payload(&invite).map(Some);
     }
@@ -87,32 +87,36 @@ pub fn parse_device_link_invite(input: &str) -> Result<Option<ParsedDeviceLinkIn
 }
 
 #[must_use]
-pub fn device_link_invite_web_url(invite_url: &str) -> String {
-    invite_url.replacen(DEVICE_LINK_INVITE_PREFIX, DEVICE_LINK_INVITE_WEB_PREFIX, 1)
+pub fn app_key_link_invite_web_url(invite_url: &str) -> String {
+    invite_url.replacen(
+        APP_KEY_LINK_INVITE_PREFIX,
+        APP_KEY_LINK_INVITE_WEB_PREFIX,
+        1,
+    )
 }
 
 fn canonical_invite_payload(input: &str) -> Option<&str> {
     input
-        .strip_prefix(DEVICE_LINK_INVITE_PREFIX)
-        .or_else(|| input.strip_prefix(DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX))
-        .or_else(|| input.strip_prefix(DEVICE_LINK_INVITE_WEB_PREFIX))
+        .strip_prefix(APP_KEY_LINK_INVITE_PREFIX)
+        .or_else(|| input.strip_prefix(APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX))
+        .or_else(|| input.strip_prefix(APP_KEY_LINK_INVITE_WEB_PREFIX))
 }
 
-fn normalize_invite_payload(invite: &DeviceLinkInvitePayload) -> Result<ParsedDeviceLinkInvite> {
-    if invite.v != DEVICE_LINK_INVITE_VERSION {
+fn normalize_invite_payload(invite: &AppKeyLinkInvitePayload) -> Result<ParsedAppKeyLinkInvite> {
+    if invite.v != APP_KEY_LINK_INVITE_VERSION {
         return Err(anyhow!(
             "unsupported device link invite version {}; expected {}",
             invite.v,
-            DEVICE_LINK_INVITE_VERSION
+            APP_KEY_LINK_INVITE_VERSION
         ));
     }
     let link_secret = invite.link_secret.trim().to_string();
     if link_secret.is_empty() {
         return Err(anyhow!("device link invite is missing secret"));
     }
-    Ok(ParsedDeviceLinkInvite {
+    Ok(ParsedAppKeyLinkInvite {
         profile_id: Some(invite.profile_id),
-        admin_device_hex: normalize_pubkey_hex(&invite.admin_device_npub)
+        admin_app_key_hex: normalize_pubkey_hex(&invite.admin_app_key_npub)
             .context("parsing invite admin AppKey")?,
         link_secret,
     })
@@ -150,19 +154,19 @@ mod tests {
     use nostr_sdk::Keys;
 
     #[test]
-    fn canonical_invite_round_trips_profile_admin_and_secret_without_owner_pubkey() {
+    fn canonical_invite_round_trips_profile_admin_and_secret() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
 
-        let url = encode_device_link_invite(profile_id, &admin.to_hex(), " join-secret ")
+        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), " join-secret ")
             .expect("encode invite");
-        let parsed = parse_device_link_invite(&url)
+        let parsed = parse_app_key_link_invite(&url)
             .expect("parse invite")
             .expect("invite");
 
-        assert!(url.starts_with(DEVICE_LINK_INVITE_PREFIX));
+        assert!(url.starts_with(APP_KEY_LINK_INVITE_PREFIX));
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.admin_device_hex, admin.to_hex());
+        assert_eq!(parsed.admin_app_key_hex, admin.to_hex());
         assert_eq!(parsed.link_secret, "join-secret");
         assert!(!url.contains("owner"));
         assert!(!url.contains("local-owner"));
@@ -173,16 +177,16 @@ mod tests {
     fn single_slash_custom_scheme_invite_imports() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
-        let url = encode_device_link_invite(profile_id, &admin.to_hex(), "join-secret")
+        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), "join-secret")
             .expect("encode invite");
         let single_slash = url.replacen("iris-drive://invite/", "iris-drive:/invite/", 1);
 
-        let parsed = parse_device_link_invite(&single_slash)
+        let parsed = parse_app_key_link_invite(&single_slash)
             .expect("parse invite")
             .expect("invite");
 
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.admin_device_hex, admin.to_hex());
+        assert_eq!(parsed.admin_app_key_hex, admin.to_hex());
         assert_eq!(parsed.link_secret, "join-secret");
     }
 
@@ -193,7 +197,7 @@ mod tests {
         let url = format!("iris-drive://link-device?admin={admin_npub}&secret=s");
 
         assert!(
-            parse_device_link_invite(&url)
+            parse_app_key_link_invite(&url)
                 .expect("parse invite")
                 .is_none()
         );

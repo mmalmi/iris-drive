@@ -99,13 +99,13 @@ pub(crate) fn cmd_link(
     force: bool,
     label: Option<String>,
 ) -> Result<()> {
-    cmd_link_with_admin_device(config_dir, invite, None, force, label)
+    cmd_link_with_admin_app_key(config_dir, invite, None, force, label)
 }
 
-pub(crate) fn cmd_link_with_admin_device(
+pub(crate) fn cmd_link_with_admin_app_key(
     config_dir: &std::path::Path,
     invite_or_profile: &str,
-    admin_device: Option<&str>,
+    admin_app_key: Option<&str>,
     force: bool,
     label: Option<String>,
 ) -> Result<()> {
@@ -115,22 +115,22 @@ pub(crate) fn cmd_link_with_admin_device(
             config_dir.display()
         ));
     }
-    let target = resolve_device_link_target_with_admin(invite_or_profile, admin_device)?;
+    let target = resolve_app_key_link_target_with_admin(invite_or_profile, admin_app_key)?;
     let mut profile = Profile::link_to_profile(
         config_dir,
         target.profile_id,
         target.admin_app_key_hex.clone(),
         label,
     )
-    .context("linking device")?;
+    .context("linking AppKey")?;
     let link_secret = if target.link_secret.trim().is_empty() {
-        profile.state.device_link_secret.clone()
+        profile.state.app_key_link_secret.clone()
     } else {
         target.link_secret
     };
     profile
         .state
-        .queue_outbound_device_link_request(
+        .queue_outbound_app_key_link_request(
             target.admin_app_key_hex,
             &link_secret,
             unix_now_seconds(),
@@ -159,12 +159,12 @@ pub(crate) fn finish_profile_init(
         json!(config_dir.display().to_string()),
     );
     output.insert(
-        "device_link_request".to_string(),
-        device_link_request_json(&profile.state),
+        "app_key_link_request".to_string(),
+        app_key_link_request_json(&profile.state),
     );
     output.insert(
-        "device_link_invite".to_string(),
-        device_link_invite_json(&profile.state),
+        "app_key_link_invite".to_string(),
+        app_key_link_invite_json(&profile.state),
     );
     output.insert(
         "drives".to_string(),
@@ -210,13 +210,13 @@ pub(crate) fn cmd_approve(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let (device_hex, label) = resolve_device_approval_input(device, state.profile_id, label)
+    let (app_key_hex, label) = resolve_app_key_approval_input(device, state.profile_id, label)
         .context("parsing AppKey approval request")?;
-    let approved_app_key_npub = pubkey_npub(&device_hex);
+    let approved_app_key_npub = pubkey_npub(&app_key_hex);
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = profile
-        .approve_device(&device_hex, label)
-        .context("approving device")?;
+        .approve_app_key(&app_key_hex, label)
+        .context("approving AppKey")?;
     let device_count = snap.app_actors.len();
     config.profile = Some(profile.state.clone());
     config.save(config_path_in(config_dir))?;
@@ -236,23 +236,23 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
         .profile
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    if !state.can_manage_devices() {
+    if !state.can_admin_profile() {
         return Err(anyhow::anyhow!(
             "this AppKey is not an admin - only admin AppKeys can reject AppKey-link requests"
         ));
     }
-    let (device_hex, _) = resolve_device_approval_input(device, state.profile_id, None)
+    let (app_key_hex, _) = resolve_app_key_approval_input(device, state.profile_id, None)
         .context("parsing AppKey rejection request")?;
     let rejected = state
-        .reject_inbound_device_link_request(&device_hex)
-        .context("rejecting device request")?;
+        .reject_inbound_app_key_link_request(&app_key_hex)
+        .context("rejecting AppKey request")?;
     config.save(config_path_in(config_dir))?;
     println!(
         "{}",
         json!({
             "rejected": rejected,
-            "rejected_app_key_npub": pubkey_npub(&device_hex),
-            "inbound_device_link_requests": inbound_device_link_requests_json(
+            "rejected_app_key_npub": pubkey_npub(&app_key_hex),
+            "inbound_app_key_link_requests": inbound_app_key_link_requests_json(
                 config.profile.as_ref().expect("profile still present")
             ),
         })
@@ -261,18 +261,18 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
 }
 
 pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<()> {
-    let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
+    let app_key_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    if state.device_pubkey == device_hex {
+    if state.app_key_pubkey == app_key_hex {
         return Err(anyhow::anyhow!("cannot revoke this AppKey from itself"));
     }
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = profile
-        .revoke_device(&device_hex)
+        .revoke_app_key(&app_key_hex)
         .context("revoking AppKey")?;
     let device_count = snap.app_actors.len();
     let dck_generation = snap.dck_generation;
@@ -281,7 +281,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     println!(
         "{}",
         json!({
-            "revoked_app_key_npub": pubkey_npub(&device_hex),
+            "revoked_app_key_npub": pubkey_npub(&app_key_hex),
             "roster_size": device_count,
             "dck_generation": dck_generation,
         })
@@ -302,7 +302,7 @@ fn set_device_admin_role(
     device: &str,
     make_admin: bool,
 ) -> Result<()> {
-    let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
+    let app_key_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
@@ -311,15 +311,15 @@ fn set_device_admin_role(
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = if make_admin {
         profile
-            .appoint_admin(&device_hex)
+            .appoint_admin(&app_key_hex)
             .context("promoting AppKey to admin")?
     } else {
         profile
-            .demote_admin(&device_hex)
+            .demote_admin(&app_key_hex)
             .context("demoting AppKey admin")?
     };
     let role = snap
-        .app_actor(&device_hex)
+        .app_actor(&app_key_hex)
         .map_or(iris_drive_core::AppActorRole::Member, |actor| actor.role);
     let dck_generation = snap.dck_generation;
     config.profile = Some(profile.state.clone());
@@ -327,7 +327,7 @@ fn set_device_admin_role(
     println!(
         "{}",
         json!({
-            "app_key_npub": pubkey_npub(&device_hex),
+            "app_key_npub": pubkey_npub(&app_key_hex),
             "role": app_actor_role_label(role),
             "dck_generation": dck_generation,
         })
@@ -343,12 +343,12 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
     let snap = state.app_keys.as_ref();
     let mut output = profile_identity_json_map(&state);
     output.insert(
-        "device_link_invite".to_string(),
-        device_link_invite_json(&state),
+        "app_key_link_invite".to_string(),
+        app_key_link_invite_json(&state),
     );
     output.insert(
-        "inbound_device_link_requests".to_string(),
-        json!(inbound_device_link_requests_json(&state)),
+        "inbound_app_key_link_requests".to_string(),
+        json!(inbound_app_key_link_requests_json(&state)),
     );
     output.insert(
         "app_keys".to_string(),
@@ -362,7 +362,7 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
                     "added_at": actor.added_at,
                     "label": actor.label,
                     "role": app_actor_role_label(actor.role),
-                    "is_current_app_key": actor.pubkey == state.device_pubkey,
+                    "is_current_app_key": actor.pubkey == state.app_key_pubkey,
                     "has_dck_wrap": s.wrapped_dck.contains_key(&actor.pubkey),
                 })).collect::<Vec<_>>(),
             })
@@ -441,16 +441,16 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut output = profile_identity_json_map(&state);
     output.insert(
-        "device_link_request".to_string(),
-        device_link_request_json(&state),
+        "app_key_link_request".to_string(),
+        app_key_link_request_json(&state),
     );
     output.insert(
-        "device_link_invite".to_string(),
-        device_link_invite_json(&state),
+        "app_key_link_invite".to_string(),
+        app_key_link_invite_json(&state),
     );
     output.insert(
-        "inbound_device_link_requests".to_string(),
-        json!(inbound_device_link_requests_json(&state)),
+        "inbound_app_key_link_requests".to_string(),
+        json!(inbound_app_key_link_requests_json(&state)),
     );
     println!("{}", Value::Object(output));
     Ok(())
@@ -464,8 +464,7 @@ pub(crate) fn load_profile_state(config_dir: &std::path::Path) -> Result<Profile
 
 pub(crate) fn already_initialized(config_dir: &std::path::Path) -> bool {
     // An install is "initialized" when both an AppKey and a non-empty
-    // config (with profile state) exist. Owner key may or may not be present
-    // depending on flow (link installs don't have one).
+    // config with profile state exist.
     key_path_in(config_dir).exists()
         && config_path_in(config_dir).exists()
         && AppConfig::load_or_default(config_path_in(config_dir))
@@ -545,17 +544,17 @@ pub(crate) struct SentDeviceLinkRequest {
     attempts: u8,
 }
 
-fn device_link_request_send_due(
+fn app_key_link_request_send_due(
     sent: Option<SentDeviceLinkRequest>,
     now: std::time::Instant,
 ) -> bool {
     let Some(sent) = sent else {
         return true;
     };
-    now.duration_since(sent.last_sent) >= device_link_request_retry_interval(sent.attempts)
+    now.duration_since(sent.last_sent) >= app_key_link_request_retry_interval(sent.attempts)
 }
 
-fn device_link_request_retry_interval(attempts: u8) -> std::time::Duration {
+fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
         std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
@@ -563,7 +562,7 @@ fn device_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     }
 }
 
-pub(crate) async fn send_pending_device_link_request(
+pub(crate) async fn send_pending_app_key_link_request(
     config_dir: &Path,
     client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
@@ -573,27 +572,27 @@ pub(crate) async fn send_pending_device_link_request(
     let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
-    if state.can_manage_devices()
-        || state.authorization_state != iris_drive_core::DeviceAuthorizationState::AwaitingApproval
+    if state.can_admin_profile()
+        || state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
     {
         return Ok(None);
     }
-    let Some(pending) = state.outbound_device_link_request.as_ref() else {
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
 
-    let admin_npub = pubkey_npub(&pending.admin_device_pubkey);
+    let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let fingerprint = format!(
         "{}:{}:{}",
-        pending.admin_device_pubkey, state.device_pubkey, pending.requested_at
+        pending.admin_app_key_pubkey, state.app_key_pubkey, pending.requested_at
     );
     let now = std::time::Instant::now();
-    if !device_link_request_send_due(sent_cache.get(&fingerprint).copied(), now) {
+    if !app_key_link_request_send_due(sent_cache.get(&fingerprint).copied(), now) {
         return Ok(None);
     }
 
     let Some(frame) =
-        iris_drive_core::device_link_transport::pending_device_link_request_frame(state)
+        iris_drive_core::device_link_transport::pending_app_key_link_request_frame(state)
     else {
         return Ok(None);
     };
@@ -601,7 +600,7 @@ pub(crate) async fn send_pending_device_link_request(
     let device =
         iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let relay_event_id =
-        iris_drive_core::relay_sync::publish_device_link_request(client, device.keys(), &frame)
+        iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame)
             .await?;
     let mut fips_sent = false;
     let mut fips_error = None;
@@ -631,10 +630,10 @@ pub(crate) async fn send_pending_device_link_request(
     );
 
     Ok(Some(json!({
-        "event": "device_link_request_sent",
+        "event": "app_key_link_request_sent",
         "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
-        "admin_device_npub": admin_npub,
-        "device_npub": pubkey_npub(&state.device_pubkey),
+        "admin_app_key_npub": admin_npub,
+        "device_npub": pubkey_npub(&state.app_key_pubkey),
         "requested_at": pending.requested_at,
         "sent_bytes": bytes.len(),
         "relay_event_id": relay_event_id.to_hex(),
@@ -657,13 +656,13 @@ pub(crate) async fn send_authorized_device_link_rosters(
     let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
-    if !state.can_manage_devices() {
+    if !state.can_admin_profile() {
         return Ok(None);
     }
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Ok(None);
     };
-    if !app_keys.contains(&state.device_pubkey) {
+    if !app_keys.contains(&state.app_key_pubkey) {
         return Ok(None);
     }
 
@@ -693,7 +692,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
     let bytes = serde_json::to_vec(&frame)?;
     let mut recipients = Vec::new();
     for recipient in due_devices {
-        let recipient_npub = pubkey_npub(&recipient.device_pubkey);
+        let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
         sync.send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
             .await?;
         sent_cache.insert(recipient.roster_fingerprint, now);
@@ -718,7 +717,7 @@ pub(crate) async fn handle_device_link_app_message(
 ) -> Result<bool> {
     match message.topic.as_str() {
         DEVICE_LINK_REQUEST_APP_TOPIC => {
-            handle_device_link_request_app_message(config_dir, message).await
+            handle_app_key_link_request_app_message(config_dir, message).await
         }
         DEVICE_LINK_ROSTER_APP_TOPIC => {
             handle_device_link_roster_app_message(config_dir, message, fips_blocks).await
@@ -730,7 +729,7 @@ pub(crate) async fn handle_device_link_app_message(
     }
 }
 
-async fn handle_device_link_request_app_message(
+async fn handle_app_key_link_request_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool> {
@@ -742,10 +741,10 @@ async fn handle_device_link_request_app_message(
             frame.schema
         ));
     }
-    let device_hex =
-        normalize_pubkey(&frame.device_pubkey).context("parsing link request device")?;
+    let app_key_hex =
+        normalize_pubkey(&frame.app_key_pubkey).context("parsing link request device")?;
     let link_secret = if frame.link_secret.trim().is_empty() {
-        decode_device_approval_request(&frame.url)?
+        decode_app_key_approval_request(&frame.url)?
             .map(|request| request.link_secret)
             .unwrap_or_default()
     } else {
@@ -758,9 +757,9 @@ async fn handle_device_link_request_app_message(
         return Ok(true);
     };
     let changed = state
-        .record_inbound_device_link_request(
+        .record_inbound_app_key_link_request(
             frame.profile_id,
-            &device_hex,
+            &app_key_hex,
             frame.label,
             &link_secret,
             frame.requested_at,
@@ -771,10 +770,10 @@ async fn handle_device_link_request_app_message(
         println!(
             "{}",
             json!({
-                "event": "device_link_request_received",
+                "event": "app_key_link_request_received",
                 "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
                 "peer": message.peer_id,
-                "device_npub": pubkey_npub(&device_hex),
+                "device_npub": pubkey_npub(&app_key_hex),
                 "requested_at": frame.requested_at,
             })
         );
@@ -796,8 +795,8 @@ async fn handle_device_link_roster_app_message(
             frame.schema
         ));
     }
-    let admin_device_hex =
-        normalize_pubkey(&frame.admin_device_pubkey).context("parsing roster admin AppKey")?;
+    let admin_app_key_hex =
+        normalize_pubkey(&frame.admin_app_key_pubkey).context("parsing roster admin AppKey")?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
@@ -805,17 +804,17 @@ async fn handle_device_link_roster_app_message(
     let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
-    if state.can_manage_devices() {
+    if state.can_admin_profile() {
         return Ok(true);
     }
-    if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
+    if sender_hex.as_deref() != Some(admin_app_key_hex.as_str()) {
         return Ok(true);
     }
 
     let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
         &mut config,
         &frame,
-        &admin_device_hex,
+        &admin_app_key_hex,
     )
     .context("applying signed profile roster ops")?;
     let accepted = match outcome {
@@ -832,7 +831,7 @@ async fn handle_device_link_roster_app_message(
     );
     let state = config.profile.as_ref().expect("profile still present");
     let ack_frame = if accepted {
-        device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
+        device_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {
         None
     };
@@ -845,7 +844,7 @@ async fn handle_device_link_roster_app_message(
                 "event": "device_link_roster_received",
                 "topic": DEVICE_LINK_ROSTER_APP_TOPIC,
                 "peer": message.peer_id,
-                "admin_device_npub": pubkey_npub(&admin_device_hex),
+                "admin_app_key_npub": pubkey_npub(&admin_app_key_hex),
                 "authorization_state": authorization_state,
                 "apply_decision": format!("{outcome:?}").to_ascii_lowercase(),
             })
@@ -870,10 +869,10 @@ fn handle_device_link_roster_ack_app_message(
             frame.schema
         ));
     }
-    let admin_device_hex =
-        normalize_pubkey(&frame.admin_device_pubkey).context("parsing ack admin AppKey")?;
-    let device_hex = normalize_pubkey(&frame.device_pubkey).context("parsing ack device")?;
-    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
+    let admin_app_key_hex =
+        normalize_pubkey(&frame.admin_app_key_pubkey).context("parsing ack admin AppKey")?;
+    let app_key_hex = normalize_pubkey(&frame.app_key_pubkey).context("parsing ack device")?;
+    if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(app_key_hex.as_str()) {
         return Ok(true);
     }
 
@@ -881,8 +880,8 @@ fn handle_device_link_roster_ack_app_message(
     let Some(state) = config.profile.as_ref() else {
         return Ok(true);
     };
-    if admin_device_hex != frame.admin_device_pubkey
-        || device_hex != frame.device_pubkey
+    if admin_app_key_hex != frame.admin_app_key_pubkey
+        || app_key_hex != frame.app_key_pubkey
         || !device_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
@@ -896,7 +895,7 @@ fn handle_device_link_roster_ack_app_message(
             json!({
                         "event": "device_link_roster_ack_received",
                         "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
-                        "device_npub": pubkey_npub(&device_hex),
+                        "device_npub": pubkey_npub(&app_key_hex),
                 "roster_fingerprint": frame.roster_fingerprint,
                 "dck_generation": app_keys.map(|app_keys| app_keys.dck_generation),
                 "created_at": app_keys.map(|app_keys| app_keys.created_at),
@@ -914,7 +913,7 @@ async fn send_device_link_roster_ack(
         return Ok(());
     };
     sync.send_app_message(
-        &pubkey_npub(&frame.admin_device_pubkey),
+        &pubkey_npub(&frame.admin_app_key_pubkey),
         DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
         serde_json::to_vec(frame)?,
     )

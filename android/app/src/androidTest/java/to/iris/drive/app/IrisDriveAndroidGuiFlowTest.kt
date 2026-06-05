@@ -103,9 +103,9 @@ class IrisDriveAndroidGuiFlowTest {
 
         val linked = appState(linkedHandle).profile
         assertEquals("awaiting_approval", linked?.authorizationState)
-        assertTrue(linked?.deviceLinkRequest?.isNotBlank() == true)
+        assertTrue(linked?.appKeyLinkRequest?.isNotBlank() == true)
 
-        dispatch(owner.handle, NativeActions.approveDevice(linked!!.deviceLinkRequest, "Android UI linked"))
+        dispatch(owner.handle, NativeActions.approveDevice(linked!!.appKeyLinkRequest, "Android UI linked"))
         assertEquals(2, appState(owner.handle).devices.size)
     }
 
@@ -213,11 +213,11 @@ class IrisDriveAndroidGuiFlowTest {
         val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val linked = dispatch(
             linkedHandle,
-            NativeActions.linkDevice(owner.profile!!.deviceLinkInvite, "Pixel"),
+            NativeActions.linkDevice(owner.profile!!.appKeyLinkInvite, "Pixel"),
         )
         val approved = dispatch(
             ownerHandle,
-            NativeActions.approveDevice(linked.profile!!.deviceLinkRequest, "Pixel"),
+            NativeActions.approveDevice(linked.profile!!.appKeyLinkRequest, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
 
@@ -258,11 +258,11 @@ class IrisDriveAndroidGuiFlowTest {
         val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val linked = dispatch(
             linkedHandle,
-            NativeActions.linkDevice(owner.profile!!.deviceLinkInvite, "Pixel"),
+            NativeActions.linkDevice(owner.profile!!.appKeyLinkInvite, "Pixel"),
         )
         val approved = dispatch(
             ownerHandle,
-            NativeActions.approveDevice(linked.profile!!.deviceLinkRequest, "Pixel"),
+            NativeActions.approveDevice(linked.profile!!.appKeyLinkRequest, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
 
@@ -279,7 +279,7 @@ class IrisDriveAndroidGuiFlowTest {
         val restartedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val restarted = refreshedAppState(restartedHandle)
         assertEquals("authorized", restarted.profile?.authorizationState)
-        assertEquals("Pixel", restarted.profile?.deviceLabel)
+        assertEquals("Pixel", restarted.profile?.appKeyLabel)
         assertEquals(1, restarted.fileCount)
 
         render(state = restarted)
@@ -446,7 +446,7 @@ class IrisDriveAndroidGuiFlowTest {
         val requestLink = "iris-drive://request/device-b"
         val state = AppState(
             profile = profileState().copy(
-                inboundDeviceLinkRequests = listOf(
+                inboundAppKeyLinkRequests = listOf(
                     to.iris.drive.app.core.DeviceLinkRequestState(
                         devicePubkey = "device-b",
                         label = "Tablet",
@@ -542,7 +542,7 @@ class IrisDriveAndroidGuiFlowTest {
         val profile = state.profile ?: error("owner account missing")
         return TestProfile(
             handle = handle,
-            invite = profile.deviceLinkInvite,
+            invite = profile.appKeyLinkInvite,
             devicePubkey = profile.devicePubkey,
         )
     }
@@ -554,7 +554,7 @@ class IrisDriveAndroidGuiFlowTest {
         assertEquals("awaiting_approval", profile.authorizationState)
         return TestProfile(
             handle = handle,
-            invite = profile.deviceLinkInvite,
+            invite = profile.appKeyLinkInvite,
             devicePubkey = profile.devicePubkey,
         )
     }
@@ -588,14 +588,14 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     private fun profileState() = to.iris.drive.app.core.ProfileState(
-        ownerPubkey = "owner",
+        currentAppKeyNpub = "app-key",
         devicePubkey = "device-a",
-        deviceLabel = "Pixel",
+        appKeyLabel = "Pixel",
         authorizationState = "authorized",
         canAdminProfile = true,
-        deviceLinkRequest = "",
-        deviceLinkInvite = "iris-drive://invite/test",
-        inboundDeviceLinkRequests = emptyList(),
+        appKeyLinkRequest = "",
+        appKeyLinkInvite = "iris-drive://invite/test",
+        inboundAppKeyLinkRequests = emptyList(),
     )
 
     private fun deviceState(

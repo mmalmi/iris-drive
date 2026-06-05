@@ -70,7 +70,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .drive(PRIMARY_DRIVE_ID)
         .unwrap()
         .device_roots
-        .get(&account.state.device_pubkey)
+        .get(&account.state.app_key_pubkey)
         .unwrap();
     assert_eq!(root.device_seq, 2);
     assert!(root.local_only);

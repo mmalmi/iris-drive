@@ -56,19 +56,19 @@ async fn publish_provider_root_if_changed(
 fn current_device_root_key(config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
-    let root = drive.device_roots.get(&state.device_pubkey)?;
+    let root = drive.device_roots.get(&state.app_key_pubkey)?;
     Some(format!(
         "{}:{}:{}",
-        drive.drive_id, state.device_pubkey, root.root_cid
+        drive.drive_id, state.app_key_pubkey, root.root_cid
     ))
 }
 
 fn merged_drive_roots_key(config: &AppConfig) -> Option<String> {
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
     let mut key = format!("drive:{}", drive.drive_id);
-    for (device_pubkey, root) in &drive.device_roots {
+    for (app_key_pubkey, root) in &drive.device_roots {
         key.push('|');
-        key.push_str(device_pubkey);
+        key.push_str(app_key_pubkey);
         key.push(':');
         key.push_str(&root.root_cid);
         key.push(':');
@@ -583,14 +583,14 @@ pub(crate) fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<S
     }
 }
 
-pub(crate) fn authorized_device_pubkeys(state: &ProfileState) -> Vec<String> {
+pub(crate) fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
         .map(|snap| snap.app_actors.iter().map(|d| d.pubkey.clone()).collect())
         .unwrap_or_default();
-    if !app_actors.contains(&state.device_pubkey) {
-        app_actors.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.app_key_pubkey) {
+        app_actors.push(state.app_key_pubkey.clone());
     }
     app_actors
 }

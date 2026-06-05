@@ -326,10 +326,10 @@ mod tests {
         bootstrap_first_launch_with(cfg.path()).unwrap();
         let second = AppConfig::load_or_default(config_path_in(cfg.path())).unwrap();
 
-        // Keys + account survive untouched; same npub, same drive id.
+        // AppKey + profile survive untouched; same npub, same drive id.
         assert_eq!(
-            first.profile.as_ref().map(|a| &a.device_pubkey),
-            second.profile.as_ref().map(|a| &a.device_pubkey),
+            first.profile.as_ref().map(|a| &a.app_key_pubkey),
+            second.profile.as_ref().map(|a| &a.app_key_pubkey),
         );
         assert_eq!(first.drives, second.drives);
     }

@@ -112,7 +112,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
         let mut transport_settings = FipsTransportSettings::from_env();
-        if accepts_device_link_requests(config) {
+        if accepts_app_key_link_requests(config) {
             transport_settings.open_discovery_max_pending = transport_settings
                 .open_discovery_max_pending
                 .max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
@@ -357,7 +357,7 @@ fn fips_endpoint_options(
     settings: &FipsTransportSettings,
 ) -> FipsEndpointOptions {
     let mut open_discovery_max_pending = settings.open_discovery_max_pending;
-    if accepts_device_link_requests(config) {
+    if accepts_app_key_link_requests(config) {
         open_discovery_max_pending =
             open_discovery_max_pending.max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
     }
@@ -377,11 +377,11 @@ fn fips_endpoint_options(
     }
 }
 
-fn accepts_device_link_requests(config: &AppConfig) -> bool {
+fn accepts_app_key_link_requests(config: &AppConfig) -> bool {
     config
         .profile
         .as_ref()
-        .is_some_and(crate::ProfileState::can_manage_devices)
+        .is_some_and(crate::ProfileState::can_admin_profile)
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -503,7 +503,7 @@ fn authorized_device_fips_peers(
         return Vec::new();
     };
     let mut peers = Vec::new();
-    let local_device = &account.device_pubkey;
+    let local_device = &account.app_key_pubkey;
     if let Some(app_keys) = account.app_keys.as_ref() {
         peers.extend(
             app_keys
@@ -553,13 +553,13 @@ fn pending_device_link_fips_peer(
     settings: &FipsTransportSettings,
 ) -> Option<FipsPeerConfig> {
     let account = config.profile.as_ref()?;
-    if account.can_manage_devices()
-        || account.authorization_state != crate::DeviceAuthorizationState::AwaitingApproval
+    if account.can_admin_profile()
+        || account.authorization_state != crate::AppKeyAuthorizationState::AwaitingApproval
     {
         return None;
     }
-    let request = account.outbound_device_link_request.as_ref()?;
-    fips_peer_config_for_pubkey(&request.admin_device_pubkey, settings)
+    let request = account.outbound_app_key_link_request.as_ref()?;
+    fips_peer_config_for_pubkey(&request.admin_app_key_pubkey, settings)
 }
 
 fn fips_peer_config_for_pubkey(

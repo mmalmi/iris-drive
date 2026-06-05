@@ -582,7 +582,7 @@ fn roots_for_drive(
     };
     let device_id = config.profile.as_ref().map_or_else(
         || "legacy".to_string(),
-        |account| account.device_pubkey.clone(),
+        |account| account.app_key_pubkey.clone(),
     );
     vec![(device_id, DeviceRootRef::legacy(root_cid, 0, 0))]
 }

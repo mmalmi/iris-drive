@@ -118,7 +118,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     let status = value_label();
     let folder = value_label();
-    let owner = value_label();
+    let app_key = value_label();
     let device = value_label();
     let snapshot = value_label();
     let files = metric_value_label();
@@ -143,10 +143,10 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     let peers_page = page_box();
     peers_page.append(&section_title("Devices"));
-    let account_owner = value_label();
+    let account_app_key = value_label();
     let account_device = value_label();
     let account_authorization = value_label();
-    let copy_owner_button = icon_button("edit-copy-symbolic", "Copy owner key");
+    let copy_app_key_button = icon_button("edit-copy-symbolic", "Copy AppKey");
     let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
     let account_grid = gtk::Grid::new();
     account_grid.add_css_class("iris-summary");
@@ -156,9 +156,9 @@ pub(crate) fn build_ui(app: &adw::Application) {
     add_copy_field(
         &account_grid,
         0,
-        "Owner",
-        &account_owner,
-        &copy_owner_button,
+        "AppKey",
+        &account_app_key,
+        &copy_app_key_button,
     );
     add_copy_field(
         &account_grid,
@@ -332,13 +332,13 @@ pub(crate) fn build_ui(app: &adw::Application) {
             status_pill,
             status,
             folder,
-            owner,
+            app_key,
             device,
             snapshot,
             files,
             storage,
             devices,
-            account_owner,
+            account_app_key,
             account_device,
             account_authorization,
             approve_box,
@@ -415,7 +415,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     }
     {
         let model = Rc::clone(&model);
-        copy_owner_button.connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
+        copy_app_key_button.connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
     }
     {
         let model = Rc::clone(&model);

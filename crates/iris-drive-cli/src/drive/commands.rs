@@ -81,7 +81,7 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
         let drive = config
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
-        let Some(root_ref) = drive.device_roots.get(&account.device_pubkey) else {
+        let Some(root_ref) = drive.device_roots.get(&account.app_key_pubkey) else {
             println!("{}", json!({"revisions": [], "note": "no imports yet"}));
             return Ok::<_, anyhow::Error>(());
         };
@@ -111,7 +111,7 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
         println!(
             "{}",
             json!({
-                "device_pubkey": account.device_pubkey,
+                "app_key_pubkey": account.app_key_pubkey,
                 "limit": limit,
                 "chain_length": revisions.len(),
                 "revisions": revisions,
@@ -129,7 +129,7 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
     let root_ref = drive
         .device_roots
-        .get(&state.device_pubkey)
+        .get(&state.app_key_pubkey)
         .ok_or_else(|| {
             anyhow::anyhow!("no root for this device yet - run `idrive import <dir>` first")
         })?;
@@ -140,7 +140,7 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         &state.root_scope_id(),
         &drive.drive_id,
         root_ref,
-        &authorized_device_pubkeys(&state),
+        &authorized_app_key_pubkeys(&state),
     )
     .context("building drive-root event")?;
     println!("{}", serde_json::to_string_pretty(&event)?);

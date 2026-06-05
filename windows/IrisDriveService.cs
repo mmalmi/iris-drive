@@ -57,14 +57,14 @@ public sealed class IrisDriveService
         return FinishSetupAsync(new[] { "restore", secret.Trim() });
     }
 
-    public Task LinkDeviceAsync(string owner)
+    public Task LinkDeviceAsync(string target)
     {
-        if (string.IsNullOrWhiteSpace(owner))
+        if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("Owner public key is required.");
+            throw new InvalidOperationException("IrisProfile invite link or admin AppKey is required.");
         }
 
-        return FinishSetupAsync(new[] { "link", owner.Trim() });
+        return FinishSetupAsync(new[] { "link", target.Trim() });
     }
 
     public Task<bool> IsCompleteLinkInputAsync(string input)
@@ -72,14 +72,14 @@ public sealed class IrisDriveService
         return Task.FromResult(IrisDriveNativeCore.IsCompleteLinkInput(input));
     }
 
-    public Task RelinkDeviceAsync(string owner)
+    public Task RelinkDeviceAsync(string target)
     {
-        if (string.IsNullOrWhiteSpace(owner))
+        if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("Owner public key is required.");
+            throw new InvalidOperationException("IrisProfile invite link or admin AppKey is required.");
         }
 
-        return FinishSetupAsync(new[] { "link", owner.Trim(), "--force" });
+        return FinishSetupAsync(new[] { "link", target.Trim(), "--force" });
     }
 
     public async Task ApproveDeviceAsync(string device, string label)
@@ -135,7 +135,7 @@ public sealed class IrisDriveService
             new Dictionary<string, object>
             {
                 ["type"] = "revoke_device",
-                ["device_pubkey"] = device.Trim(),
+                ["app_key_pubkey"] = device.Trim(),
             });
     }
 
@@ -150,7 +150,7 @@ public sealed class IrisDriveService
             new Dictionary<string, object>
             {
                 ["type"] = "appoint_admin",
-                ["device_pubkey"] = device.Trim(),
+                ["app_key_pubkey"] = device.Trim(),
             });
     }
 
@@ -165,7 +165,7 @@ public sealed class IrisDriveService
             new Dictionary<string, object>
             {
                 ["type"] = "demote_admin",
-                ["device_pubkey"] = device.Trim(),
+                ["app_key_pubkey"] = device.Trim(),
             });
     }
 
@@ -400,8 +400,7 @@ public sealed class IrisDriveService
         var status = await StatusAsync();
         var value = key switch
         {
-            "current_app_key_npub" => status.DeviceNpub,
-            "owner_npub" => status.OwnerNpub,
+            "current_app_key_npub" => status.CurrentAppKeyNpub,
             "device_npub" => status.DeviceNpub,
             _ => null,
         };

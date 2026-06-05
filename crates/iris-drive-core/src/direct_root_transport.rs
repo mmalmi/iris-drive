@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState, authorized_device_pubkeys,
+    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState, authorized_app_key_pubkeys,
 };
 
 pub const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
@@ -278,10 +278,10 @@ pub fn build_current_direct_root_events(
         ));
     }
     if let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
-        && let Some(root) = drive.device_roots.get(&state.device_pubkey)
+        && let Some(root) = drive.device_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-        let authorized_devices = authorized_device_pubkeys(state);
+        let authorized_devices = authorized_app_key_pubkeys(state);
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
             &state.root_scope_id(),
@@ -293,7 +293,7 @@ pub fn build_current_direct_root_events(
         events.push(direct_root_event(
             format!(
                 "drive-root:{}:{}:{}:{}:{}",
-                state.device_pubkey,
+                state.app_key_pubkey,
                 drive.drive_id,
                 root.device_seq,
                 root.root_cid,
@@ -390,7 +390,7 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
         drive
             .device_roots
             .iter()
-            .any(|(device, root)| device != &account.device_pubkey && root.root_cid == root_cid)
+            .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })
 }
 

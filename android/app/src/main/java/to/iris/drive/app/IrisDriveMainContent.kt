@@ -51,7 +51,7 @@ internal fun AuthenticatedContent(
     state: AppState,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onCopyOwnerKey: () -> Unit,
+    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -111,7 +111,7 @@ internal fun AuthenticatedContent(
         MainTab.Settings -> SettingsContent(
             padding = padding,
             state = state,
-            onCopyOwnerKey = onCopyOwnerKey,
+            onCopyAppKey = onCopyAppKey,
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
             onExportRecoverySecret = onExportRecoverySecret,
@@ -195,8 +195,8 @@ private fun DevicesContent(
         item {
             DevicesPanel(
                 devices = state.devices,
-                linkInvite = state.profile?.deviceLinkInvite.orEmpty(),
-                inboundRequests = state.profile?.inboundDeviceLinkRequests.orEmpty(),
+                linkInvite = state.profile?.appKeyLinkInvite.orEmpty(),
+                inboundRequests = state.profile?.inboundAppKeyLinkRequests.orEmpty(),
                 canApprove = state.profile?.canAdminProfile == true,
                 onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
@@ -250,7 +250,7 @@ private fun BackupsContent(
 private fun SettingsContent(
     padding: PaddingValues,
     state: AppState,
-    onCopyOwnerKey: () -> Unit,
+    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -273,7 +273,7 @@ private fun SettingsContent(
         item {
             SettingsPanel(
                 state = state,
-                onCopyOwnerKey = onCopyOwnerKey,
+                onCopyAppKey = onCopyAppKey,
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
                 onExportRecoverySecret = onExportRecoverySecret,
@@ -502,7 +502,7 @@ private fun BackupsPanel(
 @Composable
 private fun SettingsPanel(
     state: AppState,
-    onCopyOwnerKey: () -> Unit,
+    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -590,13 +590,13 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("Owner key", fontWeight = FontWeight.SemiBold)
-        Text(profile?.ownerPubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("AppKey", fontWeight = FontWeight.SemiBold)
+        Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Device key", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCopyOwnerKey) {
-                Text("Copy owner key")
+            OutlinedButton(onClick = onCopyAppKey) {
+                Text("Copy AppKey")
             }
             OutlinedButton(onClick = onCopyDeviceKey) {
                 Text("Copy device key")

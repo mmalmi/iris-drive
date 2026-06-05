@@ -1,10 +1,10 @@
+pub mod app_key_link_invite;
 pub mod app_keys;
 pub mod backup_ops;
 pub mod backup_summary;
 pub mod block_sync;
 pub mod blossom_sync;
 pub mod config;
-pub mod device_link_invite;
 pub mod device_link_transport;
 pub mod device_summary;
 pub mod direct_root_transport;
@@ -108,10 +108,10 @@ pub use merge::{
 };
 pub use network_sync::{
     DriveRootEventApplyReport, NetworkSyncReport, apply_drive_root_events,
-    authorized_device_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
+    authorized_app_key_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
 };
 pub use profile::{
-    DeviceAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
+    AppKeyAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
     ProfileState, logout_local_profile,
 };
 pub use projection::{
