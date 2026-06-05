@@ -24,9 +24,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::app_keys::{
-    AppActorEntry, AppActorRole, AppKeysSnapshot, ApplyDecision, apply_snapshot,
-};
+use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysSnapshot};
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::iris_profile::{
@@ -144,7 +142,8 @@ pub struct AccountState {
     pub authorization_state: DeviceAuthorizationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Runtime projection cache derived from `profile_roster_ops`.
+    #[serde(skip)]
     pub app_keys: Option<AppKeysSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_device_link_request: Option<PendingDeviceLinkRequest>,
@@ -247,15 +246,6 @@ impl AccountState {
         if self.authorization_state == DeviceAuthorizationState::Authorized {
             self.outbound_device_link_request = None;
         }
-    }
-
-    /// Adopt an incoming `AppKeys` snapshot. Returns the apply decision
-    /// so callers can decide whether to log a change. Side-effect:
-    /// `authorization_state` is recomputed.
-    pub fn apply_app_keys(&mut self, incoming: AppKeysSnapshot) -> ApplyDecision {
-        let decision = apply_snapshot(&mut self.app_keys, incoming);
-        self.recompute_authorization();
-        decision
     }
 
     pub fn queue_outbound_device_link_request(
@@ -469,31 +459,18 @@ impl Account {
         };
 
         let now = current_unix_seconds();
-        let app_actors = vec![AppActorEntry::admin(
-            state.device_pubkey.clone(),
-            now,
-            device_label,
-        )];
+        let app_actor = AppActorEntry::admin(state.device_pubkey.clone(), now, device_label);
         let dck = generate_dck();
-        let wraps = wrap_dck_for_app_actors(device.keys().secret_key(), &app_actors, &dck)?;
         let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
-            &app_actors[0],
+            &app_actor,
             Some(&recovery_pubkey),
             &dck,
             now,
         )?;
-        let snap = AppKeysSnapshot {
-            owner_pubkey: state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(state.device_pubkey.clone()),
-            created_at: now,
-            app_actors,
-            dck_generation: 1,
-            wrapped_dck: wraps,
-        };
-        state.apply_app_keys(snap);
+        state.sync_app_keys_from_profile();
 
         let account = Self {
             state,
@@ -545,31 +522,18 @@ impl Account {
         };
 
         let now = current_unix_seconds();
-        let app_actors = vec![AppActorEntry::admin(
-            state.device_pubkey.clone(),
-            now,
-            device_label,
-        )];
+        let app_actor = AppActorEntry::admin(state.device_pubkey.clone(), now, device_label);
         let dck = generate_dck();
-        let wraps = wrap_dck_for_app_actors(device.keys().secret_key(), &app_actors, &dck)?;
         let recovery_pubkey = recovery_key.as_ref().map(OwnerKey::pubkey_hex);
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
-            &app_actors[0],
+            &app_actor,
             recovery_pubkey.as_deref(),
             &dck,
             now,
         )?;
-        let snap = AppKeysSnapshot {
-            owner_pubkey: state.owner_pubkey.clone(),
-            signed_by_pubkey: Some(state.device_pubkey.clone()),
-            created_at: now,
-            app_actors,
-            dck_generation: 1,
-            wrapped_dck: wraps,
-        };
-        state.apply_app_keys(snap);
+        state.sync_app_keys_from_profile();
 
         let account = Self {
             state,
@@ -620,8 +584,9 @@ impl Account {
     /// view from the persisted `AccountState` plus the on-disk key
     /// files. Errors if the device key is missing — caller should run a
     /// create/restore/link flow first.
-    pub fn load(state: AccountState, config_dir: &Path) -> Result<Self, AccountError> {
+    pub fn load(mut state: AccountState, config_dir: &Path) -> Result<Self, AccountError> {
         let device = DeviceIdentity::load(key_path_in(config_dir))?;
+        state.sync_app_keys_from_profile();
         Ok(Self {
             state,
             device,
@@ -1089,18 +1054,6 @@ fn generate_dck() -> [u8; 32] {
 
 fn default_device_link_secret() -> String {
     URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
-}
-
-fn wrap_dck_for_app_actors(
-    owner_secret: &SecretKey,
-    app_actors: &[AppActorEntry],
-    dck: &[u8; 32],
-) -> Result<BTreeMap<String, String>, AccountError> {
-    wrap_dck_for_pubkeys(
-        owner_secret,
-        app_actors.iter().map(|actor| actor.pubkey.as_str()),
-        dck,
-    )
 }
 
 fn wrap_dck_for_pubkeys<'a, I>(

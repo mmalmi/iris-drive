@@ -229,12 +229,16 @@ impl AppConfig {
             return Ok(Self::default());
         }
         let raw = fs::read_to_string(path)?;
-        let parsed: Self = toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let mut parsed: Self =
+            toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
         if parsed.schema_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::SchemaMismatch {
                 found: parsed.schema_version,
                 expected: CONFIG_SCHEMA_VERSION,
             });
+        }
+        if let Some(account) = parsed.account.as_mut() {
+            account.sync_app_keys_from_profile();
         }
         Ok(parsed)
     }
@@ -599,6 +603,32 @@ dck_generation = 1
         let loaded = AppConfig::load_or_default(&path).unwrap();
         assert_eq!(loaded.drives.len(), 2);
         assert_eq!(loaded.drives, cfg.drives);
+    }
+
+    #[test]
+    fn app_keys_snapshot_is_hydrated_from_profile_roster_not_persisted() {
+        let dir = tempdir().unwrap();
+        let account = crate::account::Account::create(dir.path(), Some("Mac".into())).unwrap();
+        let expected = account
+            .state
+            .app_keys
+            .clone()
+            .expect("created account has derived app keys");
+        let mut cfg = AppConfig {
+            account: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
+
+        let path = dir.path().join("config.toml");
+        cfg.save(&path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("profile_roster_ops"));
+        assert!(!raw.contains("[account.app_keys]"));
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let loaded_account = loaded.account.expect("account persisted");
+        assert_eq!(loaded_account.app_keys, Some(expected));
     }
 
     #[test]
