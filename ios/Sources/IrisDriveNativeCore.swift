@@ -441,7 +441,6 @@ struct NativeAccount: Codable {
 
     var ownerPubkey: String { currentAppKeyNpub }
     var devicePubkey: String { currentAppKeyNpub }
-    var hasOwnerSigningAuthority: Bool { canAdminProfile }
 
     enum CodingKeys: String, CodingKey {
         case profileId = "profile_id"

@@ -265,7 +265,7 @@ fi
   --es "$DEBUG_ACTION_EXTRA" create-profile >/dev/null
 
 if ! wait_for_debug_state \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("has_owner_signing_authority") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("can_admin_profile") else 1)' \
   15; then
   echo "FAIL: Android did not create a real owner profile after the GUI create-profile test." >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true

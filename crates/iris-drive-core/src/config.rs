@@ -642,7 +642,6 @@ dck_generation = 1
                 device_pubkey: "device-a".into(),
                 profile_roster_ops: Vec::new(),
                 device_link_secret: "link-secret".into(),
-                has_owner_signing_authority: false,
                 authorization_state: crate::account::DeviceAuthorizationState::Authorized,
                 device_label: None,
                 app_keys: None,

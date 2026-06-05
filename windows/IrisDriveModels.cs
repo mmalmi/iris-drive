@@ -11,7 +11,7 @@ public sealed class IrisDriveStatusData
     public string DriveName { get; init; } = "My Drive";
     public string? OwnerNpub { get; init; }
     public string? DeviceNpub { get; init; }
-    public bool HasOwnerSigningAuthority { get; init; }
+    public bool CanAdminProfile { get; init; }
     public bool CanExportRecoveryPhrase { get; init; }
     public string? AuthorizationState { get; init; }
     public string SetupState { get; init; } = "not_configured";
@@ -69,7 +69,7 @@ public sealed class IrisDriveStatusData
             DriveName = NativeDriveName(ui),
             OwnerNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
             DeviceNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
-            HasOwnerSigningAuthority =
+            CanAdminProfile =
                 account.HasValue && Bool(account.Value, "can_admin_profile"),
             CanExportRecoveryPhrase =
                 account.HasValue && Bool(account.Value, "can_export_recovery_phrase"),

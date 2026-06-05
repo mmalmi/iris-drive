@@ -202,7 +202,7 @@ public partial class MainWindow : Window
         RecoveryPhraseButton.Visibility =
             status.CanExportRecoveryPhrase ? Visibility.Visible : Visibility.Collapsed;
         ApprovePanel.Visibility =
-            status.HasOwnerSigningAuthority ? Visibility.Visible : Visibility.Collapsed;
+            status.CanAdminProfile ? Visibility.Visible : Visibility.Collapsed;
 
         RenderDrives(status);
         RenderPeers(status);

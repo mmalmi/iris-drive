@@ -241,7 +241,6 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let mut awaiting_state = restored_config.account.take().expect("state exists");
     awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
-    awaiting_state.has_owner_signing_authority = false;
     awaiting_state.authorization_state =
         iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
     restored_config.account = Some(awaiting_state);

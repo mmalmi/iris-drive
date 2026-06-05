@@ -553,7 +553,7 @@ fn pending_device_link_fips_peer(
     settings: &FipsTransportSettings,
 ) -> Option<FipsPeerConfig> {
     let account = config.account.as_ref()?;
-    if account.has_owner_signing_authority
+    if account.can_manage_devices()
         || account.authorization_state != crate::DeviceAuthorizationState::AwaitingApproval
     {
         return None;

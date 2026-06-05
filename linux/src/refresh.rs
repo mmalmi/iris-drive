@@ -47,7 +47,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model
                 .ui
                 .approve_box
-                .set_visible(account.is_some_and(|account| account.has_owner_signing_authority));
+                .set_visible(account.is_some_and(|account| account.can_admin_profile));
             model.ui.snapshot.set_text(&snapshot_value(&state));
             model.ui.files.set_text(&file_count_value(&state));
             model.ui.storage.set_text(&storage_value(&state));

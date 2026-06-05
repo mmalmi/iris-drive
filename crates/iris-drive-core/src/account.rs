@@ -135,9 +135,6 @@ pub struct AccountState {
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
     #[serde(default = "default_device_link_secret")]
     pub device_link_secret: String,
-    /// Historical field name. In the current model this is true when the
-    /// current device is an admin in the latest accepted roster.
-    pub has_owner_signing_authority: bool,
     pub authorization_state: DeviceAuthorizationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_label: Option<String>,
@@ -202,9 +199,7 @@ impl AccountState {
         }
         self.app_keys
             .as_ref()
-            .map_or(self.has_owner_signing_authority, |snap| {
-                snap.is_admin(&self.device_pubkey)
-            })
+            .is_some_and(|snap| snap.is_admin(&self.device_pubkey))
     }
 
     /// Can this `AppKey` publish mutable roots for this profile?
@@ -222,7 +217,6 @@ impl AccountState {
     pub fn recompute_authorization(&mut self) {
         if !self.profile_roster_ops.is_empty() {
             let projection = self.profile_projection();
-            self.has_owner_signing_authority = projection.can_admin_profile(&self.device_pubkey);
             self.authorization_state = if projection.can_write_roots(&self.device_pubkey) {
                 DeviceAuthorizationState::Authorized
             } else if projection.tombstones.contains_key(&self.device_pubkey)
@@ -250,12 +244,6 @@ impl AccountState {
             }
             None => self.authorization_state,
         };
-        self.has_owner_signing_authority = self
-            .app_keys
-            .as_ref()
-            .map_or(self.has_owner_signing_authority, |snap| {
-                snap.is_admin(&self.device_pubkey)
-            });
         if self.authorization_state == DeviceAuthorizationState::Authorized {
             self.outbound_device_link_request = None;
         }
@@ -460,7 +448,6 @@ impl Account {
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
-            has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
             app_keys: None,
@@ -522,7 +509,6 @@ impl Account {
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
-            has_owner_signing_authority: true,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
             app_keys: None,
@@ -573,7 +559,6 @@ impl Account {
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
-            has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label,
             app_keys: None,

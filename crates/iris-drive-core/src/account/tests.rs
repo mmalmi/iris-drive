@@ -12,7 +12,6 @@ fn create_yields_admin_authorized_account() {
     .unwrap();
     let recovery_keys =
         OwnerKey::from_recovery_phrase(&phrase, dir.path().join("recovery")).unwrap();
-    assert!(acct.state.has_owner_signing_authority);
     assert!(acct.state.can_manage_devices());
     assert!(acct.state.is_authorized());
     assert!(acct.state.can_write_roots());
@@ -87,7 +86,7 @@ fn restore_uses_provided_admin_device_nsec() {
     let restored = Account::restore(dir_b.path(), &nsec, None).unwrap();
     assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
     assert_ne!(restored.state.profile_id, original.state.profile_id);
-    assert!(restored.state.has_owner_signing_authority);
+    assert!(restored.state.can_manage_devices());
     assert!(
         restored
             .state
@@ -148,7 +147,6 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
-            has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
@@ -229,7 +227,6 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
-            has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
@@ -281,7 +278,6 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
-            has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
@@ -335,7 +331,6 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
-            has_owner_signing_authority: false,
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
@@ -391,7 +386,7 @@ fn link_starts_awaiting_approval_no_owner_key() {
     .unwrap();
     assert_eq!(acct.state.profile_id, profile_id);
     assert_ne!(acct.state.device_pubkey, admin_app_key);
-    assert!(!acct.state.has_owner_signing_authority);
+    assert!(!acct.state.can_manage_devices());
     assert_eq!(
         acct.state.authorization_state,
         DeviceAuthorizationState::AwaitingApproval
@@ -677,7 +672,6 @@ fn authorization_recomputes_from_profile_without_snapshot_adapter() {
     let mut acct = Account::create(dir.path(), None).unwrap();
     acct.state.app_keys = None;
     acct.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
-    acct.state.has_owner_signing_authority = false;
 
     acct.state.recompute_authorization();
 
@@ -685,7 +679,7 @@ fn authorization_recomputes_from_profile_without_snapshot_adapter() {
         acct.state.authorization_state,
         DeviceAuthorizationState::Authorized
     );
-    assert!(acct.state.has_owner_signing_authority);
+    assert!(acct.state.can_manage_devices());
 }
 
 #[test]
@@ -833,7 +827,6 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         device_pubkey: linked_pubkey.clone(),
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),
-        has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Authorized,
         device_label: Some("phone".into()),
         app_keys: snapshot_for_linked,
@@ -873,7 +866,6 @@ fn revoked_device_cannot_decrypt_new_dck() {
         device_pubkey: linked_pubkey,
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),
-        has_owner_signing_authority: false,
         authorization_state: DeviceAuthorizationState::Revoked,
         device_label: None,
         app_keys: owner_acct.state.app_keys.clone(),

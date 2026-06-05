@@ -79,7 +79,7 @@ class IrisDriveAndroidGuiFlowTest {
 
         val state = appState(handle)
         assertEquals("authorized", state.account?.authorizationState)
-        assertTrue(state.account?.hasOwnerSigningAuthority == true)
+        assertTrue(state.account?.canAdminProfile == true)
         assertEquals(1, state.roots.size)
     }
 
@@ -577,7 +577,7 @@ class IrisDriveAndroidGuiFlowTest {
         devicePubkey = "device-a",
         deviceLabel = "Pixel",
         authorizationState = "authorized",
-        hasOwnerSigningAuthority = true,
+        canAdminProfile = true,
         deviceLinkRequest = "",
         deviceLinkInvite = "iris-drive://invite/test",
         inboundDeviceLinkRequests = emptyList(),

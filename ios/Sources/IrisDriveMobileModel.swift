@@ -143,7 +143,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var hasOwnerAuthority: Bool {
-        lastState?.ui.account?.hasOwnerSigningAuthority ?? false
+        lastState?.ui.account?.canAdminProfile ?? false
     }
 
     var canExportRecoveryPhrase: Bool {

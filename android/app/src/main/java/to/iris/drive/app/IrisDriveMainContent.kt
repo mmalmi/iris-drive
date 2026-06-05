@@ -197,7 +197,7 @@ private fun DevicesContent(
                 devices = state.devices,
                 linkInvite = state.account?.deviceLinkInvite.orEmpty(),
                 inboundRequests = state.account?.inboundDeviceLinkRequests.orEmpty(),
-                canApprove = state.account?.hasOwnerSigningAuthority == true,
+                canApprove = state.account?.canAdminProfile == true,
                 onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
