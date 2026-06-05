@@ -401,10 +401,10 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(invite.has_link_secret);
 
     let npub = super::classify_link_input(admin_app_key_npub.clone());
-    assert_eq!(npub.kind, "owner_pubkey");
+    assert_eq!(npub.kind, "app_key_pubkey");
     assert!(npub.is_complete);
     assert!(npub.is_valid);
-    assert_eq!(npub.owner_pubkey, admin_app_key_npub);
+    assert_eq!(npub.admin_device_pubkey, admin_app_key_npub);
 
     let short_invite = super::classify_link_input("iris-drive://invite/abc".to_owned());
     assert_eq!(short_invite.kind, "invite");
@@ -412,7 +412,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(!short_invite.is_valid);
 
     let short_npub = super::classify_link_input(admin_app_key_npub[..20].to_owned());
-    assert_eq!(short_npub.kind, "owner_pubkey");
+    assert_eq!(short_npub.kind, "app_key_pubkey");
     assert!(!short_npub.is_complete);
     assert!(!short_npub.is_valid);
 
@@ -435,6 +435,30 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
         "https://drive.iris.to/device-linker?owner=npub1example".to_owned(),
     );
     assert_eq!(unrelated.kind, "unknown");
+}
+
+#[test]
+fn link_device_rejects_bare_app_key_without_profile_target() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    let owner_account = owner.ui.account.unwrap();
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let state = linked_app.dispatch(NativeAppAction::LinkDevice {
+        owner_pubkey: owner_account.current_app_key_npub,
+        device_label: "Phone".to_owned(),
+    });
+
+    assert!(state.ui.account.is_none());
+    assert!(
+        state
+            .error
+            .contains("paste an IrisProfile invite URL to link this AppKey")
+    );
 }
 
 #[test]

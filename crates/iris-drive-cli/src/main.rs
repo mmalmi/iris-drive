@@ -151,10 +151,10 @@ fn run_cli() -> ExitCode {
             label,
         } => cmd_recover_app_key(&config_dir, recovery_phrase.as_deref(), label),
         Command::Link {
-            owner,
+            invite,
             force,
             label,
-        } => cmd_link(&config_dir, &owner, force, label),
+        } => cmd_link(&config_dir, &invite, force, label),
         Command::Logout => cmd_logout(&config_dir),
         Command::Approve { app_key, label } => cmd_approve(&config_dir, &app_key, label),
         Command::Revoke { app_key } => cmd_revoke(&config_dir, &app_key),

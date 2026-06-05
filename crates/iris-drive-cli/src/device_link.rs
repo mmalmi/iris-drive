@@ -6,12 +6,12 @@ pub(crate) fn cmd_app_keys(config_dir: &std::path::Path, command: AppKeysCmd) ->
         AppKeysCmd::Invite => cmd_app_keys_invite(config_dir),
         AppKeysCmd::ResetInvite => cmd_app_keys_reset_invite(config_dir),
         AppKeysCmd::Request {
-            owner_or_invite,
+            invite_or_profile,
             admin_device,
             label,
         } => cmd_link_with_admin_device(
             config_dir,
-            &owner_or_invite,
+            &invite_or_profile,
             admin_device.as_deref(),
             false,
             label,

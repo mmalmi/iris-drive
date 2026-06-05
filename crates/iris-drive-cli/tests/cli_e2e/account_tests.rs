@@ -631,19 +631,20 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
 }
 
 #[test]
-fn app_keys_request_manual_owner_and_admin_app_key_queues_fips_request() {
+fn app_keys_request_manual_profile_and_admin_app_key_queues_fips_request() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let admin_app_key_npub = current_app_key_npub(&owner);
+    let profile_id = owner["profile_id"].as_str().unwrap();
 
     let linked = run_json(
         linked_dir.path(),
         &[
             "app-keys",
             "request",
-            admin_app_key_npub,
+            profile_id,
             "--admin-app-key",
             admin_app_key_npub,
             "--label",
@@ -657,9 +658,36 @@ fn app_keys_request_manual_owner_and_admin_app_key_queues_fips_request() {
         Some(admin_app_key_npub)
     );
     assert_eq!(
+        linked["device_link_request"]["profile_id"].as_str(),
+        Some(profile_id)
+    );
+    assert_eq!(
         linked["device_link_request"]["sent_over_fips"],
         serde_json::Value::Bool(true)
     );
+}
+
+#[test]
+fn app_keys_request_rejects_manual_app_key_without_profile_id() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let admin_app_key_npub = current_app_key_npub(&owner);
+
+    idrive(linked_dir.path())
+        .args([
+            "app-keys",
+            "request",
+            admin_app_key_npub,
+            "--admin-app-key",
+            admin_app_key_npub,
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "manual AppKey linking requires an IrisProfile UUID",
+        ));
 }
 
 #[test]

@@ -721,7 +721,7 @@ mod tests {
         let validation_json = take_string(iris_drive_validate_link_input_json(input.as_ptr()));
         let validation: Value = serde_json::from_str(&validation_json).expect("validation JSON");
 
-        assert_eq!(validation["kind"], "owner_pubkey");
+        assert_eq!(validation["kind"], "app_key_pubkey");
         assert_eq!(validation["is_complete"], false);
     }
 

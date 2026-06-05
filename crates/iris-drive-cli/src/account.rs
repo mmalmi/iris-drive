@@ -94,16 +94,16 @@ pub(crate) fn cmd_recover_app_key(
 
 pub(crate) fn cmd_link(
     config_dir: &std::path::Path,
-    owner: &str,
+    invite: &str,
     force: bool,
     label: Option<String>,
 ) -> Result<()> {
-    cmd_link_with_admin_device(config_dir, owner, None, force, label)
+    cmd_link_with_admin_device(config_dir, invite, None, force, label)
 }
 
 pub(crate) fn cmd_link_with_admin_device(
     config_dir: &std::path::Path,
-    owner: &str,
+    invite_or_profile: &str,
     admin_device: Option<&str>,
     force: bool,
     label: Option<String>,
@@ -114,27 +114,23 @@ pub(crate) fn cmd_link_with_admin_device(
             config_dir.display()
         ));
     }
-    let target = resolve_device_link_target_with_admin(owner, admin_device)?;
-    let mut account = if let Some(profile_id) = target.profile_id {
-        Account::link_to_profile(config_dir, profile_id, target.owner_hex, label)
-    } else {
-        Account::link(config_dir, target.owner_hex, label)
-    }
-    .context("linking device")?;
+    let target = resolve_device_link_target_with_admin(invite_or_profile, admin_device)?;
+    let mut account =
+        Account::link_to_profile(config_dir, target.profile_id, target.owner_hex, label)
+            .context("linking device")?;
     let link_secret = if target.link_secret.trim().is_empty() {
         account.state.device_link_secret.clone()
     } else {
         target.link_secret
     };
-    if let Some(admin_device_hex) = target
-        .admin_device_hex
-        .or_else(|| Some(account.state.owner_pubkey.clone()))
-    {
-        account
-            .state
-            .queue_outbound_device_link_request(admin_device_hex, &link_secret, unix_now_seconds())
-            .context("queueing device link request")?;
-    }
+    account
+        .state
+        .queue_outbound_device_link_request(
+            target.admin_device_hex,
+            &link_secret,
+            unix_now_seconds(),
+        )
+        .context("queueing device link request")?;
     finish_account_init(config_dir, &account, None)
 }
 

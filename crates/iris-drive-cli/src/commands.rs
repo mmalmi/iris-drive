@@ -81,11 +81,12 @@ pub(crate) enum Command {
         label: Option<String>,
     },
     /// **Link** flow: turn this install into a secondary `AppKey` under an
-    /// existing `IrisProfile`. Generates a fresh local `AppKey`; approval
-    /// arrives through signed `IrisProfile` roster ops.
+    /// existing `IrisProfile` using an admin invite URL. Generates a fresh
+    /// local `AppKey`; approval arrives through signed `IrisProfile` roster
+    /// ops.
     Link {
-        /// Owner pubkey as npub1... or 64-char hex.
-        owner: String,
+        /// Invite URL from an admin `AppKey`.
+        invite: String,
         /// Replace an existing local setup.
         #[arg(long)]
         force: bool,
@@ -123,7 +124,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: Option<SharesCmd>,
     },
-    /// Classify `AppKey`-link, invite, and owner-key input using app-core parsing.
+    /// Classify `AppKey`-link, invite, and `AppKey` input using app-core parsing.
     #[command(name = "link-input")]
     LinkInput {
         #[command(subcommand)]
@@ -303,11 +304,11 @@ pub(crate) enum AppKeysCmd {
     /// Reset this admin `AppKey`'s invite URL by rotating its invite secret.
     #[command(name = "reset-invite")]
     ResetInvite,
-    /// Request linking this `AppKey` using an admin invite URL or owner pubkey.
+    /// Request linking this `AppKey` using an admin invite URL or manual profile target.
     #[command(alias = "ask", alias = "connect", alias = "link")]
     Request {
-        /// Invite URL from an admin `AppKey`, or an owner npub/hex.
-        owner_or_invite: String,
+        /// Invite URL from an admin `AppKey`, or `IrisProfile` UUID for manual pairing.
+        invite_or_profile: String,
         /// Admin `AppKey` pubkey for manual pairing when no invite URL is available.
         #[arg(long = "admin-app-key", alias = "admin-device", alias = "admin")]
         admin_device: Option<String>,
@@ -358,12 +359,12 @@ pub(crate) enum AppKeysCmd {
 pub(crate) enum LinkInputCmd {
     /// Print the app-core link input classification as JSON.
     Classify {
-        /// `AppKey`-link, invite, owner npub, or owner hex input to classify.
+        /// `AppKey`-link, invite, `AppKey` npub, or `AppKey` hex input to classify.
         input: String,
     },
     /// Print the app-core link input validation as JSON.
     Validate {
-        /// `AppKey`-link, invite, owner npub, or owner hex input to validate.
+        /// `AppKey`-link, invite, `AppKey` npub, or `AppKey` hex input to validate.
         input: String,
     },
 }

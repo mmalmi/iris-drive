@@ -428,20 +428,12 @@ impl NativeAppRuntime {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let link_result = if let Some(profile_id) = target.profile_id {
-            Account::link_to_profile(
-                Path::new(&self.data_dir),
-                profile_id,
-                target.owner_hex,
-                label_option(device_label),
-            )
-        } else {
-            Account::link(
-                Path::new(&self.data_dir),
-                target.owner_hex,
-                label_option(device_label),
-            )
-        };
+        let link_result = Account::link_to_profile(
+            Path::new(&self.data_dir),
+            target.profile_id,
+            target.owner_hex,
+            label_option(device_label),
+        );
         let mut account = match link_result {
             Ok(account) => account,
             Err(error) => {
@@ -449,16 +441,13 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let admin_device = target
-            .admin_device_hex
-            .unwrap_or_else(|| account.state.owner_pubkey.clone());
         let link_secret = if target.link_secret.trim().is_empty() {
             account.state.device_link_secret.clone()
         } else {
             target.link_secret
         };
         if let Err(error) = account.state.queue_outbound_device_link_request(
-            admin_device,
+            target.admin_device_hex,
             &link_secret,
             unix_now_seconds(),
         ) {
@@ -2206,9 +2195,9 @@ fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceCon
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DeviceLinkTarget {
-    profile_id: Option<iris_drive_core::IrisProfileId>,
+    profile_id: iris_drive_core::IrisProfileId,
     owner_hex: String,
-    admin_device_hex: Option<String>,
+    admin_device_hex: String,
     link_secret: String,
 }
 
@@ -2235,16 +2224,16 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
         return result;
     }
     if looks_like_owner_pubkey_input(trimmed) {
-        "owner_pubkey".clone_into(&mut classification.kind);
+        "app_key_pubkey".clone_into(&mut classification.kind);
         classification.is_complete = owner_pubkey_input_is_complete(trimmed);
         if classification.is_complete {
             match normalize_pubkey(trimmed) {
-                Ok(owner_hex) => {
+                Ok(app_key_hex) => {
                     classification.is_valid = true;
-                    classification.owner_pubkey = account_npub(&owner_hex);
+                    classification.admin_device_pubkey = account_npub(&app_key_hex);
                     classification
                         .normalized_input
-                        .clone_from(&classification.owner_pubkey);
+                        .clone_from(&classification.admin_device_pubkey);
                 }
                 Err(error) => {
                     classification.error = error;
@@ -2255,7 +2244,7 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
     }
 
     "unknown".clone_into(&mut classification.kind);
-    "expected owner public key or device invite link".clone_into(&mut classification.error);
+    "expected AppKey pubkey or IrisProfile invite link".clone_into(&mut classification.error);
     classification
 }
 
@@ -2423,25 +2412,24 @@ fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
     if let Some(target) = decode_device_link_invite(input)? {
         return Ok(target);
     }
-    Ok(DeviceLinkTarget {
-        profile_id: None,
-        owner_hex: normalize_pubkey(input)?,
-        admin_device_hex: None,
-        link_secret: String::new(),
-    })
+    Err("paste an IrisProfile invite URL to link this AppKey".to_owned())
 }
 
 fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, String> {
-    iris_drive_core::device_link_invite::parse_device_link_invite(request)
-        .map(|target| {
-            target.map(|target| DeviceLinkTarget {
-                profile_id: target.profile_id,
-                owner_hex: target.admin_device_hex.clone(),
-                admin_device_hex: Some(target.admin_device_hex),
-                link_secret: target.link_secret,
-            })
-        })
-        .map_err(|error| error.to_string())
+    let Some(target) = iris_drive_core::device_link_invite::parse_device_link_invite(request)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let profile_id = target
+        .profile_id
+        .ok_or_else(|| "AppKey invite is missing IrisProfile id".to_owned())?;
+    Ok(Some(DeviceLinkTarget {
+        profile_id,
+        owner_hex: target.admin_device_hex.clone(),
+        admin_device_hex: target.admin_device_hex,
+        link_secret: target.link_secret,
+    }))
 }
 
 fn decode_device_approval_request(request: &str) -> Result<DeviceApprovalRequest, String> {
