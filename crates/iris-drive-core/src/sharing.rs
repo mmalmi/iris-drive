@@ -24,8 +24,20 @@ pub enum SharingError {
     InvalidPubkey(String),
     #[error("iris profile: {0}")]
     IrisProfile(#[from] IrisProfileError),
+    #[error("no share key epoch")]
+    NoKeyEpoch,
+    #[error("no share key wrap for the current AppKey")]
+    NoWrapForCurrentAppKey,
+    #[error("current AppKey cannot repair share key epoch signed by {signed_by_pubkey}")]
+    CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey: String },
+    #[error("current AppKey cannot repair share key epochs")]
+    CurrentAppKeyCannotRepairKeyEpochs,
     #[error("failed to wrap share key: {0}")]
     Wrap(String),
+    #[error("failed to unwrap share key: {0}")]
+    Unwrap(String),
+    #[error("decrypted share key has wrong length: expected 32 bytes, got {0}")]
+    InvalidShareKeyLength(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +165,13 @@ pub struct SharedFolderView {
     pub missing_key_wrap_pubkeys: Vec<String>,
     pub participant_count: usize,
     pub shortcut_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareKeyRepairOutcome {
+    pub share_id: IrisProfileId,
+    pub epoch: u64,
+    pub repaired_pubkeys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,6 +481,87 @@ pub fn create_shared_folder(
     })
 }
 
+pub fn current_shared_folder_key(
+    folder: &SharedFolder,
+    app_keys: &Keys,
+) -> Result<[u8; 32], SharingError> {
+    let projection = folder.projection();
+    let key_epoch = projection
+        .key_epochs
+        .values()
+        .next_back()
+        .ok_or(SharingError::NoKeyEpoch)?;
+    let current_pubkey = app_keys.public_key().to_hex();
+    let wrap = key_epoch
+        .wrapped_dck
+        .get(&current_pubkey)
+        .ok_or(SharingError::NoWrapForCurrentAppKey)?;
+    let signer_pubkey = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
+        .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
+    let bytes = nip44::decrypt_to_bytes(app_keys.secret_key(), &signer_pubkey, wrap)
+        .map_err(|error| SharingError::Unwrap(error.to_string()))?;
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| SharingError::InvalidShareKeyLength(bytes.len()))
+}
+
+/// Add missing share-key wraps for the current key epoch without rotating the
+/// share key. Only the `AppKey` that signed the epoch may repair it, mirroring
+/// the profile key-wrap rule and keeping divergent roster repairs deterministic.
+pub fn repair_shared_folder_key_epoch_wraps(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    created_at: i64,
+) -> Result<ShareKeyRepairOutcome, SharingError> {
+    let projection = folder.projection();
+    let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
+        return Err(SharingError::NoKeyEpoch);
+    };
+    let epoch = *epoch;
+    let epoch_signer_pubkey = key_epoch.signed_by_pubkey.clone();
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if epoch_signer_pubkey != signer_pubkey {
+        return Err(SharingError::CurrentAppKeyCannotRepairKeyEpoch {
+            signed_by_pubkey: epoch_signer_pubkey,
+        });
+    }
+    let Some(signer_facet) = projection.active_facets.get(&signer_pubkey) else {
+        return Err(SharingError::CurrentAppKeyCannotRepairKeyEpochs);
+    };
+    if !signer_facet.capabilities.can_change_key_epochs() {
+        return Err(SharingError::CurrentAppKeyCannotRepairKeyEpochs);
+    }
+    let missing_pubkeys = projection.active_key_recipients_missing_wraps(epoch);
+    if missing_pubkeys.is_empty() {
+        return Ok(ShareKeyRepairOutcome {
+            share_id: folder.share_id,
+            epoch,
+            repaired_pubkeys: Vec::new(),
+        });
+    }
+
+    let share_key = current_shared_folder_key(folder, signer_keys)?;
+    let wrapped_dck = wrap_share_key(
+        signer_keys,
+        missing_pubkeys.iter().map(String::as_str),
+        &share_key,
+    )?;
+    let repair_op = sign_share_roster_op_with_parents(
+        signer_keys,
+        folder.share_id,
+        iris_profile_roster_parent_ids(&folder.roster_ops),
+        IrisProfileRosterOp::RepairKeyWraps { epoch, wrapped_dck },
+        created_at,
+    )?;
+    folder.roster_ops.push(repair_op);
+    Ok(ShareKeyRepairOutcome {
+        share_id: folder.share_id,
+        epoch,
+        repaired_pubkeys: missing_pubkeys,
+    })
+}
+
 fn sign_share_roster_op(
     signer_keys: &Keys,
     share_id: IrisProfileId,
@@ -742,6 +842,123 @@ mod tests {
         assert_eq!(
             recipient_view.missing_key_wrap_pubkeys,
             vec![recipient_pubkey]
+        );
+    }
+
+    #[test]
+    fn shared_folder_missing_key_wraps_can_be_repaired_by_epoch_signing_admin() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let owner_share_key = current_shared_folder_key(&folder, &owner_keys).unwrap();
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        recipient_pubkey.clone(),
+                        12,
+                        Some("Phone".to_string()),
+                        ShareRole::Editor.capabilities(),
+                    ),
+                },
+                12,
+            )
+            .unwrap(),
+        );
+
+        let unavailable = shared_folder_view(&folder, &[], &recipient_pubkey);
+        assert_eq!(
+            unavailable.key_status,
+            SharedFolderKeyStatus::KeyUnavailable
+        );
+        assert!(matches!(
+            current_shared_folder_key(&folder, &recipient_keys),
+            Err(SharingError::NoWrapForCurrentAppKey)
+        ));
+
+        let repair = repair_shared_folder_key_epoch_wraps(&mut folder, &owner_keys, 13).unwrap();
+
+        assert_eq!(repair.epoch, 1);
+        assert_eq!(repair.repaired_pubkeys, vec![recipient_pubkey.clone()]);
+        assert_eq!(repair.share_id, folder.share_id);
+        assert_eq!(
+            folder
+                .projection()
+                .active_key_recipients_missing_wraps(repair.epoch),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            current_shared_folder_key(&folder, &recipient_keys).unwrap(),
+            owner_share_key
+        );
+        let repaired_owner_view = shared_folder_view(&folder, &[], &owner_pubkey);
+        let repaired_recipient_view = shared_folder_view(&folder, &[], &recipient_pubkey);
+        assert_eq!(
+            repaired_owner_view.key_status,
+            SharedFolderKeyStatus::Available
+        );
+        assert_eq!(
+            repaired_recipient_view.key_status,
+            SharedFolderKeyStatus::Available
+        );
+    }
+
+    #[test]
+    fn shared_folder_key_wrap_repair_must_be_signed_by_epoch_signer() {
+        let owner_keys = Keys::generate();
+        let other_admin_keys = Keys::generate();
+        let other_admin_pubkey = other_admin_keys.public_key().to_hex();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        other_admin_pubkey.clone(),
+                        12,
+                        Some("Other admin".to_string()),
+                        ShareRole::Admin.capabilities(),
+                    ),
+                },
+                12,
+            )
+            .unwrap(),
+        );
+
+        match repair_shared_folder_key_epoch_wraps(&mut folder, &other_admin_keys, 13) {
+            Err(SharingError::CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey }) => {
+                assert_eq!(signed_by_pubkey, owner_keys.public_key().to_hex());
+            }
+            other => panic!("expected epoch signer error, got {other:?}"),
+        }
+        assert_eq!(
+            folder.projection().active_key_recipients_missing_wraps(1),
+            vec![other_admin_pubkey]
         );
     }
 

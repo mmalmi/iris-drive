@@ -262,6 +262,12 @@ pub(crate) enum SharesCmd {
         #[arg(long, default_value = "")]
         target_path: String,
     },
+    /// Repair missing key wraps for a share's current key epoch.
+    #[command(name = "repair-wraps")]
+    RepairWraps {
+        /// Share UUID.
+        share_id: String,
+    },
 }
 
 #[derive(Debug, Args)]

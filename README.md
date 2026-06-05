@@ -73,6 +73,9 @@ just run-cli app-keys request <owner-npub-or-invite-url> --label "Laptop"
 just run-cli app-keys approve <app-key-request-url-or-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
+just run-cli shares list
+just run-cli shares shortcut <share-id> --parent "Projects"
+just run-cli shares repair-wraps <share-id>
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
