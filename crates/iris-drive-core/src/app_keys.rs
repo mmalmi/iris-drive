@@ -76,15 +76,6 @@ impl AppActorEntry {
     }
 }
 
-/// The exact signed roster event that produced the currently parsed snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AppKeysEventRecord {
-    pub event_id: String,
-    pub signer_pubkey: String,
-    pub event_json: String,
-}
-
 /// A complete, admin-signed `AppKey` actor roster snapshot. Replaceable by `created_at`.
 ///
 /// Carries the current drive content key (DCK) NIP-44–wrapped to each

@@ -36,9 +36,11 @@ fn create_yields_admin_authorized_account() {
     assert_eq!(snap.app_actors[0].pubkey, acct.state.device_pubkey);
     assert!(snap.app_actors[0].is_admin());
     assert_eq!(snap.signer_pubkey(), acct.state.device_pubkey);
-    let record = acct.state.app_keys_event.as_ref().unwrap();
-    assert_eq!(record.signer_pubkey, acct.state.device_pubkey);
-    assert!(!record.event_json.is_empty());
+    assert!(!acct.state.profile_roster_ops.is_empty());
+    assert!(acct.state.profile_roster_ops.iter().all(|op| {
+        op.signer_pubkey == acct.state.device_pubkey
+            || op.signer_pubkey == recovery_keys.pubkey_hex()
+    }));
 
     let projection = acct.state.profile_projection();
     assert!(projection.can_write_roots(&acct.state.device_pubkey));
@@ -150,7 +152,6 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         },
@@ -166,7 +167,6 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     assert_eq!(snap.signer_pubkey(), recovery_key.pubkey_hex());
     assert!(recovered.state.is_authorized());
     assert!(recovered.state.can_manage_devices());
-    assert!(recovered.state.app_keys_event.is_none());
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert!(projection.can_admin_profile(&recovered_pubkey));
@@ -234,7 +234,6 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         },
@@ -288,7 +287,6 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: Some("web app".into()),
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         },
@@ -761,7 +759,6 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         authorization_state: DeviceAuthorizationState::Authorized,
         device_label: Some("phone".into()),
         app_keys: snapshot_for_linked,
-        app_keys_event: None,
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };
@@ -803,7 +800,6 @@ fn revoked_device_cannot_decrypt_new_dck() {
         authorization_state: DeviceAuthorizationState::Revoked,
         device_label: None,
         app_keys: owner_acct.state.app_keys.clone(),
-        app_keys_event: None,
         outbound_device_link_request: None,
         inbound_device_link_requests: Vec::new(),
     };

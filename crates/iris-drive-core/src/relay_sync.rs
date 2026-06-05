@@ -20,7 +20,7 @@ use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, Singl
 use thiserror::Error;
 
 use crate::account::app_keys_from_profile_roster;
-use crate::app_keys::{AppKeysEventRecord, ApplyDecision, apply_snapshot};
+use crate::app_keys::{ApplyDecision, apply_snapshot};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
@@ -107,12 +107,7 @@ pub fn apply_remote_app_keys_event(
     if !can_accept_app_keys_from(account, &signer_pubkey, &snapshot) {
         return Ok(AppKeysApply::UnauthorizedSigner);
     }
-    let record = AppKeysEventRecord {
-        event_id: event.id.to_hex(),
-        signer_pubkey,
-        event_json: event.as_json(),
-    };
-    let decision = account.apply_signed_app_keys(snapshot, record);
+    let decision = account.apply_app_keys(snapshot);
     Ok(AppKeysApply::Applied(decision))
 }
 
@@ -237,7 +232,6 @@ pub fn apply_device_link_roster_frame(
         };
         account.profile_id = frame.profile_id;
         account.app_keys = Some(projected_snapshot);
-        account.app_keys_event = None;
         account.recompute_authorization();
         account.root_scope_id()
     };

@@ -244,7 +244,6 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     awaiting_state.owner_pubkey = owner_state.owner_pubkey.clone();
     awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
-    awaiting_state.app_keys_event = None;
     awaiting_state.has_owner_signing_authority = false;
     awaiting_state.authorization_state =
         iris_drive_core::DeviceAuthorizationState::AwaitingApproval;

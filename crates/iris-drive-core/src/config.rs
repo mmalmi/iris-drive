@@ -617,7 +617,6 @@ dck_generation = 1
                 authorization_state: crate::account::DeviceAuthorizationState::Authorized,
                 device_label: None,
                 app_keys: None,
-                app_keys_event: None,
                 outbound_device_link_request: None,
                 inbound_device_link_requests: Vec::new(),
             }),

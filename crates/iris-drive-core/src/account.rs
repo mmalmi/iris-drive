@@ -19,13 +19,13 @@ use std::process::Command;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{JsonUtil, Keys, PublicKey, SecretKey};
+use nostr_sdk::{Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::app_keys::{
-    AppActorEntry, AppActorRole, AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, apply_snapshot,
+    AppActorEntry, AppActorRole, AppKeysSnapshot, ApplyDecision, apply_snapshot,
 };
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
@@ -35,7 +35,6 @@ use crate::iris_profile::{
     SignedIrisProfileRosterOp, build_iris_profile_roster_op_event,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
-use crate::nostr_events::build_app_keys_event;
 use crate::paths::{
     config_path_in, key_path_in, owner_key_path_in, recovery_phrase_path_in, sync_cache_path_in,
 };
@@ -83,8 +82,6 @@ pub enum AccountError {
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
     Unwrap(String),
-    #[error("failed to record signed roster event: {0}")]
-    RosterEvent(String),
     #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
     InvalidDckLength(usize),
     #[error("config: {0}")]
@@ -150,8 +147,6 @@ pub struct AccountState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_keys: Option<AppKeysSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub app_keys_event: Option<AppKeysEventRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_device_link_request: Option<PendingDeviceLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_device_link_requests: Vec<InboundDeviceLinkRequest>,
@@ -183,9 +178,6 @@ impl AccountState {
         };
         let changed = self.app_keys.as_ref() != Some(&snapshot);
         self.app_keys = Some(snapshot);
-        if changed {
-            self.app_keys_event = None;
-        }
         self.recompute_authorization();
         changed
     }
@@ -262,28 +254,7 @@ impl AccountState {
     /// `authorization_state` is recomputed.
     pub fn apply_app_keys(&mut self, incoming: AppKeysSnapshot) -> ApplyDecision {
         let decision = apply_snapshot(&mut self.app_keys, incoming);
-        if decision == ApplyDecision::Merged {
-            self.app_keys_event = None;
-        }
         self.recompute_authorization();
-        decision
-    }
-
-    pub fn apply_signed_app_keys(
-        &mut self,
-        incoming: AppKeysSnapshot,
-        event: AppKeysEventRecord,
-    ) -> ApplyDecision {
-        let decision = self.apply_app_keys(incoming);
-        match decision {
-            ApplyDecision::Adopted | ApplyDecision::Replaced => {
-                self.app_keys_event = Some(event);
-            }
-            ApplyDecision::Merged => {
-                self.app_keys_event = None;
-            }
-            ApplyDecision::Rejected => {}
-        }
         decision
     }
 
@@ -493,7 +464,6 @@ impl Account {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
@@ -525,12 +495,11 @@ impl Account {
         };
         state.apply_app_keys(snap);
 
-        let mut account = Self {
+        let account = Self {
             state,
             device,
             owner_key: None,
         };
-        account.record_current_app_keys_event()?;
         Ok(account)
     }
 
@@ -571,7 +540,6 @@ impl Account {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label: device_label.clone(),
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
@@ -603,12 +571,11 @@ impl Account {
         };
         state.apply_app_keys(snap);
 
-        let mut account = Self {
+        let account = Self {
             state,
             device,
             owner_key: None,
         };
-        account.record_current_app_keys_event()?;
         Ok(account)
     }
 
@@ -638,7 +605,6 @@ impl Account {
             authorization_state: DeviceAuthorizationState::AwaitingApproval,
             device_label,
             app_keys: None,
-            app_keys_event: None,
             outbound_device_link_request: None,
             inbound_device_link_requests: Vec::new(),
         };
@@ -695,7 +661,6 @@ impl Account {
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         self.state
             .inbound_device_link_requests
             .retain(|request| request.device_pubkey != device_pubkey_hex);
@@ -736,7 +701,6 @@ impl Account {
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -756,7 +720,6 @@ impl Account {
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -799,7 +762,6 @@ impl Account {
             self.rotate_profile_dck_epoch(&dck, now + 1)?;
         }
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         Ok(())
     }
 
@@ -901,7 +863,6 @@ impl Account {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -964,7 +925,6 @@ impl Account {
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
-        self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
@@ -1116,23 +1076,6 @@ impl Account {
             .try_into()
             .map_err(|_| AccountError::InvalidDckLength(bytes.len()))?;
         Ok(arr)
-    }
-
-    fn record_current_app_keys_event(&mut self) -> Result<(), AccountError> {
-        let Some(snapshot) = self.state.app_keys.as_ref() else {
-            return Ok(());
-        };
-        if snapshot.signer_pubkey() != self.state.device_pubkey {
-            return Ok(());
-        }
-        let event = build_app_keys_event(self.device.keys(), snapshot)
-            .map_err(|e| AccountError::RosterEvent(e.to_string()))?;
-        self.state.app_keys_event = Some(AppKeysEventRecord {
-            event_id: event.id.to_hex(),
-            signer_pubkey: event.pubkey.to_hex(),
-            event_json: event.as_json(),
-        });
-        Ok(())
     }
 }
 
