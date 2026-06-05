@@ -78,12 +78,12 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!account.device_link_invite.contains("device-"));
     assert_eq!(state.ui.devices.len(), 1);
     assert_eq!(state.ui.devices[0].label, "Pixel");
-    assert_eq!(state.ui.devices[0].display_label, "This device");
+    assert_eq!(state.ui.devices[0].display_label, "This AppKey");
     assert_eq!(state.ui.devices[0].role, "admin");
     assert_eq!(state.ui.devices[0].role_label, "Admin");
     assert_eq!(state.ui.devices[0].state_label, "Linked");
     assert_eq!(state.ui.devices[0].connection_state, "local");
-    assert_eq!(state.ui.devices[0].connection_label, "This device");
+    assert_eq!(state.ui.devices[0].connection_label, "This AppKey");
     assert!(state.ui.snapshot_link.is_empty());
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
@@ -762,7 +762,7 @@ fn native_fips_status_drives_device_online_presence() {
     assert!(current.is_online);
     assert_eq!(current.state, "Linked");
     assert_eq!(current.connection_state, "local");
-    assert_eq!(current.connection_label, "This device");
+    assert_eq!(current.connection_label, "This AppKey");
     assert_eq!(refreshed.ui.fips.state, "running");
     assert_eq!(refreshed.ui.fips.state_label, "Running");
     assert_eq!(refreshed.ui.fips.roster_label, "1/1 online");

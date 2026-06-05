@@ -54,7 +54,7 @@ pub fn setup_state_flags(setup_state: &str) -> SetupStateFlags {
 #[must_use]
 pub fn primary_status_label(primary_status: &str) -> &'static str {
     match primary_status {
-        "revoked" => "Device removed",
+        "revoked" => "AppKey removed",
         "awaiting_approval" => "Waiting for approval",
         _ => "Ready",
     }
@@ -99,7 +99,7 @@ pub fn device_display_label(
     fallback: &str,
 ) -> String {
     if is_current_device {
-        return "This device".to_owned();
+        return "This AppKey".to_owned();
     }
     label
         .map(str::trim)
@@ -136,7 +136,7 @@ pub fn device_connection_label(
     srtt_ms: Option<u64>,
 ) -> String {
     if connection_state == "local" {
-        return "This device".to_owned();
+        return "This AppKey".to_owned();
     }
     if connection_state == "offline" {
         return "Offline".to_owned();
@@ -461,6 +461,7 @@ mod tests {
             primary_status_label("awaiting_approval"),
             "Waiting for approval"
         );
+        assert_eq!(primary_status_label("revoked"), "AppKey removed");
         assert_eq!(sync_status_label("running"), "Sync on");
         assert_eq!(sync_status_label("profile synced"), "Profile synced");
         assert_eq!(sync_status_label("up to date"), "Up to date");
@@ -470,7 +471,7 @@ mod tests {
         assert_eq!(device_role_label(AppActorRole::Member), "Member");
         assert_eq!(
             device_display_label(true, Some("Mac"), "npub1x"),
-            "This device"
+            "This AppKey"
         );
         assert_eq!(
             device_display_label(false, Some("  Phone  "), "npub1x"),
@@ -486,6 +487,7 @@ mod tests {
         );
         assert_eq!(device_connection_label("mesh", None, None), "Online (Mesh)");
         assert_eq!(device_connection_label("offline", None, None), "Offline");
+        assert_eq!(device_connection_label("local", None, None), "This AppKey");
 
         let member = device_management_actions(true, false, false, 2);
         assert!(member.can_revoke);
@@ -535,11 +537,11 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].npub, current_npub);
-        assert_eq!(rows[0].display_label, "This device");
+        assert_eq!(rows[0].display_label, "This AppKey");
         assert_eq!(rows[0].role, "admin");
         assert_eq!(rows[0].role_label, "Admin");
         assert_eq!(rows[0].connection_state, "local");
-        assert_eq!(rows[0].connection_label, "This device");
+        assert_eq!(rows[0].connection_label, "This AppKey");
         assert!(!rows[0].can_revoke);
 
         assert_eq!(rows[1].npub, remote_npub);
