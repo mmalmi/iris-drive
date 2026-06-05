@@ -20,8 +20,8 @@ use std::time::Duration;
 use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
-use crate::account::app_keys_from_profile_roster;
-use crate::app_keys::{ApplyDecision, apply_snapshot};
+use crate::account::app_keys_from_profile_projection;
+use crate::app_keys::{AppKeysSnapshot, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
@@ -32,7 +32,7 @@ use crate::nostr_events::{
 };
 use crate::{
     IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
-    parse_iris_profile_roster_op_event,
+    parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 
 #[derive(Debug, Error)]
@@ -153,12 +153,12 @@ pub fn apply_device_link_roster_frame(
     }
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
-    let projected_snapshot =
-        app_keys_from_profile_roster(&frame.owner_pubkey, frame.profile_id, &incoming_ops)
-            .ok_or_else(|| {
-                RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into())
-            })?;
-    if !projected_snapshot.is_admin(admin_device_pubkey) {
+    let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
+    let incoming_snapshot =
+        app_keys_from_profile_projection(&frame.owner_pubkey, &incoming_projection).ok_or_else(
+            || RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()),
+        )?;
+    if !incoming_snapshot.is_admin(admin_device_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
@@ -170,19 +170,31 @@ pub fn apply_device_link_roster_frame(
     if !has_current_roster && !pending_from_admin {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
-    if pending_from_admin && !projected_snapshot.contains(&account.device_pubkey) {
+    if pending_from_admin && !incoming_projection.can_write_roots(&account.device_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
 
-    if account.app_keys.as_ref() == Some(&projected_snapshot)
-        && account.profile_id == frame.profile_id
-        && same_profile_ops(&account.profile_roster_ops, &incoming_ops)
-    {
+    let merged_ops = if account.profile_id == frame.profile_id {
+        merge_profile_roster_ops(&account.profile_roster_ops, &incoming_ops)
+    } else {
+        incoming_ops
+    };
+    let ops_changed = account.profile_id != frame.profile_id
+        || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
+    let merged_projection = project_iris_profile_roster(frame.profile_id, merged_ops.clone());
+    let merged_snapshot = app_keys_from_profile_projection(&frame.owner_pubkey, &merged_projection)
+        .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
+
+    if !ops_changed && account.app_keys.as_ref() == Some(&merged_snapshot) {
         return Ok(DeviceLinkRosterApply::Current);
     }
 
-    let mut current = account.app_keys.clone();
-    let decision = apply_snapshot(&mut current, projected_snapshot.clone());
+    let decision = device_link_roster_apply_decision(
+        account.app_keys.as_ref(),
+        &merged_snapshot,
+        ops_changed,
+        !account.profile_roster_ops.is_empty(),
+    );
     if decision == ApplyDecision::Rejected {
         return Ok(DeviceLinkRosterApply::Applied(decision));
     }
@@ -191,18 +203,34 @@ pub fn apply_device_link_roster_frame(
         let Some(account) = config.account.as_mut() else {
             return Err(RelayError::NoAccount);
         };
-        account.profile_roster_ops = if account.profile_id == frame.profile_id {
-            merge_profile_roster_ops(&account.profile_roster_ops, &incoming_ops)
-        } else {
-            incoming_ops
-        };
+        account.profile_roster_ops = merged_ops;
         account.profile_id = frame.profile_id;
-        account.app_keys = Some(projected_snapshot);
-        account.recompute_authorization();
+        account.sync_app_keys_from_profile();
+        debug_assert_eq!(account.app_keys.as_ref(), Some(&merged_snapshot));
         account.root_scope_id()
     };
     sync_primary_drive_scope(config, root_scope_id);
     Ok(DeviceLinkRosterApply::Applied(decision))
+}
+
+fn device_link_roster_apply_decision(
+    current: Option<&AppKeysSnapshot>,
+    merged: &AppKeysSnapshot,
+    ops_changed: bool,
+    had_profile_ops: bool,
+) -> ApplyDecision {
+    let Some(current) = current else {
+        return ApplyDecision::Adopted;
+    };
+    if current.owner_pubkey != merged.owner_pubkey {
+        return ApplyDecision::Rejected;
+    }
+    match merged.created_at.cmp(&current.created_at) {
+        std::cmp::Ordering::Greater => ApplyDecision::Replaced,
+        std::cmp::Ordering::Equal => ApplyDecision::Merged,
+        std::cmp::Ordering::Less if ops_changed && had_profile_ops => ApplyDecision::Merged,
+        std::cmp::Ordering::Less => ApplyDecision::Rejected,
+    }
 }
 
 /// Apply a signed `IrisProfile` roster-op event to the local profile log.

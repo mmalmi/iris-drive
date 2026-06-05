@@ -53,8 +53,22 @@ fn causal_encrypted_root(
     }
 }
 
-#[test]
-fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() {
+fn roster_frame(
+    admin: &Account,
+    profile_roster_ops: Vec<crate::SignedIrisProfileRosterOp>,
+    sent_at: u64,
+) -> DeviceLinkRosterFrame {
+    DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: admin.state.profile_id,
+        owner_pubkey: admin.state.owner_pubkey.clone(),
+        admin_device_pubkey: admin.state.device_pubkey.clone(),
+        profile_roster_ops,
+        sent_at,
+    }
+}
+
+fn linked_config_after_initial_roster() -> (Account, AppConfig) {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
@@ -83,14 +97,7 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     };
     cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
 
-    let first_frame = DeviceLinkRosterFrame {
-        schema: 1,
-        profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
-        profile_roster_ops: admin.state.profile_roster_ops.clone(),
-        sent_at: 456,
-    };
+    let first_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
     let initial =
         apply_device_link_roster_frame(&mut cfg, &first_frame, &admin.state.device_pubkey).unwrap();
     assert!(matches!(
@@ -109,20 +116,19 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
         cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
         admin.state.profile_id.to_string()
     );
+    (admin, cfg)
+}
+
+#[test]
+fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() {
+    let (mut admin, mut cfg) = linked_config_after_initial_roster();
 
     let third_device = Keys::generate().public_key().to_hex();
     admin
         .approve_device(&third_device, Some("tablet".into()))
         .unwrap();
 
-    let newer_frame = DeviceLinkRosterFrame {
-        schema: 1,
-        profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
-        admin_device_pubkey: admin.state.device_pubkey.clone(),
-        profile_roster_ops: admin.state.profile_roster_ops.clone(),
-        sent_at: 789,
-    };
+    let newer_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
     let update =
         apply_device_link_roster_frame(&mut cfg, &newer_frame, &admin.state.device_pubkey).unwrap();
     assert!(matches!(
@@ -131,9 +137,78 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     ));
     let linked_state = cfg.account.as_ref().unwrap();
     let linked_roster = linked_state.app_keys.as_ref().unwrap();
-    assert!(linked_roster.contains(&linked_pubkey));
+    assert!(linked_roster.contains(&linked_state.device_pubkey));
     assert!(linked_roster.contains(&third_device));
     assert!(linked_state.outbound_device_link_request.is_none());
+}
+
+#[test]
+fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
+    let (mut admin, mut cfg) = linked_config_after_initial_roster();
+    let branch_base_ops = admin.state.profile_roster_ops.clone();
+    let branch_at = branch_base_ops
+        .iter()
+        .map(|op| op.content.created_at)
+        .max()
+        .unwrap()
+        + 1;
+    let branch_app = Keys::generate().public_key().to_hex();
+    let branch_op_event = build_iris_profile_roster_op_event(
+        admin.device.keys(),
+        admin.state.profile_id,
+        branch_base_ops.iter().map(|op| op.op_id.clone()).collect(),
+        None,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                branch_app.clone(),
+                branch_at,
+                Some("branch app".into()),
+                IrisProfileCapabilities::app_writer(),
+            ),
+        },
+        branch_at,
+    )
+    .unwrap();
+    let branch_op = parse_iris_profile_roster_op_event(&branch_op_event).unwrap();
+    let mut branch_ops = branch_base_ops;
+    branch_ops.push(branch_op.clone());
+
+    admin.rotate_dck().unwrap();
+    admin.rotate_dck().unwrap();
+    let current_epoch = admin.state.app_keys.as_ref().unwrap().dck_generation;
+    let current_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
+    assert!(matches!(
+        apply_device_link_roster_frame(&mut cfg, &current_frame, &admin.state.device_pubkey)
+            .unwrap(),
+        DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
+    ));
+    assert!(
+        !cfg.account
+            .as_ref()
+            .unwrap()
+            .profile_roster_ops
+            .iter()
+            .any(|op| op.op_id == branch_op.op_id)
+    );
+
+    let branch_frame = roster_frame(&admin, branch_ops, 999);
+    assert!(matches!(
+        apply_device_link_roster_frame(&mut cfg, &branch_frame, &admin.state.device_pubkey)
+            .unwrap(),
+        DeviceLinkRosterApply::Applied(ApplyDecision::Merged)
+    ));
+
+    let linked_state = cfg.account.as_ref().unwrap();
+    assert!(
+        linked_state
+            .profile_roster_ops
+            .iter()
+            .any(|op| op.op_id == branch_op.op_id)
+    );
+    let linked_roster = linked_state.app_keys.as_ref().unwrap();
+    assert_eq!(linked_roster.dck_generation, current_epoch);
+    assert!(linked_roster.contains(&branch_app));
+    assert!(!linked_roster.wrapped_dck.contains_key(&branch_app));
 }
 
 #[test]
