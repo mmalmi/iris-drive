@@ -1,18 +1,21 @@
 # Iris Drive design
 
 End-user file sync with Google-Drive-/Dropbox-style UX, built on
-content-addressed storage (hashtree) with a Nostr-based identity and
-discovery layer. P2P as far as each OS allows.
+content-addressed storage (hashtree), IrisProfile identity, and Nostr/FIPS
+discovery. P2P as far as each OS allows.
 
 ## Goals
 
-- One **"My Drive"** per user — a hashtree root they own and edit, presented as
-  a folder in the OS file manager.
-- Sync that root across all of the user's devices automatically.
-- Each device seeds its blocks P2P to other peers through hashtree-over-FIPS.
-- **Share** folders with specific other Nostr pubkeys; shares appear as
-  additional drives on the recipient's device.
-- No DNS, SSL, CDNs, or centralized servers. Identity = Nostr keypair.
+- One **"My Drive"** per IrisProfile — a private hashtree root the profile's
+  authorized AppKeys can edit, presented as a folder in the OS file manager.
+- Sync that root across all of the user's app installs automatically.
+- Each app install seeds its blocks P2P to authorized peers through
+  hashtree-over-FIPS.
+- **Share** folders with specific other IrisProfiles/AppKeys. A share has its
+  own cryptographic root, roster, roles, key epochs, and wraps; recipients see
+  it under **Shared with me** and may add shortcuts into My Drive.
+- No DNS, SSL, CDNs, or centralized servers. Identity = IrisProfile UUID plus
+  signed AppKey/recovery/social facets, not a primary Nostr pubkey.
 - Native shells per platform, single shared Rust core.
 
 ## Architecture
@@ -23,8 +26,11 @@ over Nostr, and seeds those blocks to peers. The user's "drive" is **one
 hashtree root they own**, served to the OS through whichever presentation
 backend the platform supports (FileProvider / WinFsp / FUSE / DocumentsProvider).
 
-Multiple devices owned by the same user reconcile their drive root via Nostr;
-shares are extra roots from other pubkeys mounted as additional drives.
+Multiple app installs owned by the same IrisProfile reconcile their drive root
+through signed roster ops, AppKey-signed root events, direct FIPS messages, and
+optional relay/Blossom caching. Shares reuse the same root-event machinery but
+are scoped by a share UUID and authorized by the share roster, not by an owner's
+Nostr pubkey.
 
 No separate daemon process, no IPC — `iris-drive-app-core` links
 `hashtree-embedded` as a library and the app extensions / shells link
@@ -106,18 +112,19 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
 
 ### Phase 1 — `iris-drive-core` brain, headless (weeks 2–4)
 
-- **Identity**: `idrive init` creates a Nostr keypair under
-  `~/.config/iris-drive/key`.
-- **Drive model**: `Drive { owner_pubkey, drive_id, key, role }`. Primary
-  drive is `{ owner = self, drive_id = "main", role = Owner }`.
+- **Identity**: `idrive init` creates an IrisProfile UUID, a fresh per-install
+  AppKey under `~/.config/iris-drive/key`, and a recovery phrase authority.
+- **Drive model**: primary My Drive is scoped by `IrisProfileId` with
+  per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets can admit fresh
+  AppKeys and optionally decrypt key epochs but do not sign drive roots.
 - **Embedded daemon**: link `hashtree-embedded`, start on app launch with the
   config dir as block store path.
 - **Indexer**: maintain the htree directory tree from the present working set.
 - **Publisher**: debounce + publish new root over Nostr after each mutation
   (mirrors `hashtree-cli/app/mount_publish.rs`).
-- **Subscriber**: open Nostr subscription for `(owner_pubkey, drive_id)`
-  mutable-root events. New root → fetch diff → apply non-conflicting
-  changes → flag conflicts.
+- **Subscriber**: keep open subscriptions/direct-message streams for profile
+  roster ops and `(profile_id, drive_id)` root events. New root → fetch diff →
+  apply non-conflicting changes → flag conflicts.
 - **Conflict resolution**: last-writer-wins by published timestamp,
   conflicted local file renamed `file (conflict from <device>).ext`.
 
@@ -159,14 +166,14 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 ### Phase 4 — Sharing (weeks 11–13)
 
-- **Send invite**: `idrive share ./Photos --with npub1xxx --role reader`.
-  Creates a child htree root for `./Photos`, publishes under a derived
-  `drive_id`, encrypts access key with NIP-44 to recipient.
+- **Send invite**: `idrive share ./Photos --with <profile/appkey> --role reader`.
+  Creates an internal share root for `./Photos`, initializes a share roster,
+  and wraps the share key to recipients that can receive key wraps.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
   (no timed fetches — see CLAUDE.md rule), surfaces "X shared 'Photos'."
-- **Mount the share** as a sibling drive —
-  `~/Library/CloudStorage/Iris Drive-<account>/Shared/<owner-display>/Photos/`.
-  Reuses every Phase 1 mechanism with a different `Drive { owner, role }`.
+- **Receive share**: shared folders appear under `Shared with me/<name>`.
+  Recipients can add shortcuts anywhere in My Drive. Team/shared DriveSpaces can
+  come later; the first UX remains one Iris Drive.
 - **Revoke / leave**: owner publishes new key wrapped only to remaining
   members. Prior content can't be recalled (content-addressed); matches
   Drive/Dropbox reality.
@@ -201,19 +208,24 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 ## Decisions to lock in early
 
-1. **Identity model**: device key vs user key. Recommendation — single user
-   key copied to each device for v1 (matches Drive UX). Revisit with NIP-46 /
-   iris-drive-specific delegation once multi-device threat model justifies it.
-2. **Drive granularity**: one root per "drive" (My Drive + each share), not
-   one root per user. Clean for sharing, mirrors Drive/Dropbox sidebar.
-3. **Conflict resolution**: last-writer-wins + rename. No CRDT in v1.
-4. **In-process vs out-of-process daemon**: in-process. Mobile sandboxes ban
+1. **Identity model**: IrisProfile UUID plus typed facets. Every app install
+   has its own AppKey. There is no primary Nostr pubkey.
+2. **Authority model**: signed append-only roster op logs with deterministic
+   projection, tombstones, and key-wrap repair state. Do not add a general CRDT
+   library unless it clearly simplifies this model.
+3. **Drive granularity**: one user-facing My Drive, with internal share roots
+   for shared folders. Recipients see Shared with me and optional shortcuts,
+   not a pile of separate sidebar drives.
+4. **Conflict resolution**: causal merge where available, conflict copies for
+   concurrent edits/deletes. No document-level CRDT in v1.
+5. **In-process vs out-of-process daemon**: in-process. Mobile sandboxes ban
    IPC anyway; `hashtree-embedded` exists.
-5. **WebRTC / transport always-on**: yes on desktop; **opt-in or Wi-Fi-only
+6. **WebRTC / transport always-on**: yes on desktop; **opt-in or Wi-Fi-only
    on mobile**. Default to "sync over Wi-Fi only" with an "always" toggle.
-6. **File visibility default**: private — only the user's own pubkey's
-   devices see it. Sharing is opt-in per folder. Never default-public; mirror
-   the global rule "ONLY push PUBLIC repos to public hashtree endpoints."
+7. **File visibility default**: private — only authorized AppKeys with key
+   wraps can read current encrypted roots. Sharing is opt-in per folder. Never
+   default-public; mirror the global rule "ONLY push PUBLIC repos to public
+   hashtree endpoints."
 
 ## Risks
 

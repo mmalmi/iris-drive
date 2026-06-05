@@ -5,6 +5,7 @@ use nostr_sdk::{Keys, PublicKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::config::DeviceRootRef;
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
@@ -84,6 +85,8 @@ pub struct SharedFolder {
     pub local_role: ShareRole,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub participant_profiles: BTreeMap<String, IrisProfileId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub device_roots: BTreeMap<String, DeviceRootRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roster_ops: Vec<SignedIrisProfileRosterOp>,
 }
@@ -375,6 +378,7 @@ pub fn create_shared_folder(
         display_name,
         local_role: ShareRole::Admin,
         participant_profiles,
+        device_roots: BTreeMap::new(),
         roster_ops: ops,
     })
 }

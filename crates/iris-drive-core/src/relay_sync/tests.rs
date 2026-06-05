@@ -10,6 +10,7 @@ use crate::nostr_events::{
     build_app_keys_event, build_device_link_request_event, build_drive_root_event,
     build_private_hashtree_root_event, device_link_request_d_tag,
 };
+use crate::sharing::{ShareRecipient, ShareRole};
 use hashtree_core::Cid;
 use tempfile::tempdir;
 
@@ -643,6 +644,118 @@ fn apply_drive_root_event_for_foreign_owner_ignored() {
     .unwrap();
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, None).unwrap();
     assert_eq!(outcome, DriveRootApply::NotOurOwner);
+}
+
+#[test]
+fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Account::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    let reader_dir = tempdir().unwrap();
+    let reader = Account::create(reader_dir.path(), Some("Reader".into())).unwrap();
+    let folder = crate::create_shared_folder(
+        owner.device.keys(),
+        owner.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Owner".into()),
+        vec![ShareRecipient {
+            profile_id: reader.state.profile_id,
+            app_pubkey: reader.state.device_pubkey.clone(),
+            role: ShareRole::Reader,
+            label: Some("Reader".into()),
+        }],
+        10,
+    )
+    .unwrap();
+    let root = causal_encrypted_root(0x44, 20, 1, 7);
+    let authorized_recipients = folder
+        .projection()
+        .active_facets
+        .values()
+        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .map(|facet| facet.pubkey.clone())
+        .collect::<Vec<_>>();
+    let event = build_drive_root_event(
+        owner.device.keys(),
+        &folder.share_id.to_string(),
+        crate::PRIMARY_DRIVE_ID,
+        &root,
+        &authorized_recipients,
+    )
+    .unwrap();
+    let mut cfg = AppConfig {
+        account: Some(reader.state.clone()),
+        shared_folders: vec![folder.clone()],
+        ..AppConfig::default()
+    };
+
+    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(reader.device.keys()))
+        .expect("share root applies");
+
+    assert_eq!(outcome, DriveRootApply::Applied);
+    let stored = cfg
+        .shared_folder(folder.share_id)
+        .unwrap()
+        .device_roots
+        .get(&owner.state.device_pubkey)
+        .expect("owner share root stored");
+    assert_eq!(stored.root_cid, root.root_cid);
+    assert_eq!(stored.device_seq, 7);
+}
+
+#[test]
+fn apply_share_root_event_rejects_reader_publisher() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Account::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    let reader_dir = tempdir().unwrap();
+    let reader = Account::create(reader_dir.path(), Some("Reader".into())).unwrap();
+    let folder = crate::create_shared_folder(
+        owner.device.keys(),
+        owner.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Owner".into()),
+        vec![ShareRecipient {
+            profile_id: reader.state.profile_id,
+            app_pubkey: reader.state.device_pubkey.clone(),
+            role: ShareRole::Reader,
+            label: Some("Reader".into()),
+        }],
+        10,
+    )
+    .unwrap();
+    let root = causal_encrypted_root(0x45, 20, 1, 1);
+    let authorized_recipients = folder
+        .projection()
+        .active_facets
+        .values()
+        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .map(|facet| facet.pubkey.clone())
+        .collect::<Vec<_>>();
+    let event = build_drive_root_event(
+        reader.device.keys(),
+        &folder.share_id.to_string(),
+        crate::PRIMARY_DRIVE_ID,
+        &root,
+        &authorized_recipients,
+    )
+    .unwrap();
+    let mut cfg = AppConfig {
+        account: Some(owner.state.clone()),
+        shared_folders: vec![folder.clone()],
+        ..AppConfig::default()
+    };
+
+    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.device.keys()))
+        .expect("reader share root is inspected");
+
+    assert_eq!(outcome, DriveRootApply::UnauthorizedDevice);
+    assert!(
+        cfg.shared_folder(folder.share_id)
+            .unwrap()
+            .device_roots
+            .is_empty()
+    );
 }
 
 #[test]

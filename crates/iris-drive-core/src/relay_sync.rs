@@ -459,25 +459,57 @@ pub fn apply_remote_drive_root_event(
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if preview.owner_pubkey_hex != account.root_scope_id() {
-        return Ok(DriveRootApply::NotOurOwner);
+    if preview.owner_pubkey_hex == account.root_scope_id() {
+        let authorized: BTreeSet<String> = account
+            .app_keys
+            .as_ref()
+            .map(|s| s.devices.iter().map(|d| d.pubkey.clone()).collect())
+            .unwrap_or_default();
+        if !authorized.contains(&device_hex) {
+            return Ok(DriveRootApply::UnauthorizedDevice);
+        }
+        let Some(drive) = config
+            .drives
+            .iter_mut()
+            .find(|d| d.drive_id == preview.drive_id)
+        else {
+            return Ok(DriveRootApply::UnknownDrive);
+        };
+        return apply_root_to_device_roots(&mut drive.device_roots, event, device_keys, &preview);
     }
-    let authorized: BTreeSet<&str> = account
-        .app_keys
-        .as_ref()
-        .map(|s| s.devices.iter().map(|d| d.pubkey.as_str()).collect())
-        .unwrap_or_default();
-    if !authorized.contains(device_hex.as_str()) {
+
+    let Ok(share_id) = preview.owner_pubkey_hex.parse::<IrisProfileId>() else {
+        return Ok(DriveRootApply::NotOurOwner);
+    };
+    if preview.drive_id != crate::PRIMARY_DRIVE_ID {
+        return Ok(DriveRootApply::UnknownDrive);
+    }
+    let Some(shared_folder) = config
+        .shared_folders
+        .iter_mut()
+        .find(|folder| folder.share_id == share_id)
+    else {
+        return Ok(DriveRootApply::NotOurOwner);
+    };
+    if !shared_folder.projection().can_write_roots(&device_hex) {
         return Ok(DriveRootApply::UnauthorizedDevice);
     }
-    let Some(drive) = config
-        .drives
-        .iter_mut()
-        .find(|d| d.drive_id == preview.drive_id)
-    else {
-        return Ok(DriveRootApply::UnknownDrive);
-    };
-    if let Some(existing) = drive.device_roots.get(&device_hex)
+    apply_root_to_device_roots(
+        &mut shared_folder.device_roots,
+        event,
+        device_keys,
+        &preview,
+    )
+}
+
+fn apply_root_to_device_roots(
+    device_roots: &mut BTreeMap<String, DeviceRootRef>,
+    event: &Event,
+    device_keys: Option<&Keys>,
+    preview: &crate::nostr_events::DriveRootEventPreview,
+) -> Result<DriveRootApply, RelayError> {
+    let device_hex = preview.device_pubkey_hex.clone();
+    if let Some(existing) = device_roots.get(&device_hex)
         && incoming_root_is_stale(existing, preview.device_seq, preview.published_at)
     {
         return Ok(DriveRootApply::StaleTimestamp);
@@ -493,14 +525,13 @@ pub fn apply_remote_drive_root_event(
     } else {
         parse_drive_root_event(event)?
     };
-    if drive
-        .device_roots
+    if device_roots
         .get(&device_hex)
         .is_some_and(|existing| existing.root_cid == incoming_root.root_cid)
     {
         return Ok(DriveRootApply::StaleTimestamp);
     }
-    drive.device_roots.insert(device_hex, incoming_root);
+    device_roots.insert(device_hex, incoming_root);
     Ok(DriveRootApply::Applied)
 }
 
