@@ -796,7 +796,7 @@ async fn handle_device_link_roster_app_message(
         ));
     }
     let admin_device_hex =
-        normalize_pubkey(&frame.admin_device_pubkey).context("parsing roster admin device")?;
+        normalize_pubkey(&frame.admin_device_pubkey).context("parsing roster admin AppKey")?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
@@ -870,7 +870,7 @@ fn handle_device_link_roster_ack_app_message(
         ));
     }
     let admin_device_hex =
-        normalize_pubkey(&frame.admin_device_pubkey).context("parsing ack admin device")?;
+        normalize_pubkey(&frame.admin_device_pubkey).context("parsing ack admin AppKey")?;
     let device_hex = normalize_pubkey(&frame.device_pubkey).context("parsing ack device")?;
     if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
         return Ok(true);

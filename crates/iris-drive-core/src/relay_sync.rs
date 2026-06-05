@@ -82,7 +82,7 @@ pub enum IrisProfileRosterOpApply {
 pub enum DeviceLinkRequestApply {
     /// The event is addressed to another profile.
     NotOurProfile,
-    /// This install is not an admin device and cannot approve devices.
+    /// This install's `AppKey` is not an admin and cannot approve `AppKeys`.
     NotAdmin,
     /// The event did not carry this admin's current invite secret.
     InvalidSecret,

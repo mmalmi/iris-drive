@@ -1082,9 +1082,10 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
     let mut owner = iris_drive_core::Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
-    let mut linked = iris_drive_core::Account::link(
+    let mut linked = iris_drive_core::Account::link_to_profile(
         linked_dir.path(),
-        owner.state.owner_pubkey.clone(),
+        owner.state.profile_id,
+        owner.state.device_pubkey.clone(),
         Some("Phone".into()),
     )
     .unwrap();

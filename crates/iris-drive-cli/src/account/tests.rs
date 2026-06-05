@@ -163,9 +163,10 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     let admin_dir = tempdir().unwrap();
     let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_dir = tempdir().unwrap();
-    let joiner = Account::link(
+    let joiner = Account::link_to_profile(
         joiner_dir.path(),
-        admin.state.owner_pubkey.clone(),
+        admin.state.profile_id,
+        admin.state.device_pubkey.clone(),
         Some("laptop".into()),
     )
     .unwrap();

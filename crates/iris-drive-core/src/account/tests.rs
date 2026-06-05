@@ -384,10 +384,17 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
 #[test]
 fn link_starts_awaiting_approval_no_owner_key() {
     let dir = tempdir().unwrap();
-    // Fake owner npub (64 hex chars).
-    let owner = "ab".repeat(32);
-    let acct = Account::link(dir.path(), owner.clone(), Some("phone".into())).unwrap();
-    assert_eq!(acct.state.owner_pubkey, owner);
+    let profile_id = IrisProfileId::new_v4();
+    let admin_app_key = fresh_device_pubkey();
+    let acct = Account::link_to_profile(
+        dir.path(),
+        profile_id,
+        admin_app_key.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+    assert_eq!(acct.state.profile_id, profile_id);
+    assert_eq!(acct.state.owner_pubkey, admin_app_key);
     assert!(!acct.state.has_owner_signing_authority);
     assert_eq!(
         acct.state.authorization_state,
@@ -514,10 +521,15 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
 #[test]
 fn link_with_invalid_pubkey_errors() {
     let dir = tempdir().unwrap();
-    let result = Account::link(dir.path(), "not-a-real-pubkey".into(), None);
+    let result = Account::link_to_profile(
+        dir.path(),
+        IrisProfileId::new_v4(),
+        "not-a-real-pubkey".into(),
+        None,
+    );
     match result {
-        Err(AccountError::InvalidOwnerPubkey(_)) => {}
-        other => panic!("expected InvalidOwnerPubkey, got {:?}", other.is_ok()),
+        Err(AccountError::InvalidAppKeyPubkey(_)) => {}
+        other => panic!("expected InvalidAppKeyPubkey, got {:?}", other.is_ok()),
     }
 }
 
@@ -548,15 +560,16 @@ fn approve_adds_device_to_roster() {
 }
 
 #[test]
-fn approve_without_owner_authority_errors() {
+fn approve_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
     // Use a real x-only pubkey hex; the test only ever fails on the authority
     // check before reaching crypto, so this is fine.
-    let owner = fresh_device_pubkey();
-    let mut acct = Account::link(dir.path(), owner, None).unwrap();
+    let admin_app_key = fresh_device_pubkey();
+    let mut acct =
+        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.approve_device(&fresh_device_pubkey(), None) {
-        Err(AccountError::NoOwnerAuthority) => {}
-        _ => panic!("expected NoOwnerAuthority"),
+        Err(AccountError::NoAdminAuthority) => {}
+        _ => panic!("expected NoAdminAuthority"),
     }
 }
 
@@ -771,21 +784,23 @@ fn rotate_dck_preserves_roster() {
 }
 
 #[test]
-fn rotate_dck_without_owner_authority_errors() {
+fn rotate_dck_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
-    let owner = fresh_device_pubkey();
-    let mut acct = Account::link(dir.path(), owner, None).unwrap();
+    let admin_app_key = fresh_device_pubkey();
+    let mut acct =
+        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.rotate_dck() {
-        Err(AccountError::NoOwnerAuthority) => {}
-        other => panic!("expected NoOwnerAuthority, got {:?}", other.is_ok()),
+        Err(AccountError::NoAdminAuthority) => {}
+        other => panic!("expected NoAdminAuthority, got {:?}", other.is_ok()),
     }
 }
 
 #[test]
 fn current_dck_without_snapshot_errors() {
     let dir = tempdir().unwrap();
-    let owner = fresh_device_pubkey();
-    let acct = Account::link(dir.path(), owner, None).unwrap();
+    let admin_app_key = fresh_device_pubkey();
+    let acct =
+        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.current_dck() {
         Err(AccountError::NoCurrentSnapshot) => {}
         other => panic!("expected NoCurrentSnapshot, got {:?}", other.is_ok()),
@@ -922,8 +937,9 @@ fn load_round_trips_account_state() {
 #[test]
 fn load_for_linked_device_skips_owner_key() {
     let dir = tempdir().unwrap();
-    let owner = "ab".repeat(32);
-    let linked = Account::link(dir.path(), owner, None).unwrap();
+    let admin_app_key = fresh_device_pubkey();
+    let linked =
+        Account::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     let state = linked.state.clone();
     let loaded = Account::load(state, dir.path()).unwrap();
     assert!(loaded.owner_key.is_none());

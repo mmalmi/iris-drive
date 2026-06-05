@@ -737,8 +737,8 @@ fn owner_can_revoke_a_linked_app_key() {
 }
 
 #[test]
-fn approve_without_owner_authority_errors() {
-    // Linked-only device tries to approve.
+fn approve_without_admin_authority_errors() {
+    // Linked-only AppKey tries to approve.
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner = serde_json::from_str::<serde_json::Value>(

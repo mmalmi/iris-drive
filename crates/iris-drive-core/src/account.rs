@@ -1,16 +1,16 @@
 //! Account state machine.
 //!
-//! Wraps the account roster model — stable account id, this device's
-//! identity, whether this device is an admin in the current `AppKeys`
-//! roster, and the current authorization state.
+//! Wraps the profile roster model — stable `IrisProfile` id, this app install's
+//! `AppKey`, whether the `AppKey` is an admin in the current roster, and the
+//! current authorization state.
 //!
 //! Three creation paths mirror the iris-chat-rs onboarding flows:
 //!
-//! 1. **Create** — fresh device key. Single-device default; this device
+//! 1. **Create** — fresh `AppKey`. Single-install default; this `AppKey`
 //!    is the first admin and signs the first roster.
-//! 2. **Restore** — import an existing admin-device `nsec`.
-//! 3. **Link** — paste/scan an account/admin invite. Generate a fresh
-//!    device key and wait in `AwaitingApproval` until an admin accepts it.
+//! 2. **Restore** — import recovery authority or an existing admin `AppKey`.
+//! 3. **Link** — paste/scan an `IrisProfile`/admin `AppKey` invite. Generate a
+//!    fresh `AppKey` and wait in `AwaitingApproval` until an admin accepts it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -60,17 +60,17 @@ pub enum AccountError {
     RecoveryCannotRotateKeyEpochs,
     #[error("current app key was tombstoned and cannot be re-added")]
     CurrentAppKeyTombstoned,
-    #[error("invalid owner pubkey: {0}")]
-    InvalidOwnerPubkey(String),
+    #[error("invalid AppKey pubkey: {0}")]
+    InvalidAppKeyPubkey(String),
     #[error("invalid device pubkey: {0}")]
     InvalidDevicePubkey(String),
-    #[error("this device is not an admin")]
-    NoOwnerAuthority,
+    #[error("this AppKey is not an admin")]
+    NoAdminAuthority,
     #[error("device already authorized")]
     AlreadyAuthorized,
     #[error("device not in roster")]
     DeviceNotInRoster,
-    #[error("cannot remove the last admin device")]
+    #[error("cannot remove the last admin AppKey")]
     CannotRemoveLastAdmin,
     #[error("no AppKeys snapshot yet")]
     NoCurrentSnapshot,
@@ -130,8 +130,8 @@ pub struct InboundDeviceLinkRequest {
 #[serde(deny_unknown_fields)]
 pub struct AccountState {
     pub profile_id: IrisProfileId,
-    /// Stable account id. New accounts use their first admin device pubkey.
-    /// The name is kept for config/wire compatibility.
+    /// Historical request-target field. New accounts store their first admin
+    /// `AppKey` here; linked installs store the admin `AppKey` they request from.
     pub owner_pubkey: String,
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -546,31 +546,17 @@ impl Account {
         Ok(account)
     }
 
-    /// **Link** flow — generate a fresh device key, accept the user's
-    /// owner-npub claim, start in `AwaitingApproval`. The owner must
-    /// approve this device from another install before any drive
-    /// publishes will be honoured.
-    pub fn link(
-        config_dir: &Path,
-        owner_pubkey_hex: String,
-        device_label: Option<String>,
-    ) -> Result<Self, AccountError> {
-        Self::link_to_profile(
-            config_dir,
-            IrisProfileId::new_v4(),
-            owner_pubkey_hex,
-            device_label,
-        )
-    }
-
+    /// **Link** flow — generate a fresh `AppKey` for a known `IrisProfile`.
+    /// The admin `AppKey` is used only as the request target; the new local
+    /// `AppKey` starts in `AwaitingApproval` until a roster admin accepts it.
     pub fn link_to_profile(
         config_dir: &Path,
         profile_id: IrisProfileId,
-        owner_pubkey_hex: String,
+        admin_app_key_hex: String,
         device_label: Option<String>,
     ) -> Result<Self, AccountError> {
-        if !is_pubkey_hex(&owner_pubkey_hex) {
-            return Err(AccountError::InvalidOwnerPubkey(owner_pubkey_hex));
+        if !is_pubkey_hex(&admin_app_key_hex) {
+            return Err(AccountError::InvalidAppKeyPubkey(admin_app_key_hex));
         }
         let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
@@ -578,7 +564,7 @@ impl Account {
 
         let state = AccountState {
             profile_id,
-            owner_pubkey: owner_pubkey_hex,
+            owner_pubkey: admin_app_key_hex,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
@@ -621,7 +607,7 @@ impl Account {
         label: Option<String>,
     ) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
         if let Some(snap) = &self.state.app_keys
             && snap.contains(device_pubkey_hex)
@@ -657,7 +643,7 @@ impl Account {
         device_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
         let snap = self
             .state
@@ -691,7 +677,7 @@ impl Account {
     /// churn"). Owner-only.
     pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
         let snap = self
             .state
@@ -715,7 +701,7 @@ impl Account {
         can_decrypt_key_epochs: bool,
     ) -> Result<(), AccountError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
         PublicKey::from_hex(nip46_pubkey_hex)
             .map_err(|e| AccountError::InvalidDevicePubkey(e.to_string()))?;
@@ -870,7 +856,7 @@ impl Account {
         role: AppActorRole,
     ) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
         let snap = self
             .state
@@ -983,10 +969,10 @@ impl Account {
             });
         }
         let Some(current_facet) = projection.active_facets.get(&self.state.device_pubkey) else {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         };
         if !current_facet.capabilities.can_change_key_epochs() {
-            return Err(AccountError::NoOwnerAuthority);
+            return Err(AccountError::NoAdminAuthority);
         }
 
         let missing_pubkeys = projection.active_key_recipients_missing_wraps(*epoch);
@@ -1051,7 +1037,7 @@ impl Account {
                 .get(&self.state.device_pubkey)
                 .ok_or(AccountError::NoWrapForThisDevice)?;
             let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
-                .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+                .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
             let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
                 .map_err(|e| AccountError::Unwrap(e.to_string()))?;
             let arr: [u8; 32] = bytes
@@ -1070,7 +1056,7 @@ impl Account {
             .get(&self.state.device_pubkey)
             .ok_or(AccountError::NoWrapForThisDevice)?;
         let signer_pk = PublicKey::from_hex(snap.signer_pubkey())
-            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| AccountError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
@@ -1126,7 +1112,7 @@ impl Account {
             .get(&authority_pubkey)
             .ok_or(AccountError::NoWrapForThisDevice)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
-            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
             .map_err(|e| AccountError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
@@ -1160,7 +1146,7 @@ where
     let mut wraps = BTreeMap::new();
     for pubkey in pubkeys {
         let pk = PublicKey::from_hex(pubkey)
-            .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
+            .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
         let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
             .map_err(|e| AccountError::Wrap(e.to_string()))?;
         wraps.insert(pubkey.to_string(), ct);

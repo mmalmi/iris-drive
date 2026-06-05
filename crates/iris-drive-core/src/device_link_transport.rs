@@ -402,7 +402,7 @@ mod tests {
         let mut linked = Account::link_to_profile(
             linked_dir.path(),
             owner.state.profile_id,
-            owner.state.owner_pubkey.clone(),
+            owner.state.device_pubkey.clone(),
             Some("Phone".into()),
         )
         .unwrap();

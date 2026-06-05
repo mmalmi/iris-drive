@@ -71,9 +71,10 @@ fn linked_config_after_initial_roster() -> (Account, AppConfig) {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let mut linked = Account::link(
+    let mut linked = Account::link_to_profile(
         linked_dir.path(),
-        admin.state.owner_pubkey.clone(),
+        admin.state.profile_id,
+        admin.state.device_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
@@ -149,7 +150,7 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let mut linked = Account::link_to_profile(
         linked_dir.path(),
         admin.state.profile_id,
-        "aa".repeat(32),
+        admin.state.device_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
@@ -514,9 +515,10 @@ fn apply_device_link_request_event_records_admin_inbound_request() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let linked = Account::link(
+    let linked = Account::link_to_profile(
         linked_dir.path(),
-        admin.state.owner_pubkey.clone(),
+        admin.state.profile_id,
+        admin.state.device_pubkey.clone(),
         Some("phone".into()),
     )
     .unwrap();
@@ -587,14 +589,14 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
         .approve_device(&device_b_hex, Some("old-phone".into()))
         .unwrap();
 
-    let linked = Account::link(
+    let linked = Account::link_to_profile(
         linked_dir.path(),
-        owner_acct.state.owner_pubkey.clone(),
+        owner_acct.state.profile_id,
+        owner_acct.state.device_pubkey.clone(),
         Some("new-laptop".into()),
     )
     .unwrap();
     let mut linked_state = linked.state.clone();
-    linked_state.profile_id = owner_acct.state.profile_id;
     linked_state.app_keys = owner_acct.state.app_keys.clone();
 
     let mut cfg = AppConfig {
