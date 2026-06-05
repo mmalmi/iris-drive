@@ -20,20 +20,21 @@ fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
 fn drive_root_event_roundtrip() {
     let device = Keys::generate();
     let root_scope_id = IrisProfileId::new_v4().to_string();
-    let authorized_devices = vec![device.public_key().to_hex()];
+    let authorized_app_keys = vec![device.public_key().to_hex()];
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
         // Set an explicit published_at so roundtrip is stable.
         1_700_000_000,
         7,
     );
-    let event = build_drive_root_event(&device, &root_scope_id, "main", &root, &authorized_devices)
-        .unwrap();
+    let event =
+        build_drive_root_event(&device, &root_scope_id, "main", &root, &authorized_app_keys)
+            .unwrap();
     assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
-    let (device_pk, parsed_owner, drive_id, parsed_root) =
+    let (device_pk, parsed_scope, drive_id, parsed_root) =
         parse_drive_root_event_for_device(&event, &device).unwrap();
     assert_eq!(device_pk, device.public_key().to_hex());
-    assert_eq!(parsed_owner, root_scope_id);
+    assert_eq!(parsed_scope, root_scope_id);
     assert_eq!(drive_id, "main");
     assert_eq!(parsed_root.root_cid, root.root_cid);
     assert_eq!(parsed_root.dck_generation, root.dck_generation);
@@ -43,8 +44,7 @@ fn drive_root_event_roundtrip() {
 #[test]
 fn drive_root_event_roundtrip_preserves_causal_fields() {
     let device = Keys::generate();
-    let owner = Keys::generate();
-    let owner_hex = owner.public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let parent = RootParent {
         device_id: device.public_key().to_hex(),
         device_seq: 2,
@@ -70,7 +70,7 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
 
     let event = build_drive_root_event(
         &device,
-        &owner_hex,
+        &root_scope_id,
         "main",
         &root,
         &[device.public_key().to_hex(), observed_device],
@@ -85,7 +85,7 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
 #[test]
 fn drive_root_event_does_not_publish_root_key_in_cleartext() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root_key = [0x44; 32];
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x33; 32], root_key).to_string(),
@@ -95,7 +95,7 @@ fn drive_root_event_does_not_publish_root_key_in_cleartext() {
 
     let event = build_drive_root_event(
         &device,
-        &owner,
+        &root_scope_id,
         "main",
         &root,
         &[device.public_key().to_hex()],
@@ -138,7 +138,7 @@ fn retired_drive_root_kind_is_rejected() {
 fn drive_root_coordinate_does_not_match_other_30078_records() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let owner_hex = owner.public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x33; 32], [0x44; 32]).to_string(),
         1_700_000_000,
@@ -147,7 +147,7 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
 
     let drive_event = build_drive_root_event(
         &device,
-        &owner_hex,
+        &root_scope_id,
         "main",
         &root,
         &[device.public_key().to_hex()],
@@ -284,13 +284,13 @@ fn private_hashtree_root_event_is_files_app_compatible() {
 #[test]
 fn drive_root_event_builder_rejects_unencrypted_root() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
 
     assert!(
         build_drive_root_event(
             &device,
-            &owner,
+            &root_scope_id,
             "main",
             &root,
             &[device.public_key().to_hex()]
@@ -302,14 +302,14 @@ fn drive_root_event_builder_rejects_unencrypted_root() {
 #[test]
 fn drive_root_event_builder_always_wraps_for_signing_device() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
         1_700_000_000,
         1,
     );
 
-    let event = build_drive_root_event(&device, &owner, "main", &root, &[]).unwrap();
+    let event = build_drive_root_event(&device, &root_scope_id, "main", &root, &[]).unwrap();
     let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
     assert_eq!(parsed_root.root_cid, root.root_cid);
 }
@@ -317,7 +317,7 @@ fn drive_root_event_builder_always_wraps_for_signing_device() {
 #[test]
 fn drive_root_event_with_zero_published_at_uses_wall_clock() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         0, // caller has not stamped; use wall-clock time
@@ -325,7 +325,7 @@ fn drive_root_event_with_zero_published_at_uses_wall_clock() {
     );
     let event = build_drive_root_event(
         &device,
-        &owner,
+        &root_scope_id,
         "main",
         &root,
         &[device.public_key().to_hex()],
@@ -339,7 +339,7 @@ fn drive_root_event_with_zero_published_at_uses_wall_clock() {
 #[test]
 fn drive_root_publish_event_advances_past_stored_root_timestamp() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         1_700_000_000,
@@ -348,7 +348,7 @@ fn drive_root_publish_event_advances_past_stored_root_timestamp() {
 
     let event = build_drive_root_publish_event(
         &device,
-        &owner,
+        &root_scope_id,
         "main",
         &root,
         &[device.public_key().to_hex()],
@@ -368,11 +368,11 @@ fn drive_root_d_tag_format() {
 
 #[test]
 fn drive_root_d_tag_parse_round_trip() {
-    let owner = IrisProfileId::new_v4().to_string();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let drive_id = "shared-photos";
-    let tag = drive_root_d_tag(&owner, drive_id);
-    let (parsed_owner, parsed_drive) = parse_drive_root_d_tag(&tag).unwrap();
-    assert_eq!(parsed_owner, owner);
+    let tag = drive_root_d_tag(&root_scope_id, drive_id);
+    let (parsed_scope, parsed_drive) = parse_drive_root_d_tag(&tag).unwrap();
+    assert_eq!(parsed_scope, root_scope_id);
     assert_eq!(parsed_drive, drive_id);
 }
 
@@ -396,7 +396,7 @@ fn drive_root_event_wrong_kind_rejected() {
         Kind::from(1u16),
         "{}".to_string(),
         [Tag::identifier(drive_root_d_tag(
-            &device.public_key().to_hex(),
+            &IrisProfileId::new_v4().to_string(),
             "main",
         ))],
     )
@@ -411,15 +411,15 @@ fn drive_root_event_wrong_kind_rejected() {
 #[test]
 fn drive_root_event_attributes_to_device_signer() {
     // Important property: even if two devices publish for the same
-    // owner+drive, the event's author is the device pubkey, so the
-    // merge engine can attribute each root to the right device.
+    // root scope + drive, the event's author is the AppKey pubkey, so the
+    // merge engine can attribute each root to the right app actor.
     let device_a = Keys::generate();
     let device_b = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let root = DeviceRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
     let ev_a = build_drive_root_event(
         &device_a,
-        &owner,
+        &root_scope_id,
         "main",
         &root,
         &[device_a.public_key().to_hex()],
@@ -427,7 +427,7 @@ fn drive_root_event_attributes_to_device_signer() {
     .unwrap();
     let ev_b = build_drive_root_event(
         &device_b,
-        &owner,
+        &root_scope_id,
         "main",
         &root,
         &[device_b.public_key().to_hex()],

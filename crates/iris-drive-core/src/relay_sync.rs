@@ -360,13 +360,13 @@ fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
 /// Result of applying a remote drive-root event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriveRootApply {
-    /// Owner pubkey in the d-tag doesn't match our account — ignored.
-    NotOurOwner,
+    /// Root scope id in the d-tag is neither our profile nor a known share.
+    NotOurScope,
     /// Drive id in the d-tag isn't configured locally — ignored.
     UnknownDrive,
-    /// Device pubkey isn't in the current `AppKeys` roster — ignored.
-    /// Protects against forged events from unauthorized devices.
-    UnauthorizedDevice,
+    /// `AppKey` pubkey isn't in the current `AppKeys` roster — ignored.
+    /// Protects against forged events from unauthorized app actors.
+    UnauthorizedAppKey,
     /// Older than what we already have for this device — ignored.
     /// Causal roots compare by `device_seq`; legacy roots compare by
     /// timestamp.
@@ -391,9 +391,9 @@ pub enum FilesRootApply {
     Applied,
 }
 
-/// Apply a remote drive-root event to `config`. Drops events from
-/// foreign owners, unknown drives, unauthorized devices, or that are
-/// older than what's already recorded.
+/// Apply a remote drive-root event to `config`. Drops events for foreign root
+/// scopes, unknown drives, unauthorized app actors, or roots older than what's
+/// already recorded.
 pub fn apply_remote_drive_root_event(
     config: &mut AppConfig,
     event: &Event,
@@ -404,14 +404,14 @@ pub fn apply_remote_drive_root_event(
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if preview.owner_pubkey_hex == account.root_scope_id() {
+    if preview.root_scope_id == account.root_scope_id() {
         let authorized: BTreeSet<String> = account
             .app_keys
             .as_ref()
             .map(|s| s.app_actors.iter().map(|d| d.pubkey.clone()).collect())
             .unwrap_or_default();
         if !authorized.contains(&app_key_hex) {
-            return Ok(DriveRootApply::UnauthorizedDevice);
+            return Ok(DriveRootApply::UnauthorizedAppKey);
         }
         let Some(drive) = config
             .drives
@@ -423,8 +423,8 @@ pub fn apply_remote_drive_root_event(
         return apply_root_to_device_roots(&mut drive.device_roots, event, device_keys, &preview);
     }
 
-    let Ok(share_id) = preview.owner_pubkey_hex.parse::<IrisProfileId>() else {
-        return Ok(DriveRootApply::NotOurOwner);
+    let Ok(share_id) = preview.root_scope_id.parse::<IrisProfileId>() else {
+        return Ok(DriveRootApply::NotOurScope);
     };
     if preview.drive_id != crate::PRIMARY_DRIVE_ID {
         return Ok(DriveRootApply::UnknownDrive);
@@ -434,10 +434,10 @@ pub fn apply_remote_drive_root_event(
         .iter_mut()
         .find(|folder| folder.share_id == share_id)
     else {
-        return Ok(DriveRootApply::NotOurOwner);
+        return Ok(DriveRootApply::NotOurScope);
     };
     if !shared_folder.projection().can_write_roots(&app_key_hex) {
-        return Ok(DriveRootApply::UnauthorizedDevice);
+        return Ok(DriveRootApply::UnauthorizedAppKey);
     }
     apply_root_to_device_roots(
         &mut shared_folder.device_roots,
@@ -843,10 +843,10 @@ pub async fn fetch_iris_profile_restore_candidates(
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
 /// the d-tag `iris-drive/<profile_or_share_id>/<drive>/root` already pins the drive,
-/// and `apply_remote_drive_root_event` rejects events from
-/// unauthorized devices. Skipping the author filter means the daemon
+/// and `apply_remote_drive_root_event` rejects events from unauthorized
+/// `AppKeys`. Skipping the author filter means the daemon
 /// doesn't need to re-subscribe every time the roster changes — newly
-/// approved devices' events flow in automatically.
+/// approved `AppKeys`' events flow in automatically.
 #[must_use]
 pub fn subscription_filters(
     current_app_key_pubkey_hex: &str,

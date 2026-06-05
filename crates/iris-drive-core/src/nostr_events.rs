@@ -64,7 +64,7 @@ pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriveRootEventPreview {
     pub app_key_pubkey_hex: String,
-    pub owner_pubkey_hex: String,
+    pub root_scope_id: String,
     pub drive_id: String,
     pub published_at: i64,
     pub dck_generation: u64,
@@ -209,7 +209,7 @@ pub fn drive_root_d_tag(root_scope_id: &str, drive_id: &str) -> String {
 
 /// Build a signed drive-root event. Signed by the **app key**;
 /// `device_keys.public_key()` becomes the event author, and the
-/// merge engine attributes the published root to that device.
+/// merge engine attributes the published root to that app actor.
 ///
 /// This builder preserves `root.published_at` when present so build/parse
 /// roundtrips remain stable. Live publishing should use
@@ -356,7 +356,7 @@ pub fn build_private_hashtree_root_event(
 
 /// Parse + verify a drive-root event. Returns
 /// `(app_key_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
-/// The device pubkey is the event's author; the root scope id and
+/// The `AppKey` pubkey is the event's author; the root scope id and
 /// drive id are extracted from the d-tag.
 pub fn parse_drive_root_event(
     event: &Event,
@@ -372,17 +372,16 @@ pub fn parse_drive_root_event_for_device(
 }
 
 pub fn parse_drive_root_event_header(event: &Event) -> Result<(String, String, String), WireError> {
-    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, _, _) =
-        parse_drive_root_event_parts(event)?;
-    Ok((app_key_pubkey_hex, owner_pubkey_hex, drive_id))
+    let (app_key_pubkey_hex, root_scope_id, drive_id, _, _) = parse_drive_root_event_parts(event)?;
+    Ok((app_key_pubkey_hex, root_scope_id, drive_id))
 }
 
 pub fn parse_drive_root_event_preview(event: &Event) -> Result<DriveRootEventPreview, WireError> {
-    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+    let (app_key_pubkey_hex, root_scope_id, drive_id, content, published_at) =
         parse_drive_root_event_parts(event)?;
     Ok(DriveRootEventPreview {
         app_key_pubkey_hex,
-        owner_pubkey_hex,
+        root_scope_id,
         drive_id,
         published_at,
         dck_generation: content.dck_generation,
@@ -394,7 +393,7 @@ fn parse_drive_root_event_inner(
     event: &Event,
     device_keys: Option<&Keys>,
 ) -> Result<(String, String, String, DeviceRootRef), WireError> {
-    let (app_key_pubkey_hex, owner_pubkey_hex, drive_id, content, published_at) =
+    let (app_key_pubkey_hex, root_scope_id, drive_id, content, published_at) =
         parse_drive_root_event_parts(event)?;
     let root_cid = root_cid_from_wire_content(event, &content, device_keys)?;
     let device_root = DeviceRootRef {
@@ -406,7 +405,7 @@ fn parse_drive_root_event_inner(
         observed: content.observed,
         local_only: false,
     };
-    Ok((app_key_pubkey_hex, owner_pubkey_hex, drive_id, device_root))
+    Ok((app_key_pubkey_hex, root_scope_id, drive_id, device_root))
 }
 
 fn parse_drive_root_event_parts(
@@ -420,7 +419,7 @@ fn parse_drive_root_event_parts(
         });
     }
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
-    let (owner_pubkey_hex, drive_id) = parse_drive_root_d_tag(d_tag)?;
+    let (root_scope_id, drive_id) = parse_drive_root_d_tag(d_tag)?;
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
@@ -430,7 +429,7 @@ fn parse_drive_root_event_parts(
     let published_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
     Ok((
         app_key_pubkey_hex,
-        owner_pubkey_hex,
+        root_scope_id,
         drive_id,
         content,
         published_at,
@@ -478,17 +477,17 @@ fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
     let rest = rest
         .strip_suffix("/root")
         .ok_or_else(|| WireError::DTagMalformed(format!("no /root suffix: {d_tag}")))?;
-    let Some((owner, drive)) = rest.split_once('/') else {
+    let Some((root_scope_id, drive)) = rest.split_once('/') else {
         return Err(WireError::DTagMalformed(format!(
-            "missing owner/drive separator: {d_tag}"
+            "missing root-scope/drive separator: {d_tag}"
         )));
     };
-    if owner.is_empty() || drive.is_empty() {
+    if root_scope_id.is_empty() || drive.is_empty() {
         return Err(WireError::DTagMalformed(format!(
-            "empty owner or drive id: {d_tag}"
+            "empty root-scope or drive id: {d_tag}"
         )));
     }
-    Ok((owner.to_string(), drive.to_string()))
+    Ok((root_scope_id.to_string(), drive.to_string()))
 }
 
 #[cfg(test)]

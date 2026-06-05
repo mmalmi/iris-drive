@@ -666,7 +666,7 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
 }
 
 #[test]
-fn apply_drive_root_event_from_authorized_device_applies() {
+fn apply_drive_root_event_from_authorized_app_key_applies() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
 
@@ -676,7 +676,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
     acct.approve_app_key(&device_b_hex, None).unwrap();
     cfg.profile = Some(acct.state.clone());
 
-    // Device B publishes a drive-root event.
+    // Linked AppKey publishes a drive-root event.
     let root = encrypted_root(0xab, 0, 1);
     let event = build_drive_root_event(
         &device_b,
@@ -825,51 +825,51 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
 fn apply_files_root_event_from_foreign_app_key_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
-    let other_owner = Keys::generate();
+    let other_app_key = Keys::generate();
     let root = encrypted_root(0x61, 1_700_000_000, 0);
-    let event = build_private_hashtree_root_event(&other_owner, "main", &root).unwrap();
+    let event = build_private_hashtree_root_event(&other_app_key, "main", &root).unwrap();
 
-    let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_owner)).unwrap();
+    let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_app_key)).unwrap();
 
     assert_eq!(outcome, FilesRootApply::NotOurAppKey);
     assert!(cfg.drive("main").unwrap().device_roots.is_empty());
 }
 
 #[test]
-fn apply_drive_root_event_from_unauthorized_device_ignored() {
+fn apply_drive_root_event_from_unauthorized_app_key_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
     let stranger = Keys::generate(); // not in roster
 
     let root = encrypted_root(0xee, 0, 99);
-    let owner_hex = cfg.profile.as_ref().unwrap().root_scope_id();
+    let root_scope_id = cfg.profile.as_ref().unwrap().root_scope_id();
     let recipient = cfg.profile.as_ref().unwrap().app_key_pubkey.clone();
     let outcome = {
         let event =
-            build_drive_root_event(&stranger, &owner_hex, "main", &root, &[recipient]).unwrap();
+            build_drive_root_event(&stranger, &root_scope_id, "main", &root, &[recipient]).unwrap();
         apply_remote_drive_root_event(&mut cfg, &event, None).unwrap()
     };
-    assert_eq!(outcome, DriveRootApply::UnauthorizedDevice);
+    assert_eq!(outcome, DriveRootApply::UnauthorizedAppKey);
     assert!(cfg.drive("main").unwrap().device_roots.is_empty());
 }
 
 #[test]
-fn apply_drive_root_event_for_foreign_owner_ignored() {
+fn apply_drive_root_event_for_foreign_scope_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
-    let other_owner = IrisProfileId::new_v4().to_string();
+    let other_scope = IrisProfileId::new_v4().to_string();
     let device_key = Keys::generate();
     let root = encrypted_root(0xf0, 0, 1);
     let event = build_drive_root_event(
         &device_key,
-        &other_owner,
+        &other_scope,
         "main",
         &root,
         &[cfg.profile.as_ref().unwrap().app_key_pubkey.clone()],
     )
     .unwrap();
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, None).unwrap();
-    assert_eq!(outcome, DriveRootApply::NotOurOwner);
+    assert_eq!(outcome, DriveRootApply::NotOurScope);
 }
 
 #[test]
@@ -975,7 +975,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.app_key.keys()))
         .expect("reader share root is inspected");
 
-    assert_eq!(outcome, DriveRootApply::UnauthorizedDevice);
+    assert_eq!(outcome, DriveRootApply::UnauthorizedAppKey);
     assert!(
         cfg.shared_folder(folder.share_id)
             .unwrap()
@@ -1160,12 +1160,14 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
 #[test]
 fn same_second_drive_root_selection_prefers_higher_device_seq() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
+    let root_scope_id = IrisProfileId::new_v4().to_string();
     let older = causal_encrypted_root(0x31, 1_700_000_000, 1, 1);
     let newer = causal_encrypted_root(0x32, 1_700_000_000, 1, 2);
     let authorized = vec![device.public_key().to_hex()];
-    let older_event = build_drive_root_event(&device, &owner, "main", &older, &authorized).unwrap();
-    let newer_event = build_drive_root_event(&device, &owner, "main", &newer, &authorized).unwrap();
+    let older_event =
+        build_drive_root_event(&device, &root_scope_id, "main", &older, &authorized).unwrap();
+    let newer_event =
+        build_drive_root_event(&device, &root_scope_id, "main", &newer, &authorized).unwrap();
 
     assert!(drive_root_event_is_newer(&newer_event, &older_event));
     assert!(!drive_root_event_is_newer(&older_event, &newer_event));
