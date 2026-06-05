@@ -160,7 +160,6 @@ pub fn device_link_roster_ack_matches_state(
     frame: &DeviceLinkRosterAckFrame,
 ) -> bool {
     state.can_manage_devices()
-        && state.owner_pubkey == frame.owner_pubkey
         && state.device_pubkey == frame.admin_device_pubkey
         && state
             .app_keys
@@ -403,6 +402,30 @@ mod tests {
             admin_device_pubkey: account.state.device_pubkey.clone(),
             device_pubkey: app_actor,
             roster_fingerprint: recipient.roster_fingerprint.clone(),
+            acknowledged_at: 123,
+        };
+
+        assert!(device_link_roster_ack_matches_state(&account.state, &frame));
+    }
+
+    #[test]
+    fn roster_ack_is_profile_roster_scoped_not_owner_pubkey_scoped() {
+        let dir = tempdir().unwrap();
+        let mut account = Account::create(dir.path(), Some("Mac".into())).unwrap();
+        let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
+        account
+            .approve_device(&app_actor, Some("Browser".into()))
+            .unwrap();
+        let recipient = device_link_roster_recipients(&account.state)
+            .into_iter()
+            .find(|recipient| recipient.device_pubkey == app_actor)
+            .expect("approved app actor is a roster recipient");
+        let frame = DeviceLinkRosterAckFrame {
+            schema: 1,
+            owner_pubkey: nostr_sdk::Keys::generate().public_key().to_hex(),
+            admin_device_pubkey: account.state.device_pubkey.clone(),
+            device_pubkey: app_actor,
+            roster_fingerprint: recipient.roster_fingerprint,
             acknowledged_at: 123,
         };
 

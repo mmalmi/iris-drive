@@ -80,8 +80,8 @@ pub enum IrisProfileRosterOpApply {
 /// Result of applying a device-link request sent over relay metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceLinkRequestApply {
-    /// The event is addressed to another account.
-    NotOurOwner,
+    /// The event is addressed to another profile.
+    NotOurProfile,
     /// This install is not an admin device and cannot approve devices.
     NotAdmin,
     /// The event did not carry this admin's current invite secret.
@@ -102,10 +102,7 @@ pub fn apply_remote_device_link_request_event(
         return Err(RelayError::NoAccount);
     };
     if frame.profile_id != account.profile_id {
-        return Ok(DeviceLinkRequestApply::NotOurOwner);
-    }
-    if frame.owner_pubkey != account.owner_pubkey {
-        return Ok(DeviceLinkRequestApply::NotOurOwner);
+        return Ok(DeviceLinkRequestApply::NotOurProfile);
     }
     if !account.can_manage_devices() {
         return Ok(DeviceLinkRequestApply::NotAdmin);
@@ -117,7 +114,6 @@ pub fn apply_remote_device_link_request_event(
 
     let changed = account.record_inbound_device_link_request(
         frame.profile_id,
-        &frame.owner_pubkey,
         &frame.device_pubkey,
         frame.label,
         &frame.link_secret,
@@ -147,9 +143,7 @@ pub fn apply_device_link_roster_frame(
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if frame.owner_pubkey != account.owner_pubkey
-        || frame.admin_device_pubkey != admin_device_pubkey
-    {
+    if frame.admin_device_pubkey != admin_device_pubkey {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
     if !account.profile_roster_ops.is_empty() && account.profile_id != frame.profile_id {
@@ -158,10 +152,8 @@ pub fn apply_device_link_roster_frame(
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
     let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
-    let incoming_snapshot =
-        app_keys_from_profile_projection(&frame.owner_pubkey, &incoming_projection).ok_or_else(
-            || RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()),
-        )?;
+    let incoming_snapshot = app_keys_from_profile_projection(&incoming_projection)
+        .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
     if !incoming_snapshot.is_admin(admin_device_pubkey) {
         return Ok(DeviceLinkRosterApply::Ignored);
     }
@@ -186,7 +178,7 @@ pub fn apply_device_link_roster_frame(
     let ops_changed = account.profile_id != frame.profile_id
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
     let merged_projection = project_iris_profile_roster(frame.profile_id, merged_ops.clone());
-    let merged_snapshot = app_keys_from_profile_projection(&frame.owner_pubkey, &merged_projection)
+    let merged_snapshot = app_keys_from_profile_projection(&merged_projection)
         .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
 
     if !ops_changed && account.app_keys.as_ref() == Some(&merged_snapshot) {

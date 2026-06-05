@@ -452,7 +452,6 @@ fn owner_rejects_device_request_link() {
         let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
         let state = config.account.as_mut().unwrap();
         let profile_id = state.profile_id;
-        let owner_hex = state.owner_pubkey.clone();
         let link_secret = state.device_link_secret.clone();
         let linked_hex = iris_drive_core::AppConfig::load_or_default(
             iris_drive_core::paths::config_path_in(linked_dir.path()),
@@ -464,7 +463,6 @@ fn owner_rejects_device_request_link() {
         state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner_hex,
                 &linked_hex,
                 Some("rejected-phone".into()),
                 &link_secret,
@@ -596,12 +594,10 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let owner_hex = state.owner_pubkey.clone();
     let old_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
             profile_id,
-            &owner_hex,
             &linked_app_key,
             Some("phone".to_string()),
             &old_secret,
@@ -631,7 +627,6 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
         !state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner_hex,
                 &linked_app_key,
                 Some("phone".to_string()),
                 &old_secret,

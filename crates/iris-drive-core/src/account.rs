@@ -173,11 +173,7 @@ impl AccountState {
 
     #[must_use]
     pub fn app_keys_from_profile(&self) -> Option<AppKeysSnapshot> {
-        app_keys_from_profile_roster(
-            &self.owner_pubkey,
-            self.profile_id,
-            &self.profile_roster_ops,
-        )
+        app_keys_from_profile_roster(self.profile_id, &self.profile_roster_ops)
     }
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
@@ -282,16 +278,12 @@ impl AccountState {
     pub fn record_inbound_device_link_request(
         &mut self,
         profile_id: IrisProfileId,
-        owner_pubkey: &str,
         device_pubkey: &str,
         label: Option<String>,
         link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
-        if profile_id != self.profile_id
-            || owner_pubkey != self.owner_pubkey
-            || !self.can_manage_devices()
-        {
+        if profile_id != self.profile_id || !self.can_manage_devices() {
             return Ok(false);
         }
         let link_secret = link_secret.trim();
@@ -381,17 +373,15 @@ impl AccountState {
 
 #[must_use]
 pub fn app_keys_from_profile_roster(
-    owner_pubkey: &str,
     profile_id: IrisProfileId,
     profile_roster_ops: &[SignedIrisProfileRosterOp],
 ) -> Option<AppKeysSnapshot> {
     let projection = project_iris_profile_roster(profile_id, profile_roster_ops.iter().cloned());
-    app_keys_from_profile_projection(owner_pubkey, &projection)
+    app_keys_from_profile_projection(&projection)
 }
 
 #[must_use]
 pub fn app_keys_from_profile_projection(
-    owner_pubkey: &str,
     projection: &IrisProfileRosterProjection,
 ) -> Option<AppKeysSnapshot> {
     let key_epoch = projection.key_epochs.values().next_back()?;
@@ -425,7 +415,7 @@ pub fn app_keys_from_profile_projection(
         .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
         .collect();
     Some(AppKeysSnapshot {
-        owner_pubkey: owner_pubkey.to_string(),
+        owner_pubkey: projection.profile_id.to_string(),
         signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
         created_at: key_epoch.created_at,
         app_actors,

@@ -860,12 +860,10 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
             profile_id,
-            &owner_hex,
             &linked_device_hex,
             Some("Phone".to_owned()),
             &link_secret,
@@ -920,12 +918,10 @@ fn owner_can_reject_inbound_device_link_request() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
             profile_id,
-            &owner_hex,
             &linked_device_hex,
             Some("Phone".to_owned()),
             &link_secret,
@@ -1036,14 +1032,12 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     let linked_device =
         iris_drive_core::DeviceIdentity::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
     state
         .record_inbound_device_link_request(
             profile_id,
-            &owner_hex,
             &linked_device,
             Some("Phone".to_owned()),
             &link_secret,

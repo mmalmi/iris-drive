@@ -1500,7 +1500,6 @@ fn handle_native_device_link_request(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
     let device_hex = normalize_pubkey(&frame.device_pubkey)?;
     let link_secret = if frame.link_secret.trim().is_empty() {
         device_approval_link_secret(&frame.url)
@@ -1516,7 +1515,6 @@ fn handle_native_device_link_request(
     let changed = state
         .record_inbound_device_link_request(
             frame.profile_id,
-            &owner_hex,
             &device_hex,
             frame.label,
             &link_secret,
@@ -1581,7 +1579,6 @@ async fn handle_native_device_link_roster(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
     let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
@@ -1590,7 +1587,7 @@ async fn handle_native_device_link_roster(
     let Some(state) = config.account.as_ref() else {
         return Ok(true);
     };
-    if state.can_manage_devices() || state.owner_pubkey != owner_hex {
+    if state.can_manage_devices() {
         return Ok(true);
     }
     if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
@@ -1678,7 +1675,6 @@ fn handle_native_device_link_roster_ack(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey)?;
     let admin_device_hex = normalize_pubkey(&frame.admin_device_pubkey)?;
     let device_hex = normalize_pubkey(&frame.device_pubkey)?;
     if normalize_pubkey(&message.peer_id).ok().as_deref() != Some(device_hex.as_str()) {
@@ -1690,8 +1686,7 @@ fn handle_native_device_link_roster_ack(
     let Some(state) = config.account.as_ref() else {
         return Ok(true);
     };
-    if owner_hex != frame.owner_pubkey
-        || admin_device_hex != frame.admin_device_pubkey
+    if admin_device_hex != frame.admin_device_pubkey
         || device_hex != frame.device_pubkey
         || !device_link_roster_ack_matches_state(state, &frame)
     {

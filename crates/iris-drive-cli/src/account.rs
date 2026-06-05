@@ -743,7 +743,6 @@ async fn handle_device_link_request_app_message(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing link request owner")?;
     let device_hex =
         normalize_pubkey(&frame.device_pubkey).context("parsing link request device")?;
     let link_secret = if frame.link_secret.trim().is_empty() {
@@ -762,7 +761,6 @@ async fn handle_device_link_request_app_message(
     let changed = state
         .record_inbound_device_link_request(
             frame.profile_id,
-            &owner_hex,
             &device_hex,
             frame.label,
             &link_secret,
@@ -799,7 +797,6 @@ async fn handle_device_link_roster_app_message(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing roster owner")?;
     let admin_device_hex =
         normalize_pubkey(&frame.admin_device_pubkey).context("parsing roster admin device")?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
@@ -809,7 +806,7 @@ async fn handle_device_link_roster_app_message(
     let Some(state) = config.account.as_mut() else {
         return Ok(true);
     };
-    if state.can_manage_devices() || state.owner_pubkey != owner_hex {
+    if state.can_manage_devices() {
         return Ok(true);
     }
     if sender_hex.as_deref() != Some(admin_device_hex.as_str()) {
@@ -874,7 +871,6 @@ fn handle_device_link_roster_ack_app_message(
             frame.schema
         ));
     }
-    let owner_hex = normalize_pubkey(&frame.owner_pubkey).context("parsing ack owner")?;
     let admin_device_hex =
         normalize_pubkey(&frame.admin_device_pubkey).context("parsing ack admin device")?;
     let device_hex = normalize_pubkey(&frame.device_pubkey).context("parsing ack device")?;
@@ -886,8 +882,7 @@ fn handle_device_link_roster_ack_app_message(
     let Some(state) = config.account.as_ref() else {
         return Ok(true);
     };
-    if owner_hex != frame.owner_pubkey
-        || admin_device_hex != frame.admin_device_pubkey
+    if admin_device_hex != frame.admin_device_pubkey
         || device_hex != frame.device_pubkey
         || !device_link_roster_ack_matches_state(state, &frame)
     {

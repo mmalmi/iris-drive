@@ -32,6 +32,7 @@ fn create_yields_admin_authorized_account() {
     assert!(!dir.path().join("owner_key").exists());
     // AppKeys lists one device — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
+    assert_eq!(snap.owner_pubkey, acct.state.profile_id.to_string());
     assert_eq!(snap.app_actors.len(), 1);
     assert_eq!(snap.app_actors[0].pubkey, acct.state.device_pubkey);
     assert!(snap.app_actors[0].is_admin());
@@ -402,7 +403,6 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let owner = acct.state.owner_pubkey.clone();
     let link_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
 
@@ -410,7 +410,6 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
         acct.state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner,
                 &device,
                 Some(" phone ".to_string()),
                 &link_secret,
@@ -429,7 +428,6 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
             .state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner,
                 &device,
                 Some("phone".to_string()),
                 &link_secret,
@@ -441,7 +439,6 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
         acct.state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner,
                 &device,
                 Some("tablet".to_string()),
                 &link_secret,
@@ -461,7 +458,6 @@ fn inbound_device_link_request_requires_link_secret() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let owner = acct.state.owner_pubkey.clone();
     let device = fresh_device_pubkey();
 
     assert!(
@@ -469,7 +465,6 @@ fn inbound_device_link_request_requires_link_secret() {
             .state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner,
                 &device,
                 Some("phone".to_string()),
                 "wrong-secret",
@@ -485,14 +480,12 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let owner = acct.state.owner_pubkey.clone();
     let old_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
 
     acct.state
         .record_inbound_device_link_request(
             profile_id,
-            &owner,
             &device,
             Some("phone".to_string()),
             &old_secret,
@@ -509,7 +502,6 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
             .state
             .record_inbound_device_link_request(
                 profile_id,
-                &owner,
                 &fresh_device_pubkey(),
                 Some("old".to_string()),
                 &old_secret,

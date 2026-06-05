@@ -1,10 +1,11 @@
 //! Admin-signed `AppKey` actor roster.
 //!
 //! Iris Drive stores one account roster, signed by an authorized admin `AppKey`.
-//! The historical field name `owner_pubkey` remains the stable account id, but
-//! it is no longer a separate owner secret. This module owns the snapshot **data
-//! model and timeline rules** — wire format (Nostr event kind, `d` tag, NIP-44
-//! envelope) is the publishing layer's problem, not this module's.
+//! The historical field name `owner_pubkey` remains the stable account id; new
+//! `IrisProfile`-derived snapshots set it to the profile UUID string instead of
+//! any Nostr pubkey. This module owns the snapshot **data model and timeline
+//! rules** — wire format (Nostr event kind, `d` tag, NIP-44 envelope) is the
+//! publishing layer's problem, not this module's.
 //!
 //! Timeline rules (from nostr-double-ratchet's published guidance):
 //!
@@ -86,8 +87,8 @@ impl AppActorEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppKeysSnapshot {
-    /// Stable account id. Historically this was a separate owner key; new
-    /// installs set it to the first admin `AppKey` pubkey.
+    /// Stable roster id. Historically this was a separate owner key; new
+    /// `IrisProfile`-derived snapshots set it to the profile UUID string.
     pub owner_pubkey: String,
     /// Pubkey of the admin `AppKey` that signed this snapshot. Local snapshots
     /// created before their Nostr event is built set this to the local `AppKey`.

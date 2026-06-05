@@ -143,6 +143,53 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 }
 
 #[test]
+fn apply_device_link_roster_is_profile_scoped_not_owner_pubkey_scoped() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Account::link_to_profile(
+        linked_dir.path(),
+        admin.state.profile_id,
+        "aa".repeat(32),
+        Some("phone".into()),
+    )
+    .unwrap();
+    let linked_pubkey = linked.state.device_pubkey.clone();
+    linked
+        .state
+        .queue_outbound_device_link_request(
+            admin.state.device_pubkey.clone(),
+            &admin.state.device_link_secret,
+            123,
+        )
+        .unwrap();
+    admin
+        .approve_device(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let mut cfg = AppConfig {
+        account: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
+    let mut frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
+    frame.owner_pubkey = Keys::generate().public_key().to_hex();
+
+    let outcome =
+        apply_device_link_roster_frame(&mut cfg, &frame, &admin.state.device_pubkey).unwrap();
+
+    assert!(matches!(
+        outcome,
+        DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
+    ));
+    let linked_state = cfg.account.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, admin.state.profile_id);
+    assert_eq!(
+        linked_state.app_keys.as_ref().unwrap().owner_pubkey,
+        admin.state.profile_id.to_string()
+    );
+}
+
+#[test]
 fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
     let (mut admin, mut cfg) = linked_config_after_initial_roster();
     let branch_base_ops = admin.state.profile_roster_ops.clone();
@@ -477,7 +524,7 @@ fn apply_device_link_request_event_records_admin_inbound_request() {
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
-        owner_pubkey: admin.state.owner_pubkey.clone(),
+        owner_pubkey: Keys::generate().public_key().to_hex(),
         device_pubkey: linked.state.device_pubkey.clone(),
         link_secret: admin.state.device_link_secret.clone(),
         label: Some("phone".to_string()),
