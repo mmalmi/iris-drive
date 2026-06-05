@@ -21,7 +21,7 @@ use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, Singl
 use thiserror::Error;
 
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
-use crate::app_keys::{AppKeysSnapshot, ApplyDecision};
+use crate::app_keys::{AppKeysProjection, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::nostr_events::{
     KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
@@ -166,9 +166,9 @@ pub fn apply_app_key_link_roster_frame(
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
     let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
-    let incoming_snapshot = app_keys_from_profile_projection(&incoming_projection)
+    let incoming_app_keys = app_keys_from_profile_projection(&incoming_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
-    if !incoming_snapshot.is_admin(admin_app_key_pubkey) {
+    if !incoming_app_keys.is_admin(admin_app_key_pubkey) {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
 
@@ -192,16 +192,16 @@ pub fn apply_app_key_link_roster_frame(
     let ops_changed = account.profile_id != frame.profile_id
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
     let merged_projection = project_iris_profile_roster(frame.profile_id, merged_ops.clone());
-    let merged_snapshot = app_keys_from_profile_projection(&merged_projection)
+    let merged_app_keys = app_keys_from_profile_projection(&merged_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
 
-    if !ops_changed && account.app_keys.as_ref() == Some(&merged_snapshot) {
+    if !ops_changed && account.app_keys.as_ref() == Some(&merged_app_keys) {
         return Ok(AppKeyLinkRosterApply::Current);
     }
 
     let decision = app_key_link_roster_apply_decision(
         account.app_keys.as_ref(),
-        &merged_snapshot,
+        &merged_app_keys,
         ops_changed,
         !account.profile_roster_ops.is_empty(),
     );
@@ -216,7 +216,7 @@ pub fn apply_app_key_link_roster_frame(
         account.profile_roster_ops = merged_ops;
         account.profile_id = frame.profile_id;
         account.sync_app_keys_from_profile();
-        debug_assert_eq!(account.app_keys.as_ref(), Some(&merged_snapshot));
+        debug_assert_eq!(account.app_keys.as_ref(), Some(&merged_app_keys));
         account.root_scope_id()
     };
     sync_primary_drive_scope(config, root_scope_id);
@@ -224,8 +224,8 @@ pub fn apply_app_key_link_roster_frame(
 }
 
 fn app_key_link_roster_apply_decision(
-    current: Option<&AppKeysSnapshot>,
-    merged: &AppKeysSnapshot,
+    current: Option<&AppKeysProjection>,
+    merged: &AppKeysProjection,
     ops_changed: bool,
     had_profile_ops: bool,
 ) -> ApplyDecision {
@@ -837,9 +837,9 @@ pub async fn fetch_iris_profile_restore_candidates(
 }
 
 /// Build the relay filter set covering profile roster ops and drive-root
-/// events for a single profile's primary drive. Legacy `AppKeys` snapshots are
-/// intentionally excluded from relays; `IrisProfile` roster ops are the relay
-/// roster format.
+/// events for a single profile's primary drive. Full `AppKeys` roster snapshots
+/// are intentionally excluded from relays; `IrisProfile` roster ops are the
+/// relay roster format.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
 /// the d-tag `iris-drive/<profile_or_share_id>/<drive>/root` already pins the drive,

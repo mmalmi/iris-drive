@@ -425,7 +425,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
         "{}",
         json!({
             "epoch": repair.epoch,
-            "dck_generation": repair.snapshot.dck_generation,
+            "dck_generation": repair.projection.dck_generation,
             "repaired_key_wrap_count": repair.repaired_pubkeys.len(),
             "repaired_key_wraps": repaired_key_wraps,
             "remaining_missing_key_wraps": remaining_missing_key_wraps,

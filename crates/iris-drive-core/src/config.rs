@@ -626,7 +626,7 @@ dck_generation = 1
     }
 
     #[test]
-    fn app_keys_snapshot_is_hydrated_from_profile_roster_not_persisted() {
+    fn app_keys_projection_is_hydrated_from_profile_roster_not_persisted() {
         let dir = tempdir().unwrap();
         let account = crate::profile::Profile::create(dir.path(), Some("Mac".into())).unwrap();
         let expected = account

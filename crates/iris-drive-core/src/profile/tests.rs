@@ -180,7 +180,7 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
     let fallback_app_key = fallback.state.app_key_pubkey.clone();
     assert_ne!(fallback.state.profile_id, owner.state.profile_id);
 
-    let snapshot = fallback
+    let app_keys = fallback
         .reconcile_with_profile_roster_ops(
             &phrase,
             owner.state.profile_id,
@@ -191,11 +191,11 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
 
     assert_eq!(fallback.state.profile_id, owner.state.profile_id);
     assert_eq!(fallback.state.app_key_pubkey, fallback_app_key);
-    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(app_keys.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
     assert!(fallback.state.can_admin_profile());
     assert_eq!(fallback.state.app_key_label.as_deref(), Some("fallback"));
-    let reconciled_actor = snapshot.app_actor(&fallback_app_key).unwrap();
+    let reconciled_actor = app_keys.app_actor(&fallback_app_key).unwrap();
     assert_eq!(reconciled_actor.label.as_deref(), Some("reconciled"));
 }
 
@@ -212,7 +212,7 @@ fn fallback_nsec_restore_can_reconcile_with_recovery_roster_evidence() {
     let mut fallback = Profile::restore(fallback_dir.path(), &recovery_nsec, None).unwrap();
     let fallback_app_key = fallback.state.app_key_pubkey.clone();
 
-    let snapshot = fallback
+    let app_keys = fallback
         .reconcile_with_profile_roster_ops(
             &recovery_nsec,
             owner.state.profile_id,
@@ -222,7 +222,7 @@ fn fallback_nsec_restore_can_reconcile_with_recovery_roster_evidence() {
         .unwrap();
 
     assert_eq!(fallback.state.profile_id, owner.state.profile_id);
-    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(app_keys.is_admin(&fallback_app_key));
     assert!(!fallback_dir.path().join("recovery_phrase").exists());
 }
 
@@ -243,7 +243,7 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
     .unwrap();
     let fallback_app_key = fallback.state.app_key_pubkey.clone();
 
-    let snapshot = fallback
+    let app_keys = fallback
         .reconcile_with_profile_roster_ops_using_nip46_keys(
             &nip46,
             owner.state.profile_id,
@@ -254,7 +254,7 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
 
     assert_eq!(fallback.state.profile_id, owner.state.profile_id);
     assert_eq!(fallback.state.app_key_pubkey, fallback_app_key);
-    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(app_keys.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
     assert_ne!(
         fallback.current_dck().unwrap(),
@@ -803,7 +803,7 @@ fn current_dck_is_decryptable_by_owner_device() {
 }
 
 #[test]
-fn current_dck_comes_from_profile_epoch_without_snapshot_adapter() {
+fn current_dck_comes_from_profile_epoch_without_app_keys_cache() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let expected = acct.current_dck().unwrap();
@@ -812,7 +812,7 @@ fn current_dck_comes_from_profile_epoch_without_snapshot_adapter() {
 }
 
 #[test]
-fn authorization_recomputes_from_profile_without_snapshot_adapter() {
+fn authorization_recomputes_from_profile_without_app_keys_cache() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     acct.state.app_keys = None;
@@ -931,14 +931,17 @@ fn rotate_dck_without_admin_authority_errors() {
 }
 
 #[test]
-fn current_dck_without_snapshot_errors() {
+fn current_dck_without_key_epoch_errors() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_app_key_pubkey();
     let acct =
         Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
     match acct.current_dck() {
-        Err(ProfileError::NoCurrentSnapshot) => {}
-        other => panic!("expected NoCurrentSnapshot, got {:?}", other.is_ok()),
+        Err(ProfileError::NoCurrentAppKeysProjection) => {}
+        other => panic!(
+            "expected NoCurrentAppKeysProjection, got {:?}",
+            other.is_ok()
+        ),
     }
 }
 
@@ -963,10 +966,9 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         .unwrap();
     let owner_dck = owner_acct.current_dck().unwrap();
 
-    // Reconstruct a Profile from the linked device's perspective:
-    // app key is the one we generated; ProfileState mirrors what
-    // the device would see after pulling the latest snapshot.
-    let snapshot_for_linked = owner_acct.state.app_keys.clone();
+    // Reconstruct a Profile from the linked device's perspective: app key is
+    // the one we generated, with the same roster ops the device would pull.
+    let app_keys_for_linked = owner_acct.state.app_keys.clone();
     let linked_state = ProfileState {
         profile_id: owner_acct.state.profile_id,
         app_key_pubkey: linked_pubkey.clone(),
@@ -974,7 +976,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         app_key_link_secret: "linked-secret".into(),
         authorization_state: AppKeyAuthorizationState::Authorized,
         app_key_label: Some("phone".into()),
-        app_keys: snapshot_for_linked,
+        app_keys: app_keys_for_linked,
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
     };

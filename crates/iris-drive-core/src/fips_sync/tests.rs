@@ -469,7 +469,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
             app_key_link_secret: "link-secret".into(),
             authorization_state: crate::AppKeyAuthorizationState::Authorized,
             app_key_label: None,
-            app_keys: Some(crate::app_keys::AppKeysSnapshot {
+            app_keys: Some(crate::app_keys::AppKeysProjection {
                 profile_id: profile_id.to_string(),
                 signed_by_pubkey: Some("dd".repeat(32)),
                 created_at: 1,
@@ -567,30 +567,10 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 #[test]
 fn admin_endpoint_options_allow_open_app_key_link_requests() {
     let settings = FipsTransportSettings::default();
-    let profile_id = crate::IrisProfileId::new_v4();
+    let dir = tempfile::tempdir().unwrap();
+    let profile = crate::Profile::create(dir.path(), Some("admin".into())).unwrap();
     let config = AppConfig {
-        profile: Some(crate::ProfileState {
-            profile_id,
-            app_key_pubkey: "aa".repeat(32),
-            profile_roster_ops: Vec::new(),
-            app_key_link_secret: "link-secret".into(),
-            authorization_state: crate::AppKeyAuthorizationState::Authorized,
-            app_key_label: None,
-            app_keys: Some(crate::app_keys::AppKeysSnapshot {
-                profile_id: profile_id.to_string(),
-                signed_by_pubkey: Some("aa".repeat(32)),
-                created_at: 1,
-                app_actors: vec![crate::app_keys::AppActorEntry::admin(
-                    "aa".repeat(32),
-                    1,
-                    None,
-                )],
-                dck_generation: 0,
-                wrapped_dck: std::collections::BTreeMap::default(),
-            }),
-            outbound_app_key_link_request: None,
-            inbound_app_key_link_requests: Vec::new(),
-        }),
+        profile: Some(profile.state),
         ..Default::default()
     };
 

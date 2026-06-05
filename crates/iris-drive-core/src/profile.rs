@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysSnapshot};
+use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysProjection};
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{AppKey, IdentityError, RecoveryKey};
 use crate::iris_profile::{
@@ -62,10 +62,8 @@ pub enum ProfileError {
     AppKeyNotInRoster,
     #[error("cannot remove the last admin AppKey")]
     CannotRemoveLastAdmin,
-    #[error("no AppKeys snapshot yet")]
-    NoCurrentSnapshot,
-    #[error("AppKeys snapshot is missing an explicit signing AppKey")]
-    MissingSnapshotSigner,
+    #[error("no AppKeys projection yet")]
+    NoCurrentAppKeysProjection,
     #[error("no DCK wrap for this AppKey (revoked or never authorized)")]
     NoWrapForThisAppKey,
     #[error("current AppKey cannot repair key epoch signed by {signed_by_pubkey}")]
@@ -131,7 +129,7 @@ pub struct ProfileState {
     pub app_key_label: Option<String>,
     /// Runtime projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
-    pub app_keys: Option<AppKeysSnapshot>,
+    pub app_keys: Option<AppKeysProjection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -142,7 +140,7 @@ pub struct ProfileState {
 pub struct KeyWrapRepairOutcome {
     pub epoch: u64,
     pub repaired_pubkeys: Vec<String>,
-    pub snapshot: AppKeysSnapshot,
+    pub projection: AppKeysProjection,
 }
 
 impl ProfileState {
@@ -157,16 +155,16 @@ impl ProfileState {
     }
 
     #[must_use]
-    pub fn app_keys_from_profile(&self) -> Option<AppKeysSnapshot> {
+    pub fn app_keys_from_profile(&self) -> Option<AppKeysProjection> {
         app_keys_from_profile_roster(self.profile_id, &self.profile_roster_ops)
     }
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
-        let Some(snapshot) = self.app_keys_from_profile() else {
+        let Some(projection) = self.app_keys_from_profile() else {
             return false;
         };
-        let changed = self.app_keys.as_ref() != Some(&snapshot);
-        self.app_keys = Some(snapshot);
+        let changed = self.app_keys.as_ref() != Some(&projection);
+        self.app_keys = Some(projection);
         self.recompute_authorization();
         changed
     }
@@ -183,57 +181,28 @@ impl ProfileState {
     /// Can this install's `AppKey` administer the `IrisProfile` roster?
     #[must_use]
     pub fn can_admin_profile(&self) -> bool {
-        if !self.profile_roster_ops.is_empty() {
-            return self
-                .profile_projection()
-                .can_admin_profile(&self.app_key_pubkey);
-        }
-        self.app_keys
-            .as_ref()
-            .is_some_and(|snap| snap.is_admin(&self.app_key_pubkey))
+        self.profile_projection()
+            .can_admin_profile(&self.app_key_pubkey)
     }
 
     /// Can this `AppKey` publish mutable roots for this profile?
     #[must_use]
     pub fn can_write_roots(&self) -> bool {
-        if !self.profile_roster_ops.is_empty() {
-            return self
-                .profile_projection()
-                .can_write_roots(&self.app_key_pubkey);
-        }
-        self.is_authorized()
+        self.profile_projection()
+            .can_write_roots(&self.app_key_pubkey)
     }
 
-    /// Recompute `authorization_state` from the current `AppKeys` snapshot.
+    /// Recompute `authorization_state` from the current profile roster projection.
     pub fn recompute_authorization(&mut self) {
-        if !self.profile_roster_ops.is_empty() {
-            let projection = self.profile_projection();
-            self.authorization_state = if projection.can_write_roots(&self.app_key_pubkey) {
-                AppKeyAuthorizationState::Authorized
-            } else if projection.tombstones.contains_key(&self.app_key_pubkey)
-                || self.authorization_state == AppKeyAuthorizationState::Authorized
-            {
-                AppKeyAuthorizationState::Revoked
-            } else {
-                self.authorization_state
-            };
-            if self.authorization_state == AppKeyAuthorizationState::Authorized {
-                self.outbound_app_key_link_request = None;
-            }
-            return;
-        }
-        self.authorization_state = match &self.app_keys {
-            Some(snap) if snap.contains(&self.app_key_pubkey) => {
-                AppKeyAuthorizationState::Authorized
-            }
-            Some(_) => {
-                // Previously authorized → Revoked; never authorized → AwaitingApproval.
-                match self.authorization_state {
-                    AppKeyAuthorizationState::Authorized => AppKeyAuthorizationState::Revoked,
-                    other => other,
-                }
-            }
-            None => self.authorization_state,
+        let projection = self.profile_projection();
+        self.authorization_state = if projection.can_write_roots(&self.app_key_pubkey) {
+            AppKeyAuthorizationState::Authorized
+        } else if projection.tombstones.contains_key(&self.app_key_pubkey)
+            || self.authorization_state == AppKeyAuthorizationState::Authorized
+        {
+            AppKeyAuthorizationState::Revoked
+        } else {
+            self.authorization_state
         };
         if self.authorization_state == AppKeyAuthorizationState::Authorized {
             self.outbound_app_key_link_request = None;
@@ -366,7 +335,7 @@ impl ProfileState {
 pub fn app_keys_from_profile_roster(
     profile_id: IrisProfileId,
     profile_roster_ops: &[SignedIrisProfileRosterOp],
-) -> Option<AppKeysSnapshot> {
+) -> Option<AppKeysProjection> {
     let projection = project_iris_profile_roster(profile_id, profile_roster_ops.iter().cloned());
     app_keys_from_profile_projection(&projection)
 }
@@ -374,7 +343,7 @@ pub fn app_keys_from_profile_roster(
 #[must_use]
 pub fn app_keys_from_profile_projection(
     projection: &IrisProfileRosterProjection,
-) -> Option<AppKeysSnapshot> {
+) -> Option<AppKeysProjection> {
     let key_epoch = projection.key_epochs.values().next_back()?;
     let app_key_pubkeys: BTreeSet<_> = projection.active_app_key_pubkeys().into_iter().collect();
     if app_key_pubkeys.is_empty() {
@@ -405,7 +374,7 @@ pub fn app_keys_from_profile_projection(
         .filter(|(pubkey, _)| app_key_pubkeys.contains(*pubkey))
         .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
         .collect();
-    Some(AppKeysSnapshot {
+    Some(AppKeysProjection {
         profile_id: projection.profile_id.to_string(),
         signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
         created_at: key_epoch.created_at,
@@ -424,7 +393,7 @@ pub struct Profile {
 impl Profile {
     /// **Create** flow — fresh device saved to the config dir. The device is
     /// auto-authorized as the first admin via a self-signed single-entry
-    /// `AppKeys` snapshot.
+    /// `IrisProfile` roster op log.
     pub fn create(config_dir: &Path, app_key_label: Option<String>) -> Result<Self, ProfileError> {
         let recovery_phrase = generate_recovery_phrase()?;
         let profile_id = IrisProfileId::new_v4();
@@ -588,7 +557,7 @@ impl Profile {
         profile_id: IrisProfileId,
         profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
         label: Option<String>,
-    ) -> Result<AppKeysSnapshot, ProfileError> {
+    ) -> Result<AppKeysProjection, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
             RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
@@ -621,7 +590,7 @@ impl Profile {
         profile_id: IrisProfileId,
         profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
         label: Option<String>,
-    ) -> Result<AppKeysSnapshot, ProfileError> {
+    ) -> Result<AppKeysProjection, ProfileError> {
         let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
         let expected_purpose = recovery_authority_purpose(
             &projection,
@@ -644,7 +613,7 @@ impl Profile {
         profile_id: IrisProfileId,
         profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
         label: Option<String>,
-    ) -> Result<AppKeysSnapshot, ProfileError> {
+    ) -> Result<AppKeysProjection, ProfileError> {
         let original_state = self.state.clone();
         self.state.profile_id = profile_id;
         self.state.profile_roster_ops = profile_roster_ops;
@@ -663,7 +632,7 @@ impl Profile {
                 .state
                 .app_keys
                 .clone()
-                .ok_or(ProfileError::NoCurrentSnapshot);
+                .ok_or(ProfileError::NoCurrentAppKeysProjection);
         }
 
         match self.admit_current_app_key_with_authority_keys(
@@ -729,12 +698,12 @@ impl Profile {
     /// Approve a new `AppKey` by appending it to the roster
     /// and rotating the DCK so the new `AppKey` gets a fresh wrap.
     /// Bumps `created_at` and `dck_generation`. Callers should fan the
-    /// new snapshot out over Nostr.
+    /// new signed roster ops out over Nostr.
     pub fn approve_app_key(
         &mut self,
         app_key_pubkey_hex: &str,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
@@ -770,7 +739,7 @@ impl Profile {
     pub fn revoke_app_key(
         &mut self,
         app_key_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
@@ -803,8 +772,8 @@ impl Profile {
 
     /// Rotate the DCK without changing the device roster. Useful for
     /// periodic key freshness ("rotate weekly even with no membership
-    /// churn"). Owner-only.
-    pub fn rotate_dck(&mut self) -> Result<&AppKeysSnapshot, ProfileError> {
+    /// churn"). Admin-only.
+    pub fn rotate_dck(&mut self) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
@@ -812,7 +781,7 @@ impl Profile {
             .state
             .app_keys
             .as_ref()
-            .ok_or(ProfileError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
         let dck = generate_dck();
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
@@ -872,7 +841,7 @@ impl Profile {
         &mut self,
         recovery_phrase: &str,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
         let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.admit_current_app_key_with_authority_keys(
@@ -889,7 +858,7 @@ impl Profile {
         &mut self,
         nip46_keys: &Keys,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         self.admit_current_app_key_with_authority_keys(
             nip46_keys,
             IrisProfileKeyPurpose::Nip46Signer,
@@ -902,7 +871,7 @@ impl Profile {
         authority_keys: &Keys,
         expected_purpose: IrisProfileKeyPurpose,
         label: Option<String>,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
         let Some(authority_facet) = projection.active_facets.get(&authority_pubkey) else {
@@ -960,14 +929,14 @@ impl Profile {
     pub fn appoint_admin(
         &mut self,
         app_key_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         self.set_device_role(app_key_pubkey_hex, AppActorRole::Admin)
     }
 
     pub fn demote_admin(
         &mut self,
         app_key_pubkey_hex: &str,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         self.set_device_role(app_key_pubkey_hex, AppActorRole::Member)
     }
 
@@ -975,7 +944,7 @@ impl Profile {
         &mut self,
         app_key_pubkey_hex: &str,
         role: AppActorRole,
-    ) -> Result<&AppKeysSnapshot, ProfileError> {
+    ) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
@@ -983,7 +952,7 @@ impl Profile {
             .state
             .app_keys
             .as_ref()
-            .ok_or(ProfileError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
         let current = snap
             .app_actor(app_key_pubkey_hex)
             .ok_or(ProfileError::AppKeyNotInRoster)?;
@@ -1082,7 +1051,7 @@ impl Profile {
     pub fn repair_current_key_epoch_wraps(&mut self) -> Result<KeyWrapRepairOutcome, ProfileError> {
         let projection = self.state.profile_projection();
         let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
-            return Err(ProfileError::NoCurrentSnapshot);
+            return Err(ProfileError::NoCurrentAppKeysProjection);
         };
         if key_epoch.signed_by_pubkey != self.state.app_key_pubkey {
             return Err(ProfileError::CurrentAppKeyCannotRepairKeyEpoch {
@@ -1102,11 +1071,11 @@ impl Profile {
             return Ok(KeyWrapRepairOutcome {
                 epoch: *epoch,
                 repaired_pubkeys: Vec::new(),
-                snapshot: self
+                projection: self
                     .state
                     .app_keys
                     .as_ref()
-                    .ok_or(ProfileError::NoCurrentSnapshot)?
+                    .ok_or(ProfileError::NoCurrentAppKeysProjection)?
                     .clone(),
             });
         }
@@ -1133,53 +1102,30 @@ impl Profile {
         Ok(KeyWrapRepairOutcome {
             epoch: *epoch,
             repaired_pubkeys: missing_pubkeys,
-            snapshot: self
+            projection: self
                 .state
                 .app_keys
                 .as_ref()
-                .ok_or(ProfileError::NoCurrentSnapshot)?
+                .ok_or(ProfileError::NoCurrentAppKeysProjection)?
                 .clone(),
         })
     }
 
-    /// Decrypt this `AppKey`'s DCK wrap from the current snapshot. Errors
+    /// Decrypt this `AppKey`'s DCK wrap from the current profile key epoch. Errors
     /// with `NoWrapForThisAppKey` if the `AppKey` has been revoked or
     /// never authorized.
     pub fn current_dck(&self) -> Result<[u8; 32], ProfileError> {
-        if !self.state.profile_roster_ops.is_empty() {
-            let projection = self.state.profile_projection();
-            let key_epoch = projection
-                .key_epochs
-                .values()
-                .next_back()
-                .ok_or(ProfileError::NoCurrentSnapshot)?;
-            let wrap = key_epoch
-                .wrapped_dck
-                .get(&self.state.app_key_pubkey)
-                .ok_or(ProfileError::NoWrapForThisAppKey)?;
-            let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
-                .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
-            let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
-                .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
-            let arr: [u8; 32] = bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
-            return Ok(arr);
-        }
-        let snap = self
-            .state
-            .app_keys
-            .as_ref()
-            .ok_or(ProfileError::NoCurrentSnapshot)?;
-        let wrap = snap
+        let projection = self.state.profile_projection();
+        let key_epoch = projection
+            .key_epochs
+            .values()
+            .next_back()
+            .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
+        let wrap = key_epoch
             .wrapped_dck
             .get(&self.state.app_key_pubkey)
             .ok_or(ProfileError::NoWrapForThisAppKey)?;
-        let signer_pubkey = snap
-            .signer_pubkey()
-            .ok_or(ProfileError::MissingSnapshotSigner)?;
-        let signer_pk = PublicKey::from_hex(signer_pubkey)
+        let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
@@ -1223,7 +1169,7 @@ impl Profile {
             .key_epochs
             .values()
             .next_back()
-            .ok_or(ProfileError::NoCurrentSnapshot)?;
+            .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
         let wrap = key_epoch
             .wrapped_dck
             .get(&authority_pubkey)
@@ -1386,10 +1332,10 @@ fn current_unix_seconds() -> i64 {
 }
 
 /// Pick a `created_at` for a local mutation that is strictly greater
-/// than the current snapshot's. Same-second merges are additive
-/// (designed for remote-vs-remote races), so locally we need to bypass
-/// them — otherwise rapid approve+revoke cycles would be no-ops.
-fn next_local_timestamp(current: Option<&AppKeysSnapshot>) -> i64 {
+/// than the current key epoch's. Roster-op merges can be additive, so locally
+/// we need to bypass same-second collisions; otherwise rapid approve+revoke
+/// cycles would be no-ops.
+fn next_local_timestamp(current: Option<&AppKeysProjection>) -> i64 {
     let now = current_unix_seconds();
     match current {
         Some(snap) if snap.created_at >= now => snap.created_at + 1,
@@ -1404,13 +1350,13 @@ fn next_profile_timestamp(state: &ProfileState) -> i64 {
         .map(|op| op.content.created_at)
         .max()
         .unwrap_or(0);
-    let latest_snapshot = state
+    let latest_projection = state
         .app_keys
         .as_ref()
-        .map_or(0, |snapshot| snapshot.created_at);
+        .map_or(0, |projection| projection.created_at);
     current_unix_seconds()
         .max(latest_profile_op)
-        .max(latest_snapshot)
+        .max(latest_projection)
         + 1
 }
 

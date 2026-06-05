@@ -56,9 +56,7 @@ pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
 
-pub use app_keys::{
-    AppActorEntry, AppActorRole, AppKeysSnapshot, ApplyDecision, apply_snapshot, select_latest,
-};
+pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
 pub use config::{
     AppConfig, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, ConfigError,
     DeviceRootRef, Drive, DriveRole, UserProfile,
