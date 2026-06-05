@@ -104,7 +104,7 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
     let repair = iris_drive_core::repair_shared_folder_key_epoch_wraps(
         folder,
-        account.device.keys(),
+        account.app_key.keys(),
         share_repair_timestamp(),
     )
     .context("repairing share key epoch wraps")?;
@@ -189,7 +189,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let folder = iris_drive_core::create_shared_folder(
-            account.device.keys(),
+            account.app_key.keys(),
             account.state.profile_id,
             "Projects/Alpha",
             "Alpha",
@@ -233,7 +233,7 @@ mod tests {
         let recipient_keys = nostr_sdk::Keys::generate();
         let recipient_pubkey = recipient_keys.public_key().to_hex();
         let mut folder = iris_drive_core::create_shared_folder(
-            account.device.keys(),
+            account.app_key.keys(),
             account.state.profile_id,
             "Projects/Alpha",
             "Alpha",
@@ -243,7 +243,7 @@ mod tests {
         )
         .unwrap();
         let add_recipient_event = iris_drive_core::build_iris_profile_roster_op_event(
-            account.device.keys(),
+            account.app_key.keys(),
             folder.share_id,
             iris_drive_core::iris_profile_roster_parent_ids(&folder.roster_ops),
             None,
@@ -284,7 +284,7 @@ mod tests {
         );
         assert_eq!(
             iris_drive_core::current_shared_folder_key(repaired, &recipient_keys).unwrap(),
-            iris_drive_core::current_shared_folder_key(repaired, account.device.keys()).unwrap()
+            iris_drive_core::current_shared_folder_key(repaired, account.app_key.keys()).unwrap()
         );
     }
 }

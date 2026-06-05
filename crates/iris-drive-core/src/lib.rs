@@ -76,7 +76,7 @@ pub use direct_root_transport::{
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
 pub use hashtree_fips_transport::FipsAppMessage;
-pub use identity::{DeviceIdentity, Identity, IdentityError, OwnerKey};
+pub use identity::{AppKey, Identity, IdentityError, RecoveryKey};
 pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
     path_has_ignored_component, read_conflict_records, should_ignore_name,
@@ -138,7 +138,7 @@ pub use sync_cache::{
 /// removed or repurposed so older installs fail closed instead of carrying
 /// stale state forward.
 ///
-/// v2: added optional `ProfileState` for the owner/device key split + `AppKeys`.
+/// v2: added optional `ProfileState` for the recovery/app-key split + `AppKeys`.
 /// v3: removed plain working-directory mode; configs are strict.
 /// v4: renamed the persisted local identity field from `account` to `profile`.
 pub const CONFIG_SCHEMA_VERSION: u32 = 4;

@@ -66,7 +66,7 @@ impl EmbeddedHashtreeHost {
             std::fs::copy(&device_key_path, embedded_config_dir.join("keys")).with_context(
                 || {
                     format!(
-                        "copying Iris Drive device key from {}",
+                        "copying Iris Drive app key from {}",
                         device_key_path.display()
                     )
                 },

@@ -1,18 +1,16 @@
-//! Per-device and owner Nostr keypairs.
+//! `AppKey` and recovery-authority Nostr keypairs.
 //!
-//! Iris Drive has two key kinds, persisted to separate files:
+//! Iris Drive has two local key kinds:
 //!
-//! - [`DeviceIdentity`] (`<config>/key`) — generated on every install,
-//!   present on every device. Identifies this machine. Used to sign
-//!   per-device drive-tree roots.
-//! - [`OwnerKey`] (`<config>/owner_key`) — the user's long-lived
-//!   identity key. Present only on devices that have owner-signing
-//!   authority (i.e. the user clicked "Create" or "Restore" rather
-//!   than "Link this device"). Used to sign the `AppKeys` roster.
+//! - [`AppKey`] (`<config>/key`) - generated for every app install
+//!   or runtime. A person can have more than one `AppKey` on the same hardware.
+//!   Authorized `AppKeys` sign drive roots and `IrisProfile` roster ops.
+//! - [`RecoveryKey`] - a transient recovery-authority key loaded from an
+//!   nsec/hex secret or 12-word phrase. It can admit a fresh `AppKey` when that
+//!   authority is present in a roster, but it is not the stable `IrisProfile` id.
 //!
-//! Single-device mode is the v1 default: `idrive init` generates both
-//! keys, the same install holds both files, and the `AppKeys` roster
-//! lists this one device. Linked devices skip the owner key.
+//! Create, restore, and link all generate a fresh `AppKey`. Create/restore may
+//! also keep recovery material for later admission of more `AppKeys`.
 
 use std::fs;
 use std::io::Write;
@@ -114,11 +112,11 @@ macro_rules! keypair_struct {
     };
 }
 
-keypair_struct!(DeviceIdentity);
-keypair_struct!(OwnerKey);
+keypair_struct!(AppKey);
+keypair_struct!(RecoveryKey);
 
-impl DeviceIdentity {
-    /// Load or generate the device's per-machine identity. Creates the
+impl AppKey {
+    /// Load or generate this install's `AppKey`. Creates the
     /// parent dir if missing. Persisted to disk on first generate.
     pub fn load_or_generate(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
         let path = path.as_ref();
@@ -131,19 +129,8 @@ impl DeviceIdentity {
     }
 }
 
-impl OwnerKey {
-    /// Owner key creation is deliberately explicit — there's no
-    /// `load_or_generate`. Use `OwnerKey::generate(path).save()?` for the
-    /// "Create" flow or `OwnerKey::from_secret(nsec, path)?.save()?` for
-    /// "Restore". Linked devices never call either.
-    pub fn exists_at(path: impl AsRef<Path>) -> bool {
-        path.as_ref().exists()
-    }
-}
-
-/// Back-compat alias for the historical name. New code should use
-/// `DeviceIdentity` directly.
-pub type Identity = DeviceIdentity;
+/// Short alias for the current app install's Nostr keypair.
+pub type Identity = AppKey;
 
 fn parse_secret_key(raw: &str) -> Result<SecretKey, IdentityError> {
     let nsec =
@@ -181,51 +168,42 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn device_generate_produces_distinct_keys() {
+    fn app_key_generate_produces_distinct_keys() {
         let dir = tempdir().unwrap();
-        let a = DeviceIdentity::generate(dir.path().join("a"));
-        let b = DeviceIdentity::generate(dir.path().join("b"));
+        let a = AppKey::generate(dir.path().join("a"));
+        let b = AppKey::generate(dir.path().join("b"));
         assert_ne!(a.pubkey_hex(), b.pubkey_hex());
     }
 
     #[test]
-    fn device_round_trip_through_disk() {
+    fn app_key_round_trip_through_disk() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
-        let original = DeviceIdentity::generate(&path);
+        let original = AppKey::generate(&path);
         original.save().unwrap();
-        let loaded = DeviceIdentity::load(&path).unwrap();
+        let loaded = AppKey::load(&path).unwrap();
         assert_eq!(original.pubkey_hex(), loaded.pubkey_hex());
     }
 
     #[test]
-    fn device_load_or_generate_creates_when_missing() {
+    fn app_key_load_or_generate_creates_when_missing() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nested").join("key");
         assert!(!path.exists());
-        let id = DeviceIdentity::load_or_generate(&path).unwrap();
+        let id = AppKey::load_or_generate(&path).unwrap();
         assert!(path.exists());
-        let again = DeviceIdentity::load_or_generate(&path).unwrap();
+        let again = AppKey::load_or_generate(&path).unwrap();
         assert_eq!(id.pubkey_hex(), again.pubkey_hex());
     }
 
     #[test]
-    fn owner_does_not_auto_generate() {
+    fn recovery_key_round_trips_through_disk_when_explicitly_saved() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("owner_key");
-        let owner = OwnerKey::generate(&path);
+        let path = dir.path().join("recovery");
+        let owner = RecoveryKey::generate(&path);
         owner.save().unwrap();
-        let loaded = OwnerKey::load(&path).unwrap();
+        let loaded = RecoveryKey::load(&path).unwrap();
         assert_eq!(owner.pubkey_hex(), loaded.pubkey_hex());
-    }
-
-    #[test]
-    fn owner_exists_at_reports_correctly() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("owner_key");
-        assert!(!OwnerKey::exists_at(&path));
-        OwnerKey::generate(&path).save().unwrap();
-        assert!(OwnerKey::exists_at(&path));
     }
 
     #[test]
@@ -233,10 +211,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path_a = dir.path().join("a");
         let path_b = dir.path().join("b");
-        let original = OwnerKey::generate(path_a.clone());
+        let original = RecoveryKey::generate(path_a.clone());
         original.save().unwrap();
         let nsec = original.keys().secret_key().to_bech32().unwrap();
-        let recovered = OwnerKey::from_secret(&nsec, path_b).unwrap();
+        let recovered = RecoveryKey::from_secret(&nsec, path_b).unwrap();
         assert_eq!(original.pubkey_hex(), recovered.pubkey_hex());
     }
 
@@ -245,7 +223,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("k");
         let hex = "aa".repeat(32);
-        let owner = OwnerKey::from_secret(&hex, &path).unwrap();
+        let owner = RecoveryKey::from_secret(&hex, &path).unwrap();
         assert_eq!(owner.keys().secret_key().to_secret_hex(), hex);
     }
 
@@ -254,9 +232,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
         let original =
-            OwnerKey::from_recovery_phrase(&phrase, dir.path().join("original")).unwrap();
+            RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("original")).unwrap();
 
-        let recovered = OwnerKey::from_secret(&phrase, dir.path().join("restored")).unwrap();
+        let recovered = RecoveryKey::from_secret(&phrase, dir.path().join("restored")).unwrap();
 
         assert_eq!(original.pubkey_hex(), recovered.pubkey_hex());
     }
@@ -266,14 +244,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
         std::fs::write(&path, "this is not a key").unwrap();
-        assert!(DeviceIdentity::load(&path).is_err());
-        assert!(OwnerKey::load(&path).is_err());
+        assert!(AppKey::load(&path).is_err());
+        assert!(RecoveryKey::load(&path).is_err());
     }
 
     #[test]
     fn pubkey_bech32_starts_with_npub1() {
         let dir = tempdir().unwrap();
-        let id = DeviceIdentity::generate(dir.path().join("k"));
+        let id = AppKey::generate(dir.path().join("k"));
         assert!(id.pubkey_bech32().starts_with("npub1"));
     }
 
@@ -283,7 +261,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let path = dir.path().join("key");
-        DeviceIdentity::generate(&path).save().unwrap();
+        AppKey::generate(&path).save().unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "got {:o}", mode & 0o777);
     }

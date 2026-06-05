@@ -40,8 +40,8 @@ pub(crate) async fn apply_one_event(
             sync.refresh_authorized_peers(&config).await;
         }
     } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
-        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-            .context("loading device key")?;
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading app key")?;
         let parsed =
             iris_drive_core::nostr_events::parse_drive_root_event_for_device(event, device.keys())
                 .ok();
@@ -137,7 +137,7 @@ pub(crate) fn apply_files_root_event(
     }
     let account = Profile::load(account_state, config_dir).context("loading profile")?;
     let outcome =
-        relay_sync::apply_remote_files_root_event(config, event, Some(account.device.keys()))?;
+        relay_sync::apply_remote_files_root_event(config, event, Some(account.app_key.keys()))?;
     let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
     let root_cid_to_pull = if was_applied {
         config

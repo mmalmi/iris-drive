@@ -26,16 +26,14 @@ use uuid::Uuid;
 
 use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysSnapshot};
 use crate::config::{AppConfig, ConfigError};
-use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
+use crate::identity::{AppKey, IdentityError, RecoveryKey};
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
     SignedIrisProfileRosterOp, build_iris_profile_roster_op_event, iris_profile_roster_parent_ids,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
-use crate::paths::{
-    config_path_in, key_path_in, owner_key_path_in, recovery_phrase_path_in, sync_cache_path_in,
-};
+use crate::paths::{config_path_in, key_path_in, recovery_phrase_path_in, sync_cache_path_in};
 use crate::recovery_phrase::{
     RecoveryPhraseError, generate_recovery_phrase, save_recovery_phrase, validate_recovery_phrase,
 };
@@ -419,10 +417,7 @@ pub fn app_keys_from_profile_projection(
 /// In-memory profile: persisted state + the keypairs it references.
 pub struct Profile {
     pub state: ProfileState,
-    pub device: DeviceIdentity,
-    /// Legacy compatibility slot. New profiles do not create or require a
-    /// separate owner key; admin authority lives in the roster.
-    pub owner_key: Option<OwnerKey>,
+    pub app_key: AppKey,
 }
 
 impl Profile {
@@ -432,9 +427,8 @@ impl Profile {
     pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, ProfileError> {
         let recovery_phrase = generate_recovery_phrase()?;
         let profile_id = IrisProfileId::new_v4();
-        let recovery_key =
-            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(config_dir))?;
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
+        let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
@@ -467,8 +461,7 @@ impl Profile {
 
         let profile = Self {
             state,
-            device,
-            owner_key: None,
+            app_key: device,
         };
         Ok(profile)
     }
@@ -482,12 +475,12 @@ impl Profile {
     ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
-            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir))?
+            RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
         } else {
-            OwnerKey::from_secret(recovery_secret, owner_key_path_in(config_dir))?
+            RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
         let profile_id = IrisProfileId::new_v4();
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         if let Some(phrase) = recovery_phrase.as_deref() {
             save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
@@ -522,8 +515,7 @@ impl Profile {
 
         let profile = Self {
             state,
-            device,
-            owner_key: None,
+            app_key: device,
         };
         Ok(profile)
     }
@@ -541,9 +533,9 @@ impl Profile {
     ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
-            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir))?
+            RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
         } else {
-            OwnerKey::from_secret(recovery_secret, owner_key_path_in(config_dir))?
+            RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
         let authority_pubkey = recovery_key.pubkey_hex();
         let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
@@ -555,7 +547,7 @@ impl Profile {
                 .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
         )?;
 
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         if let Some(phrase) = recovery_phrase.as_deref() {
             save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
@@ -576,8 +568,7 @@ impl Profile {
 
         let mut profile = Self {
             state,
-            device,
-            owner_key: None,
+            app_key: device,
         };
         profile.admit_current_app_key_with_authority_keys(
             recovery_key.keys(),
@@ -599,9 +590,9 @@ impl Profile {
     ) -> Result<AppKeysSnapshot, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
         let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
-            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(Path::new("")))?
+            RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
         } else {
-            OwnerKey::from_secret(recovery_secret, owner_key_path_in(Path::new("")))?
+            RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
         let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
         let expected_purpose = recovery_authority_purpose(
@@ -699,7 +690,7 @@ impl Profile {
         if !is_pubkey_hex(&admin_app_key_hex) {
             return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_hex));
         }
-        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
@@ -717,22 +708,20 @@ impl Profile {
 
         Ok(Self {
             state,
-            device,
-            owner_key: None,
+            app_key: device,
         })
     }
 
     /// Load a profile from its config dir. Reconstructs the in-memory
     /// view from the persisted `ProfileState` plus the on-disk key
-    /// files. Errors if the device key is missing — caller should run a
+    /// files. Errors if the app key is missing — caller should run a
     /// create/restore/link flow first.
     pub fn load(mut state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
-        let device = DeviceIdentity::load(key_path_in(config_dir))?;
+        let device = AppKey::load(key_path_in(config_dir))?;
         state.sync_app_keys_from_profile();
         Ok(Self {
             state,
-            device,
-            owner_key: None,
+            app_key: device,
         })
     }
 
@@ -884,8 +873,7 @@ impl Profile {
         label: Option<String>,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
-        let recovery_key =
-            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.admit_current_app_key_with_authority_keys(
             recovery_key.keys(),
             IrisProfileKeyPurpose::RecoveryPhrase,
@@ -1037,7 +1025,7 @@ impl Profile {
     ) -> Result<(), ProfileError> {
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
         let signed = signed_profile_roster_op_with_parents(
-            self.device.keys(),
+            self.app_key.keys(),
             self.state.profile_id,
             parents,
             op,
@@ -1052,7 +1040,7 @@ impl Profile {
         dck: &[u8; 32],
         created_at: i64,
     ) -> Result<(), ProfileError> {
-        let signer = self.device.keys().clone();
+        let signer = self.app_key.keys().clone();
         self.rotate_profile_dck_epoch_with_signer(&signer, dck, created_at)
     }
 
@@ -1124,13 +1112,13 @@ impl Profile {
 
         let dck = self.current_dck()?;
         let wrapped_dck = wrap_dck_for_pubkeys(
-            self.device.keys().secret_key(),
+            self.app_key.keys().secret_key(),
             missing_pubkeys.iter().map(String::as_str),
             &dck,
         )?;
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
         let signed = signed_profile_roster_op_with_parents(
-            self.device.keys(),
+            self.app_key.keys(),
             self.state.profile_id,
             parents,
             IrisProfileRosterOp::RepairKeyWraps {
@@ -1170,7 +1158,7 @@ impl Profile {
                 .ok_or(ProfileError::NoWrapForThisDevice)?;
             let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
                 .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
-            let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
+            let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
                 .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
             let arr: [u8; 32] = bytes
                 .as_slice()
@@ -1192,7 +1180,7 @@ impl Profile {
             .ok_or(ProfileError::MissingSnapshotSigner)?;
         let signer_pk = PublicKey::from_hex(signer_pubkey)
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
-        let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
+        let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .as_slice()
@@ -1206,8 +1194,7 @@ impl Profile {
         recovery_phrase: &str,
     ) -> Result<[u8; 32], ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
-        let recovery_key =
-            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.current_dck_from_authority_keys(
             recovery_key.keys(),
             IrisProfileKeyPurpose::RecoveryPhrase,
@@ -1504,25 +1491,25 @@ fn is_pubkey_hex(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Convenience: load just the keypair paths under a given config dir.
+/// Convenience: load just the local profile secret paths under a config dir.
 #[must_use]
 pub fn profile_paths(config_dir: &Path) -> ProfilePaths {
     ProfilePaths {
-        device_key: key_path_in(config_dir),
-        owner_key: owner_key_path_in(config_dir),
+        app_key: key_path_in(config_dir),
+        recovery_phrase: recovery_phrase_path_in(config_dir),
     }
 }
 
 pub struct ProfilePaths {
-    pub device_key: PathBuf,
-    pub owner_key: PathBuf,
+    pub app_key: PathBuf,
+    pub recovery_phrase: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ProfileLogoutReport {
     pub removed_key: bool,
-    pub removed_owner_key: bool,
+    pub removed_recovery_phrase: bool,
     pub removed_sync_cache: bool,
     pub cleared_profile: bool,
     pub cleared_user_profile: bool,
@@ -1534,7 +1521,7 @@ impl ProfileLogoutReport {
     #[must_use]
     pub fn changed(&self) -> bool {
         self.removed_key
-            || self.removed_owner_key
+            || self.removed_recovery_phrase
             || self.removed_sync_cache
             || self.cleared_profile
             || self.cleared_user_profile
@@ -1571,7 +1558,7 @@ pub fn logout_local_profile(config_dir: &Path) -> Result<ProfileLogoutReport, Pr
     }
 
     report.removed_key = remove_file_if_present(&key_path_in(config_dir))?;
-    report.removed_owner_key = remove_file_if_present(&owner_key_path_in(config_dir))?;
+    report.removed_recovery_phrase = remove_file_if_present(&recovery_phrase_path_in(config_dir))?;
     report.removed_sync_cache = remove_file_if_present(&sync_cache_path_in(config_dir))?;
 
     Ok(report)

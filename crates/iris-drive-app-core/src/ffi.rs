@@ -1177,8 +1177,8 @@ async fn run_device_link_exchange_async(
         return Ok(());
     }
 
-    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-        .map_err(|error| format!("loading device key: {error}"))?;
+    let device = iris_drive_core::AppKey::load(key_path_in(config_dir))
+        .map_err(|error| format!("loading app key: {error}"))?;
     let relays = if startup_config.relays.is_empty() {
         default_relays()
     } else {
@@ -1953,7 +1953,7 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             };
         }
     };
-    let recovery_key = match iris_drive_core::identity::OwnerKey::from_recovery_phrase(
+    let recovery_key = match iris_drive_core::identity::RecoveryKey::from_recovery_phrase(
         &phrase,
         config_dir.join("recovery-export-check"),
     ) {

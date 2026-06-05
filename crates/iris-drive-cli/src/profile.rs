@@ -189,7 +189,7 @@ pub(crate) fn cmd_logout(config_dir: &std::path::Path) -> Result<()> {
             "changed": report.changed(),
             "config_dir": config_dir.display().to_string(),
             "removed_key": report.removed_key,
-            "removed_owner_key": report.removed_owner_key,
+            "removed_recovery_phrase": report.removed_recovery_phrase,
             "removed_sync_cache": report.removed_sync_cache,
             "cleared_profile": report.cleared_profile,
             "cleared_user_profile": report.cleared_user_profile,
@@ -598,8 +598,8 @@ pub(crate) async fn send_pending_device_link_request(
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
-    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
+    let device =
+        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let relay_event_id =
         iris_drive_core::relay_sync::publish_device_link_request(client, device.keys(), &frame)
             .await?;

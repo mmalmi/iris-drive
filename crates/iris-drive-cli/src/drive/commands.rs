@@ -133,8 +133,8 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         .ok_or_else(|| {
             anyhow::anyhow!("no root for this device yet - run `idrive import <dir>` first")
         })?;
-    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+        .context("loading app key")?;
     let event = iris_drive_core::nostr_events::build_drive_root_event(
         device.keys(),
         &state.root_scope_id(),

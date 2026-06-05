@@ -200,7 +200,7 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
         + 1;
     let branch_app = Keys::generate().public_key().to_hex();
     let branch_op_event = build_iris_profile_roster_op_event(
-        admin.device.keys(),
+        admin.app_key.keys(),
         admin.state.profile_id,
         branch_base_ops.iter().map(|op| op.op_id.clone()).collect(),
         None,
@@ -318,7 +318,7 @@ fn restore_candidate_filters_match_roster_mentions_and_acceptance_events() {
     )
     .unwrap();
     let recovery_key =
-        crate::identity::OwnerKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
+        crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
             .unwrap();
     let recovery_pubkey = recovery_key.pubkey_hex();
     let filters = iris_profile_restore_candidate_filters(&recovery_pubkey).unwrap();
@@ -355,7 +355,7 @@ fn restore_candidates_require_active_recovery_facet_projection() {
     )
     .unwrap();
     let recovery_key =
-        crate::identity::OwnerKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
+        crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
             .unwrap();
     let recovery_pubkey = recovery_key.pubkey_hex();
     let events = acct
@@ -392,7 +392,7 @@ fn restore_candidates_require_active_recovery_facet_projection() {
     assert_eq!(restored.state.profile_id, acct.state.profile_id);
 
     let remove_recovery = build_iris_profile_roster_op_event(
-        acct.device.keys(),
+        acct.app_key.keys(),
         acct.state.profile_id,
         crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
         None,
@@ -432,7 +432,7 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
     let (_, owner) = config_with_owner_account(dir.path());
     let reader = Keys::generate();
     let folder = crate::create_shared_folder(
-        owner.device.keys(),
+        owner.app_key.keys(),
         owner.state.profile_id,
         "Projects/Alpha",
         "Alpha",
@@ -449,7 +449,7 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
     let share_op = profile_event(&folder.roster_ops[0]);
     let root = encrypted_root(0x55, 20, 1);
     let root_event = build_drive_root_event(
-        owner.device.keys(),
+        owner.app_key.keys(),
         &folder.share_id.to_string(),
         crate::PRIMARY_DRIVE_ID,
         &root,
@@ -477,7 +477,7 @@ fn apply_share_roster_op_event_merges_known_shared_folder() {
     let (_, owner) = config_with_owner_account(dir.path());
     let editor = Keys::generate();
     let mut folder = crate::create_shared_folder(
-        owner.device.keys(),
+        owner.app_key.keys(),
         owner.state.profile_id,
         "Projects/Alpha",
         "Alpha",
@@ -487,7 +487,7 @@ fn apply_share_roster_op_event_merges_known_shared_folder() {
     )
     .unwrap();
     let op_event = build_iris_profile_roster_op_event(
-        owner.device.keys(),
+        owner.app_key.keys(),
         folder.share_id,
         crate::iris_profile_roster_parent_ids(&folder.roster_ops),
         None,
@@ -572,7 +572,7 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
         .max()
         .unwrap();
     let add_event = build_iris_profile_roster_op_event(
-        acct.device.keys(),
+        acct.app_key.keys(),
         profile_id,
         crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
         None,
@@ -591,7 +591,7 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
     let mut set_parents = crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops);
     set_parents.push(add_op.op_id.clone());
     let set_event = build_iris_profile_roster_op_event(
-        acct.device.keys(),
+        acct.app_key.keys(),
         profile_id,
         set_parents,
         None,
@@ -648,7 +648,7 @@ fn apply_device_link_request_event_records_admin_inbound_request() {
         requested_at: 123,
         url: "iris-drive://device-link?device=example".to_string(),
     };
-    let event = build_device_link_request_event(linked.device.keys(), &frame).unwrap();
+    let event = build_device_link_request_event(linked.app_key.keys(), &frame).unwrap();
     let mut cfg = AppConfig {
         profile: Some(admin.state.clone()),
         ..AppConfig::default()
@@ -685,7 +685,7 @@ fn apply_drive_root_event_from_authorized_device_applies() {
     )
     .unwrap();
     let outcome =
-        apply_remote_drive_root_event(&mut cfg, &event, Some(acct.device.keys())).unwrap();
+        apply_remote_drive_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap();
     assert_eq!(outcome, DriveRootApply::Applied);
 
     let drive = cfg.drive("main").unwrap();
@@ -732,7 +732,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
     )
     .unwrap();
     let outcome =
-        apply_remote_drive_root_event(&mut cfg, &event, Some(linked.device.keys())).unwrap();
+        apply_remote_drive_root_event(&mut cfg, &event, Some(linked.app_key.keys())).unwrap();
 
     assert_eq!(outcome, DriveRootApply::KeyUnavailable);
     assert!(cfg.drive("main").unwrap().device_roots.is_empty());
@@ -743,10 +743,10 @@ fn apply_files_root_event_from_current_app_key_maps_to_current_device() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let root = encrypted_root(0x5a, 1_700_000_000, 0);
-    let event = build_private_hashtree_root_event(acct.device.keys(), "main", &root).unwrap();
+    let event = build_private_hashtree_root_event(acct.app_key.keys(), "main", &root).unwrap();
 
     let outcome =
-        apply_remote_files_root_event(&mut cfg, &event, Some(acct.device.keys())).unwrap();
+        apply_remote_files_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap();
 
     assert_eq!(outcome, FilesRootApply::Applied);
     let entry = cfg
@@ -773,10 +773,10 @@ fn apply_files_root_event_does_not_replace_causal_native_root() {
         .insert(acct.state.device_pubkey.clone(), native_root.clone());
     let legacy_root = encrypted_root(0x5c, 1_700_000_000, 0);
     let event =
-        build_private_hashtree_root_event(acct.device.keys(), "main", &legacy_root).unwrap();
+        build_private_hashtree_root_event(acct.app_key.keys(), "main", &legacy_root).unwrap();
 
     let outcome =
-        apply_remote_files_root_event(&mut cfg, &event, Some(acct.device.keys())).unwrap();
+        apply_remote_files_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap();
 
     assert_eq!(outcome, FilesRootApply::StaleTimestamp);
     let entry = cfg
@@ -794,19 +794,19 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let mut root = encrypted_root(0x5d, 100, 0);
-    let owner_keys = acct.device.keys();
-    let first = build_private_hashtree_root_event(owner_keys, "main", &root).unwrap();
+    let local_keys = acct.app_key.keys();
+    let first = build_private_hashtree_root_event(local_keys, "main", &root).unwrap();
 
     assert_eq!(
-        apply_remote_files_root_event(&mut cfg, &first, Some(owner_keys)).unwrap(),
+        apply_remote_files_root_event(&mut cfg, &first, Some(local_keys)).unwrap(),
         FilesRootApply::Applied
     );
 
     root.published_at = 200;
-    let republished = build_private_hashtree_root_event(owner_keys, "main", &root).unwrap();
+    let republished = build_private_hashtree_root_event(local_keys, "main", &root).unwrap();
 
     assert_eq!(
-        apply_remote_files_root_event(&mut cfg, &republished, Some(owner_keys)).unwrap(),
+        apply_remote_files_root_event(&mut cfg, &republished, Some(local_keys)).unwrap(),
         FilesRootApply::StaleTimestamp
     );
     let entry = cfg
@@ -877,7 +877,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
     let reader_dir = tempdir().unwrap();
     let reader = Profile::create(reader_dir.path(), Some("Reader".into())).unwrap();
     let folder = crate::create_shared_folder(
-        owner.device.keys(),
+        owner.app_key.keys(),
         owner.state.profile_id,
         "Projects/Alpha",
         "Alpha",
@@ -900,7 +900,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
         .map(|facet| facet.pubkey.clone())
         .collect::<Vec<_>>();
     let event = build_drive_root_event(
-        owner.device.keys(),
+        owner.app_key.keys(),
         &folder.share_id.to_string(),
         crate::PRIMARY_DRIVE_ID,
         &root,
@@ -913,7 +913,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
         ..AppConfig::default()
     };
 
-    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(reader.device.keys()))
+    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(reader.app_key.keys()))
         .expect("share root applies");
 
     assert_eq!(outcome, DriveRootApply::Applied);
@@ -934,7 +934,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
     let reader_dir = tempdir().unwrap();
     let reader = Profile::create(reader_dir.path(), Some("Reader".into())).unwrap();
     let folder = crate::create_shared_folder(
-        owner.device.keys(),
+        owner.app_key.keys(),
         owner.state.profile_id,
         "Projects/Alpha",
         "Alpha",
@@ -957,7 +957,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
         .map(|facet| facet.pubkey.clone())
         .collect::<Vec<_>>();
     let event = build_drive_root_event(
-        reader.device.keys(),
+        reader.app_key.keys(),
         &folder.share_id.to_string(),
         crate::PRIMARY_DRIVE_ID,
         &root,
@@ -970,7 +970,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
         ..AppConfig::default()
     };
 
-    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.device.keys()))
+    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.app_key.keys()))
         .expect("reader share root is inspected");
 
     assert_eq!(outcome, DriveRootApply::UnauthorizedDevice);
@@ -1023,7 +1023,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
     )
     .unwrap();
     assert_eq!(
-        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.device.keys())).unwrap(),
+        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.app_key.keys())).unwrap(),
         DriveRootApply::Applied
     );
     let first_published_at = cfg
@@ -1079,7 +1079,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
     )
     .unwrap();
     assert_eq!(
-        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.device.keys())).unwrap(),
+        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.app_key.keys())).unwrap(),
         DriveRootApply::Applied
     );
 
@@ -1094,7 +1094,7 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
     .unwrap();
 
     assert_eq!(
-        apply_remote_drive_root_event(&mut cfg, &republished, Some(acct.device.keys())).unwrap(),
+        apply_remote_drive_root_event(&mut cfg, &republished, Some(acct.app_key.keys())).unwrap(),
         DriveRootApply::StaleTimestamp
     );
     let entry = cfg
@@ -1126,7 +1126,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     )
     .unwrap();
     assert_eq!(
-        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.device.keys())).unwrap(),
+        apply_remote_drive_root_event(&mut cfg, &event_1, Some(acct.app_key.keys())).unwrap(),
         DriveRootApply::Applied
     );
 
@@ -1140,7 +1140,7 @@ fn apply_drive_root_event_prefers_higher_device_seq_over_newer_timestamp() {
     )
     .unwrap();
     assert_eq!(
-        apply_remote_drive_root_event(&mut cfg, &event_2, Some(acct.device.keys())).unwrap(),
+        apply_remote_drive_root_event(&mut cfg, &event_2, Some(acct.app_key.keys())).unwrap(),
         DriveRootApply::Applied
     );
 

@@ -41,13 +41,6 @@ pub fn sync_cache_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("sync-cache.json")
 }
 
-/// Owner signing key. Only present on devices with owner authority
-/// (create / restore flows). Linked devices never have this file.
-#[must_use]
-pub fn owner_key_path_in(config_dir: &std::path::Path) -> PathBuf {
-    config_dir.join("owner_key")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,7 +63,6 @@ mod tests {
             sync_cache_path_in(base),
             PathBuf::from("/tmp/x/sync-cache.json")
         );
-        assert_eq!(owner_key_path_in(base), PathBuf::from("/tmp/x/owner_key"));
     }
 
     #[test]

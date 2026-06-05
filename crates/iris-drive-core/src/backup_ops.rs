@@ -111,8 +111,7 @@ pub async fn sync_backups(
     let root_cid_str = current_primary_root_cid(&config)
         .ok_or_else(|| anyhow::anyhow!("no current drive root; import files first"))?;
     let root_cid = Cid::parse(&root_cid_str).context("parsing current root cid")?;
-    let device =
-        crate::DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+    let device = crate::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for backup upload")?;
     let mut reports = Vec::new();
 
@@ -208,8 +207,7 @@ pub async fn check_backups(
     let root_cid_str = current_primary_root_cid(&config)
         .ok_or_else(|| anyhow::anyhow!("no current drive root; import files first"))?;
     let root_cid = Cid::parse(&root_cid_str).context("parsing current root cid")?;
-    let device =
-        crate::DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+    let device = crate::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for backup check")?;
     let mut reports = Vec::new();
     let sample_size = sample_size.max(1);

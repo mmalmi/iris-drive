@@ -94,7 +94,7 @@ pub(crate) async fn announce_current_state_direct(
 pub(crate) async fn upload_tree_to_blossom_with_hashtree(
     config_dir: &std::path::Path,
     config: &AppConfig,
-    device: &iris_drive_core::DeviceIdentity,
+    device: &iris_drive_core::AppKey,
     root_cid: Cid,
     _previous_root_cid: Option<Cid>,
 ) -> Result<UploadReport> {
@@ -113,7 +113,7 @@ pub(crate) async fn upload_tree_to_blossom_with_hashtree(
 pub(crate) async fn maybe_upload_root_to_blossom(
     config_dir: &std::path::Path,
     config: &AppConfig,
-    device: &iris_drive_core::DeviceIdentity,
+    device: &iris_drive_core::AppKey,
     root_cid_str: &str,
     previous_root_cid: Option<&str>,
 ) -> Result<(Option<UploadReport>, Option<String>)> {
@@ -152,8 +152,8 @@ pub(crate) async fn start_fips_block_sync(
     config_dir: &std::path::Path,
     config: &AppConfig,
 ) -> Result<FsFipsBlockSync> {
-    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
+    let device =
+        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for direct FIPS sync")?;
     let local = daemon.tree().get_store().clone();
     iris_drive_core::FipsBlockSync::start(&device, local, config)
@@ -216,8 +216,8 @@ pub(crate) async fn download_roots_over_blossom(
         return Err(anyhow::anyhow!("no blossom servers configured"));
     }
 
-    let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
+    let device =
+        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Blossom sync")?;
     let local = daemon.tree().get_store().clone();
     let bclient =
@@ -422,8 +422,8 @@ pub(crate) async fn publish_current_state(
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
-        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-            .context("loading device key")?;
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading app key")?;
         report.root_cid = Some(root.root_cid.clone());
 
         if upload_blossom {
@@ -452,7 +452,7 @@ pub(crate) async fn publish_current_state(
             let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,
-                account.device.keys(),
+                account.app_key.keys(),
                 &drive.drive_id,
                 &root,
             ))

@@ -443,7 +443,7 @@ async fn publish_current_device_root(config_dir: &Path) -> anyhow::Result<serde_
     let authorized_devices = authorized_device_pubkeys(account);
     let result = iris_drive_core::relay_sync::publish_drive_root(
         &client,
-        loaded_account.device.keys(),
+        loaded_account.app_key.keys(),
         &account.root_scope_id(),
         &drive.drive_id,
         root,

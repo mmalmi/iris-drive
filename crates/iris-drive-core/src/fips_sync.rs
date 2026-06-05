@@ -26,7 +26,7 @@ use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::device_link_transport::{DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC};
 use crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC;
-use crate::identity::DeviceIdentity;
+use crate::identity::AppKey;
 
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
 const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -100,7 +100,7 @@ pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
 
 impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     pub async fn start(
-        device: &DeviceIdentity,
+        device: &AppKey,
         local_store: Arc<L>,
         config: &AppConfig,
     ) -> Result<Self, FipsSyncError> {

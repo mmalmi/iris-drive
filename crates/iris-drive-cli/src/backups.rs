@@ -102,8 +102,8 @@ pub(crate) fn cmd_backups_sync(config_dir: &std::path::Path, target: Option<&str
         let root_cid_str = current_primary_root_cid(&config)
             .ok_or_else(|| anyhow::anyhow!("no current drive root; import files first"))?;
         let root_cid = Cid::parse(&root_cid_str).context("parsing current root cid")?;
-        let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-            .context("loading device key")?;
+        let device =
+            iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let daemon = Daemon::open(config_dir).context("opening daemon for backup upload")?;
         let mut reports = Vec::new();
 
@@ -285,8 +285,8 @@ pub(crate) fn cmd_backups_check(
         let root_cid_str = current_primary_root_cid(&config)
             .ok_or_else(|| anyhow::anyhow!("no current drive root; import files first"))?;
         let root_cid = Cid::parse(&root_cid_str).context("parsing current root cid")?;
-        let device = iris_drive_core::DeviceIdentity::load(key_path_in(config_dir))
-            .context("loading device key")?;
+        let device =
+            iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let daemon = Daemon::open(config_dir).context("opening daemon for backup check")?;
         let mut reports = Vec::new();
 

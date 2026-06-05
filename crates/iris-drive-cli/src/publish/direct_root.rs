@@ -375,8 +375,8 @@ async fn append_primary_drive_root_events(
     {
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
         let authorized_devices = authorized_device_pubkeys(state);
-        let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-            .context("loading device key")?;
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading app key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_event(
             device.keys(),
             &state.root_scope_id(),
@@ -400,7 +400,7 @@ async fn append_primary_drive_root_events(
         if state.can_write_roots() {
             let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
-                account.device.keys(),
+                account.app_key.keys(),
                 &drive.drive_id,
                 &root,
             )
@@ -423,8 +423,8 @@ async fn append_share_root_events(
     config: &AppConfig,
     state: &ProfileState,
 ) -> Result<()> {
-    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
-        .context("loading device key")?;
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+        .context("loading app key")?;
     for folder in &config.shared_folders {
         let projection = folder.projection();
         if !projection.can_write_roots(&state.device_pubkey) {

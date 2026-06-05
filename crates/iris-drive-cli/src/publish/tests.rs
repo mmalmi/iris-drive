@@ -154,7 +154,7 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
         .clone();
     assert_eq!(root.root_cid, report.root_cid);
     let mut folder = iris_drive_core::create_shared_folder(
-        account.device.keys(),
+        account.app_key.keys(),
         account.state.profile_id,
         "Projects/Alpha",
         "Alpha",

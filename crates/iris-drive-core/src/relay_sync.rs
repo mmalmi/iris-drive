@@ -489,13 +489,13 @@ fn apply_root_to_device_roots(
 pub fn apply_remote_files_root_event(
     config: &mut AppConfig,
     event: &Event,
-    owner_keys: Option<&Keys>,
+    local_keys: Option<&Keys>,
 ) -> Result<FilesRootApply, RelayError> {
     let parsed = hashtree_nostr::parse_verified_hashtree_root_event(event)
         .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
         .ok_or_else(|| RelayError::HashtreeRoot("not a hashtree root event".to_string()))?;
-    let root_cid = if let Some(owner_keys) = owner_keys {
-        hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, owner_keys)
+    let root_cid = if let Some(local_keys) = local_keys {
+        hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, local_keys)
             .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
     } else {
         parsed.root_cid.clone()

@@ -203,7 +203,7 @@ pub fn drive_root_d_tag(root_scope_id: &str, drive_id: &str) -> String {
     format!("iris-drive/{root_scope_id}/{drive_id}/root")
 }
 
-/// Build a signed drive-root event. Signed by the **device key**;
+/// Build a signed drive-root event. Signed by the **app key**;
 /// `device_keys.public_key()` becomes the event author, and the
 /// merge engine attributes the published root to that device.
 ///
@@ -335,7 +335,7 @@ fn build_drive_root_event_at(
 /// and `selfEncryptedKey` tags. This event points `npub/tree_name` at the
 /// current root without publishing the root key in cleartext.
 pub fn build_private_hashtree_root_event(
-    owner_keys: &Keys,
+    signer_keys: &Keys,
     tree_name: &str,
     root: &DeviceRootRef,
 ) -> Result<Event, WireError> {
@@ -346,7 +346,7 @@ pub fn build_private_hashtree_root_event(
     } else {
         None
     };
-    hashtree_nostr::build_private_hashtree_root_event(owner_keys, tree_name, &root_cid, ts)
+    hashtree_nostr::build_private_hashtree_root_event(signer_keys, tree_name, &root_cid, ts)
         .map_err(|e| WireError::Event(e.to_string()))
 }
 

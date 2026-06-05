@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    AppConfig, DeviceIdentity, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
-    authorized_device_pubkeys,
+    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState, authorized_device_pubkeys,
 };
 
 pub const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
@@ -281,7 +280,7 @@ pub fn build_current_direct_root_events(
     if let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
         && let Some(root) = drive.device_roots.get(&state.device_pubkey)
     {
-        let device = DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+        let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let authorized_devices = authorized_device_pubkeys(state);
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
@@ -339,7 +338,7 @@ pub async fn apply_direct_root_event(
         return Ok(changed);
     }
     if crate::nostr_events::is_drive_root_event_coordinate(event) {
-        let device = DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+        let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let parsed =
             crate::nostr_events::parse_drive_root_event_for_device(event, device.keys()).ok();
         let outcome = crate::relay_sync::apply_remote_drive_root_event(

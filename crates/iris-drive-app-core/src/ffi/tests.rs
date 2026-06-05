@@ -130,7 +130,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     let account = iris_drive_core::Profile::load(config.profile.clone().unwrap(), dir.path())
         .expect("account loads");
     let folder = iris_drive_core::create_shared_folder(
-        account.device.keys(),
+        account.app_key.keys(),
         account.state.profile_id,
         "Projects/Alpha",
         "Alpha",
@@ -1059,7 +1059,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let profile_id = state.profile_id;
     let link_secret = state.device_link_secret.clone();
     let linked_device =
-        iris_drive_core::DeviceIdentity::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
+        iris_drive_core::AppKey::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
     state
         .record_inbound_device_link_request(
             profile_id,

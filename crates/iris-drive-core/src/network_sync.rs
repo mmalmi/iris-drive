@@ -15,7 +15,7 @@ use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::daemon::Daemon;
 use crate::fips_sync::FsFipsBlockSync;
-use crate::identity::DeviceIdentity;
+use crate::identity::AppKey;
 use crate::paths::{config_path_in, key_path_in};
 use crate::profile::ProfileState;
 use crate::{PRIMARY_DRIVE_ID, blossom_sync, blossom_sync_client, relay_sync};
@@ -177,7 +177,7 @@ pub async fn sync_once_with_fips(
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
                     &ev,
-                    Some(account.device.keys()),
+                    Some(account.app_key.keys()),
                 )
                 .context("applying files-root event")?;
                 report.files_root_event_outcome = files_root_apply_label(&outcome).to_string();
@@ -231,7 +231,7 @@ pub fn apply_drive_root_events(
     config: &mut AppConfig,
     events: &[Event],
 ) -> Result<DriveRootEventApplyReport> {
-    let device = DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let mut report = DriveRootEventApplyReport {
         seen: events.len(),
         ..DriveRootEventApplyReport::default()
@@ -332,7 +332,7 @@ async fn download_roots(
 }
 
 async fn start_fips_block_sync(config_dir: &Path, config: &AppConfig) -> Result<FsFipsBlockSync> {
-    let device = DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for direct FIPS sync")?;
     let local = daemon.tree().get_store().clone();
     crate::FipsBlockSync::start(&device, local, config)
@@ -409,7 +409,7 @@ async fn download_roots_over_blossom(
         return Err(anyhow::anyhow!("no blossom servers configured"));
     }
 
-    let device = DeviceIdentity::load(key_path_in(config_dir)).context("loading device key")?;
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Blossom sync")?;
     let local = daemon.tree().get_store().clone();
     let bclient = blossom_sync_client(device.keys().clone(), &config.blossom_servers);
