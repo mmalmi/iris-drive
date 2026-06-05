@@ -45,9 +45,9 @@ Mobile (spec): same 4 destinations as a bottom tab bar.
   (e.g. "This device" / "Online" / "Updated <date>"). No npub/CID on the face of the row.
 - **Expand a row** to reveal technical details: full npub (with copy), root CID, key generation,
   published time, Public/Private. (Decision: expandable in place.)
-- **"Add device"** becomes a button → sheet/popover with the public-key + label fields + Approve
-  (only when the user has owner signing authority). No always-visible inline form.
-- The **account keys** block (Owner npub / This device npub / State) leaves this view → Settings → Account.
+- **"Add app install"** becomes a button -> sheet/popover with the AppKey + label fields + Approve
+  (only when the current AppKey can admin the profile). No always-visible inline form.
+- The **profile keys** block (Profile ID / Current AppKey / State) leaves this view -> Settings -> Account.
 
 ### Backups — clean list
 - Row = kind icon · friendly **name** · status line ("Synced · up to date" / "Syncing 40%" / "Pending").
@@ -58,7 +58,7 @@ Mobile (spec): same 4 destinations as a bottom tab bar.
 ### Settings — sectioned (the home for everything technical)
 Grouped sections (native grouped `Form`/list per platform):
 1. **General** — Menu bar on close (macOS) and any existing app toggles.
-2. **Account** — Owner key, this device key (copy buttons), authorization state. *(moved from Devices)*
+2. **Account** — IrisProfile ID, current AppKey (copy button), authorization state. *(moved from Devices)*
 3. **Network** — the entire former Network tab: Relays editor, Blossom servers, FIPS diagnostics.
 4. **Sync & Advanced** — Start / Stop / Restart daemon; copy/view drive.iris.to link; Blocks & raw storage.
 5. **About** — version / drive name.

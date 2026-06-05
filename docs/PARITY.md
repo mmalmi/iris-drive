@@ -10,18 +10,18 @@ equivalent to desktop.
 | Capability | Linux GTK | macOS SwiftUI | Windows WPF | iOS SwiftUI | Android Compose |
 | --- | --- | --- | --- | --- | --- |
 | First-run create profile | Yes | Yes | Yes | Local create flow | App-core create flow |
-| Restore owner profile | Yes | Yes | Yes | Local restore flow | App-core restore flow |
-| Link this device flow | Sign in -> Link this device | Sign in -> Link this device | Sign in -> Link this device | Sign in -> Link this device + deep link | Sign in -> Link this device + deep link |
+| Restore IrisProfile | Yes | Yes | Yes | Local restore flow | App-core restore flow |
+| Link this app install flow | Sign in -> Link this app install | Sign in -> Link this app install | Sign in -> Link this app install | Sign in -> Link this app install + deep link | Sign in -> Link this app install + deep link |
 | Log out local profile | Yes | Yes | Yes | App-core logout flow | App-core logout flow |
-| Copy owner/device keys | Yes | Yes | Yes | Yes | App-core UI flow |
-| Add another device | Add Device dialog | Add Device sheet | Add Device dialog | Add Device sheet + deep link | Add Device dialog + deep link |
+| Copy IrisProfile/AppKey info | Yes | Yes | Yes | Yes | App-core UI flow |
+| Add another app install | Add app install dialog | Add app install sheet | Add app install dialog | Add app install sheet + deep link | Add app install dialog + deep link |
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
 | Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
-| Devices list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
-| Device online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
-| Owner device revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |
+| App installs list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
+| App install online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
+| AppKey revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |
 | Relay add/reset controls | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | Direct FIPS block sync | Yes | Yes | Yes | Harness daemon peer; app pending | Harness daemon peer; app pending |
 | Blossom remote server list | Yes | Yes | Yes | Read-only list | Read-only list |

@@ -60,14 +60,11 @@ pub struct UiShare {
 #[allow(clippy::struct_excessive_bools)]
 pub struct UiAccount {
     pub profile_id: String,
-    pub owner_pubkey: String,
-    pub device_pubkey: String,
     pub current_app_key_pubkey: String,
     pub current_app_key_npub: String,
     pub current_app_key_label: String,
     pub device_label: String,
     pub authorization_state: String,
-    pub has_owner_signing_authority: bool,
     pub can_admin_profile: bool,
     pub can_write_roots: bool,
     pub active_app_key_count: u64,

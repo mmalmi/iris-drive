@@ -936,14 +936,11 @@ impl NativeAppRuntime {
         let profile = iris_profile_summary(&account);
         self.state.ui.account = Some(UiAccount {
             profile_id: profile.profile_id,
-            owner_pubkey: account_npub(&account.owner_pubkey),
-            device_pubkey: account_npub(&account.device_pubkey),
             current_app_key_pubkey: profile.current_app_key_pubkey_hex,
             current_app_key_npub: profile.current_app_key_npub,
             current_app_key_label: profile.current_app_key_label.unwrap_or_default(),
             device_label: account.device_label.clone().unwrap_or_default(),
             authorization_state: profile.authorization_state,
-            has_owner_signing_authority: account.has_owner_signing_authority,
             can_admin_profile: profile.can_admin_profile,
             can_write_roots: profile.can_write_roots,
             active_app_key_count: profile.active_app_key_count as u64,
