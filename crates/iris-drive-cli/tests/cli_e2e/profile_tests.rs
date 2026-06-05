@@ -77,12 +77,10 @@ fn logout_removes_local_account_and_key_material() {
 }
 
 #[test]
-fn raw_nsec_restore_reuses_app_key_in_fresh_admin_profile() {
-    // Capture original account/device npub from an init.
+fn recovery_phrase_restore_keeps_profile_and_uses_fresh_app_key() {
     let dir_a = tempdir().unwrap();
     idrive(dir_a.path()).arg("init").assert().success();
-    // Read the persisted device nsec from disk to drive `restore`.
-    let nsec = std::fs::read_to_string(dir_a.path().join("key"))
+    let recovery_phrase = std::fs::read_to_string(dir_a.path().join("recovery_phrase"))
         .unwrap()
         .trim()
         .to_string();
@@ -94,28 +92,58 @@ fn raw_nsec_restore_reuses_app_key_in_fresh_admin_profile() {
 
     let dir_b = tempdir().unwrap();
     let out = idrive(dir_b.path())
-        .args(["restore", &nsec])
+        .args(["restore", &recovery_phrase])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
-    assert_ne!(v["profile_id"], original_profile_id);
+    assert_eq!(v["profile_id"], original_profile_id);
     assert_eq!(v["can_admin_profile"], true);
-    assert_eq!(v["current_app_key_npub"], original_app_key_npub);
+    assert_ne!(v["current_app_key_npub"], original_app_key_npub);
     assert!(!dir_b.path().join("owner_key").exists());
+    assert!(dir_b.path().join("recovery_phrase").exists());
+}
+
+#[test]
+fn raw_nsec_restore_creates_fresh_profile_and_uses_fresh_app_key() {
+    let dir_a = tempdir().unwrap();
+    idrive(dir_a.path()).arg("init").assert().success();
+    let nsec = std::fs::read_to_string(dir_a.path().join("key"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let original = run_json(dir_a.path(), &["whoami"]);
+    let original_app_key_npub = current_app_key_npub(&original).to_string();
+
+    let dir_b = tempdir().unwrap();
+    let restored = run_json(dir_b.path(), &["restore", &nsec]);
+    let dir_c = tempdir().unwrap();
+    let restored_again = run_json(dir_c.path(), &["restore", &nsec]);
+
+    assert_ne!(restored["profile_id"], restored_again["profile_id"]);
+    assert_ne!(restored["profile_id"], original["profile_id"]);
+    assert_ne!(
+        restored["current_app_key_npub"].as_str(),
+        Some(original_app_key_npub.as_str())
+    );
+    assert_eq!(restored["can_admin_profile"], true);
+    assert_eq!(restored["authorization_state"], "authorized");
+    assert!(!dir_b.path().join("owner_key").exists());
+    assert!(!dir_b.path().join("recovery_phrase").exists());
 }
 
 #[test]
 fn macos_login_restore_can_replace_existing_local_setup_with_force() {
     let original_dir = tempdir().unwrap();
     idrive(original_dir.path()).arg("init").assert().success();
-    let nsec = std::fs::read_to_string(original_dir.path().join("key"))
+    let recovery_phrase = std::fs::read_to_string(original_dir.path().join("recovery_phrase"))
         .unwrap()
         .trim()
         .to_string();
     let original = run_json(original_dir.path(), &["whoami"]);
-    let original_device = current_app_key_npub(&original);
+    let original_profile_id = original["profile_id"].as_str().unwrap();
+    let original_app_key = current_app_key_npub(&original);
 
     let macos_dir = tempdir().unwrap();
     let stale = run_json(
@@ -124,19 +152,20 @@ fn macos_login_restore_can_replace_existing_local_setup_with_force() {
     );
     assert_ne!(
         stale["current_app_key_npub"].as_str(),
-        Some(original_device)
+        Some(original_app_key)
     );
 
     idrive(macos_dir.path())
-        .args(["restore", &nsec])
+        .args(["restore", &recovery_phrase])
         .assert()
         .failure()
         .stderr(contains("already initialized"));
 
-    let restored = run_json(macos_dir.path(), &["restore", &nsec, "--force"]);
-    assert_eq!(
+    let restored = run_json(macos_dir.path(), &["restore", &recovery_phrase, "--force"]);
+    assert_eq!(restored["profile_id"].as_str(), Some(original_profile_id));
+    assert_ne!(
         restored["current_app_key_npub"].as_str(),
-        Some(original_device)
+        Some(original_app_key)
     );
     assert_eq!(restored["can_admin_profile"], true);
     assert_eq!(restored["authorization_state"], "authorized");

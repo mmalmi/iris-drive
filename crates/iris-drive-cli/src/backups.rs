@@ -551,7 +551,7 @@ pub(crate) fn parse_backup_target(input: &str, label: Option<String>) -> Result<
         }
         BackupTargetKind::Fips => {
             let hex = normalize_pubkey(value)?;
-            let target = account_npub(&hex);
+            let target = pubkey_npub(&hex);
             Ok(BackupTarget {
                 id: format!("fips:{target}"),
                 kind: BackupTargetKind::Fips,

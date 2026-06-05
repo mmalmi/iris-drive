@@ -471,38 +471,36 @@ impl Profile {
         )?;
         state.sync_app_keys_from_profile();
 
-        let account = Self {
+        let profile = Self {
             state,
             device,
             owner_key: None,
         };
-        Ok(account)
+        Ok(profile)
     }
 
-    /// **Restore** flow — import an existing admin-device nsec.
+    /// **Restore** flow — use a recovery phrase or recovery secret key to
+    /// recover profile authority while generating a fresh per-install `AppKey`.
     pub fn restore(
         config_dir: &Path,
-        device_nsec: &str,
+        recovery_secret: &str,
         device_label: Option<String>,
     ) -> Result<Self, ProfileError> {
-        let recovery_phrase = validate_recovery_phrase(device_nsec).ok();
-        let profile_id = recovery_phrase
-            .as_deref()
-            .map(recovery_phrase_to_profile_id)
-            .transpose()?
-            .unwrap_or_else(IrisProfileId::new_v4);
-        let recovery_key = recovery_phrase
-            .as_deref()
-            .map(|phrase| OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir)))
-            .transpose()?;
-        let device = if recovery_phrase.is_some() {
-            DeviceIdentity::generate(key_path_in(config_dir))
+        let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
+        let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
+            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir))?
         } else {
-            DeviceIdentity::from_secret(device_nsec, key_path_in(config_dir))?
+            OwnerKey::from_secret(recovery_secret, owner_key_path_in(config_dir))?
         };
+        let profile_id = if let Some(phrase) = recovery_phrase.as_deref() {
+            recovery_phrase_to_profile_id(phrase)?
+        } else {
+            IrisProfileId::new_v4()
+        };
+        let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
-        if let Some(phrase) = recovery_phrase {
-            save_recovery_phrase(recovery_phrase_path_in(config_dir), &phrase)?;
+        if let Some(phrase) = recovery_phrase.as_deref() {
+            save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
         }
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
@@ -521,23 +519,23 @@ impl Profile {
         let now = current_unix_seconds();
         let app_actor = AppActorEntry::admin(state.device_pubkey.clone(), now, device_label);
         let dck = generate_dck();
-        let recovery_pubkey = recovery_key.as_ref().map(OwnerKey::pubkey_hex);
+        let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
             &app_actor,
-            recovery_pubkey.as_deref(),
+            Some(&recovery_pubkey),
             &dck,
             now,
         )?;
         state.sync_app_keys_from_profile();
 
-        let account = Self {
+        let profile = Self {
             state,
             device,
             owner_key: None,
         };
-        Ok(account)
+        Ok(profile)
     }
 
     /// **Link** flow — generate a fresh `AppKey` for a known `IrisProfile`.

@@ -560,13 +560,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         finishSetup(arguments: args)
     }
 
-    func restoreProfile(secretKey: String) {
-        let secret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !secret.isEmpty else {
-            updateStatus("Secret key required")
+    func restoreProfile(recoverySecret: String) {
+        let recoverySecret = recoverySecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !recoverySecret.isEmpty else {
+            updateStatus("Recovery phrase or secret key required")
             return
         }
-        let args = setupArguments(command: "restore", label: "", extra: [secret, "--force"])
+        let args = setupArguments(command: "restore", label: "", extra: [recoverySecret, "--force"])
         finishSetup(arguments: args)
     }
 

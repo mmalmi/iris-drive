@@ -500,12 +500,12 @@ fn restore_after_init_errors_without_force_path() {
     // For now restore refuses to overwrite an existing install.
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
-    let nsec = std::fs::read_to_string(dir.path().join("key"))
+    let recovery_phrase = std::fs::read_to_string(dir.path().join("recovery_phrase"))
         .unwrap()
         .trim()
         .to_string();
     idrive(dir.path())
-        .args(["restore", &nsec])
+        .args(["restore", &recovery_phrase])
         .assert()
         .failure();
 }

@@ -104,7 +104,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "current_app_key_npub": config.profile.as_ref().map(|s| account_npub(&s.device_pubkey)),
+            "current_app_key_npub": config.profile.as_ref().map(|s| pubkey_npub(&s.device_pubkey)),
             "profile": profile_block,
             "summary": status_summary(
                 initialized,
@@ -302,7 +302,7 @@ pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
     config.profile.as_ref().map(|state| {
         let mut state = state.clone();
         state.recompute_authorization();
-        let mut output = account_identity_json_map(&state);
+        let mut output = profile_identity_json_map(&state);
         output.insert(
             "roster_size".to_string(),
             json!(state.app_keys.as_ref().map_or(0, |s| s.app_actors.len())),

@@ -27,13 +27,13 @@ use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-mod account;
 mod backups;
 mod commands;
 mod daemon;
 mod device_link;
 mod drive;
 mod mount;
+mod profile;
 mod publish;
 mod shares;
 mod stats;
@@ -41,8 +41,6 @@ mod status;
 mod sync;
 mod updater;
 
-#[allow(clippy::wildcard_imports)]
-use account::*;
 #[allow(clippy::wildcard_imports)]
 use backups::*;
 #[allow(clippy::wildcard_imports)]
@@ -53,6 +51,8 @@ use daemon::*;
 use device_link::*;
 #[allow(clippy::wildcard_imports)]
 use drive::*;
+#[allow(clippy::wildcard_imports)]
+use profile::*;
 #[allow(clippy::wildcard_imports)]
 use publish::*;
 #[allow(clippy::wildcard_imports)]
@@ -143,7 +143,11 @@ fn run_cli() -> ExitCode {
             username.as_deref(),
             profile_photo.as_deref(),
         ),
-        Command::Restore { nsec, force, label } => cmd_restore(&config_dir, &nsec, force, label),
+        Command::Restore {
+            recovery_secret,
+            force,
+            label,
+        } => cmd_restore(&config_dir, &recovery_secret, force, label),
         Command::RecoverAppKey {
             recovery_phrase,
             label,

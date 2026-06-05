@@ -38,7 +38,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
 
     let device = readonly_entry(
         account
-            .map(|account| account.device_pubkey.as_str())
+            .map(|account| account.current_app_key_npub.as_str())
             .unwrap_or("-"),
     );
     container.append(&field_title("This device"));
@@ -54,7 +54,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     let copy = primary_button("Copy device ID");
     {
         let device = account
-            .map(|account| account.device_pubkey.clone())
+            .map(|account| account.current_app_key_npub.clone())
             .unwrap_or_default();
         let notice = notice.clone();
         copy.connect_clicked(move |_| {
@@ -109,7 +109,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     container.append(&readonly_entry(owner_npub));
 
     let device_npub = account
-        .map(|account| account.device_pubkey.as_str())
+        .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
     container.append(&field_title("This device"));
     container.append(&readonly_entry(device_npub));
@@ -482,19 +482,19 @@ pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
 
 pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
     let container = setup_container(model, "Secret key");
-    let nsec = setup_entry("nsec1... or hex secret key");
-    nsec.set_visibility(false);
-    nsec.set_input_purpose(gtk::InputPurpose::Password);
-    container.append(&nsec);
+    let secret = setup_entry("nsec1... or hex secret key");
+    secret.set_visibility(false);
+    secret.set_input_purpose(gtk::InputPurpose::Password);
+    container.append(&secret);
 
     let notice = setup_notice();
     let submit = primary_button("Restore");
     {
         let model = Rc::clone(model);
-        let nsec = nsec.clone();
+        let secret = secret.clone();
         let notice = notice.clone();
         submit.connect_clicked(move |button| {
-            let secret = nsec.text().trim().to_string();
+            let secret = secret.text().trim().to_string();
             if secret.is_empty() {
                 notice.set_text("Secret key is required.");
                 return;
@@ -514,13 +514,13 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
     }
     {
         let submit = submit.clone();
-        nsec.connect_activate(move |_| submit.emit_clicked());
+        secret.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
     container.append(&notice);
     append_centered_setup(model, &container);
 
-    nsec.grab_focus();
+    secret.grab_focus();
 }
 
 pub(crate) fn render_link_device(model: &AppRef) {
@@ -770,8 +770,8 @@ pub(crate) fn create_profile(username: &str, photo_path: Option<&str>) -> Result
     run_idrive_owned(&args)
 }
 
-pub(crate) fn restore_profile(secret: &str) -> Result<(), String> {
-    run_idrive_owned(&["restore".to_string(), secret.to_string()])
+pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
+    run_idrive_owned(&["restore".to_string(), recovery_secret.to_string()])
 }
 
 pub(crate) fn link_device(owner: &str) -> Result<(), String> {

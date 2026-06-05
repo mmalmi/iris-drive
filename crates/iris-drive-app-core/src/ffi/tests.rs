@@ -189,7 +189,7 @@ fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
     let restored_dir = tempfile::tempdir().unwrap();
     let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
     let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
-        secret: recovery_phrase.clone(),
+        recovery_secret: recovery_phrase.clone(),
         device_label: "Restored".to_owned(),
     });
 
@@ -230,7 +230,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let restored_dir = tempfile::tempdir().unwrap();
     let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
     let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
-        secret: export.recovery_phrase,
+        recovery_secret: export.recovery_phrase,
         device_label: "Browser".to_owned(),
     });
     assert!(restored.error.is_empty(), "{}", restored.error);
@@ -271,30 +271,32 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
 }
 
 #[test]
-fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
+fn raw_secret_key_restore_uses_fresh_app_key_without_phrase_export() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let created = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Pixel".to_owned(),
     });
-    let created_account = created.ui.profile.as_ref().expect("account exists");
+    assert!(created.error.is_empty(), "{}", created.error);
+    let created_account = created.ui.profile.as_ref().expect("profile exists");
     let export = super::export_recovery_secret(dir.path().display().to_string());
     assert!(export.error.is_empty(), "{}", export.error);
 
     let restored_dir = tempfile::tempdir().unwrap();
     let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
     let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
-        secret: export.secret_key,
+        recovery_secret: export.secret_key,
         device_label: "Restored".to_owned(),
     });
 
     assert!(restored.error.is_empty(), "{}", restored.error);
-    let restored_account = restored.ui.profile.expect("restored account exists");
+    let restored_account = restored.ui.profile.expect("restored profile exists");
     assert_ne!(restored_account.profile_id, created_account.profile_id);
     assert_ne!(
         restored_account.current_app_key_npub,
         created_account.current_app_key_npub
     );
+    assert!(restored_account.can_admin_profile);
     assert!(!restored_account.can_export_recovery_phrase);
 
     let raw_export = super::export_recovery_secret(restored_dir.path().display().to_string());

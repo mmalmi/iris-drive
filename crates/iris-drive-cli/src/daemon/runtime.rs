@@ -236,7 +236,7 @@ pub(crate) fn cmd_daemon(
         let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
-                "current_app_key_npub": account_npub(&state.device_pubkey),
+                "current_app_key_npub": pubkey_npub(&state.device_pubkey),
                 "provider_update_mode": "event_driven",
                 "watch_debounce_ms": watch_debounce_ms,
                 "root_update_throttle_ms": root_update_debounce.as_millis(),

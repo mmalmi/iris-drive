@@ -80,14 +80,17 @@ fn empty_device_label_uses_pubkey_label() {
 }
 
 #[test]
-fn restore_uses_provided_admin_device_nsec() {
+fn restore_from_raw_secret_creates_fresh_profile_with_fresh_app_key() {
     let dir_a = tempdir().unwrap();
     let original = Profile::create(dir_a.path(), None).unwrap();
     let nsec = original.device.keys().secret_key().to_secret_hex();
 
     let dir_b = tempdir().unwrap();
     let restored = Profile::restore(dir_b.path(), &nsec, None).unwrap();
-    assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
+    assert_ne!(
+        restored.state.device_pubkey, original.state.device_pubkey,
+        "nsec restore creates a fresh AppKey instead of cloning the supplied key"
+    );
     assert_ne!(restored.state.profile_id, original.state.profile_id);
     assert!(restored.state.can_manage_devices());
     assert!(
@@ -98,6 +101,7 @@ fn restore_uses_provided_admin_device_nsec() {
             .unwrap()
             .is_admin(&restored.state.device_pubkey)
     );
+    assert!(dir_b.path().join("key").exists());
     assert!(!dir_b.path().join("owner_key").exists());
     assert!(!dir_b.path().join("recovery_phrase").exists());
 }

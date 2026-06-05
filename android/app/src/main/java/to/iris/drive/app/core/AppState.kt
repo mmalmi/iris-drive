@@ -178,10 +178,10 @@ internal object NativeActions {
             .put("device_label", deviceLabel)
             .toString()
 
-    fun restoreProfile(secret: String, deviceLabel: String): String =
+    fun restoreProfile(recoverySecret: String, deviceLabel: String): String =
         JSONObject()
             .put("type", "restore_profile")
-            .put("secret", secret)
+            .put("recovery_secret", recoverySecret)
             .put("device_label", deviceLabel)
             .toString()
 

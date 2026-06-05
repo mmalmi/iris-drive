@@ -88,7 +88,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
         ),
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: account_npub(&linked_device),
+        peer_id: pubkey_npub(&linked_device),
         topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
@@ -134,7 +134,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
         ),
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: account_npub(&linked_device),
+        peer_id: pubkey_npub(&linked_device),
         topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
@@ -181,7 +181,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         sent_at: 456,
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: account_npub(&admin.state.device_pubkey),
+        peer_id: pubkey_npub(&admin.state.device_pubkey),
         topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
@@ -254,7 +254,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         sent_at: 789,
     };
     let updated_message = iris_drive_core::FipsAppMessage {
-        peer_id: account_npub(&admin.state.device_pubkey),
+        peer_id: pubkey_npub(&admin.state.device_pubkey),
         topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&updated_frame).unwrap(),
     };
@@ -301,7 +301,7 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
         acknowledged_at: 789,
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: account_npub(&joiner_pubkey),
+        peer_id: pubkey_npub(&joiner_pubkey),
         topic: DEVICE_LINK_ROSTER_ACK_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };

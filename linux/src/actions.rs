@@ -564,7 +564,7 @@ pub(crate) fn current_account_value(key: &str) -> Result<String, String> {
     let account = profile(&state).ok_or_else(|| "No account key available".to_string())?;
     match key {
         "owner_npub" | "current_app_key_npub" => Ok(account.current_app_key_npub.clone()),
-        "device_npub" => Ok(account.device_pubkey.clone()),
+        "device_npub" => Ok(account.current_app_key_npub.clone()),
         _ => Err("No account key available".to_string()),
     }
 }

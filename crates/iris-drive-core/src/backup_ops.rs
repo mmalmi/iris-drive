@@ -377,7 +377,7 @@ pub fn parse_backup_target(input: &str, label: Option<String>) -> Result<BackupT
         }
         BackupTargetKind::Fips => {
             let hex = normalize_pubkey(value)?;
-            let target = account_npub(&hex);
+            let target = pubkey_npub(&hex);
             Ok(BackupTarget {
                 id: format!("fips:{target}"),
                 kind: BackupTargetKind::Fips,
@@ -572,7 +572,7 @@ fn normalize_pubkey(input: &str) -> Result<String> {
     ))
 }
 
-fn account_npub(hex: &str) -> String {
+fn pubkey_npub(hex: &str) -> String {
     PublicKey::from_hex(hex)
         .ok()
         .and_then(|pubkey| pubkey.to_bech32().ok())

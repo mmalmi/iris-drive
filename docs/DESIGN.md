@@ -115,6 +115,16 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
 
 - **Identity**: `idrive init` creates an IrisProfile UUID, a fresh per-install
   AppKey under `~/.config/iris-drive/key`, and a recovery phrase authority.
+  UUIDs are created or learned from verified roster evidence; they are never
+  derived from Nostr pubkeys, nsecs, or recovery secrets. Bare `nsec` restore
+  can create a fresh local IrisProfile with that nsec as recovery authority;
+  recovering an existing UUID from an nsec requires roster ops/invites/export
+  data that carry the UUID and verify against the recovery key.
+  Roster ops are not lockstep multisig documents: an op is signed by the key
+  authorized to make that change. Member keys may also sign join/acceptance
+  breadcrumbs for their own facet so they can later rediscover candidate
+  IrisProfile UUIDs, but those breadcrumbs are only trusted after projecting
+  the authoritative roster log and confirming the facet is active.
 - **Drive model**: primary My Drive is scoped by `IrisProfileId` (`root_scope_id`
   in config) with per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets
   can admit fresh AppKeys and optionally decrypt key epochs but do not sign drive roots.
@@ -210,7 +220,8 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 ## Decisions to lock in early
 
 1. **Identity model**: IrisProfile UUID plus typed facets. Every app install
-   has its own AppKey. There is no primary Nostr pubkey.
+   has its own AppKey. There is no primary Nostr pubkey, and profile UUIDs are
+   not derived from key material.
 2. **Authority model**: signed append-only roster op logs with deterministic
    projection, tombstones, and key-wrap status/repair state derived in Rust
    core. Do not add a general CRDT library unless it clearly simplifies this model.

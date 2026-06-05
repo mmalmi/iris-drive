@@ -17,7 +17,7 @@ pub(crate) async fn apply_one_event(
             json!({
                 "event": "device_link_request",
                 "event_id": event.id.to_hex(),
-                "author": account_npub(&event.pubkey.to_hex()),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
             }),
         );
@@ -32,7 +32,7 @@ pub(crate) async fn apply_one_event(
             json!({
                 "event": "iris_profile_roster_op",
                 "event_id": event.id.to_hex(),
-                "author": account_npub(&event.pubkey.to_hex()),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
             }),
         );
@@ -74,7 +74,7 @@ pub(crate) async fn apply_one_event(
             json!({
                 "event": "drive_root",
                 "event_id": event.id.to_hex(),
-                "author": account_npub(&event.pubkey.to_hex()),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
                 "root_cid": root_cid_to_pull.clone(),
             }),
@@ -129,7 +129,7 @@ pub(crate) fn apply_files_root_event(
             json!({
                 "event": "files_root",
                 "event_id": event.id.to_hex(),
-                "author": account_npub(&event.pubkey.to_hex()),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": "app_key_cannot_write_roots",
             })
         );
@@ -152,7 +152,7 @@ pub(crate) fn apply_files_root_event(
         json!({
             "event": "files_root",
             "event_id": event.id.to_hex(),
-            "author": account_npub(&event.pubkey.to_hex()),
+            "author": pubkey_npub(&event.pubkey.to_hex()),
             "outcome": files_root_apply_label(&outcome),
             "root_cid": root_cid_to_pull.clone(),
         }),

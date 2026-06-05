@@ -282,7 +282,7 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     config.upsert_drive(Drive::primary(owner.state.root_scope_id()));
     config.save(config_path_in(dir.path())).unwrap();
 
-    let linked_npub = account_npub(&linked_device);
+    let linked_npub = pubkey_npub(&linked_device);
     let daemon_status = json!({
         "running": true,
         "fresh": true,
@@ -395,7 +395,7 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
     };
     config.save(config_path_in(dir.path())).unwrap();
 
-    let linked_npub = account_npub(&linked_device);
+    let linked_npub = pubkey_npub(&linked_device);
     write_daemon_status(
         dir.path(),
         json!({

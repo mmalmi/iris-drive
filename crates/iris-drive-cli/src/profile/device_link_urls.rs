@@ -62,12 +62,12 @@ pub(crate) fn device_link_request_json(state: &ProfileState) -> Value {
     json!({
         "url": url,
         "profile_id": state.profile_id.to_string(),
-        "app_key_npub": account_npub(&state.device_pubkey),
+        "app_key_npub": pubkey_npub(&state.device_pubkey),
         "label": state.device_label.as_deref(),
         "admin_app_key_npub": state
             .outbound_device_link_request
             .as_ref()
-            .map(|request| account_npub(&request.admin_device_pubkey)),
+            .map(|request| pubkey_npub(&request.admin_device_pubkey)),
         "requested_at": state
             .outbound_device_link_request
             .as_ref()
@@ -92,7 +92,7 @@ pub(crate) fn device_link_invite_json(state: &ProfileState) -> Value {
         "url": url,
         "web_url": device_link_web_url(&url),
         "profile_id": state.profile_id.to_string(),
-        "admin_app_key_npub": account_npub(&state.device_pubkey),
+        "admin_app_key_npub": pubkey_npub(&state.device_pubkey),
     })
 }
 
@@ -109,7 +109,7 @@ pub(crate) fn inbound_device_link_requests_json(state: &ProfileState) -> Vec<Val
                     request.label.as_deref(),
                 ),
                 "profile_id": state.profile_id.to_string(),
-                "app_key_npub": account_npub(&request.device_pubkey),
+                "app_key_npub": pubkey_npub(&request.device_pubkey),
                 "label": request.label.as_deref(),
                 "requested_at": request.requested_at,
             })

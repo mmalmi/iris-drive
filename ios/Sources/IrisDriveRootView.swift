@@ -417,7 +417,7 @@ private struct RestoreRecoveryPhraseSetupView: View {
     private func advanceOrRestore() {
         if index == recoveryPhraseWordCount - 1 {
             guard allWordsAreFilled else { return }
-            model.restoreProfile(secret: phrase)
+            model.restoreProfile(recoverySecret: phrase)
         } else if currentWordIsFilled {
             index += 1
             wordFieldFocused = true
@@ -438,6 +438,7 @@ private struct RestoreRecoveryPhraseSetupView: View {
         index = min(words.count - 1, index + parts.count - 1)
     }
 }
+}
 
 private struct RestoreSecretKeySetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
@@ -445,7 +446,7 @@ private struct RestoreSecretKeySetupView: View {
     var body: some View {
         Form {
             Section {
-                SecureField("Secret key", text: $model.restoreSecret)
+                SecureField("nsec1... or hex secret key", text: $model.restoreSecret)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit {

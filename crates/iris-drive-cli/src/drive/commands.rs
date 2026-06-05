@@ -122,7 +122,7 @@ pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<
 }
 
 pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
-    let state = load_account_state(config_dir)?;
+    let state = load_profile_state(config_dir)?;
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let drive = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)

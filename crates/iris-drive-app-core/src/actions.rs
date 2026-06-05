@@ -8,7 +8,7 @@ pub enum NativeAppAction {
         device_label: String,
     },
     RestoreProfile {
-        secret: String,
+        recovery_secret: String,
         device_label: String,
     },
     AdmitAppKeyWithRecoveryPhrase {

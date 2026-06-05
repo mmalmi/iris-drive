@@ -206,7 +206,7 @@ pub fn encode_device_approval_request(
     let mut url = format!(
         "iris-drive://device-link?profile={}&device={}",
         profile_id,
-        account_npub(device_hex)
+        pubkey_npub(device_hex)
     );
     if !link_secret.trim().is_empty() {
         url.push_str("&secret=");
@@ -272,7 +272,7 @@ pub fn device_approval_query(input: &str) -> Option<&str> {
     None
 }
 
-fn account_npub(hex: &str) -> String {
+fn pubkey_npub(hex: &str) -> String {
     PublicKey::from_hex(hex)
         .ok()
         .and_then(|pk| pk.to_bech32().ok())

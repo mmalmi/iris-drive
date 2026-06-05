@@ -498,20 +498,20 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func restoreProfile() {
-        let secret = restoreSecret
+        let recoverySecret = restoreSecret
         restoreSecret = ""
-        restoreProfile(secret: secret)
+        restoreProfile(recoverySecret: recoverySecret)
     }
 
-    func restoreProfile(secret: String) {
-        guard !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    func restoreProfile(recoverySecret: String) {
+        guard !recoverySecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
         profileUsername = ""
         profilePhotoName = ""
         dispatch([
             "type": "restore_profile",
-            "secret": secret,
+            "recovery_secret": recoverySecret,
             "device_label": deviceLabel,
         ])
         persistLocalSettings()

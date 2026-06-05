@@ -269,10 +269,10 @@ impl NativeAppRuntime {
                 self.create_profile(&device_label);
             }
             NativeAppAction::RestoreProfile {
-                secret,
+                recovery_secret,
                 device_label,
             } => {
-                self.restore_profile(&secret, &device_label);
+                self.restore_profile(&recovery_secret, &device_label);
             }
             NativeAppAction::AdmitAppKeyWithRecoveryPhrase {
                 recovery_phrase,
@@ -351,16 +351,16 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = self.finish_account_init(&account) {
+        if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
         } else {
             self.set_sync_running(true);
         }
     }
 
-    fn restore_profile(&mut self, secret: &str, device_label: &str) {
-        if secret.trim().is_empty() {
-            "owner secret is required".clone_into(&mut self.state.error);
+    fn restore_profile(&mut self, recovery_secret: &str, device_label: &str) {
+        if recovery_secret.trim().is_empty() {
+            "recovery phrase or secret key is required".clone_into(&mut self.state.error);
             return;
         }
         if self.initialized() {
@@ -369,7 +369,7 @@ impl NativeAppRuntime {
         }
         let account = match Profile::restore(
             Path::new(&self.data_dir),
-            secret.trim(),
+            recovery_secret.trim(),
             label_option(device_label),
         ) {
             Ok(account) => account,
@@ -378,7 +378,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = self.finish_account_init(&account) {
+        if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
         } else {
             self.set_sync_running(true);
@@ -469,7 +469,7 @@ impl NativeAppRuntime {
             self.state.error = format!("queueing device link request: {error}");
             return;
         }
-        if let Err(error) = self.finish_account_init(&account) {
+        if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
         } else {
             self.set_sync_running(true);
@@ -851,7 +851,7 @@ impl NativeAppRuntime {
             .map_err(|error| format!("loading config: {error}"))
     }
 
-    fn finish_account_init(&self, account: &Profile) -> Result<(), String> {
+    fn finish_profile_init(&self, account: &Profile) -> Result<(), String> {
         let mut config = self.load_config()?;
         config.profile = Some(account.state.clone());
         if config.drive(iris_drive_core::PRIMARY_DRIVE_ID).is_none() {
@@ -1358,7 +1358,7 @@ async fn send_native_pending_device_link_request(
     if !device_link_request_send_due(sent_requests.get(&fingerprint).copied(), now) {
         return Ok(());
     }
-    let admin_npub = account_npub(&pending.admin_device_pubkey);
+    let admin_npub = pubkey_npub(&pending.admin_device_pubkey);
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link request: {error}"))?;
     let relay_event_id =
@@ -1440,7 +1440,7 @@ async fn send_native_authorized_device_link_rosters(
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link roster: {error}"))?;
     for recipient in due_devices {
-        let recipient_npub = account_npub(&recipient.device_pubkey);
+        let recipient_npub = pubkey_npub(&recipient.device_pubkey);
         match sync
             .send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
             .await
@@ -1522,7 +1522,7 @@ fn handle_native_device_link_request(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
-            device_npub = account_npub(&device_hex),
+            device_npub = pubkey_npub(&device_hex),
             requested_at = frame.requested_at,
             "received native device-link request over FIPS"
         );
@@ -1552,7 +1552,7 @@ fn handle_native_device_link_request_event(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             event_id = %event.id.to_hex(),
-            device_npub = account_npub(&event.pubkey.to_hex()),
+            device_npub = pubkey_npub(&event.pubkey.to_hex()),
             "received native device-link request over relay"
         );
     }
@@ -1619,7 +1619,7 @@ async fn handle_native_device_link_roster(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
-            admin_device_npub = account_npub(&admin_device_hex),
+            admin_device_npub = pubkey_npub(&admin_device_hex),
             apply_outcome = ?outcome,
             "accepted native device-link roster over FIPS"
         );
@@ -1698,7 +1698,7 @@ async fn send_native_device_link_roster_ack(
     frame: &DeviceLinkRosterAckFrame,
 ) -> Result<(), String> {
     sync.send_app_message(
-        &account_npub(&frame.admin_device_pubkey),
+        &pubkey_npub(&frame.admin_device_pubkey),
         DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
         serde_json::to_vec(frame)
             .map_err(|error| format!("encoding device-link roster ack: {error}"))?,
@@ -2073,7 +2073,7 @@ fn normalize_pubkey(input: &str) -> Result<String, String> {
     iris_drive_core::normalize_app_key_pubkey(input).map_err(|error| error.to_string())
 }
 
-fn account_npub(hex: &str) -> String {
+fn pubkey_npub(hex: &str) -> String {
     PublicKey::from_hex(hex)
         .ok()
         .and_then(|pubkey| pubkey.to_bech32().ok())
@@ -2087,7 +2087,7 @@ fn devices_from_account(
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
-    let current_device_npub = account_npub(&state.device_pubkey);
+    let current_device_npub = pubkey_npub(&state.device_pubkey);
     let current_device_online = fips_status.fresh
         && (fips_status.endpoint_npub.is_empty()
             || fips_status.endpoint_npub == current_device_npub);
@@ -2233,7 +2233,7 @@ fn inbound_device_link_requests(state: &iris_drive_core::ProfileState) -> Vec<Ui
         .inbound_device_link_requests
         .iter()
         .map(|request| UiDeviceLinkRequest {
-            device_pubkey: account_npub(&request.device_pubkey),
+            device_pubkey: pubkey_npub(&request.device_pubkey),
             label: request.label.clone().unwrap_or_default(),
             requested_at: request.requested_at,
             request_link: encode_device_approval_request(

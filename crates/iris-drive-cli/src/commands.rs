@@ -56,12 +56,12 @@ pub(crate) enum Command {
         #[arg(long)]
         profile_photo: Option<String>,
     },
-    /// **Restore** flow: import an existing admin `nsec` onto this install.
-    /// A fresh local `AppKey` is generated; this install gets profile admin
-    /// authority.
+    /// **Restore** flow: use a 12-word recovery phrase or recovery `nsec` to
+    /// recover an `IrisProfile` onto this install. A fresh local `AppKey` is
+    /// generated; the recovery secret is never cloned as the `AppKey`.
     Restore {
-        /// Owner secret key as nsec1... or 64-char hex.
-        nsec: String,
+        /// 12-word `IrisProfile` recovery phrase, nsec1..., or 64-char hex secret.
+        recovery_secret: String,
         /// Replace an existing local setup.
         #[arg(long)]
         force: bool,
@@ -94,7 +94,7 @@ pub(crate) enum Command {
         #[arg(long)]
         label: Option<String>,
     },
-    /// Log out this local install and remove local account key material.
+    /// Log out this local install and remove local profile key material.
     Logout,
     /// Approve a pending install by adding its `AppKey` to the `IrisProfile`
     /// roster. Only usable by profile admins.

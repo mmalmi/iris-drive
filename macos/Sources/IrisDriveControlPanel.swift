@@ -337,12 +337,12 @@ struct IrisDriveControlPanel: View {
             }
         case .restoreSecretKey:
             setupForm(title: "Secret key", backTarget: .restoreOptions) {
-                SecureField("Secret key", text: $setupSecret)
+                SecureField("nsec1... or hex secret key", text: $setupSecret)
                     .onSubmit {
-                        controller.restoreProfile(secretKey: setupSecret)
+                        controller.restoreProfile(recoverySecret: setupSecret)
                     }
                 setupSubmit("Restore") {
-                    controller.restoreProfile(secretKey: setupSecret)
+                    controller.restoreProfile(recoverySecret: setupSecret)
                 }
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -426,7 +426,7 @@ struct IrisDriveControlPanel: View {
     private func advanceOrRestoreRecoveryPhrase() {
         if setupRecoveryWordIndex == recoveryPhraseWordCount - 1 {
             guard allRecoveryWordsFilled else { return }
-            controller.restoreProfile(secretKey: setupRecoveryPhrase)
+            controller.restoreProfile(recoverySecret: setupRecoveryPhrase)
         } else if !currentRecoveryWord.isEmpty {
             setupRecoveryWordIndex = min(recoveryPhraseWordCount - 1, setupRecoveryWordIndex + 1)
         }
