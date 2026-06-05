@@ -192,7 +192,7 @@ structure:
     ./scripts/check-backup-target-summary-ownership.sh
     ./scripts/check-backup-control-parity.sh
     ./scripts/check-windows-provider-refresh-key-ownership.sh
-    ./scripts/check-device-summary-ownership.sh
+    ./scripts/check-app-key-summary-ownership.sh
     ./scripts/check-fips-status-normalization.sh
     ./scripts/check-linux-core-owned-status.sh
     ./scripts/check-desktop-core-backed-actions.sh

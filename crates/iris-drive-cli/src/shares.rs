@@ -112,12 +112,12 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
         .projection()
         .active_key_recipients_missing_wraps(repair.epoch)
         .iter()
-        .map(|pubkey| iris_drive_core::device_summary::pubkey_npub(pubkey))
+        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
         .collect::<Vec<_>>();
     let repaired_key_wraps = repair
         .repaired_pubkeys
         .iter()
-        .map(|pubkey| iris_drive_core::device_summary::pubkey_npub(pubkey))
+        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
         .collect::<Vec<_>>();
     config.save(config_path_in(config_dir))?;
     println!(
@@ -154,7 +154,7 @@ fn share_views_json(views: Vec<iris_drive_core::SharedFolderView>) -> Vec<Value>
                 "missing_key_wraps": view
                     .missing_key_wrap_pubkeys
                     .iter()
-                    .map(|pubkey| iris_drive_core::device_summary::pubkey_npub(pubkey))
+                    .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
                     .collect::<Vec<_>>(),
                 "participant_count": view.participant_count,
                 "shortcut_paths": view.shortcut_paths,

@@ -480,7 +480,7 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {
-    let summary = iris_drive_core::device_summary::iris_profile_summary(state);
+    let summary = iris_drive_core::app_key_summary::iris_profile_summary(state);
     let mut output = serde_json::Map::new();
     output.insert("profile".to_string(), iris_profile_summary_json(&summary));
     output.insert("profile_id".to_string(), json!(summary.profile_id));
@@ -512,7 +512,7 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
 }
 
 fn iris_profile_summary_json(
-    summary: &iris_drive_core::device_summary::IrisProfileSummary,
+    summary: &iris_drive_core::app_key_summary::IrisProfileSummary,
 ) -> Value {
     json!({
         "profile_id": &summary.profile_id,
@@ -937,11 +937,11 @@ pub(crate) fn pubkey_npub(hex: &str) -> String {
 }
 
 pub(crate) fn authorization_state_label(state: &ProfileState) -> &'static str {
-    iris_drive_core::device_summary::authorization_state_key(state.authorization_state)
+    iris_drive_core::app_key_summary::authorization_state_key(state.authorization_state)
 }
 
 pub(crate) fn app_actor_role_label(role: iris_drive_core::AppActorRole) -> &'static str {
-    iris_drive_core::device_summary::device_role_key(role)
+    iris_drive_core::app_key_summary::app_actor_role_key(role)
 }
 
 pub(crate) fn drive_role_label(role: DriveRole) -> &'static str {

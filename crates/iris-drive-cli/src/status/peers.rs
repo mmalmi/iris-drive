@@ -2,8 +2,8 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-use iris_drive_core::device_summary::{
-    DeviceConnectionDetails, DeviceConnectivity, DeviceRosterRow, device_roster_rows,
+use iris_drive_core::app_key_summary::{
+    AppKeyConnectionDetails, AppKeyConnectivity, AppKeyRosterRow, app_key_roster_rows,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -40,16 +40,16 @@ pub(crate) fn peer_statuses(
         string_set_from_json_array(fips_status.and_then(|status| status.get("authorized_peers")));
     let fips_peer_statuses =
         fips_peer_statuses_by_npub(fips_status.and_then(|status| status.get("peer_statuses")));
-    let connectivity = DeviceConnectivity {
-        online_devices: online_fips.clone(),
-        direct_devices: connected_fips.clone(),
-        mesh_devices: mesh_fips.clone(),
+    let connectivity = AppKeyConnectivity {
+        online_app_keys: online_fips.clone(),
+        direct_app_keys: connected_fips.clone(),
+        mesh_app_keys: mesh_fips.clone(),
         peer_statuses: fips_peer_statuses
             .iter()
             .map(|(npub, status)| {
                 (
                     npub.clone(),
-                    DeviceConnectionDetails {
+                    AppKeyConnectionDetails {
                         transport_type: status
                             .get("transport_type")
                             .and_then(Value::as_str)
@@ -65,7 +65,7 @@ pub(crate) fn peer_statuses(
         .filter(|value| value.is_object());
     let can_admin_profile = account.can_admin_profile();
 
-    device_roster_rows(
+    app_key_roster_rows(
         &snapshot.app_actors,
         &account.app_key_pubkey,
         can_admin_profile,
@@ -73,52 +73,52 @@ pub(crate) fn peer_statuses(
         &connectivity,
     )
     .iter()
-    .map(|device| {
-        let root = primary_drive.and_then(|drive| drive.device_roots.get(&device.pubkey_hex));
+    .map(|app_key| {
+        let root = primary_drive.and_then(|drive| drive.device_roots.get(&app_key.pubkey_hex));
         let root_cid = root.map(|root| root.root_cid.clone());
         let root_private = root_cid.as_deref().and_then(root_is_private);
         let root_available = root_cid
             .as_deref()
             .map(|root| root_file_count(config_dir, root).is_some());
-        let fips_peer_status = fips_peer_statuses.get(&device.npub);
+        let fips_peer_status = fips_peer_statuses.get(&app_key.npub);
         let sync_state =
-            device_sync_state(device.is_current_device, root.is_some(), root_available);
+            device_sync_state(app_key.is_current_app_key, root.is_some(), root_available);
         let last_block_sync = root_cid
             .as_ref()
             .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
         let detail = peer_detail(
-            device,
+            app_key,
             sync_state,
             last_block_sync.as_ref(),
             root_cid.as_deref(),
             root.map(|root| root.dck_generation),
         );
         json!({
-            "app_key_pubkey": device.pubkey_hex,
-            "device_npub": device.npub,
-            "label": device.label,
-            "display_label": device.display_label,
-            "role": device.role,
-            "role_label": device.role_label,
+            "app_key_pubkey": app_key.pubkey_hex,
+            "device_npub": app_key.npub,
+            "label": app_key.label,
+            "display_label": app_key.display_label,
+            "role": app_key.role,
+            "role_label": app_key.role_label,
             "authorized": true,
-            "is_current_device": device.is_current_device,
-            "added_at": device.added_at,
-            "fips_authorized": authorized_fips.contains(&device.npub),
-            "fips_online": device.is_online,
-            "fips_direct_online": device.is_direct,
-            "fips_mesh_online": device.is_mesh,
-            "fips_online_via": device.online_via,
-            "connection_state": device.connection_state,
-            "connection_label": device.connection_label,
-            "can_revoke": device.can_revoke,
-            "can_appoint_admin": device.can_appoint_admin,
-            "can_demote_admin": device.can_demote_admin,
-            "fips_transport_type": device.transport_type,
+            "is_current_device": app_key.is_current_app_key,
+            "added_at": app_key.added_at,
+            "fips_authorized": authorized_fips.contains(&app_key.npub),
+            "fips_online": app_key.is_online,
+            "fips_direct_online": app_key.is_direct,
+            "fips_mesh_online": app_key.is_mesh,
+            "fips_online_via": app_key.online_via,
+            "connection_state": app_key.connection_state,
+            "connection_label": app_key.connection_label,
+            "can_revoke": app_key.can_revoke,
+            "can_appoint_admin": app_key.can_appoint_admin,
+            "can_demote_admin": app_key.can_demote_admin,
+            "fips_transport_type": app_key.transport_type,
             "fips_transport_addr": fips_peer_status
                 .and_then(|status| status.get("transport_addr"))
                 .and_then(Value::as_str),
-            "fips_srtt_ms": device.srtt_ms,
-            "fips_ping_ms": device.srtt_ms,
+            "fips_srtt_ms": app_key.srtt_ms,
+            "fips_ping_ms": app_key.srtt_ms,
             "fips_packets_sent": fips_peer_status
                 .and_then(|status| status.get("packets_sent"))
                 .and_then(Value::as_u64),
@@ -164,18 +164,18 @@ fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> 
 }
 
 fn peer_detail(
-    device: &DeviceRosterRow,
+    app_key: &AppKeyRosterRow,
     sync_state: &str,
     last_block_sync: Option<&Value>,
     root_cid: Option<&str>,
     dck_generation: Option<u64>,
 ) -> String {
     let mut parts = Vec::new();
-    if device.is_current_device {
+    if app_key.is_current_app_key {
         parts.push("This AppKey".to_owned());
     }
-    if !device.role_label.trim().is_empty() {
-        parts.push(device.role_label.clone());
+    if !app_key.role_label.trim().is_empty() {
+        parts.push(app_key.role_label.clone());
     }
     if !sync_state.trim().is_empty() {
         parts.push(sync_state.to_owned());

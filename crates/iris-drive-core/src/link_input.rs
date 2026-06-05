@@ -14,7 +14,7 @@ use crate::app_key_link_invite::{
     APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
 use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
-use crate::device_summary::pubkey_npub;
+use crate::app_key_summary::pubkey_npub;
 
 const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual AppKey linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";

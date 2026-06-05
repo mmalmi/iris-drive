@@ -22,24 +22,24 @@ require_absent() {
   fi
 }
 
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_connection_label"
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_display_label"
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_management_actions"
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn device_roster_rows"
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn primary_status_for_setup_state"
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn setup_state_flags"
-require_contains crates/iris-drive-app-core/src/ffi.rs "use iris_drive_core::device_summary"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn app_key_connection_label"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn app_key_display_label"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn app_key_management_actions"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn app_key_roster_rows"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn primary_status_for_setup_state"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn setup_state_flags"
+require_contains crates/iris-drive-app-core/src/ffi.rs "use iris_drive_core::app_key_summary"
 require_contains crates/iris-drive-app-core/src/state.rs "pub setup_complete: bool"
 require_contains crates/iris-drive-app-core/src/state.rs "pub awaiting_approval: bool"
 require_contains crates/iris-drive-app-core/src/state.rs "pub revoked: bool"
 require_contains crates/iris-drive-cli/src/status.rs '"setup_complete": setup_flags.setup_complete'
 require_contains crates/iris-drive-cli/src/status.rs '"awaiting_approval": setup_flags.awaiting_approval'
 require_contains crates/iris-drive-cli/src/status.rs '"revoked": setup_flags.revoked'
-require_contains crates/iris-drive-cli/src/status/peers.rs "use iris_drive_core::device_summary"
-require_contains crates/iris-drive-cli/src/status/peers.rs "device_roster_rows("
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": device.can_revoke'
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": device.can_appoint_admin'
-require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": device.can_demote_admin'
+require_contains crates/iris-drive-cli/src/status/peers.rs "use iris_drive_core::app_key_summary"
+require_contains crates/iris-drive-cli/src/status/peers.rs "app_key_roster_rows("
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": app_key.can_revoke'
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": app_key.can_appoint_admin'
+require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": app_key.can_demote_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"detail": detail'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["display_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var setupComplete = false'
@@ -66,8 +66,8 @@ require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'i
 require_contains linux/src/data.rs 'state.ui.awaiting_approval'
 require_contains linux/src/data.rs 'state.ui.revoked'
 
-require_absent crates/iris-drive-app-core/src/ffi.rs "fn device_connection_label("
-require_absent crates/iris-drive-app-core/src/ffi.rs "fn device_connection_state("
+require_absent crates/iris-drive-app-core/src/ffi.rs "fn app_key_connection_label("
+require_absent crates/iris-drive-app-core/src/ffi.rs "fn app_key_connection_state("
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn refresh_device_actions("
 require_absent crates/iris-drive-cli/src/status/peers.rs "fn peer_connection_label("
 require_absent crates/iris-drive-cli/src/status/peers.rs "fn peer_connection_state("
@@ -107,4 +107,4 @@ require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'get
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'get() = setupState == "awaiting_approval"'
 require_absent android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'get() = setupState == "revoked"'
 
-echo "DEVICE_SUMMARY_OWNERSHIP_OK"
+echo "APP_KEY_SUMMARY_OWNERSHIP_OK"

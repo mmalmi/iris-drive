@@ -20,6 +20,11 @@ use iris_drive_core::app_key_link_transport::{
 use iris_drive_core::app_key_link_transport::{
     AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
 };
+use iris_drive_core::app_key_summary::{
+    AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, iris_profile_summary,
+    primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
+    setup_state_flags, sync_status_label,
+};
 use iris_drive_core::backup_ops::{
     add_backup_target as core_add_backup_target, add_blossom_server as core_add_blossom_server,
     check_backups as core_check_backups, default_backup_check_sample_size,
@@ -28,11 +33,6 @@ use iris_drive_core::backup_ops::{
 };
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
-use iris_drive_core::device_summary::{
-    DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
-    primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
-    setup_state_flags, sync_status_label,
-};
 #[cfg(not(test))]
 use iris_drive_core::fips_status::online_device_ids;
 use iris_drive_core::fips_status::{
@@ -2104,36 +2104,36 @@ fn devices_from_account(
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
-    let current_device_npub = pubkey_npub(&state.app_key_pubkey);
-    let current_device_online = fips_status.fresh
+    let current_app_key_npub = pubkey_npub(&state.app_key_pubkey);
+    let current_app_key_online = fips_status.fresh
         && (fips_status.endpoint_npub.is_empty()
-            || fips_status.endpoint_npub == current_device_npub);
+            || fips_status.endpoint_npub == current_app_key_npub);
     let connectivity = device_connectivity_from_fips_status(fips_status);
 
-    device_roster_rows(
+    app_key_roster_rows(
         &app_keys.app_actors,
         &state.app_key_pubkey,
         state.can_admin_profile(),
-        current_device_online,
+        current_app_key_online,
         &connectivity,
     )
     .iter()
-    .map(|device| UiDevice {
-        pubkey: device.npub.clone(),
-        label: device.label.clone().unwrap_or_default(),
-        display_label: device.display_label.clone(),
-        state: device.state.clone(),
-        state_label: device.state_label.clone(),
-        connection_label: device.connection_label.clone(),
-        connection_state: device.connection_state.clone(),
-        role: device.role.clone(),
-        role_label: device.role_label.clone(),
-        detail: device.npub.clone(),
-        is_current_device: device.is_current_device,
-        is_online: device.is_online,
-        can_revoke: device.can_revoke,
-        can_appoint_admin: device.can_appoint_admin,
-        can_demote_admin: device.can_demote_admin,
+    .map(|app_key| UiDevice {
+        pubkey: app_key.npub.clone(),
+        label: app_key.label.clone().unwrap_or_default(),
+        display_label: app_key.display_label.clone(),
+        state: app_key.state.clone(),
+        state_label: app_key.state_label.clone(),
+        connection_label: app_key.connection_label.clone(),
+        connection_state: app_key.connection_state.clone(),
+        role: app_key.role.clone(),
+        role_label: app_key.role_label.clone(),
+        detail: app_key.npub.clone(),
+        is_current_device: app_key.is_current_app_key,
+        is_online: app_key.is_online,
+        can_revoke: app_key.can_revoke,
+        can_appoint_admin: app_key.can_appoint_admin,
+        can_demote_admin: app_key.can_demote_admin,
     })
     .collect()
 }
@@ -2162,7 +2162,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         missing_key_wraps: share
             .missing_key_wrap_pubkeys
             .into_iter()
-            .map(|pubkey| iris_drive_core::device_summary::pubkey_npub(&pubkey))
+            .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(&pubkey))
             .collect(),
         participant_count: share.participant_count as u64,
         shortcut_paths: share.shortcut_paths,
@@ -2186,21 +2186,21 @@ fn share_role_label(role: iris_drive_core::ShareRole) -> &'static str {
     }
 }
 
-fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceConnectivity {
+fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyConnectivity {
     if !fips_status.fresh {
-        return DeviceConnectivity::default();
+        return AppKeyConnectivity::default();
     }
-    DeviceConnectivity {
-        online_devices: fips_status.online_devices.iter().cloned().collect(),
-        direct_devices: fips_status.direct_devices.iter().cloned().collect(),
-        mesh_devices: fips_status.mesh_devices.iter().cloned().collect(),
+    AppKeyConnectivity {
+        online_app_keys: fips_status.online_devices.iter().cloned().collect(),
+        direct_app_keys: fips_status.direct_devices.iter().cloned().collect(),
+        mesh_app_keys: fips_status.mesh_devices.iter().cloned().collect(),
         peer_statuses: fips_status
             .peer_statuses
             .iter()
             .map(|peer| {
                 (
                     peer.npub.clone(),
-                    DeviceConnectionDetails {
+                    AppKeyConnectionDetails {
                         transport_type: label_option(&peer.transport_type),
                         srtt_ms: peer.srtt_ms,
                     },

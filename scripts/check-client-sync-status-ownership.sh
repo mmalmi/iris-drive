@@ -22,7 +22,7 @@ require_absent() {
   fi
 }
 
-require_contains crates/iris-drive-core/src/device_summary.rs "pub fn sync_status_label"
+require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn sync_status_label"
 require_contains crates/iris-drive-app-core/src/state.rs "pub status_label: String"
 require_contains crates/iris-drive-app-core/src/ffi.rs "sync_status_label(status)"
 require_contains crates/iris-drive-cli/src/daemon/runtime.rs "normalize_daemon_status_for_clients(config_dir, &mut payload)"

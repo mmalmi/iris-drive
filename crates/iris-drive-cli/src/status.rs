@@ -8,11 +8,11 @@ mod peers;
 #[cfg(test)]
 pub(crate) use backups::backup_target_status;
 pub(crate) use backups::{backup_targets_status, configured_backup_targets_status};
-pub(crate) use iris_drive_core::backup_summary::backup_target_kind_label;
-use iris_drive_core::device_summary::{
-    DeviceConnectivity, device_roster_rows, primary_status_for_setup_state, primary_status_label,
+use iris_drive_core::app_key_summary::{
+    AppKeyConnectivity, app_key_roster_rows, primary_status_for_setup_state, primary_status_label,
     setup_label_for_setup_state, setup_state_flags, sync_status_label,
 };
+pub(crate) use iris_drive_core::backup_summary::backup_target_kind_label;
 pub(crate) use iris_drive_core::fips_status::{
     fips_direct_devices_from_status, fips_mesh_devices_from_status,
     fips_online_devices_from_status, string_set_from_json_array, string_vec_from_json_array,
@@ -521,14 +521,14 @@ fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, 
     let fips_status = payload
         .get("fips_block_sync")
         .filter(|value| value.is_object());
-    let connectivity = DeviceConnectivity {
-        online_devices: fips_online_devices_from_status(fips_status)
+    let connectivity = AppKeyConnectivity {
+        online_app_keys: fips_online_devices_from_status(fips_status)
             .into_iter()
             .collect(),
-        direct_devices: fips_direct_devices_from_status(fips_status)
+        direct_app_keys: fips_direct_devices_from_status(fips_status)
             .into_iter()
             .collect(),
-        mesh_devices: fips_mesh_devices_from_status(fips_status)
+        mesh_app_keys: fips_mesh_devices_from_status(fips_status)
             .into_iter()
             .collect(),
         peer_statuses: BTreeMap::new(),
@@ -537,7 +537,7 @@ fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, 
         .get("running")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let rows = device_roster_rows(
+    let rows = app_key_roster_rows(
         &snapshot.app_actors,
         &account.app_key_pubkey,
         account.can_admin_profile(),

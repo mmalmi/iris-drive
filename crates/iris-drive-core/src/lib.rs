@@ -1,12 +1,12 @@
 pub mod app_key_link_invite;
 pub mod app_key_link_transport;
+pub mod app_key_summary;
 pub mod app_keys;
 pub mod backup_ops;
 pub mod backup_summary;
 pub mod block_sync;
 pub mod blossom_sync;
 pub mod config;
-pub mod device_summary;
 pub mod direct_root_transport;
 pub mod fips_status;
 pub mod fips_sync;

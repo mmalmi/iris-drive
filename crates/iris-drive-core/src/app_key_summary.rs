@@ -77,7 +77,7 @@ pub fn sync_status_label(sync_status: &str) -> String {
 }
 
 #[must_use]
-pub fn device_role_key(role: AppActorRole) -> &'static str {
+pub fn app_actor_role_key(role: AppActorRole) -> &'static str {
     match role {
         AppActorRole::Admin => "admin",
         AppActorRole::Member => "member",
@@ -85,7 +85,7 @@ pub fn device_role_key(role: AppActorRole) -> &'static str {
 }
 
 #[must_use]
-pub fn device_role_label(role: AppActorRole) -> &'static str {
+pub fn app_actor_role_label(role: AppActorRole) -> &'static str {
     match role {
         AppActorRole::Admin => "Admin",
         AppActorRole::Member => "Member",
@@ -93,12 +93,12 @@ pub fn device_role_label(role: AppActorRole) -> &'static str {
 }
 
 #[must_use]
-pub fn device_display_label(
-    is_current_device: bool,
+pub fn app_key_display_label(
+    is_current_app_key: bool,
     label: Option<&str>,
     fallback: &str,
 ) -> String {
-    if is_current_device {
+    if is_current_app_key {
         return "This AppKey".to_owned();
     }
     label
@@ -110,13 +110,13 @@ pub fn device_display_label(
 
 #[allow(clippy::fn_params_excessive_bools)]
 #[must_use]
-pub fn device_connection_state(
-    is_current_device: bool,
+pub fn app_key_connection_state(
+    is_current_app_key: bool,
     is_online: bool,
     is_direct: bool,
     is_mesh: bool,
 ) -> &'static str {
-    if is_current_device {
+    if is_current_app_key {
         "local"
     } else if is_direct {
         "direct"
@@ -130,7 +130,7 @@ pub fn device_connection_state(
 }
 
 #[must_use]
-pub fn device_connection_label(
+pub fn app_key_connection_label(
     connection_state: &str,
     transport_type: Option<&str>,
     srtt_ms: Option<u64>,
@@ -152,43 +152,43 @@ pub fn device_connection_label(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceManagementActions {
+pub struct AppKeyManagementActions {
     pub can_revoke: bool,
     pub can_appoint_admin: bool,
     pub can_demote_admin: bool,
 }
 
 #[must_use]
-pub fn device_management_actions(
+pub fn app_key_management_actions(
     can_admin_profile: bool,
-    is_current_device: bool,
+    is_current_app_key: bool,
     is_admin: bool,
     admin_count: usize,
-) -> DeviceManagementActions {
-    DeviceManagementActions {
-        can_revoke: can_admin_profile && !is_current_device,
-        can_appoint_admin: can_admin_profile && !is_current_device && !is_admin,
-        can_demote_admin: can_admin_profile && !is_current_device && is_admin && admin_count > 1,
+) -> AppKeyManagementActions {
+    AppKeyManagementActions {
+        can_revoke: can_admin_profile && !is_current_app_key,
+        can_appoint_admin: can_admin_profile && !is_current_app_key && !is_admin,
+        can_demote_admin: can_admin_profile && !is_current_app_key && is_admin && admin_count > 1,
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DeviceConnectionDetails {
+pub struct AppKeyConnectionDetails {
     pub transport_type: Option<String>,
     pub srtt_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DeviceConnectivity {
-    pub online_devices: BTreeSet<String>,
-    pub direct_devices: BTreeSet<String>,
-    pub mesh_devices: BTreeSet<String>,
-    pub peer_statuses: BTreeMap<String, DeviceConnectionDetails>,
+pub struct AppKeyConnectivity {
+    pub online_app_keys: BTreeSet<String>,
+    pub direct_app_keys: BTreeSet<String>,
+    pub mesh_app_keys: BTreeSet<String>,
+    pub peer_statuses: BTreeMap<String, AppKeyConnectionDetails>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct DeviceRosterRow {
+pub struct AppKeyRosterRow {
     pub pubkey_hex: String,
     pub npub: String,
     pub label: Option<String>,
@@ -197,7 +197,7 @@ pub struct DeviceRosterRow {
     pub role_label: String,
     pub state: String,
     pub state_label: String,
-    pub is_current_device: bool,
+    pub is_current_app_key: bool,
     pub is_online: bool,
     pub is_direct: bool,
     pub is_mesh: bool,
@@ -316,62 +316,62 @@ fn facet_count_for_purpose(
 }
 
 #[must_use]
-pub fn device_roster_rows(
+pub fn app_key_roster_rows(
     app_actors: &[AppActorEntry],
     current_app_key_pubkey: &str,
     can_admin_profile: bool,
-    current_device_online: bool,
-    connectivity: &DeviceConnectivity,
-) -> Vec<DeviceRosterRow> {
+    current_app_key_online: bool,
+    connectivity: &AppKeyConnectivity,
+) -> Vec<AppKeyRosterRow> {
     let admin_count = app_actors
         .iter()
-        .filter(|device| device.role == AppActorRole::Admin)
+        .filter(|actor| actor.role == AppActorRole::Admin)
         .count();
 
     app_actors
         .iter()
-        .map(|device| {
-            let npub = pubkey_npub(&device.pubkey);
-            let is_current_device = device.pubkey == current_app_key_pubkey;
-            let is_direct = !is_current_device && connectivity.direct_devices.contains(&npub);
-            let is_mesh = !is_current_device && connectivity.mesh_devices.contains(&npub);
-            let is_online = if is_current_device {
-                current_device_online
+        .map(|actor| {
+            let npub = pubkey_npub(&actor.pubkey);
+            let is_current_app_key = actor.pubkey == current_app_key_pubkey;
+            let is_direct = !is_current_app_key && connectivity.direct_app_keys.contains(&npub);
+            let is_mesh = !is_current_app_key && connectivity.mesh_app_keys.contains(&npub);
+            let is_online = if is_current_app_key {
+                current_app_key_online
             } else {
-                connectivity.online_devices.contains(&npub) || is_direct || is_mesh
+                connectivity.online_app_keys.contains(&npub) || is_direct || is_mesh
             };
-            let online_via = device_online_via(is_current_device, is_online, is_direct, is_mesh);
+            let online_via = app_key_online_via(is_current_app_key, is_online, is_direct, is_mesh);
             let connection_state =
-                device_connection_state(is_current_device, is_online, is_direct, is_mesh)
+                app_key_connection_state(is_current_app_key, is_online, is_direct, is_mesh)
                     .to_owned();
             let connection = connectivity.peer_statuses.get(&npub);
             let transport_type = connection.and_then(|status| status.transport_type.clone());
             let srtt_ms = connection.and_then(|status| status.srtt_ms);
-            let actions = device_management_actions(
+            let actions = app_key_management_actions(
                 can_admin_profile,
-                is_current_device,
-                device.role == AppActorRole::Admin,
+                is_current_app_key,
+                actor.role == AppActorRole::Admin,
                 admin_count,
             );
-            DeviceRosterRow {
-                pubkey_hex: device.pubkey.clone(),
+            AppKeyRosterRow {
+                pubkey_hex: actor.pubkey.clone(),
                 npub: npub.clone(),
-                label: device.label.clone(),
-                display_label: device_display_label(
-                    is_current_device,
-                    device.label.as_deref(),
+                label: actor.label.clone(),
+                display_label: app_key_display_label(
+                    is_current_app_key,
+                    actor.label.as_deref(),
                     &npub,
                 ),
-                role: device_role_key(device.role).to_owned(),
-                role_label: device_role_label(device.role).to_owned(),
+                role: app_actor_role_key(actor.role).to_owned(),
+                role_label: app_actor_role_label(actor.role).to_owned(),
                 state: "Linked".to_owned(),
                 state_label: "Linked".to_owned(),
-                is_current_device,
+                is_current_app_key,
                 is_online,
                 is_direct,
                 is_mesh,
                 online_via,
-                connection_label: device_connection_label(
+                connection_label: app_key_connection_label(
                     &connection_state,
                     transport_type.as_deref(),
                     srtt_ms,
@@ -382,20 +382,20 @@ pub fn device_roster_rows(
                 can_revoke: actions.can_revoke,
                 can_appoint_admin: actions.can_appoint_admin,
                 can_demote_admin: actions.can_demote_admin,
-                added_at: device.added_at,
+                added_at: actor.added_at,
             }
         })
         .collect()
 }
 
 #[allow(clippy::fn_params_excessive_bools)]
-fn device_online_via(
-    is_current_device: bool,
+fn app_key_online_via(
+    is_current_app_key: bool,
     is_online: bool,
     is_direct: bool,
     is_mesh: bool,
 ) -> Option<String> {
-    if is_current_device && is_online {
+    if is_current_app_key && is_online {
         Some("local".to_owned())
     } else if is_direct {
         Some("direct".to_owned())
@@ -413,7 +413,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn shared_device_summary_labels_match_native_clients() {
+    fn shared_app_key_summary_labels_match_native_clients() {
         assert_eq!(
             authorization_state_key(AppKeyAuthorizationState::Authorized),
             "authorized"
@@ -463,73 +463,76 @@ mod tests {
         assert_eq!(sync_status_label("up to date"), "Up to date");
         assert_eq!(sync_status_label("paused"), "Sync paused");
 
-        assert_eq!(device_role_key(AppActorRole::Admin), "admin");
-        assert_eq!(device_role_label(AppActorRole::Member), "Member");
+        assert_eq!(app_actor_role_key(AppActorRole::Admin), "admin");
+        assert_eq!(app_actor_role_label(AppActorRole::Member), "Member");
         assert_eq!(
-            device_display_label(true, Some("Mac"), "npub1x"),
+            app_key_display_label(true, Some("Mac"), "npub1x"),
             "This AppKey"
         );
         assert_eq!(
-            device_display_label(false, Some("  Phone  "), "npub1x"),
+            app_key_display_label(false, Some("  Phone  "), "npub1x"),
             "Phone"
         );
-        assert_eq!(device_display_label(false, Some("  "), "npub1x"), "npub1x");
+        assert_eq!(app_key_display_label(false, Some("  "), "npub1x"), "npub1x");
 
-        let direct = device_connection_state(false, true, true, false);
+        let direct = app_key_connection_state(false, true, true, false);
         assert_eq!(direct, "direct");
         assert_eq!(
-            device_connection_label(direct, Some("tcp"), Some(17)),
+            app_key_connection_label(direct, Some("tcp"), Some(17)),
             "Online (TCP, 17 ms)"
         );
-        assert_eq!(device_connection_label("mesh", None, None), "Online (Mesh)");
-        assert_eq!(device_connection_label("offline", None, None), "Offline");
-        assert_eq!(device_connection_label("local", None, None), "This AppKey");
+        assert_eq!(
+            app_key_connection_label("mesh", None, None),
+            "Online (Mesh)"
+        );
+        assert_eq!(app_key_connection_label("offline", None, None), "Offline");
+        assert_eq!(app_key_connection_label("local", None, None), "This AppKey");
 
-        let member = device_management_actions(true, false, false, 2);
+        let member = app_key_management_actions(true, false, false, 2);
         assert!(member.can_revoke);
         assert!(member.can_appoint_admin);
         assert!(!member.can_demote_admin);
 
-        let peer_admin = device_management_actions(true, false, true, 2);
+        let peer_admin = app_key_management_actions(true, false, true, 2);
         assert!(peer_admin.can_revoke);
         assert!(!peer_admin.can_appoint_admin);
         assert!(peer_admin.can_demote_admin);
 
-        let sole_admin = device_management_actions(true, false, true, 1);
+        let sole_admin = app_key_management_actions(true, false, true, 1);
         assert!(!sole_admin.can_demote_admin);
 
-        let current = device_management_actions(true, true, true, 2);
+        let current = app_key_management_actions(true, true, true, 2);
         assert!(!current.can_revoke);
         assert!(!current.can_appoint_admin);
         assert!(!current.can_demote_admin);
     }
 
     #[test]
-    fn shared_device_rows_include_presence_roles_and_actions() {
+    fn shared_app_key_rows_include_presence_roles_and_actions() {
         let current = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let remote = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let current_npub = pubkey_npub(current);
         let remote_npub = pubkey_npub(remote);
-        let devices = vec![
+        let app_actors = vec![
             crate::app_keys::AppActorEntry::admin(current.to_owned(), 10, Some("Mac".to_owned())),
             crate::app_keys::AppActorEntry::member(remote.to_owned(), 11, Some("Phone".to_owned())),
         ];
-        let connectivity = DeviceConnectivity {
-            online_devices: [remote_npub.clone()].into_iter().collect(),
-            direct_devices: [remote_npub.clone()].into_iter().collect(),
+        let connectivity = AppKeyConnectivity {
+            online_app_keys: [remote_npub.clone()].into_iter().collect(),
+            direct_app_keys: [remote_npub.clone()].into_iter().collect(),
             peer_statuses: [(
                 remote_npub.clone(),
-                DeviceConnectionDetails {
+                AppKeyConnectionDetails {
                     transport_type: Some("tcp".to_owned()),
                     srtt_ms: Some(12),
                 },
             )]
             .into_iter()
             .collect(),
-            ..DeviceConnectivity::default()
+            ..AppKeyConnectivity::default()
         };
 
-        let rows = device_roster_rows(&devices, current, true, true, &connectivity);
+        let rows = app_key_roster_rows(&app_actors, current, true, true, &connectivity);
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].npub, current_npub);
