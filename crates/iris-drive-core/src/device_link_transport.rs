@@ -1,5 +1,6 @@
+use anyhow::{Context, Result, anyhow};
 use nostr_sdk::PublicKey;
-use nostr_sdk::nips::nip19::ToBech32;
+use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -8,6 +9,9 @@ use crate::{AccountState, DeviceAuthorizationState, IrisProfileId, SignedIrisPro
 pub const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
 pub const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
 pub const DEVICE_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/device-link/v1/roster-ack";
+pub const DEVICE_APPROVAL_REQUEST_PREFIX: &str = "iris-drive://device-link";
+const DEVICE_APPROVAL_REQUEST_SINGLE_SLASH_PREFIX: &str = "iris-drive:/device-link";
+pub const DEVICE_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/device-link";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeviceLinkRequestFrame {
@@ -21,6 +25,15 @@ pub struct DeviceLinkRequestFrame {
     pub label: Option<String>,
     pub requested_at: u64,
     pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceApprovalRequest {
+    pub profile_id: Option<IrisProfileId>,
+    pub owner_hex: String,
+    pub device_hex: String,
+    pub link_secret: String,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -217,11 +230,81 @@ pub fn encode_device_approval_request(
     url
 }
 
+pub fn parse_device_approval_request(input: &str) -> Result<Option<DeviceApprovalRequest>> {
+    let trimmed = input.trim();
+    let Some(query) = device_approval_query(trimmed) else {
+        return Ok(None);
+    };
+
+    let mut profile_id = None;
+    let mut owner = None;
+    let mut device = None;
+    let mut link_secret = None;
+    let mut label = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let key = percent_decode_component(raw_key)?;
+        let value = percent_decode_component(raw_value)?;
+        match key.as_str() {
+            "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
+                profile_id = Some(value.trim().parse().context("parsing request profile id")?);
+            }
+            "owner" if !value.trim().is_empty() => owner = Some(value),
+            "device" if !value.trim().is_empty() => device = Some(value),
+            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
+            "label" if !value.trim().is_empty() => label = Some(value),
+            _ => {}
+        }
+    }
+
+    let owner = owner.ok_or_else(|| anyhow!("AppKey-link request is missing owner"))?;
+    let device = device.ok_or_else(|| anyhow!("AppKey-link request is missing AppKey"))?;
+
+    Ok(Some(DeviceApprovalRequest {
+        profile_id,
+        owner_hex: normalize_pubkey_hex(&owner).context("parsing request owner")?,
+        device_hex: normalize_pubkey_hex(&device).context("parsing request AppKey")?,
+        link_secret: link_secret.unwrap_or_default().trim().to_string(),
+        label,
+    }))
+}
+
+#[must_use]
+pub fn device_approval_query(input: &str) -> Option<&str> {
+    if let Some(rest) = input.strip_prefix(DEVICE_APPROVAL_REQUEST_PREFIX) {
+        return rest.strip_prefix('?');
+    }
+    if let Some(rest) = input.strip_prefix(DEVICE_APPROVAL_REQUEST_SINGLE_SLASH_PREFIX) {
+        return rest.strip_prefix('?');
+    }
+    if let Some(rest) = input.strip_prefix(DEVICE_APPROVAL_REQUEST_WEB_PREFIX) {
+        return rest.strip_prefix('?');
+    }
+    None
+}
+
 fn account_npub(hex: &str) -> String {
     PublicKey::from_hex(hex)
         .ok()
         .and_then(|pk| pk.to_bech32().ok())
         .unwrap_or_else(|| hex.to_string())
+}
+
+fn normalize_pubkey_hex(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.starts_with("npub1") {
+        let pubkey = PublicKey::from_bech32(trimmed).context("parsing npub")?;
+        return Ok(pubkey.to_hex());
+    }
+    if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(trimmed.to_ascii_lowercase());
+    }
+    Err(anyhow!(
+        "expected npub1... or 64-char hex pubkey, got {trimmed}"
+    ))
 }
 
 fn percent_encode_component(input: &str) -> String {
@@ -236,6 +319,32 @@ fn percent_encode_component(input: &str) -> String {
         }
     }
     encoded
+}
+
+fn percent_decode_component(value: &str) -> Result<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' if index + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .context("invalid percent escape")?;
+                let byte = u8::from_str_radix(hex, 16).context("invalid percent escape")?;
+                out.push(byte);
+                index += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).context("invalid utf-8 in percent escape")
 }
 
 fn hex_digit(value: u8) -> char {
@@ -328,6 +437,56 @@ mod tests {
             frame
                 .url
                 .contains(&format!("profile={}", owner.state.profile_id))
+        );
+    }
+
+    #[test]
+    fn approval_request_round_trips_profile_keys_secret_and_label() {
+        let profile_id = IrisProfileId::new_v4();
+        let owner = nostr_sdk::Keys::generate().public_key();
+        let app_key = nostr_sdk::Keys::generate().public_key();
+
+        let url = encode_device_approval_request(
+            profile_id,
+            &owner.to_hex(),
+            &app_key.to_hex(),
+            " join secret ",
+            Some("Web + Native"),
+        );
+        let parsed = parse_device_approval_request(&url)
+            .expect("parse request")
+            .expect("request");
+
+        assert_eq!(parsed.profile_id, Some(profile_id));
+        assert_eq!(parsed.owner_hex, owner.to_hex());
+        assert_eq!(parsed.device_hex, app_key.to_hex());
+        assert_eq!(parsed.link_secret, "join secret");
+        assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
+    }
+
+    #[test]
+    fn approval_request_parser_accepts_aliases_and_rejects_nearby_routes() {
+        let profile_id = IrisProfileId::new_v4();
+        let owner = nostr_sdk::Keys::generate().public_key();
+        let app_key = nostr_sdk::Keys::generate().public_key();
+        let url = format!(
+            "iris-drive:/device-link?profile_id={profile_id}&owner={}&device={}&link_secret=s&label=Phone+Browser",
+            owner.to_hex(),
+            app_key.to_hex()
+        );
+        let parsed = parse_device_approval_request(&url)
+            .expect("parse request")
+            .expect("request");
+
+        assert_eq!(parsed.profile_id, Some(profile_id));
+        assert_eq!(parsed.owner_hex, owner.to_hex());
+        assert_eq!(parsed.device_hex, app_key.to_hex());
+        assert_eq!(parsed.link_secret, "s");
+        assert_eq!(parsed.label.as_deref(), Some("Phone Browser"));
+        assert!(
+            parse_device_approval_request("https://drive.iris.to/device-linker?owner=x")
+                .unwrap()
+                .is_none()
         );
     }
 }

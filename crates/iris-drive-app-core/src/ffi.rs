@@ -25,6 +25,10 @@ use iris_drive_core::device_link_transport::{
     device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
     device_link_roster_recipients, pending_device_link_request_frame,
 };
+use iris_drive_core::device_link_transport::{
+    DeviceApprovalRequest, device_approval_query, encode_device_approval_request,
+    parse_device_approval_request,
+};
 use iris_drive_core::device_summary::{
     DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
@@ -2221,14 +2225,6 @@ struct DeviceLinkTarget {
     link_secret: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DeviceApprovalRequest {
-    profile_id: Option<iris_drive_core::IrisProfileId>,
-    owner_hex: String,
-    device_hex: String,
-    label: Option<String>,
-}
-
 fn classify_link_input_value(input: &str) -> LinkInputClassification {
     let trimmed = input.trim();
     let mut classification = LinkInputClassification {
@@ -2277,17 +2273,9 @@ fn classify_link_input_value(input: &str) -> LinkInputClassification {
 }
 
 fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassification> {
-    let lower = input.to_ascii_lowercase();
-    let is_device_approval = link_route_matches(&lower, "iris-drive://device-link", false)
-        || link_route_matches(&lower, "iris-drive:/device-link", false)
-        || link_route_matches(&lower, "https://drive.iris.to/device-link", false);
-    if !is_device_approval {
-        return None;
-    }
-
-    let query = input.split_once('?').map_or("", |(_, query)| query);
-    let owner = query_value(query, "owner");
-    let device = query_value(query, "device");
+    let query = device_approval_query(input)?;
+    let owner = raw_query_value(query, "owner");
+    let device = raw_query_value(query, "device");
     let is_complete = owner.as_deref().is_some_and(owner_pubkey_input_is_complete)
         && device
             .as_deref()
@@ -2457,30 +2445,6 @@ fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<Ui
         .collect()
 }
 
-fn encode_device_approval_request(
-    profile_id: iris_drive_core::IrisProfileId,
-    owner_hex: &str,
-    device_hex: &str,
-    link_secret: &str,
-    label: Option<&str>,
-) -> String {
-    let mut url = format!(
-        "iris-drive://device-link?profile={}&owner={}&device={}",
-        profile_id,
-        account_npub(owner_hex),
-        account_npub(device_hex)
-    );
-    if !link_secret.trim().is_empty() {
-        url.push_str("&secret=");
-        url.push_str(&percent_encode_component(link_secret.trim()));
-    }
-    if let Some(label) = label.and_then(label_option) {
-        url.push_str("&label=");
-        url.push_str(&percent_encode_component(&label));
-    }
-    url
-}
-
 fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
     if let Some(target) = decode_device_link_invite(input)? {
         return Ok(target);
@@ -2507,124 +2471,45 @@ fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, 
 }
 
 fn decode_device_approval_request(request: &str) -> Result<DeviceApprovalRequest, String> {
-    let lower = request.to_ascii_lowercase();
-    if link_route_matches(&lower, "iris-drive://device-link", false)
-        || link_route_matches(&lower, "iris-drive:/device-link", false)
-        || link_route_matches(&lower, "https://drive.iris.to/device-link", false)
+    if let Some(request) =
+        parse_device_approval_request(request).map_err(|error| error.to_string())?
     {
-        let query = request.split_once('?').map_or("", |(_, query)| query);
-        let profile_id = query_value(query, "profile")
-            .or_else(|| query_value(query, "profile_id"))
-            .or_else(|| query_value(query, "profileId"))
-            .map(|value| {
-                value
-                    .parse()
-                    .map_err(|error| format!("parsing profile id: {error}"))
-            })
-            .transpose()?;
-        let owner = query_value(query, "owner")
-            .ok_or_else(|| "device request is missing owner".to_owned())?;
-        let device = query_value(query, "device")
-            .ok_or_else(|| "device request is missing device".to_owned())?;
-        let label = query_value(query, "label");
-        return Ok(DeviceApprovalRequest {
-            profile_id,
-            owner_hex: normalize_pubkey(&owner)?,
-            device_hex: normalize_pubkey(&device)?,
-            label,
-        });
+        return Ok(request);
     }
     let device = normalize_pubkey(request)?;
     Ok(DeviceApprovalRequest {
         profile_id: None,
         owner_hex: String::new(),
         device_hex: device,
+        link_secret: String::new(),
         label: None,
     })
 }
 
 #[cfg(not(test))]
 fn device_approval_link_secret(request: &str) -> String {
-    device_approval_link_secret_value(request)
+    parse_device_approval_request(request)
+        .ok()
+        .flatten()
+        .map(|request| request.link_secret)
         .unwrap_or_default()
         .trim()
         .to_owned()
 }
 
 fn device_approval_link_secret_value(request: &str) -> Option<String> {
-    let lower = request.to_ascii_lowercase();
-    if link_route_matches(&lower, "iris-drive://device-link", false)
-        || link_route_matches(&lower, "iris-drive:/device-link", false)
-        || link_route_matches(&lower, "https://drive.iris.to/device-link", false)
-    {
-        let query = request.split_once('?').map_or("", |(_, query)| query);
-        return query_value(query, "secret").or_else(|| query_value(query, "link_secret"));
-    }
-    None
+    parse_device_approval_request(request)
+        .ok()
+        .flatten()
+        .map(|request| request.link_secret)
+        .filter(|secret| !secret.trim().is_empty())
 }
 
-fn query_value(query: &str, name: &str) -> Option<String> {
+fn raw_query_value(query: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|part| {
         let (key, value) = part.split_once('=')?;
-        (key == name && !value.is_empty()).then(|| percent_decode_component(value))
+        (key == name && !value.is_empty()).then(|| value.to_owned())
     })
-}
-
-fn percent_encode_component(input: &str) -> String {
-    let mut encoded = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(hex_digit(byte >> 4));
-            encoded.push(hex_digit(byte & 0x0f));
-        }
-    }
-    encoded
-}
-
-fn percent_decode_component(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let Some(hi) = bytes.get(index + 1).copied().and_then(hex_value) else {
-                output.push(bytes[index]);
-                index += 1;
-                continue;
-            };
-            let Some(lo) = bytes.get(index + 2).copied().and_then(hex_value) else {
-                output.push(bytes[index]);
-                index += 1;
-                continue;
-            };
-            output.push((hi << 4) | lo);
-            index += 3;
-        } else {
-            output.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(output).unwrap_or_default()
-}
-
-fn hex_digit(value: u8) -> char {
-    match value {
-        0..=9 => (b'0' + value) as char,
-        10..=15 => (b'A' + value - 10) as char,
-        _ => '0',
-    }
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn unix_now_seconds() -> u64 {

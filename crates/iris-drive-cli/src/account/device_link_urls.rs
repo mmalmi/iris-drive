@@ -1,5 +1,8 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+pub(crate) use iris_drive_core::device_link_transport::{
+    encode_device_approval_request, parse_device_approval_request as decode_device_approval_request,
+};
 
 pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
     let trimmed = input.trim();
@@ -13,15 +16,6 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
             "expected npub1... or 64-char hex pubkey, got {trimmed}"
         ))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeviceApprovalRequest {
-    pub(crate) profile_id: Option<iris_drive_core::IrisProfileId>,
-    pub(crate) owner_hex: String,
-    pub(crate) device_hex: String,
-    pub(crate) link_secret: String,
-    pub(crate) label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,30 +169,6 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
         .collect()
 }
 
-pub(crate) fn encode_device_approval_request(
-    profile_id: iris_drive_core::IrisProfileId,
-    owner_hex: &str,
-    device_hex: &str,
-    link_secret: &str,
-    label: Option<&str>,
-) -> String {
-    let mut url = format!(
-        "iris-drive://device-link?profile={}&owner={}&device={}",
-        profile_id,
-        account_npub(owner_hex),
-        account_npub(device_hex)
-    );
-    if !link_secret.trim().is_empty() {
-        url.push_str("&secret=");
-        url.push_str(&percent_encode_component(link_secret.trim()));
-    }
-    if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
-        url.push_str("&label=");
-        url.push_str(&percent_encode_component(label));
-    }
-    url
-}
-
 pub(crate) fn device_link_web_url(invite_url: &str) -> String {
     iris_drive_core::device_link_invite::device_link_invite_web_url(invite_url)
 }
@@ -207,59 +177,4 @@ pub(crate) fn decode_device_link_invite(
     input: &str,
 ) -> Result<Option<iris_drive_core::device_link_invite::ParsedDeviceLinkInvite>> {
     iris_drive_core::device_link_invite::parse_device_link_invite(input)
-}
-
-pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<DeviceApprovalRequest>> {
-    let trimmed = input.trim();
-    let Some(query) = device_approval_query(trimmed) else {
-        return Ok(None);
-    };
-
-    let mut owner = None;
-    let mut profile_id = None;
-    let mut device = None;
-    let mut link_secret = None;
-    let mut label = None;
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = percent_decode_component(raw_key)?;
-        let value = percent_decode_component(raw_value)?;
-        match key.as_str() {
-            "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
-                profile_id = Some(value.trim().parse().context("parsing request profile id")?);
-            }
-            "owner" if !value.trim().is_empty() => owner = Some(value),
-            "device" if !value.trim().is_empty() => device = Some(value),
-            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
-            "label" if !value.trim().is_empty() => label = Some(value),
-            _ => {}
-        }
-    }
-
-    let owner = owner.ok_or_else(|| anyhow::anyhow!("AppKey-link request is missing owner"))?;
-    let device = device.ok_or_else(|| anyhow::anyhow!("AppKey-link request is missing AppKey"))?;
-
-    Ok(Some(DeviceApprovalRequest {
-        profile_id,
-        owner_hex: normalize_pubkey(&owner).context("parsing request owner")?,
-        device_hex: normalize_pubkey(&device).context("parsing request AppKey")?,
-        link_secret: link_secret.unwrap_or_default().trim().to_string(),
-        label,
-    }))
-}
-
-pub(crate) fn device_approval_query(input: &str) -> Option<&str> {
-    if let Some(rest) = input.strip_prefix("iris-drive://device-link") {
-        return rest.strip_prefix('?');
-    }
-    if let Some(rest) = input.strip_prefix("iris-drive:/device-link") {
-        return rest.strip_prefix('?');
-    }
-    if let Some(rest) = input.strip_prefix("https://drive.iris.to/device-link") {
-        return rest.strip_prefix('?');
-    }
-    None
 }
