@@ -71,28 +71,24 @@ pub(crate) fn cmd_recover_app_key(
     account
         .admit_current_app_key_with_recovery_phrase(&phrase, label)
         .context("recovering app key")?;
-    let profile = iris_profile_summary_json(&account.state);
     let dck_generation = account
         .state
         .app_keys
         .as_ref()
         .map_or(0, |snapshot| snapshot.dck_generation);
+    let mut output = account_identity_json_map(&account.state);
+    output.insert("dck_generation".to_string(), json!(dck_generation));
+    output.insert(
+        "profile_roster_op_count".to_string(),
+        json!(account.state.profile_roster_ops.len()),
+    );
+    output.insert(
+        "loaded_recovery_phrase_from_disk".to_string(),
+        json!(loaded_from_disk),
+    );
     config.account = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
-    println!(
-        "{}",
-        json!({
-            "profile": profile,
-            "profile_id": account.state.profile_id.to_string(),
-            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
-                &account.state.device_pubkey
-            ),
-            "authorization_state": authorization_state_label(&account.state),
-            "dck_generation": dck_generation,
-            "profile_roster_op_count": account.state.profile_roster_ops.len(),
-            "loaded_recovery_phrase_from_disk": loaded_from_disk,
-        })
-    );
+    println!("{}", Value::Object(output));
     Ok(())
 }
 
@@ -152,25 +148,30 @@ pub(crate) fn finish_account_init(
         config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     }
     config.save(config_path_in(config_dir))?;
-    let profile = iris_profile_summary_json(&account.state);
-    println!(
-        "{}",
-        json!({
-            "config_dir": config_dir.display().to_string(),
-            "profile": profile,
-            "profile_id": account.state.profile_id.to_string(),
-            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
-                &account.state.device_pubkey
-            ),
-            "owner_npub": account_npub(&account.state.owner_pubkey),
-            "device_npub": account_npub(&account.state.device_pubkey),
-            "has_owner_signing_authority": account.state.has_owner_signing_authority,
-            "authorization_state": authorization_state_label(&account.state),
-            "device_link_request": device_link_request_json(&account.state),
-            "device_link_invite": device_link_invite_json(&account.state),
-            "drives": config.drives.iter().map(|d| &d.drive_id).collect::<Vec<_>>(),
-        })
+    let mut output = account_identity_json_map(&account.state);
+    output.insert(
+        "config_dir".to_string(),
+        json!(config_dir.display().to_string()),
     );
+    output.insert(
+        "device_link_request".to_string(),
+        device_link_request_json(&account.state),
+    );
+    output.insert(
+        "device_link_invite".to_string(),
+        device_link_invite_json(&account.state),
+    );
+    output.insert(
+        "drives".to_string(),
+        json!(
+            config
+                .drives
+                .iter()
+                .map(|d| &d.drive_id)
+                .collect::<Vec<_>>()
+        ),
+    );
+    println!("{}", Value::Object(output));
     Ok(())
 }
 
@@ -335,16 +336,19 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
         .account
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let snap = state.app_keys.as_ref();
-    println!(
-        "{}",
-        json!({
-            "profile": iris_profile_summary_json(&state),
-            "owner_npub": account_npub(&state.owner_pubkey),
-            "current_device_npub": account_npub(&state.device_pubkey),
-            "authorization_state": authorization_state_label(&state),
-            "device_link_invite": device_link_invite_json(&state),
-            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
-            "app_keys": snap.map(|s| json!({
+    let mut output = account_identity_json_map(&state);
+    output.insert(
+        "device_link_invite".to_string(),
+        device_link_invite_json(&state),
+    );
+    output.insert(
+        "inbound_device_link_requests".to_string(),
+        json!(inbound_device_link_requests_json(&state)),
+    );
+    output.insert(
+        "app_keys".to_string(),
+        snap.map_or(Value::Null, |s| {
+            json!({
                 "created_at": s.created_at,
                 "dck_generation": s.dck_generation,
                 "app_actors": s.app_actors.iter().map(|actor| json!({
@@ -356,9 +360,10 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
                     "is_current_app_key": actor.pubkey == state.device_pubkey,
                     "has_dck_wrap": s.wrapped_dck.contains_key(&actor.pubkey),
                 })).collect::<Vec<_>>(),
-            })),
-        })
+            })
+        }),
     );
+    println!("{}", Value::Object(output));
     Ok(())
 }
 
@@ -392,24 +397,20 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let state = config
         .account
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let profile = iris_profile_summary_json(&state);
-    println!(
-        "{}",
-        json!({
-            "profile": profile,
-            "profile_id": state.profile_id.to_string(),
-            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
-                &state.device_pubkey
-            ),
-            "owner_npub": account_npub(&state.owner_pubkey),
-            "device_npub": account_npub(&state.device_pubkey),
-            "has_owner_signing_authority": state.has_owner_signing_authority,
-            "authorization_state": authorization_state_label(&state),
-            "device_link_request": device_link_request_json(&state),
-            "device_link_invite": device_link_invite_json(&state),
-            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
-        })
+    let mut output = account_identity_json_map(&state);
+    output.insert(
+        "device_link_request".to_string(),
+        device_link_request_json(&state),
     );
+    output.insert(
+        "device_link_invite".to_string(),
+        device_link_invite_json(&state),
+    );
+    output.insert(
+        "inbound_device_link_requests".to_string(),
+        json!(inbound_device_link_requests_json(&state)),
+    );
+    println!("{}", Value::Object(output));
     Ok(())
 }
 
@@ -437,14 +438,47 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn iris_profile_summary_json(state: &AccountState) -> Value {
+pub(crate) fn account_identity_json_map(state: &AccountState) -> serde_json::Map<String, Value> {
     let summary = iris_drive_core::device_summary::iris_profile_summary(state);
+    let mut output = serde_json::Map::new();
+    output.insert("profile".to_string(), iris_profile_summary_json(&summary));
+    output.insert("profile_id".to_string(), json!(summary.profile_id));
+    output.insert(
+        "current_app_key_pubkey".to_string(),
+        json!(summary.current_app_key_pubkey_hex),
+    );
+    output.insert(
+        "current_app_key_npub".to_string(),
+        json!(summary.current_app_key_npub),
+    );
+    output.insert(
+        "current_app_key_label".to_string(),
+        json!(summary.current_app_key_label),
+    );
+    output.insert(
+        "authorization_state".to_string(),
+        json!(summary.authorization_state),
+    );
+    output.insert(
+        "can_write_roots".to_string(),
+        json!(summary.can_write_roots),
+    );
+    output.insert(
+        "can_admin_profile".to_string(),
+        json!(summary.can_admin_profile),
+    );
+    output
+}
+
+fn iris_profile_summary_json(
+    summary: &iris_drive_core::device_summary::IrisProfileSummary,
+) -> Value {
     json!({
-        "profile_id": summary.profile_id,
-        "current_app_key_pubkey": summary.current_app_key_pubkey_hex,
-        "current_app_key_npub": summary.current_app_key_npub,
-        "current_app_key_label": summary.current_app_key_label,
-        "authorization_state": summary.authorization_state,
+        "profile_id": &summary.profile_id,
+        "current_app_key_pubkey": &summary.current_app_key_pubkey_hex,
+        "current_app_key_npub": &summary.current_app_key_npub,
+        "current_app_key_label": &summary.current_app_key_label,
+        "authorization_state": &summary.authorization_state,
         "can_write_roots": summary.can_write_roots,
         "can_admin_profile": summary.can_admin_profile,
         "active_app_key_count": summary.active_app_key_count,

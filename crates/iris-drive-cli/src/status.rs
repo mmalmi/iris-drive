@@ -302,20 +302,33 @@ pub(crate) fn status_account_block(config: &AppConfig) -> Option<Value> {
     config.account.as_ref().map(|state| {
         let mut state = state.clone();
         state.recompute_authorization();
-        json!({
-            "owner_npub": account_npub(&state.owner_pubkey),
-            "device_npub": account_npub(&state.device_pubkey),
-            "has_owner_signing_authority": state.has_owner_signing_authority,
-            "authorization_state": authorization_state_label(&state),
-            "roster_size": state.app_keys.as_ref().map_or(0, |s| s.app_actors.len()),
-            "profile": config.user_profile.as_ref().map(|profile| json!({
+        let mut output = account_identity_json_map(&state);
+        output.insert(
+            "roster_size".to_string(),
+            json!(state.app_keys.as_ref().map_or(0, |s| s.app_actors.len())),
+        );
+        output.insert(
+            "user_profile".to_string(),
+            config.user_profile.as_ref().map_or(Value::Null, |profile| {
+                json!({
                 "username": profile.username,
                 "photo_path": profile.photo_path,
-            })),
-            "device_link_request": device_link_request_json(&state),
-            "device_link_invite": device_link_invite_json(&state),
-            "inbound_device_link_requests": inbound_device_link_requests_json(&state),
-        })
+                })
+            }),
+        );
+        output.insert(
+            "device_link_request".to_string(),
+            device_link_request_json(&state),
+        );
+        output.insert(
+            "device_link_invite".to_string(),
+            device_link_invite_json(&state),
+        );
+        output.insert(
+            "inbound_device_link_requests".to_string(),
+            json!(inbound_device_link_requests_json(&state)),
+        );
+        Value::Object(output)
     })
 }
 

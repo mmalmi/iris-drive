@@ -36,6 +36,14 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn current_app_key_npub(value: &serde_json::Value) -> &str {
+    value["current_app_key_npub"].as_str().unwrap()
+}
+
+fn device_link_invite_url(value: &serde_json::Value) -> &str {
+    value["device_link_invite"]["url"].as_str().unwrap()
+}
+
 fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
     let output = idrive(dir).args(args).output().unwrap();
     assert_success(&output);
@@ -269,7 +277,7 @@ fn status_after_init_reports_initialized() {
 fn backup_targets_can_be_added_listed_and_removed() {
     let dir = tempdir().unwrap();
     let init = run_json(dir.path(), &["init"]);
-    let device_npub = init["device_npub"].as_str().unwrap();
+    let device_npub = current_app_key_npub(&init);
 
     let added_blossom = run_json(
         dir.path(),
@@ -644,12 +652,12 @@ fn status_reports_fips_latency_for_direct_peer() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let owner_invite = device_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
-        &["link", &owner_npub, "--label", "linux-peer"],
+        &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    let linked_device_npub = current_app_key_npub(&linked).to_string();
     run_json(owner_dir.path(), &["approve", &linked_device_npub]);
 
     let now = std::time::SystemTime::now()
@@ -710,12 +718,12 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let owner_invite = device_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
-        &["link", &owner_npub, "--label", "linux-peer"],
+        &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    let linked_device_npub = current_app_key_npub(&linked).to_string();
     run_json(owner_dir.path(), &["approve", &linked_device_npub]);
 
     let now = std::time::SystemTime::now()
@@ -760,12 +768,12 @@ fn status_drops_stale_fips_mesh_peers() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "macos"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap().to_string();
+    let owner_invite = device_link_invite_url(&owner).to_string();
     let linked = run_json(
         linked_dir.path(),
-        &["link", &owner_npub, "--label", "linux-peer"],
+        &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = linked["device_npub"].as_str().unwrap().to_string();
+    let linked_device_npub = current_app_key_npub(&linked).to_string();
     run_json(owner_dir.path(), &["approve", &linked_device_npub]);
 
     std::fs::write(
@@ -813,7 +821,7 @@ fn status_drops_stale_fips_mesh_peers() {
 fn status_marks_current_device_fips_online_when_daemon_is_running() {
     let dir = tempdir().unwrap();
     let init = run_json(dir.path(), &["init", "--label", "macos"]);
-    let device_npub = init["device_npub"].as_str().unwrap().to_string();
+    let device_npub = current_app_key_npub(&init).to_string();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

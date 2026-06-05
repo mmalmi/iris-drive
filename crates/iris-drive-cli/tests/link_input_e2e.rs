@@ -41,7 +41,7 @@ fn link_input_classify_uses_app_core_completion() {
     assert_eq!(short["is_complete"], false);
 
     let owner = run_json(dir.path(), &["init", "--force", "--label", "CLI owner"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let owner_npub = owner["device_link_invite"]["owner_npub"].as_str().unwrap();
     let complete = run_json(dir.path(), &["link-input", "classify", owner_npub]);
     assert_eq!(complete["kind"], "owner_pubkey");
     assert_eq!(complete["is_complete"], true);
@@ -57,7 +57,7 @@ fn link_input_validate_uses_app_core_completion() {
     assert_eq!(short["is_complete"], false);
 
     let owner = run_json(dir.path(), &["init", "--force", "--label", "CLI owner"]);
-    let owner_npub = owner["owner_npub"].as_str().unwrap();
+    let owner_npub = owner["device_link_invite"]["owner_npub"].as_str().unwrap();
     let complete = run_json(dir.path(), &["link-input", "validate", owner_npub]);
     assert_eq!(complete["kind"], "owner_pubkey");
     assert_eq!(complete["is_complete"], true);
