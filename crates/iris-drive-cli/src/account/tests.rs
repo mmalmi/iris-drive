@@ -16,7 +16,6 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
         .expect("restore from recovery phrase");
     let recovered_pubkey = recovered.state.device_pubkey.clone();
     let mut awaiting_state = recovered.state.clone();
-    awaiting_state.owner_pubkey = owner.state.owner_pubkey.clone();
     awaiting_state.profile_roster_ops = owner.state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
     awaiting_state.has_owner_signing_authority = false;

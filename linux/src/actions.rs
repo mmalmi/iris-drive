@@ -397,8 +397,8 @@ pub(crate) fn copy_snapshot_link(model: &AppRef) {
 pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
-            let message = if key == "owner_npub" {
-                "Owner key copied"
+            let message = if key == "owner_npub" || key == "current_app_key_npub" {
+                "AppKey copied"
             } else {
                 "Device key copied"
             };
@@ -563,7 +563,7 @@ pub(crate) fn current_account_value(key: &str) -> Result<String, String> {
     let state = desktop_state()?;
     let account = account(&state).ok_or_else(|| "No account key available".to_string())?;
     match key {
-        "owner_npub" => Ok(account.owner_pubkey.clone()),
+        "owner_npub" | "current_app_key_npub" => Ok(account.current_app_key_npub.clone()),
         "device_npub" => Ok(account.device_pubkey.clone()),
         _ => Err("No account key available".to_string()),
     }

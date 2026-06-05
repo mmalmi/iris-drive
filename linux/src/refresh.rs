@@ -34,7 +34,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.status.set_text(primary_status_label);
             model.ui.folder.set_text(&drive_mount_text(&state));
             let account = account(&state);
-            let owner_npub = account.map(|account| account.owner_pubkey.as_str());
+            let owner_npub = account.map(|account| account.current_app_key_npub.as_str());
             let device_npub = account.map(|account| account.device_pubkey.as_str());
             model.ui.owner.set_text(&short_value(owner_npub));
             model.ui.device.set_text(&short_value(device_npub));

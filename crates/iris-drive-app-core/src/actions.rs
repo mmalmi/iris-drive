@@ -16,7 +16,7 @@ pub enum NativeAppAction {
         label: String,
     },
     LinkDevice {
-        owner_pubkey: String,
+        link_target: String,
         device_label: String,
     },
     Logout,

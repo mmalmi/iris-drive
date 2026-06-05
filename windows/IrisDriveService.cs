@@ -400,6 +400,7 @@ public sealed class IrisDriveService
         var status = await StatusAsync();
         var value = key switch
         {
+            "current_app_key_npub" => status.DeviceNpub,
             "owner_npub" => status.OwnerNpub,
             "device_npub" => status.DeviceNpub,
             _ => null,

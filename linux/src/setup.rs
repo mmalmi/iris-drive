@@ -30,7 +30,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     let account = account(state);
     let owner = readonly_entry(
         account
-            .map(|account| account.owner_pubkey.as_str())
+            .map(|account| account.current_app_key_npub.as_str())
             .unwrap_or("-"),
     );
     container.append(&field_title("Owner"));
@@ -103,7 +103,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
 
     let account = account(state);
     let owner_npub = account
-        .map(|account| account.owner_pubkey.as_str())
+        .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
     container.append(&field_title("Owner"));
     container.append(&readonly_entry(owner_npub));

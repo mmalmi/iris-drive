@@ -57,7 +57,7 @@ pub(crate) fn cmd_daemon(
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
     let filters = relay_sync::subscription_filters_for_shared_roots(
-        &state.owner_pubkey,
+        &state.device_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &share_ids,
@@ -236,7 +236,7 @@ pub(crate) fn cmd_daemon(
         let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
-                "owner_npub": account_npub(&state.owner_pubkey),
+                "current_app_key_npub": account_npub(&state.device_pubkey),
                 "provider_update_mode": "event_driven",
                 "watch_debounce_ms": watch_debounce_ms,
                 "root_update_throttle_ms": root_update_debounce.as_millis(),

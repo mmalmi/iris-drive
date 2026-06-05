@@ -426,22 +426,32 @@ struct NativeSyncRoot: Codable {
 }
 
 struct NativeAccount: Codable {
-    var ownerPubkey: String
-    var devicePubkey: String
+    var profileId: String
+    var currentAppKeyPubkey: String
+    var currentAppKeyNpub: String
+    var currentAppKeyLabel: String
     var deviceLabel: String
     var authorizationState: String
-    var hasOwnerSigningAuthority: Bool
+    var canAdminProfile: Bool
+    var canWriteRoots: Bool
     var canExportRecoveryPhrase: Bool
     var deviceLinkRequest: String
     var deviceLinkInvite: String
     var inboundDeviceLinkRequests: [NativeDeviceLinkRequest]
 
+    var ownerPubkey: String { currentAppKeyNpub }
+    var devicePubkey: String { currentAppKeyNpub }
+    var hasOwnerSigningAuthority: Bool { canAdminProfile }
+
     enum CodingKeys: String, CodingKey {
-        case ownerPubkey = "owner_pubkey"
-        case devicePubkey = "device_pubkey"
+        case profileId = "profile_id"
+        case currentAppKeyPubkey = "current_app_key_pubkey"
+        case currentAppKeyNpub = "current_app_key_npub"
+        case currentAppKeyLabel = "current_app_key_label"
         case deviceLabel = "device_label"
         case authorizationState = "authorization_state"
-        case hasOwnerSigningAuthority = "has_owner_signing_authority"
+        case canAdminProfile = "can_admin_profile"
+        case canWriteRoots = "can_write_roots"
         case canExportRecoveryPhrase = "can_export_recovery_phrase"
         case deviceLinkRequest = "device_link_request"
         case deviceLinkInvite = "device_link_invite"

@@ -599,7 +599,7 @@ pub(crate) fn files_root_apply_label(
     outcome: &iris_drive_core::relay_sync::FilesRootApply,
 ) -> &'static str {
     match outcome {
-        iris_drive_core::relay_sync::FilesRootApply::NotOurOwner => "not_our_owner",
+        iris_drive_core::relay_sync::FilesRootApply::NotOurAppKey => "not_our_app_key",
         iris_drive_core::relay_sync::FilesRootApply::UnknownDrive => "unknown_drive",
         iris_drive_core::relay_sync::FilesRootApply::StaleTimestamp => "stale_timestamp",
         iris_drive_core::relay_sync::FilesRootApply::Applied => "applied",

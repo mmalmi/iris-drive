@@ -367,8 +367,8 @@ pub enum DriveRootApply {
 /// Result of applying a web-compatible hashtree root event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilesRootApply {
-    /// Event author doesn't match our owner.
-    NotOurOwner,
+    /// Event author doesn't match our current `AppKey`.
+    NotOurAppKey,
     /// The tree name does not match a configured drive id.
     UnknownDrive,
     /// Older than the local root we already mapped to this device.
@@ -466,14 +466,12 @@ fn apply_root_to_device_roots(
     Ok(DriveRootApply::Applied)
 }
 
-/// Apply a standard web hashtree root event to the local primary device root.
+/// Apply a standard web hashtree root event to the local primary `AppKey` root.
 ///
-/// Web Iris apps publish one owner-signed mutable root per tree. Native Iris
-/// Drive stores roots per authorized device, so an owner-capable native client
-/// imports that web root as its own current device contribution. Native
-/// drive-root events remain the richer multi-device protocol; this bridge makes
-/// the web root an interoperable source of truth for restored web accounts and
-/// browser-origin edits.
+/// Web Iris apps publish one signer-scoped mutable root per tree. Native Iris
+/// Drive stores roots per authorized `AppKey`, so this bridge imports a
+/// current-`AppKey` web root as that `AppKey`'s native contribution. Native
+/// drive-root events remain the richer multi-AppKey protocol.
 pub fn apply_remote_files_root_event(
     config: &mut AppConfig,
     event: &Event,
@@ -505,8 +503,8 @@ pub fn apply_remote_files_root_event(
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if parsed.event.pubkey != account.owner_pubkey {
-        return Ok(FilesRootApply::NotOurOwner);
+    if parsed.event.pubkey != account.device_pubkey {
+        return Ok(FilesRootApply::NotOurAppKey);
     }
     let device_pubkey = account.device_pubkey.clone();
     let Some(drive) = config
@@ -629,14 +627,14 @@ pub async fn publish_drive_root(
     Ok(*output.id())
 }
 
-/// Publish the owner-private drive.iris.to-compatible mutable tree root.
+/// Publish the current-AppKey private drive.iris.to-compatible mutable tree root.
 pub async fn publish_files_root(
     client: &Client,
-    owner_keys: &Keys,
+    app_key: &Keys,
     tree_name: &str,
     root: &DeviceRootRef,
 ) -> Result<nostr_sdk::EventId, RelayError> {
-    let event = build_private_hashtree_root_event(owner_keys, tree_name, root)?;
+    let event = build_private_hashtree_root_event(app_key, tree_name, root)?;
     let output = client
         .send_event(event)
         .await
@@ -644,17 +642,17 @@ pub async fn publish_files_root(
     Ok(*output.id())
 }
 
-/// Fetch the latest standard hashtree root for `owner_pubkey_hex/tree_name`.
+/// Fetch the latest standard hashtree root for `app_key_pubkey_hex/tree_name`.
 pub async fn fetch_latest_files_root(
     client: &Client,
-    owner_pubkey_hex: &str,
+    app_key_pubkey_hex: &str,
     tree_name: &str,
     timeout: Duration,
 ) -> Result<Option<Event>, RelayError> {
-    let owner = PublicKey::from_hex(owner_pubkey_hex)
+    let app_key = PublicKey::from_hex(app_key_pubkey_hex)
         .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
     let filter = Filter::new()
-        .author(owner)
+        .author(app_key)
         .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
         .identifier(tree_name)
         .custom_tag(
@@ -704,16 +702,16 @@ pub async fn fetch_iris_profile_roster_ops(
 /// approved devices' events flow in automatically.
 #[must_use]
 pub fn subscription_filters(
-    owner_pubkey_hex: &str,
+    current_app_key_pubkey_hex: &str,
     root_scope_id: &str,
     drive_id: &str,
 ) -> Vec<Filter> {
-    subscription_filters_for_shared_roots(owner_pubkey_hex, root_scope_id, drive_id, &[])
+    subscription_filters_for_shared_roots(current_app_key_pubkey_hex, root_scope_id, drive_id, &[])
 }
 
 #[must_use]
 pub fn subscription_filters_for_shared_roots(
-    owner_pubkey_hex: &str,
+    current_app_key_pubkey_hex: &str,
     root_scope_id: &str,
     drive_id: &str,
     share_ids: &[IrisProfileId],
@@ -739,10 +737,10 @@ pub fn subscription_filters_for_shared_roots(
         filters.push(iris_profile_roster_op_filter(*share_id));
         push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
     }
-    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
+    if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
         filters.push(
             Filter::new()
-                .author(owner)
+                .author(current_app_key)
                 .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
                 .identifier(drive_id)
                 .custom_tag(

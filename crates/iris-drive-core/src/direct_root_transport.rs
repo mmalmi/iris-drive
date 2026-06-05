@@ -57,7 +57,7 @@ impl DirectRootExchange {
             return Ok(());
         };
         let root_scope_id = state.root_scope_id();
-        self.subscribe_owner_stream(&root_scope_id, sync).await;
+        self.subscribe_profile_stream(&root_scope_id, sync).await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let events = self.events_for_publish(
             build_current_direct_root_events(config_dir, &config, state)
@@ -167,8 +167,8 @@ impl DirectRootExchange {
         }
     }
 
-    async fn subscribe_owner_stream(&mut self, owner_pubkey: &str, sync: &FsFipsBlockSync) {
-        let stream = direct_root_mesh_stream(owner_pubkey);
+    async fn subscribe_profile_stream(&mut self, root_scope_id: &str, sync: &FsFipsBlockSync) {
+        let stream = direct_root_mesh_stream(root_scope_id);
         let peers_changed = self.refresh_known_root_peers(sync).await;
         if self.subscribed_streams.insert(stream.clone()) || peers_changed {
             let stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
@@ -315,8 +315,8 @@ fn direct_root_event(key: String, event: &Event) -> DirectRootEvent {
 }
 
 #[must_use]
-pub fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
-    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
+pub fn direct_root_mesh_stream(root_scope_id: &str) -> String {
+    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{root_scope_id}")
 }
 
 pub async fn apply_direct_root_event(

@@ -19,12 +19,12 @@ pub(crate) struct DirectRootExchange {
 }
 
 impl DirectRootExchange {
-    async fn subscribe_owner_stream(&mut self, owner_pubkey: &str, sync: Option<&FsFipsBlockSync>) {
+    async fn subscribe_profile_stream(&mut self, root_scope_id: &str, sync: Option<&FsFipsBlockSync>) {
         let Some(sync) = sync else {
             self.subscribed_streams.clear();
             return;
         };
-        let stream = direct_root_mesh_stream(owner_pubkey);
+        let stream = direct_root_mesh_stream(root_scope_id);
         let peers_changed = self.refresh_known_mesh_peers(sync).await;
         if self.subscribed_streams.insert(stream.clone()) || peers_changed {
             let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
@@ -51,7 +51,7 @@ impl DirectRootExchange {
             return Ok(());
         };
         let root_scope_id = state.root_scope_id();
-        self.subscribe_owner_stream(&root_scope_id, Some(sync)).await;
+        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let events = self.events_for_publish(build_current_sync_events(config_dir, config, state).await?);
         let now = std::time::Instant::now();
@@ -157,7 +157,7 @@ impl DirectRootExchange {
             return;
         };
         if let Some(state) = config.account.as_ref() {
-            self.subscribe_owner_stream(&state.root_scope_id(), Some(sync))
+            self.subscribe_profile_stream(&state.root_scope_id(), Some(sync))
                 .await;
         }
     }
@@ -397,7 +397,7 @@ async fn append_primary_drive_root_events(
             &event,
         )?);
 
-        if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
+        if state.can_write_roots() {
             let account = Account::load(state.clone(), config_dir).context("loading account")?;
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
                 account.device.keys(),
@@ -408,7 +408,7 @@ async fn append_primary_drive_root_events(
             events.push(direct_root_event(
                 format!(
                     "files-root:{}:{}:{}",
-                    state.owner_pubkey, drive.drive_id, root.root_cid
+                    state.device_pubkey, drive.drive_id, root.root_cid
                 ),
                 &event,
             )?);
@@ -541,8 +541,8 @@ pub(crate) fn direct_root_event(key: String, event: &Event) -> Result<DirectRoot
     })
 }
 
-pub(crate) fn direct_root_mesh_stream(owner_pubkey: &str) -> String {
-    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{owner_pubkey}")
+pub(crate) fn direct_root_mesh_stream(root_scope_id: &str) -> String {
+    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{root_scope_id}")
 }
 
 pub(crate) async fn ensure_publishable_root_locally_available(

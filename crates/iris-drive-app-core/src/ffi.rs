@@ -281,10 +281,10 @@ impl NativeAppRuntime {
                 self.admit_app_key_with_recovery_phrase(&recovery_phrase, &label);
             }
             NativeAppAction::LinkDevice {
-                owner_pubkey,
+                link_target,
                 device_label,
             } => {
-                self.link_device(&owner_pubkey, &device_label);
+                self.link_device(&link_target, &device_label);
             }
             NativeAppAction::Logout => self.logout(),
             NativeAppAction::ApproveDevice { request, label } => {
@@ -431,8 +431,8 @@ impl NativeAppRuntime {
         }
     }
 
-    fn link_device(&mut self, owner_pubkey: &str, device_label: &str) {
-        let target = match resolve_device_link_target(owner_pubkey) {
+    fn link_device(&mut self, link_target: &str, device_label: &str) {
+        let target = match resolve_device_link_target(link_target) {
             Ok(target) => target,
             Err(error) => {
                 self.state.error = error;
@@ -1189,10 +1189,9 @@ async fn run_device_link_exchange_async(
         .account
         .as_ref()
         .expect("account checked above");
-    let owner_pubkey = account_state.owner_pubkey.clone();
     let root_scope_id = account_state.root_scope_id();
     let relay_filters = iris_drive_core::relay_sync::subscription_filters(
-        &owner_pubkey,
+        &account_state.device_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );

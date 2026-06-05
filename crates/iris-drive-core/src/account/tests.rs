@@ -15,8 +15,8 @@ fn create_yields_admin_authorized_account() {
     assert!(acct.state.has_owner_signing_authority);
     assert!(acct.state.can_manage_devices());
     assert!(acct.state.is_authorized());
+    assert!(acct.state.can_write_roots());
     assert!(acct.owner_key.is_none());
-    assert_eq!(acct.state.owner_pubkey, acct.state.device_pubkey);
     assert_ne!(
         acct.state.device_pubkey,
         recovery_keys.pubkey_hex(),
@@ -85,8 +85,8 @@ fn restore_uses_provided_admin_device_nsec() {
 
     let dir_b = tempdir().unwrap();
     let restored = Account::restore(dir_b.path(), &nsec, None).unwrap();
-    assert_eq!(restored.state.owner_pubkey, original.state.owner_pubkey);
     assert_eq!(restored.state.device_pubkey, original.state.device_pubkey);
+    assert_ne!(restored.state.profile_id, original.state.profile_id);
     assert!(restored.state.has_owner_signing_authority);
     assert!(
         restored
@@ -145,7 +145,6 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let mut recovered = Account {
         state: AccountState {
             profile_id: owner.state.profile_id,
-            owner_pubkey: owner.state.owner_pubkey.clone(),
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
@@ -227,7 +226,6 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     let mut recovered = Account {
         state: AccountState {
             profile_id: owner.state.profile_id,
-            owner_pubkey: owner.state.owner_pubkey.clone(),
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
@@ -280,7 +278,6 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     let mut recovered = Account {
         state: AccountState {
             profile_id: owner.state.profile_id,
-            owner_pubkey: owner.state.owner_pubkey.clone(),
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
@@ -335,7 +332,6 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
     let mut recovered = Account {
         state: AccountState {
             profile_id: owner.state.profile_id,
-            owner_pubkey: owner.state.owner_pubkey.clone(),
             device_pubkey: recovered_pubkey.clone(),
             profile_roster_ops: owner.state.profile_roster_ops.clone(),
             device_link_secret: "recover-secret".into(),
@@ -394,7 +390,7 @@ fn link_starts_awaiting_approval_no_owner_key() {
     )
     .unwrap();
     assert_eq!(acct.state.profile_id, profile_id);
-    assert_eq!(acct.state.owner_pubkey, admin_app_key);
+    assert_ne!(acct.state.device_pubkey, admin_app_key);
     assert!(!acct.state.has_owner_signing_authority);
     assert_eq!(
         acct.state.authorization_state,
@@ -834,7 +830,6 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
     let snapshot_for_linked = owner_acct.state.app_keys.clone();
     let linked_state = AccountState {
         profile_id: owner_acct.state.profile_id,
-        owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey.clone(),
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),
@@ -875,7 +870,6 @@ fn revoked_device_cannot_decrypt_new_dck() {
 
     let linked_state = AccountState {
         profile_id: owner_acct.state.profile_id,
-        owner_pubkey: owner_acct.state.owner_pubkey.clone(),
         device_pubkey: linked_pubkey,
         profile_roster_ops: owner_acct.state.profile_roster_ops.clone(),
         device_link_secret: "linked-secret".into(),

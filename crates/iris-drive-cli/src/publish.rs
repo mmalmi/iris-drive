@@ -448,7 +448,7 @@ pub(crate) async fn publish_current_state(
             Err(error) => report.drive_root_publish_error = Some(error),
         }
 
-        if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
+        if state.can_write_roots() {
             let account = Account::load(state.clone(), config_dir).context("loading account")?;
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,

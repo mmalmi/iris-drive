@@ -219,7 +219,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_account.device_link_invite,
+        link_target: owner_account.device_link_invite,
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();

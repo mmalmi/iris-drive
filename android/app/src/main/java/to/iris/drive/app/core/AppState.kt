@@ -185,10 +185,10 @@ internal object NativeActions {
             .put("device_label", deviceLabel)
             .toString()
 
-    fun linkDevice(ownerPubkey: String, deviceLabel: String): String =
+    fun linkDevice(linkTarget: String, deviceLabel: String): String =
         JSONObject()
             .put("type", "link_device")
-            .put("owner_pubkey", ownerPubkey)
+            .put("link_target", linkTarget)
             .put("device_label", deviceLabel)
             .toString()
 
@@ -306,11 +306,11 @@ internal object NativeActions {
 
 private fun JSONObject.toAccount(): AccountState =
     AccountState(
-        ownerPubkey = optString("owner_pubkey"),
-        devicePubkey = optString("device_pubkey"),
+        ownerPubkey = optString("current_app_key_npub"),
+        devicePubkey = optString("current_app_key_npub"),
         deviceLabel = optString("device_label"),
         authorizationState = optString("authorization_state"),
-        hasOwnerSigningAuthority = optBoolean("has_owner_signing_authority"),
+        hasOwnerSigningAuthority = optBoolean("can_admin_profile"),
         canExportRecoveryPhrase = optBoolean("can_export_recovery_phrase"),
         deviceLinkRequest = optString("device_link_request"),
         deviceLinkInvite = optString("device_link_invite"),

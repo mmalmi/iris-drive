@@ -415,7 +415,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     }
     {
         let model = Rc::clone(&model);
-        copy_owner_button.connect_clicked(move |_| copy_account_key(&model, "owner_npub"));
+        copy_owner_button.connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
     }
     {
         let model = Rc::clone(&model);

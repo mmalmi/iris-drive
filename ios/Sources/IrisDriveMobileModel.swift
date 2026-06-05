@@ -534,7 +534,7 @@ final class IrisDriveMobileModel: ObservableObject {
             await self.dispatchInBackground(
                 [
                     "type": "link_device",
-                    "owner_pubkey": owner,
+                    "link_target": owner,
                     "device_label": self.deviceLabel,
                 ],
                 invalidatePendingState: true

@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use hashtree_core::Cid;
 use nostr_sdk::Event;
 
-use crate::account::{Account, AccountState};
+use crate::account::AccountState;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::daemon::Daemon;
@@ -161,23 +161,19 @@ pub async fn sync_once_with_fips(
     report.drive_root_events_skipped = drive_roots.skipped;
     let mut root_cids_to_download = drive_roots.root_cids_to_download;
 
-    match relay_sync::fetch_latest_files_root(
-        &client,
-        &state.owner_pubkey,
-        PRIMARY_DRIVE_ID,
-        timeout,
-    )
-    .await
-    {
-        Ok(Some(ev)) => {
-            report.files_root_event_seen = true;
-            if state.can_manage_devices() && state.device_pubkey == state.owner_pubkey {
-                let account_state = config
-                    .account
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("not initialized; create a profile first"))?;
+    if let Some(account_state) = config.account.clone().filter(AccountState::can_write_roots) {
+        match relay_sync::fetch_latest_files_root(
+            &client,
+            &account_state.device_pubkey,
+            PRIMARY_DRIVE_ID,
+            timeout,
+        )
+        .await
+        {
+            Ok(Some(ev)) => {
+                report.files_root_event_seen = true;
                 let account =
-                    Account::load(account_state, config_dir).context("loading account")?;
+                    crate::Account::load(account_state, config_dir).context("loading account")?;
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
                     &ev,
@@ -192,14 +188,12 @@ pub async fn sync_once_with_fips(
                 {
                     push_unique(&mut root_cids_to_download, root_ref.root_cid.clone());
                 }
-            } else {
-                report.files_root_event_outcome = "account_key_unavailable".to_string();
             }
-        }
-        Ok(None) => {}
-        Err(error) => {
-            report.files_root_event_outcome = "fetch_error".to_string();
-            report.files_root_fetch_error = Some(format!("{error:#}"));
+            Ok(None) => {}
+            Err(error) => {
+                report.files_root_event_outcome = "fetch_error".to_string();
+                report.files_root_fetch_error = Some(format!("{error:#}"));
+            }
         }
     }
 
@@ -282,7 +276,7 @@ fn pick_relays(config: &AppConfig, relay_override: &[String]) -> Vec<String> {
 fn files_root_apply_label(outcome: &relay_sync::FilesRootApply) -> &'static str {
     match outcome {
         relay_sync::FilesRootApply::Applied => "applied",
-        relay_sync::FilesRootApply::NotOurOwner => "not_our_owner",
+        relay_sync::FilesRootApply::NotOurAppKey => "not_our_app_key",
         relay_sync::FilesRootApply::UnknownDrive => "unknown_drive",
         relay_sync::FilesRootApply::StaleTimestamp => "stale",
     }

@@ -67,10 +67,10 @@ public sealed class IrisDriveStatusData
         {
             Initialized = account.HasValue,
             DriveName = NativeDriveName(ui),
-            OwnerNpub = account.HasValue ? String(account.Value, "owner_pubkey") : null,
-            DeviceNpub = account.HasValue ? String(account.Value, "device_pubkey") : null,
+            OwnerNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
+            DeviceNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
             HasOwnerSigningAuthority =
-                account.HasValue && Bool(account.Value, "has_owner_signing_authority"),
+                account.HasValue && Bool(account.Value, "can_admin_profile"),
             CanExportRecoveryPhrase =
                 account.HasValue && Bool(account.Value, "can_export_recovery_phrase"),
             AuthorizationState =

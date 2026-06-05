@@ -404,7 +404,7 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) {
             "last_block_sync",
             "block_sync_by_root",
             "relays",
-            "owner_npub",
+            "current_app_key_npub",
             "provider_update_mode",
             "watch_debounce_ms",
             "mount",

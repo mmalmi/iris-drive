@@ -123,14 +123,14 @@ pub(crate) fn apply_files_root_event(
     account_state: AccountState,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
-    if !account_state.can_manage_devices() || account_state.device_pubkey != account_state.owner_pubkey {
+    if !account_state.can_write_roots() {
         println!(
             "{}",
             json!({
                 "event": "files_root",
                 "event_id": event.id.to_hex(),
                 "author": account_npub(&event.pubkey.to_hex()),
-                "outcome": "account_key_unavailable",
+                "outcome": "app_key_cannot_write_roots",
             })
         );
         return Ok(());

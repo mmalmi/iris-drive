@@ -130,9 +130,6 @@ pub struct InboundDeviceLinkRequest {
 #[serde(deny_unknown_fields)]
 pub struct AccountState {
     pub profile_id: IrisProfileId,
-    /// Historical request-target field. New accounts store their first admin
-    /// `AppKey` here; linked installs store the admin `AppKey` they request from.
-    pub owner_pubkey: String,
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
@@ -208,6 +205,17 @@ impl AccountState {
             .map_or(self.has_owner_signing_authority, |snap| {
                 snap.is_admin(&self.device_pubkey)
             })
+    }
+
+    /// Can this `AppKey` publish mutable roots for this profile?
+    #[must_use]
+    pub fn can_write_roots(&self) -> bool {
+        if !self.profile_roster_ops.is_empty() {
+            return self
+                .profile_projection()
+                .can_write_roots(&self.device_pubkey);
+        }
+        self.is_authorized()
     }
 
     /// Recompute `authorization_state` from the current `AppKeys` snapshot.
@@ -449,7 +457,6 @@ impl Account {
 
         let mut state = AccountState {
             profile_id,
-            owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
@@ -512,7 +519,6 @@ impl Account {
 
         let mut state = AccountState {
             profile_id,
-            owner_pubkey: device.pubkey_hex(),
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),
@@ -564,7 +570,6 @@ impl Account {
 
         let state = AccountState {
             profile_id,
-            owner_pubkey: admin_app_key_hex,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),
             device_link_secret: default_device_link_secret(),

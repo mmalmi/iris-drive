@@ -295,7 +295,7 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
 
     assert!(
         subscription_filters(
-            &acct.state.owner_pubkey,
+            &acct.state.device_pubkey,
             &acct.state.root_scope_id(),
             crate::PRIMARY_DRIVE_ID,
         )
@@ -344,7 +344,7 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
     .unwrap();
 
     let filters = subscription_filters_for_shared_roots(
-        &owner.state.owner_pubkey,
+        &owner.state.device_pubkey,
         &owner.state.root_scope_id(),
         crate::PRIMARY_DRIVE_ID,
         &[folder.share_id],
@@ -622,7 +622,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
 }
 
 #[test]
-fn apply_files_root_event_from_owner_maps_to_current_device() {
+fn apply_files_root_event_from_current_app_key_maps_to_current_device() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let root = encrypted_root(0x5a, 1_700_000_000, 0);
@@ -703,7 +703,7 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
 }
 
 #[test]
-fn apply_files_root_event_from_foreign_owner_ignored() {
+fn apply_files_root_event_from_foreign_app_key_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
     let other_owner = Keys::generate();
@@ -712,7 +712,7 @@ fn apply_files_root_event_from_foreign_owner_ignored() {
 
     let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_owner)).unwrap();
 
-    assert_eq!(outcome, FilesRootApply::NotOurOwner);
+    assert_eq!(outcome, FilesRootApply::NotOurAppKey);
     assert!(cfg.drive("main").unwrap().device_roots.is_empty());
 }
 

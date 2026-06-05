@@ -239,7 +239,6 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let mut restored_config =
         AppConfig::load_or_default(config_path_in(restored_dir.path())).expect("config loads");
     let mut awaiting_state = restored_config.account.take().expect("state exists");
-    awaiting_state.owner_pubkey = owner_state.owner_pubkey.clone();
     awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
     awaiting_state.has_owner_signing_authority = false;
@@ -449,7 +448,7 @@ fn link_device_rejects_bare_app_key_without_profile_target() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let state = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_account.current_app_key_npub,
+        link_target: owner_account.current_app_key_npub,
         device_label: "Phone".to_owned(),
     });
 
@@ -537,7 +536,7 @@ fn link_action_tracks_pending_approval() {
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
 
     let state = app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: invite,
+        link_target: invite,
         device_label: "iPhone".to_owned(),
     });
 
@@ -579,7 +578,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite.clone(),
+        link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -644,7 +643,7 @@ fn delete_device_json_action_revokes_linked_device() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite.clone(),
+        link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -691,7 +690,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite.clone(),
+        link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -735,7 +734,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     assert_eq!(refreshed.ui.sync.status_label, "Sync paused");
 
     let relinked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite,
+        link_target: owner_invite,
         device_label: "Phone".to_owned(),
     });
     let account = relinked.ui.account.as_ref().expect("account exists");
@@ -762,7 +761,7 @@ fn native_fips_status_drives_device_online_presence() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: owner_invite,
+        link_target: owner_invite,
         device_label: "Phone".to_owned(),
     });
     let linked_account = linked.ui.account.unwrap();
@@ -874,7 +873,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: invite,
+        link_target: invite,
         device_label: "Phone".to_owned(),
     });
     let linked_device = linked.ui.account.unwrap().current_app_key_npub;
@@ -932,7 +931,7 @@ fn owner_can_reject_inbound_device_link_request() {
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        owner_pubkey: invite,
+        link_target: invite,
         device_label: "Phone".to_owned(),
     });
     let linked_device = linked.ui.account.unwrap().current_app_key_npub;

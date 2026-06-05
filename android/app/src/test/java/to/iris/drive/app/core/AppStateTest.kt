@@ -114,8 +114,7 @@ class AppStateTest {
             {
               "ui": {
                 "account": {
-                  "owner_pubkey": "owner",
-                  "device_pubkey": "owner",
+                  "current_app_key_npub": "npub1app",
                   "can_export_recovery_phrase": true
                 }
               },

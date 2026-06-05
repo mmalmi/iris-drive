@@ -275,11 +275,7 @@ pub fn iris_profile_summary(state: &AccountState) -> IrisProfileSummary {
             .and_then(|facet| facet.label.clone())
             .or_else(|| state.device_label.clone()),
         authorization_state: authorization_state_key(state.authorization_state).to_owned(),
-        can_write_roots: if projection.active_facets.is_empty() {
-            state.is_authorized()
-        } else {
-            projection.can_write_roots(&state.device_pubkey)
-        },
+        can_write_roots: state.can_write_roots(),
         can_admin_profile: if projection.active_facets.is_empty() {
             state.can_manage_devices()
         } else {
