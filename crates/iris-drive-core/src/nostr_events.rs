@@ -20,6 +20,7 @@ use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::IrisProfileId;
 use crate::config::DeviceRootRef;
 use crate::device_link_transport::DeviceLinkRequestFrame;
 use crate::root_meta::{RootObservation, RootParent};
@@ -27,7 +28,7 @@ use crate::root_meta::{RootObservation, RootParent};
 /// NIP-78 parameterized-replaceable kind for AppKey-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30078;
 
-/// NIP-78 parameterized-replaceable kind for device-signed join requests.
+/// NIP-78 parameterized-replaceable kind for AppKey-signed join requests.
 pub const KIND_DEVICE_LINK_REQUEST: u16 = 30078;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
@@ -35,8 +36,8 @@ pub const KIND_HASHTREE_ROOT: u16 = 30_078;
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 #[must_use]
-pub fn device_link_request_d_tag(owner_pubkey_hex: &str) -> String {
-    format!("iris-drive/{owner_pubkey_hex}/device-link-request")
+pub fn device_link_request_d_tag(profile_id: IrisProfileId) -> String {
+    format!("iris-drive/{profile_id}/device-link-request")
 }
 
 #[must_use]
@@ -92,10 +93,12 @@ pub enum WireError {
     MissingRootHash,
     #[error("drive-root key is not available for this device")]
     RootKeyUnavailable,
-    #[error("device-link d-tag owner {d_tag_owner} does not match request owner {frame_owner}")]
-    DeviceLinkOwnerMismatch {
-        d_tag_owner: String,
-        frame_owner: String,
+    #[error(
+        "device-link d-tag profile {d_tag_profile} does not match request profile {frame_profile}"
+    )]
+    DeviceLinkProfileMismatch {
+        d_tag_profile: IrisProfileId,
+        frame_profile: IrisProfileId,
     },
     #[error("device-link event signer {signer} does not match request device {device}")]
     DeviceLinkSignerMismatch { signer: String, device: String },
@@ -123,8 +126,8 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Build a signed device-link request event. Signed by the requesting device;
-/// the owner-scoped d-tag routes the request to admins for that account.
+/// Build a signed device-link request event. Signed by the requesting `AppKey`;
+/// the profile-scoped d-tag routes the request to admins for that `IrisProfile`.
 pub fn build_device_link_request_event(
     device_keys: &Keys,
     frame: &DeviceLinkRequestFrame,
@@ -138,9 +141,7 @@ pub fn build_device_link_request_event(
     let builder = EventBuilder::new(
         Kind::from(KIND_DEVICE_LINK_REQUEST),
         content_json,
-        [Tag::identifier(device_link_request_d_tag(
-            &frame.owner_pubkey,
-        ))],
+        [Tag::identifier(device_link_request_d_tag(frame.profile_id))],
     );
     builder
         .to_event(device_keys)
@@ -157,7 +158,7 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
         });
     }
     let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
-    let d_tag_owner = parse_device_link_request_d_tag(d_tag)?;
+    let d_tag_profile = parse_device_link_request_d_tag(d_tag)?;
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
@@ -167,10 +168,10 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     PublicKey::from_hex(&frame.device_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    if d_tag_owner != frame.owner_pubkey {
-        return Err(WireError::DeviceLinkOwnerMismatch {
-            d_tag_owner,
-            frame_owner: frame.owner_pubkey,
+    if d_tag_profile != frame.profile_id {
+        return Err(WireError::DeviceLinkProfileMismatch {
+            d_tag_profile,
+            frame_profile: frame.profile_id,
         });
     }
     let signer = event.pubkey.to_hex();
@@ -183,20 +184,21 @@ pub fn parse_device_link_request_event(event: &Event) -> Result<DeviceLinkReques
     Ok(frame)
 }
 
-fn parse_device_link_request_d_tag(d_tag: &str) -> Result<String, WireError> {
+fn parse_device_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireError> {
     let rest = d_tag
         .strip_prefix("iris-drive/")
         .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
-    let owner = rest.strip_suffix("/device-link-request").ok_or_else(|| {
+    let profile = rest.strip_suffix("/device-link-request").ok_or_else(|| {
         WireError::DTagMalformed(format!("no /device-link-request suffix: {d_tag}"))
     })?;
-    if owner.is_empty() {
+    if profile.is_empty() {
         return Err(WireError::DTagMalformed(format!(
-            "empty device-link owner: {d_tag}"
+            "empty device-link profile: {d_tag}"
         )));
     }
-    PublicKey::from_hex(owner).map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    Ok(owner.to_string())
+    profile
+        .parse()
+        .map_err(|error| WireError::DTagMalformed(format!("invalid device-link profile: {error}")))
 }
 
 /// Compute the d-tag for a drive-root event.
@@ -354,7 +356,7 @@ pub fn build_private_hashtree_root_event(
 
 /// Parse + verify a drive-root event. Returns
 /// `(device_pubkey_hex, root_scope_id, drive_id, DeviceRootRef)`.
-/// The device pubkey is the event's author; the owner pubkey and
+/// The device pubkey is the event's author; the root scope id and
 /// drive id are extracted from the d-tag.
 pub fn parse_drive_root_event(
     event: &Event,

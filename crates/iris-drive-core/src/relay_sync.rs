@@ -575,7 +575,7 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
     Ok(client)
 }
 
-/// Publish a signed device-link request from the requesting device.
+/// Publish a signed device-link request from the requesting `AppKey`.
 pub async fn publish_device_link_request(
     client: &Client,
     device_keys: &Keys,
@@ -705,7 +705,7 @@ pub async fn fetch_iris_profile_roster_ops(
 /// roster format.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
-/// the d-tag `iris-drive/<owner>/<drive>/root` already pins the drive,
+/// the d-tag `iris-drive/<profile_or_share_id>/<drive>/root` already pins the drive,
 /// and `apply_remote_drive_root_event` rejects events from
 /// unauthorized devices. Skipping the author filter means the daemon
 /// doesn't need to re-subscribe every time the roster changes — newly
@@ -729,15 +729,15 @@ pub fn subscription_filters_for_shared_roots(
     let mut filters = Vec::new();
     if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
         filters.push(iris_profile_roster_op_filter(profile_id));
+        filters.push(
+            Filter::new()
+                .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
+                .custom_tag(
+                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+                    [device_link_request_d_tag(profile_id)],
+                ),
+        );
     }
-    filters.push(
-        Filter::new()
-            .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
-            .custom_tag(
-                SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                [device_link_request_d_tag(owner_pubkey_hex)],
-            ),
-    );
     push_drive_root_filters(&mut filters, root_scope_id, drive_id);
     for share_id in share_ids {
         let share_scope = share_id.to_string();
@@ -781,7 +781,7 @@ fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
 }
 
 /// Fetch drive-root events from any of `authorized_devices` for
-/// `(owner_pubkey, drive_id)`. Returns the latest event from each
+/// `(root_scope_id, drive_id)`. Returns the latest event from each
 /// device (one event per device).
 pub async fn fetch_drive_roots(
     client: &Client,

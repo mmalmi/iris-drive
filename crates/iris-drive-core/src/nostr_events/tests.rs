@@ -199,9 +199,38 @@ fn device_link_request_event_round_trips_and_is_its_own_coordinate() {
     assert!(!is_drive_root_event_coordinate(&event));
     assert_eq!(
         event.identifier(),
-        Some(device_link_request_d_tag(&frame.owner_pubkey).as_str())
+        Some(device_link_request_d_tag(frame.profile_id).as_str())
     );
     assert_eq!(parse_device_link_request_event(&event).unwrap(), frame);
+}
+
+#[test]
+fn device_link_request_event_d_tag_is_profile_scoped() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+        schema: 1,
+        profile_id: crate::IrisProfileId::new_v4(),
+        owner_pubkey: owner.public_key().to_hex(),
+        device_pubkey: device.public_key().to_hex(),
+        link_secret: "join-secret".to_string(),
+        label: None,
+        requested_at: 123,
+        url: "iris-drive://device-link?device=example".to_string(),
+    };
+    let other_profile = crate::IrisProfileId::new_v4();
+    let event = EventBuilder::new(
+        Kind::from(KIND_DEVICE_LINK_REQUEST),
+        serde_json::to_string(&frame).unwrap(),
+        [Tag::identifier(device_link_request_d_tag(other_profile))],
+    )
+    .to_event(&device)
+    .unwrap();
+
+    assert!(matches!(
+        parse_device_link_request_event(&event),
+        Err(WireError::DeviceLinkProfileMismatch { .. })
+    ));
 }
 
 #[test]

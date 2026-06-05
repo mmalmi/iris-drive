@@ -212,13 +212,14 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 }
 
 #[test]
-fn subscription_filters_match_device_link_requests_for_owner() {
+fn subscription_filters_match_device_link_requests_for_profile() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let owner_hex = owner.public_key().to_hex();
+    let profile_id = IrisProfileId::new_v4();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
-        profile_id: IrisProfileId::new_v4(),
+        profile_id,
         owner_pubkey: owner_hex.clone(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
@@ -230,10 +231,10 @@ fn subscription_filters_match_device_link_requests_for_owner() {
 
     assert_eq!(
         event.identifier(),
-        Some(device_link_request_d_tag(&owner_hex).as_str())
+        Some(device_link_request_d_tag(profile_id).as_str())
     );
     assert!(
-        subscription_filters(&owner_hex, &IrisProfileId::new_v4().to_string(), "main")
+        subscription_filters(&owner_hex, &profile_id.to_string(), "main")
             .iter()
             .any(|filter| filter.match_event(&event))
     );
