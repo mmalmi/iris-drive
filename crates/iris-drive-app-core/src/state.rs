@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiState {
     pub roots: Vec<UiSyncRoot>,
+    pub shares: Vec<UiShare>,
     pub account: Option<UiAccount>,
     pub devices: Vec<UiDevice>,
     pub relays: Vec<String>,
@@ -32,6 +33,24 @@ pub struct UiSyncRoot {
     pub name: String,
     pub local_path: String,
     pub status: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct UiShare {
+    pub share_id: String,
+    pub display_name: String,
+    pub shared_with_me_path: String,
+    pub role: String,
+    pub role_label: String,
+    pub can_write: bool,
+    pub can_admin: bool,
+    pub current_key_epoch: Option<u64>,
+    pub has_current_key_wrap: bool,
+    pub key_unavailable: bool,
+    pub missing_key_wraps: Vec<String>,
+    pub participant_count: u64,
+    pub shortcut_paths: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

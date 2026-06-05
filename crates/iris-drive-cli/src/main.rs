@@ -37,6 +37,7 @@ mod device_link;
 mod drive;
 mod mount;
 mod publish;
+mod shares;
 mod stats;
 mod status;
 mod sync;
@@ -56,6 +57,8 @@ use device_link::*;
 use drive::*;
 #[allow(clippy::wildcard_imports)]
 use publish::*;
+#[allow(clippy::wildcard_imports)]
+use shares::*;
 #[allow(clippy::wildcard_imports)]
 use stats::*;
 #[allow(clippy::wildcard_imports)]
@@ -159,6 +162,7 @@ fn run_cli() -> ExitCode {
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
         Command::Stats => cmd_stats(&config_dir),
+        Command::Shares { command } => cmd_shares(&config_dir, command),
         Command::LinkInput { command } => cmd_link_input(command),
         Command::Devices(command) => cmd_devices(&config_dir, command),
         Command::NhashResolver { command } => cmd_nhash_resolver(&config_dir, command),

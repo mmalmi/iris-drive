@@ -62,7 +62,7 @@ pub(crate) use crate::native_provider::{
 };
 use crate::state::{
     NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus,
-    UiFipsStatus, UiPaths, UiRelayStatus, UiState, UiSyncRoot, UiSyncStatus,
+    UiFipsStatus, UiPaths, UiRelayStatus, UiShare, UiState, UiSyncRoot, UiSyncStatus,
 };
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -959,9 +959,11 @@ impl NativeAppRuntime {
             device_link_invite: device_link_invite_url(&account),
             inbound_device_link_requests: inbound_device_link_requests(&account),
         });
+        self.state.ui.shares = ui_shares_for_config(&config, &account.device_pubkey);
         if account.authorization_state == DeviceAuthorizationState::Revoked {
             self.set_sync_running(false);
             self.state.ui.roots.clear();
+            self.state.ui.shares.clear();
             self.state.ui.devices.clear();
             self.state.ui.snapshot_link.clear();
             self.refresh_ui_summary(None);
@@ -2215,6 +2217,51 @@ fn devices_from_account(
         can_demote_admin: device.can_demote_admin,
     })
     .collect()
+}
+
+fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiShare> {
+    iris_drive_core::shared_folder_views(
+        &config.shared_folders,
+        &config.share_shortcuts,
+        current_app_pubkey,
+    )
+    .into_iter()
+    .map(|share| UiShare {
+        share_id: share.share_id.to_string(),
+        display_name: share.display_name,
+        shared_with_me_path: share.shared_with_me_path,
+        role: share_role_key(share.local_role).to_owned(),
+        role_label: share_role_label(share.local_role).to_owned(),
+        can_write: share.can_write,
+        can_admin: share.can_admin,
+        current_key_epoch: share.current_key_epoch,
+        has_current_key_wrap: share.has_current_key_wrap,
+        key_unavailable: share.key_unavailable,
+        missing_key_wraps: share
+            .missing_key_wrap_pubkeys
+            .into_iter()
+            .map(|pubkey| iris_drive_core::device_summary::pubkey_npub(&pubkey))
+            .collect(),
+        participant_count: share.participant_count as u64,
+        shortcut_paths: share.shortcut_paths,
+    })
+    .collect()
+}
+
+fn share_role_key(role: iris_drive_core::ShareRole) -> &'static str {
+    match role {
+        iris_drive_core::ShareRole::Admin => "admin",
+        iris_drive_core::ShareRole::Editor => "editor",
+        iris_drive_core::ShareRole::Reader => "reader",
+    }
+}
+
+fn share_role_label(role: iris_drive_core::ShareRole) -> &'static str {
+    match role {
+        iris_drive_core::ShareRole::Admin => "Admin",
+        iris_drive_core::ShareRole::Editor => "Editor",
+        iris_drive_core::ShareRole::Reader => "Reader",
+    }
 }
 
 fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceConnectivity {

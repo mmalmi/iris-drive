@@ -13,6 +13,8 @@ use crate::iris_profile::{
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
+pub const SHARED_WITH_ME_DIR: &str = "Shared with me";
+
 #[derive(Debug, Error)]
 pub enum SharingError {
     #[error("share path: {0}")]
@@ -91,6 +93,11 @@ impl SharedFolder {
     pub fn projection(&self) -> IrisProfileRosterProjection {
         project_iris_profile_roster(self.share_id, self.roster_ops.clone())
     }
+
+    #[must_use]
+    pub fn shared_with_me_path(&self) -> String {
+        shared_with_me_path(&self.display_name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +128,161 @@ impl ShareShortcut {
             target_path,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
+#[serde(deny_unknown_fields)]
+pub struct SharedFolderView {
+    pub share_id: IrisProfileId,
+    pub display_name: String,
+    pub source_path: String,
+    pub shared_with_me_path: String,
+    pub local_role: ShareRole,
+    pub current_app_pubkey: String,
+    pub can_write: bool,
+    pub can_admin: bool,
+    pub current_key_epoch: Option<u64>,
+    pub has_current_key_wrap: bool,
+    pub key_unavailable: bool,
+    pub missing_key_wrap_pubkeys: Vec<String>,
+    pub participant_count: usize,
+    pub shortcut_paths: Vec<String>,
+}
+
+#[must_use]
+pub fn shared_folder_views(
+    shared_folders: &[SharedFolder],
+    share_shortcuts: &[ShareShortcut],
+    current_app_pubkey: &str,
+) -> Vec<SharedFolderView> {
+    let mut views = shared_folders
+        .iter()
+        .map(|folder| shared_folder_view(folder, share_shortcuts, current_app_pubkey))
+        .collect::<Vec<_>>();
+    views.sort_by(|left, right| {
+        left.shared_with_me_path
+            .cmp(&right.shared_with_me_path)
+            .then_with(|| left.share_id.cmp(&right.share_id))
+    });
+    views
+}
+
+#[must_use]
+pub fn shared_folder_view(
+    folder: &SharedFolder,
+    share_shortcuts: &[ShareShortcut],
+    current_app_pubkey: &str,
+) -> SharedFolderView {
+    let projection = folder.projection();
+    let current_key_epoch = projection.key_epochs.keys().next_back().copied();
+    let has_current_key_wrap = current_key_epoch.is_some_and(|epoch| {
+        projection.key_wrap_status(current_app_pubkey, epoch) == crate::KeyWrapStatus::Available
+    });
+    let missing_key_wrap_pubkeys = current_key_epoch.map_or_else(Vec::new, |epoch| {
+        projection.active_key_recipients_missing_wraps(epoch)
+    });
+    let mut shortcut_paths = share_shortcuts
+        .iter()
+        .filter(|shortcut| shortcut.share_id == folder.share_id)
+        .map(|shortcut| shortcut.path.clone())
+        .collect::<Vec<_>>();
+    shortcut_paths.sort();
+    SharedFolderView {
+        share_id: folder.share_id,
+        display_name: folder.display_name.clone(),
+        source_path: folder.source_path.clone(),
+        shared_with_me_path: folder.shared_with_me_path(),
+        local_role: share_role_for_pubkey(&projection, current_app_pubkey),
+        current_app_pubkey: current_app_pubkey.to_string(),
+        can_write: projection.can_write_roots(current_app_pubkey),
+        can_admin: projection.can_admin_profile(current_app_pubkey),
+        current_key_epoch,
+        has_current_key_wrap,
+        key_unavailable: !has_current_key_wrap,
+        missing_key_wrap_pubkeys,
+        participant_count: projection.active_facets.len(),
+        shortcut_paths,
+    }
+}
+
+pub fn default_share_shortcut_path(
+    share_shortcuts: &[ShareShortcut],
+    display_name: &str,
+    parent_path: &str,
+) -> Result<String, SharingError> {
+    let parent_path = if parent_path.trim_matches('/').is_empty() {
+        String::new()
+    } else {
+        normalize_provider_path(parent_path)
+            .map_err(|error| SharingError::Path(error.to_string()))?
+    };
+    let name = sanitized_provider_file_name(display_name);
+    Ok(unique_share_shortcut_path(
+        share_shortcuts,
+        &parent_path,
+        &name,
+    ))
+}
+
+#[must_use]
+pub fn shared_with_me_path(display_name: &str) -> String {
+    format!(
+        "{SHARED_WITH_ME_DIR}/{}",
+        sanitized_provider_file_name(display_name)
+    )
+}
+
+fn share_role_for_pubkey(
+    projection: &IrisProfileRosterProjection,
+    current_app_pubkey: &str,
+) -> ShareRole {
+    if projection.can_admin_profile(current_app_pubkey) {
+        ShareRole::Admin
+    } else if projection.can_write_roots(current_app_pubkey) {
+        ShareRole::Editor
+    } else {
+        ShareRole::Reader
+    }
+}
+
+fn unique_share_shortcut_path(
+    share_shortcuts: &[ShareShortcut],
+    parent_path: &str,
+    name: &str,
+) -> String {
+    let prefix = if parent_path.is_empty() {
+        String::new()
+    } else {
+        format!("{parent_path}/")
+    };
+    let existing = share_shortcuts
+        .iter()
+        .map(|shortcut| shortcut.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut candidate = format!("{prefix}{name}");
+    if !existing.contains(candidate.as_str()) {
+        return candidate;
+    }
+
+    let path = std::path::Path::new(name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Shared folder");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let mut index = 2;
+    while existing.contains(candidate.as_str()) {
+        candidate = format!("{prefix}{stem} ({index}){extension}");
+        index += 1;
+    }
+    candidate
 }
 
 pub fn create_shared_folder(
@@ -320,6 +482,58 @@ mod tests {
         let shortcut = ShareShortcut::new(folder.share_id, "Shared/Alpha", "").unwrap();
         assert_eq!(shortcut.path, "Shared/Alpha");
         assert_eq!(shortcut.target_path, "");
+    }
+
+    #[test]
+    fn shared_folder_view_surfaces_shared_with_me_and_shortcuts() {
+        let owner_keys = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let (recipient_keys, recipient) = recipient(ShareRole::Editor);
+        let folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            vec![recipient],
+            10,
+        )
+        .unwrap();
+        let shortcut = ShareShortcut::new(folder.share_id, "Projects/Alpha shared", "").unwrap();
+
+        let views = shared_folder_views(
+            std::slice::from_ref(&folder),
+            std::slice::from_ref(&shortcut),
+            &recipient_keys.public_key().to_hex(),
+        );
+
+        assert_eq!(views.len(), 1);
+        let view = &views[0];
+        assert_eq!(view.share_id, folder.share_id);
+        assert_eq!(view.shared_with_me_path, "Shared with me/Alpha");
+        assert_eq!(view.shortcut_paths, vec!["Projects/Alpha shared"]);
+        assert_eq!(view.local_role, ShareRole::Editor);
+        assert!(view.can_write);
+        assert!(!view.can_admin);
+        assert_eq!(view.current_key_epoch, Some(1));
+        assert!(view.has_current_key_wrap);
+        assert!(!view.key_unavailable);
+        assert!(view.missing_key_wrap_pubkeys.is_empty());
+        assert_eq!(view.participant_count, 2);
+    }
+
+    #[test]
+    fn default_share_shortcut_path_is_unique_under_my_drive_parent() {
+        let share_id = IrisProfileId::new_v4();
+        let existing = vec![
+            ShareShortcut::new(share_id, "Projects/Alpha", "").unwrap(),
+            ShareShortcut::new(share_id, "Projects/Alpha (2)", "").unwrap(),
+        ];
+
+        let path = default_share_shortcut_path(&existing, "Alpha", "Projects").unwrap();
+
+        assert_eq!(path, "Projects/Alpha (3)");
+        assert!(default_share_shortcut_path(&existing, "Alpha", "../Projects").is_err());
     }
 
     #[test]

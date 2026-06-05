@@ -106,6 +106,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.primary_status_label, "Ready");
     assert_eq!(state.ui.authorized_device_count, 1);
     assert_eq!(state.ui.online_device_count, 0);
+    assert!(state.ui.shares.is_empty());
 
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
@@ -116,6 +117,53 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
     assert_eq!(state.ui.sync.status_label, "Sync paused");
+}
+
+#[test]
+fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Mac".to_owned(),
+    });
+    assert!(created.error.is_empty(), "{}", created.error);
+
+    let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let account = iris_drive_core::Account::load(config.account.clone().unwrap(), dir.path())
+        .expect("account loads");
+    let folder = iris_drive_core::create_shared_folder(
+        account.device.keys(),
+        account.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Mac".to_owned()),
+        Vec::new(),
+        10,
+    )
+    .unwrap();
+    let shortcut =
+        iris_drive_core::ShareShortcut::new(folder.share_id, "Projects/Alpha shared", "").unwrap();
+    config.upsert_shared_folder(folder.clone());
+    config.upsert_share_shortcut(shortcut);
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let refreshed = app.refresh();
+
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    assert_eq!(refreshed.ui.shares.len(), 1);
+    let share = &refreshed.ui.shares[0];
+    assert_eq!(share.share_id, folder.share_id.to_string());
+    assert_eq!(share.display_name, "Alpha");
+    assert_eq!(share.shared_with_me_path, "Shared with me/Alpha");
+    assert_eq!(share.role, "admin");
+    assert_eq!(share.role_label, "Admin");
+    assert!(share.can_write);
+    assert!(share.can_admin);
+    assert_eq!(share.current_key_epoch, Some(1));
+    assert!(share.has_current_key_wrap);
+    assert!(!share.key_unavailable);
+    assert_eq!(share.participant_count, 1);
+    assert_eq!(share.shortcut_paths, vec!["Projects/Alpha shared"]);
 }
 
 #[test]
@@ -1090,19 +1138,27 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
 
 fn apply_latest_app_keys_event(from: &Path, to: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
-    let app_keys_event = nostr_sdk::Event::from_json(
-        &owner_config
-            .account
-            .as_ref()
-            .unwrap()
-            .app_keys_event
-            .as_ref()
-            .unwrap()
-            .event_json,
+    let owner_state = owner_config.account.as_ref().unwrap();
+    let app_keys_record = owner_state.app_keys_event.as_ref().unwrap();
+    let app_keys_event = nostr_sdk::Event::from_json(&app_keys_record.event_json).unwrap();
+    let frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+        schema: 1,
+        profile_id: owner_state.profile_id,
+        owner_pubkey: owner_state.owner_pubkey.clone(),
+        admin_device_pubkey: owner_state.device_pubkey.clone(),
+        profile_roster_ops: owner_state.profile_roster_ops.clone(),
+        app_keys: owner_state.app_keys.clone().unwrap(),
+        app_keys_event_id: app_keys_event.id.to_hex(),
+        app_keys_event_json: app_keys_event.as_json(),
+        sent_at: 123,
+    };
+    let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
+    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+        &mut linked_config,
+        &frame,
+        &app_keys_event,
+        &owner_state.device_pubkey,
     )
     .unwrap();
-    let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
-    iris_drive_core::relay_sync::apply_remote_app_keys_event(&mut linked_config, &app_keys_event)
-        .unwrap();
     linked_config.save(config_path_in(to)).unwrap();
 }

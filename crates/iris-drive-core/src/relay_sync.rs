@@ -401,21 +401,15 @@ fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
 fn can_accept_app_keys_from(
     account: &crate::account::AccountState,
     signer_pubkey: &str,
-    snapshot: &AppKeysSnapshot,
+    _snapshot: &AppKeysSnapshot,
 ) -> bool {
     if let Some(current) = account.app_keys.as_ref() {
         return current.is_admin(signer_pubkey);
     }
-    if account
-        .outbound_device_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_device_pubkey == signer_pubkey)
-    {
-        return snapshot.contains(&account.device_pubkey) && snapshot.is_admin(signer_pubkey);
-    }
-    signer_pubkey == account.owner_pubkey
-        && snapshot.contains(&account.device_pubkey)
-        && snapshot.is_admin(signer_pubkey)
+    // A bare AppKeys snapshot has no IrisProfileId. New links must be
+    // admitted by DeviceLinkRosterFrame/profile roster ops so they do not
+    // become authorized under their temporary local profile id.
+    false
 }
 
 /// Result of applying a remote drive-root event.

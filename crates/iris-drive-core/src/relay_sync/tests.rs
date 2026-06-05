@@ -202,6 +202,54 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 }
 
 #[test]
+fn bare_app_keys_event_does_not_bootstrap_pending_iris_profile_link() {
+    let admin_dir = tempdir().unwrap();
+    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut linked = Account::link(
+        linked_dir.path(),
+        admin.state.owner_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+    let linked_pubkey = linked.state.device_pubkey.clone();
+    let temporary_profile_id = linked.state.profile_id;
+    linked
+        .state
+        .queue_outbound_device_link_request(
+            admin.state.device_pubkey.clone(),
+            &admin.state.device_link_secret,
+            123,
+        )
+        .unwrap();
+    admin
+        .approve_device(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let event =
+        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
+    let mut cfg = AppConfig {
+        account: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(linked.state.root_scope_id()));
+
+    let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
+
+    assert_eq!(outcome, AppKeysApply::UnauthorizedSigner);
+    let linked_state = cfg.account.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, temporary_profile_id);
+    assert_eq!(
+        linked_state.authorization_state,
+        DeviceAuthorizationState::AwaitingApproval
+    );
+    assert!(linked_state.app_keys.is_none());
+    assert_eq!(
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        temporary_profile_id.to_string()
+    );
+}
+
+#[test]
 fn subscription_filters_match_device_link_requests_for_owner() {
     let owner = Keys::generate();
     let device = Keys::generate();

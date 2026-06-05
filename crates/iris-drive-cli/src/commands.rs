@@ -119,6 +119,11 @@ pub(crate) enum Command {
     Status,
     /// Print compact GUI summary stats as JSON.
     Stats,
+    /// List shared folders and add shortcuts into My Drive.
+    Shares {
+        #[command(subcommand)]
+        command: Option<SharesCmd>,
+    },
     /// Classify device-link, invite, and owner-key input using app-core parsing.
     #[command(name = "link-input")]
     LinkInput {
@@ -239,6 +244,26 @@ pub(crate) enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum SharesCmd {
+    /// List shared folders visible to this app install.
+    List,
+    /// Add a shortcut for a share into My Drive.
+    Shortcut {
+        /// Share UUID.
+        share_id: String,
+        /// Shortcut path in My Drive. Defaults to a unique root-level name.
+        #[arg(long)]
+        path: Option<String>,
+        /// Parent directory for the default shortcut path.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Path inside the share to open. Empty means the share root.
+        #[arg(long, default_value = "")]
+        target_path: String,
     },
 }
 
