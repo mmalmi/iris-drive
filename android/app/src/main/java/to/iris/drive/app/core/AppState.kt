@@ -70,7 +70,7 @@ internal data class ProfileState(
     val canExportRecoveryPhrase: Boolean = false,
     val appKeyLinkRequest: String,
     val appKeyLinkInvite: String,
-    val inboundAppKeyLinkRequests: List<DeviceLinkRequestState>,
+    val inboundAppKeyLinkRequests: List<AppKeyLinkRequestState>,
 )
 
 internal data class RecoverySecretExport(
@@ -81,7 +81,7 @@ internal data class RecoverySecretExport(
     val error: String = "",
 )
 
-internal data class DeviceLinkRequestState(
+internal data class AppKeyLinkRequestState(
     val devicePubkey: String,
     val label: String,
     val requestedAt: Long,
@@ -314,7 +314,7 @@ private fun JSONObject.toProfile(): ProfileState =
         canExportRecoveryPhrase = optBoolean("can_export_recovery_phrase"),
         appKeyLinkRequest = optString("app_key_link_request"),
         appKeyLinkInvite = optString("app_key_link_invite"),
-        inboundAppKeyLinkRequests = optJSONArray("inbound_app_key_link_requests").toDeviceLinkRequests(),
+        inboundAppKeyLinkRequests = optJSONArray("inbound_app_key_link_requests").toAppKeyLinkRequests(),
     )
 
 internal fun recoverySecretExportFromJson(text: String): RecoverySecretExport =
@@ -340,13 +340,13 @@ private fun JSONArray?.toStringList(): List<String> {
     }
 }
 
-private fun JSONArray?.toDeviceLinkRequests(): List<DeviceLinkRequestState> {
+private fun JSONArray?.toAppKeyLinkRequests(): List<AppKeyLinkRequestState> {
     if (this == null) return emptyList()
     return buildList {
         for (index in 0 until length()) {
             val item = optJSONObject(index) ?: continue
             add(
-                DeviceLinkRequestState(
+                AppKeyLinkRequestState(
                     devicePubkey = item.optString("app_key_pubkey"),
                     label = item.optString("label"),
                     requestedAt = item.optLong("requested_at"),

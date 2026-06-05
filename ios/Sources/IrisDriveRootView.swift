@@ -438,7 +438,6 @@ private struct RestoreRecoveryPhraseSetupView: View {
         index = min(words.count - 1, index + parts.count - 1)
     }
 }
-}
 
 private struct RestoreSecretKeySetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
@@ -788,9 +787,9 @@ private struct AddDeviceSheet: View {
                     }
                 }
 
-                if !model.inboundDeviceLinkRequests.isEmpty {
+                if !model.inboundAppKeyLinkRequests.isEmpty {
                     Section("Devices asking to join") {
-                        ForEach(model.inboundDeviceLinkRequests) { request in
+                        ForEach(model.inboundAppKeyLinkRequests) { request in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(request.label.isEmpty ? "New device" : request.label)
                                     .font(.headline)

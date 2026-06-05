@@ -8,7 +8,7 @@ use std::path::Path;
 fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();
     let owner_state = owner_config.profile.as_ref().unwrap();
-    let roster_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+    let roster_frame = iris_drive_core::app_key_link_transport::AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
         admin_app_key_pubkey: owner_state.app_key_pubkey.clone(),
@@ -16,7 +16,7 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
-    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &roster_frame,
         &owner_state.app_key_pubkey,

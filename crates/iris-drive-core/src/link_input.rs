@@ -13,7 +13,7 @@ use crate::IrisProfileId;
 use crate::app_key_link_invite::{
     APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
-use crate::device_link_transport::{app_key_approval_query, parse_app_key_approval_request};
+use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
 use crate::device_summary::pubkey_npub;
 
 const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
@@ -261,7 +261,7 @@ fn raw_query_value(query: &str, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::app_key_link_invite::encode_app_key_link_invite;
-    use crate::device_link_transport::encode_app_key_approval_request;
+    use crate::app_key_link_transport::encode_app_key_approval_request;
     use nostr_sdk::Keys;
     use nostr_sdk::nips::nip19::ToBech32;
 

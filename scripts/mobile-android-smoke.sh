@@ -121,7 +121,7 @@ if [[ "$add_debug_root" -eq 1 ]]; then
 fi
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
 "$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "$PROVIDER_AUTHORITY" >/dev/null
-"$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "device-link" >/dev/null
+"$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "app-key-link" >/dev/null
 "$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "invite" >/dev/null
 
 echo "Android smoke passed on adb serial: $serial"

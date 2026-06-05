@@ -81,7 +81,7 @@ const encryptionDeclarationId = envValue(['IRIS_DRIVE_TESTFLIGHT_APP_ENCRYPTION_
 const defaultPublicGroupName = 'Public Beta'
 const defaultPublicLinkLimit = 9999
 const defaultWhatsNew =
-  'Please test device linking, file sync, provider browsing, uploads, downloads, and feedback or crash reporting.'
+  'Please test AppKey linking, file sync, provider browsing, uploads, downloads, and feedback or crash reporting.'
 const defaultBetaDescription =
   'Iris Drive is a private file sync app that links the user-owned devices they choose and syncs files over the Iris Drive daemon.'
 const defaultReviewNotes =

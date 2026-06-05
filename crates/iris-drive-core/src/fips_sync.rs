@@ -21,10 +21,12 @@ use nostr_sdk::nips::nip19::ToBech32;
 use thiserror::Error;
 use tokio::task::JoinHandle;
 
+use crate::app_key_link_transport::{
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC,
+};
 use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
-use crate::device_link_transport::{DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC};
 use crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC;
 use crate::identity::AppKey;
 
@@ -34,7 +36,7 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
-const DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
+const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
 /// Shared public FIPS bootstrap/transit nodes. Kept in sync with nostr-vpn's
@@ -115,7 +117,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         if accepts_app_key_link_requests(config) {
             transport_settings.open_discovery_max_pending = transport_settings
                 .open_discovery_max_pending
-                .max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
+                .max(APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING);
         }
         let endpoint = Box::pin(bind_fips_endpoint(fips_endpoint_options(
             identity_nsec,
@@ -280,8 +282,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
 fn unconfigured_app_message_topics() -> [&'static str; 3] {
     [
-        DEVICE_LINK_REQUEST_APP_TOPIC,
-        DEVICE_LINK_ROSTER_APP_TOPIC,
+        APP_KEY_LINK_REQUEST_APP_TOPIC,
+        APP_KEY_LINK_ROSTER_APP_TOPIC,
         DIRECT_ROOT_APP_TOPIC,
     ]
 }
@@ -359,7 +361,7 @@ fn fips_endpoint_options(
     let mut open_discovery_max_pending = settings.open_discovery_max_pending;
     if accepts_app_key_link_requests(config) {
         open_discovery_max_pending =
-            open_discovery_max_pending.max(DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING);
+            open_discovery_max_pending.max(APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING);
     }
     FipsEndpointOptions {
         identity_nsec,
@@ -525,7 +527,7 @@ fn authorized_device_fips_peers(
                 }),
         );
     }
-    if let Some(pending) = pending_device_link_fips_peer(config, settings)
+    if let Some(pending) = pending_app_key_link_fips_peer(config, settings)
         && !peers.iter().any(|peer| peer.npub == pending.npub)
     {
         peers.push(pending);
@@ -535,20 +537,20 @@ fn authorized_device_fips_peers(
 
 fn routing_fips_peers(config: &AppConfig, settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
     let mut peers = bootstrap_fips_peers(settings);
-    peers.extend(pending_device_link_fips_peers(config, settings));
+    peers.extend(pending_app_key_link_fips_peers(config, settings));
     peers
 }
 
-fn pending_device_link_fips_peers(
+fn pending_app_key_link_fips_peers(
     config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> Vec<FipsPeerConfig> {
-    pending_device_link_fips_peer(config, settings)
+    pending_app_key_link_fips_peer(config, settings)
         .into_iter()
         .collect()
 }
 
-fn pending_device_link_fips_peer(
+fn pending_app_key_link_fips_peer(
     config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> Option<FipsPeerConfig> {

@@ -48,9 +48,9 @@ pub fn encode_app_key_link_invite(
         link_secret: link_secret.trim().to_string(),
     };
     if payload.link_secret.is_empty() {
-        return Err(anyhow!("device link invite is missing secret"));
+        return Err(anyhow!("app-key link invite is missing secret"));
     }
-    let bytes = serde_json::to_vec(&payload).context("encoding device link invite JSON")?;
+    let bytes = serde_json::to_vec(&payload).context("encoding app-key link invite JSON")?;
     Ok(format!(
         "{APP_KEY_LINK_INVITE_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(bytes)
@@ -64,23 +64,23 @@ pub fn parse_app_key_link_invite(input: &str) -> Result<Option<ParsedAppKeyLinkI
     }
     if let Some(payload) = canonical_invite_payload(trimmed) {
         if payload.trim().is_empty() {
-            return Err(anyhow!("device link invite payload is empty"));
+            return Err(anyhow!("app-key link invite payload is empty"));
         }
         if looks_like_invite_placeholder(payload) {
             return Err(anyhow!(
-                "device link invite is a placeholder; paste the full iris-drive://invite/... value"
+                "app-key link invite is a placeholder; paste the full iris-drive://invite/... value"
             ));
         }
         let decoded = URL_SAFE_NO_PAD
             .decode(payload)
-            .context("decoding device link invite payload")?;
+            .context("decoding app-key link invite payload")?;
         let invite: AppKeyLinkInvitePayload =
-            serde_json::from_slice(&decoded).context("parsing device link invite payload")?;
+            serde_json::from_slice(&decoded).context("parsing app-key link invite payload")?;
         return normalize_invite_payload(&invite).map(Some);
     }
     if trimmed.starts_with('{') {
         let invite: AppKeyLinkInvitePayload =
-            serde_json::from_str(trimmed).context("parsing device link invite JSON")?;
+            serde_json::from_str(trimmed).context("parsing app-key link invite JSON")?;
         return normalize_invite_payload(&invite).map(Some);
     }
     Ok(None)
@@ -105,14 +105,14 @@ fn canonical_invite_payload(input: &str) -> Option<&str> {
 fn normalize_invite_payload(invite: &AppKeyLinkInvitePayload) -> Result<ParsedAppKeyLinkInvite> {
     if invite.v != APP_KEY_LINK_INVITE_VERSION {
         return Err(anyhow!(
-            "unsupported device link invite version {}; expected {}",
+            "unsupported app-key link invite version {}; expected {}",
             invite.v,
             APP_KEY_LINK_INVITE_VERSION
         ));
     }
     let link_secret = invite.link_secret.trim().to_string();
     if link_secret.is_empty() {
-        return Err(anyhow!("device link invite is missing secret"));
+        return Err(anyhow!("app-key link invite is missing secret"));
     }
     Ok(ParsedAppKeyLinkInvite {
         profile_id: Some(invite.profile_id),

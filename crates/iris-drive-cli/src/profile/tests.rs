@@ -61,7 +61,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
 }
 
 #[tokio::test]
-async fn device_link_app_message_records_inbound_request_for_owner_admin() {
+async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
@@ -73,7 +73,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     let link_secret = account.state.app_key_link_secret.clone();
-    let frame = DeviceLinkRequestFrame {
+    let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
         app_key_pubkey: linked_device.clone(),
@@ -89,12 +89,12 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device),
-        topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
+        topic: APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
 
     assert!(
-        handle_device_link_app_message(config_dir.path(), &message, None, &mut BTreeSet::new())
+        handle_app_key_link_app_message(config_dir.path(), &message, None, &mut BTreeSet::new())
             .await
             .unwrap()
     );
@@ -108,7 +108,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
 }
 
 #[tokio::test]
-async fn device_link_app_message_ignores_wrong_link_secret() {
+async fn app_key_link_app_message_ignores_wrong_link_secret() {
     let config_dir = tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("admin".into())).unwrap();
     let mut config = AppConfig {
@@ -119,7 +119,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
-    let frame = DeviceLinkRequestFrame {
+    let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
         app_key_pubkey: linked_device.clone(),
@@ -135,12 +135,12 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device),
-        topic: DEVICE_LINK_REQUEST_APP_TOPIC.to_string(),
+        topic: APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
 
     assert!(
-        handle_device_link_app_message(config_dir.path(), &message, None, &mut BTreeSet::new())
+        handle_app_key_link_app_message(config_dir.path(), &message, None, &mut BTreeSet::new())
             .await
             .unwrap()
     );
@@ -157,7 +157,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn device_link_roster_message_authorizes_only_after_local_request() {
+async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     let admin_dir = tempdir().unwrap();
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_dir = tempdir().unwrap();
@@ -173,7 +173,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         .approve_app_key(&joiner_pubkey, Some("laptop".into()))
         .unwrap();
 
-    let frame = DeviceLinkRosterFrame {
+    let frame = AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
         admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
@@ -182,7 +182,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&admin.state.app_key_pubkey),
-        topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
+        topic: APP_KEY_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
 
@@ -194,7 +194,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     config.save(config_path_in(joiner_dir.path())).unwrap();
 
     assert!(
-        handle_device_link_app_message(joiner_dir.path(), &message, None, &mut BTreeSet::new())
+        handle_app_key_link_app_message(joiner_dir.path(), &message, None, &mut BTreeSet::new())
             .await
             .unwrap()
     );
@@ -222,7 +222,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     config.save(config_path_in(joiner_dir.path())).unwrap();
 
     assert!(
-        handle_device_link_app_message(joiner_dir.path(), &message, None, &mut BTreeSet::new())
+        handle_app_key_link_app_message(joiner_dir.path(), &message, None, &mut BTreeSet::new())
             .await
             .unwrap()
     );
@@ -246,7 +246,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     admin
         .approve_app_key(&third_device, Some("tablet".into()))
         .unwrap();
-    let updated_frame = DeviceLinkRosterFrame {
+    let updated_frame = AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
         admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
@@ -255,12 +255,12 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
     };
     let updated_message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&admin.state.app_key_pubkey),
-        topic: DEVICE_LINK_ROSTER_APP_TOPIC.to_string(),
+        topic: APP_KEY_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&updated_frame).unwrap(),
     };
 
     assert!(
-        handle_device_link_app_message(
+        handle_app_key_link_app_message(
             joiner_dir.path(),
             &updated_message,
             None,
@@ -275,7 +275,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
 }
 
 #[tokio::test]
-async fn device_link_roster_ack_marks_delivery_for_admin() {
+async fn app_key_link_roster_ack_marks_delivery_for_admin() {
     let admin_dir = tempdir().unwrap();
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let joiner_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
@@ -289,11 +289,11 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(admin_dir.path())).unwrap();
 
-    let frame = DeviceLinkRosterAckFrame {
+    let frame = AppKeyLinkRosterAckFrame {
         schema: 1,
         admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
         app_key_pubkey: joiner_pubkey.clone(),
-        roster_fingerprint: device_link_roster_fingerprint(
+        roster_fingerprint: app_key_link_roster_fingerprint(
             &joiner_pubkey,
             admin.state.profile_id,
             &admin.state.profile_roster_ops,
@@ -302,18 +302,18 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&joiner_pubkey),
-        topic: DEVICE_LINK_ROSTER_ACK_APP_TOPIC.to_string(),
+        topic: APP_KEY_LINK_ROSTER_ACK_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
     let mut acked = BTreeSet::new();
 
     assert!(
-        handle_device_link_app_message(admin_dir.path(), &message, None, &mut acked)
+        handle_app_key_link_app_message(admin_dir.path(), &message, None, &mut acked)
             .await
             .unwrap()
     );
 
-    assert!(acked.contains(&device_link_roster_fingerprint(
+    assert!(acked.contains(&app_key_link_roster_fingerprint(
         &joiner_pubkey,
         admin.state.profile_id,
         &admin.state.profile_roster_ops,
@@ -325,7 +325,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     let now = std::time::Instant::now();
     assert!(app_key_link_request_send_due(None, now));
 
-    let first = SentDeviceLinkRequest {
+    let first = SentAppKeyLinkRequest {
         last_sent: now,
         attempts: 1,
     };
@@ -338,7 +338,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
         now + std::time::Duration::from_millis(250)
     ));
 
-    let steady = SentDeviceLinkRequest {
+    let steady = SentAppKeyLinkRequest {
         last_sent: now,
         attempts: 40,
     };

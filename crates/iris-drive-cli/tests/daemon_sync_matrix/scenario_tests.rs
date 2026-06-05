@@ -68,7 +68,7 @@ async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_running_device_link_approval_clears_waiting_quickly() {
+async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;

@@ -6,15 +6,15 @@ use sha2::{Digest, Sha256};
 
 use crate::{AppKeyAuthorizationState, IrisProfileId, ProfileState, SignedIrisProfileRosterOp};
 
-pub const DEVICE_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/device-link/v1/request";
-pub const DEVICE_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/device-link/v1/roster";
-pub const DEVICE_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/device-link/v1/roster-ack";
+pub const APP_KEY_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/app-key-link/v1/request";
+pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster";
+pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster-ack";
 pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "iris-drive://app-key-link";
 const APP_KEY_APPROVAL_REQUEST_SINGLE_SLASH_PREFIX: &str = "iris-drive:/app-key-link";
 pub const APP_KEY_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/app-key-link";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeviceLinkRequestFrame {
+pub struct AppKeyLinkRequestFrame {
     pub schema: u32,
     pub profile_id: IrisProfileId,
     pub app_key_pubkey: String,
@@ -35,7 +35,7 @@ pub struct AppKeyApprovalRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeviceLinkRosterFrame {
+pub struct AppKeyLinkRosterFrame {
     pub schema: u32,
     pub profile_id: IrisProfileId,
     pub admin_app_key_pubkey: String,
@@ -44,7 +44,7 @@ pub struct DeviceLinkRosterFrame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DeviceLinkRosterAckFrame {
+pub struct AppKeyLinkRosterAckFrame {
     pub schema: u32,
     pub admin_app_key_pubkey: String,
     pub app_key_pubkey: String,
@@ -53,13 +53,13 @@ pub struct DeviceLinkRosterAckFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceLinkRosterRecipient {
+pub struct AppKeyLinkRosterRecipient {
     pub app_key_pubkey: String,
     pub roster_fingerprint: String,
 }
 
 #[must_use]
-pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<DeviceLinkRequestFrame> {
+pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKeyLinkRequestFrame> {
     if state.can_admin_profile()
         || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
     {
@@ -71,7 +71,7 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<Device
     } else {
         pending.link_secret.clone()
     };
-    Some(DeviceLinkRequestFrame {
+    Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
         app_key_pubkey: state.app_key_pubkey.clone(),
@@ -88,14 +88,14 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<Device
 }
 
 #[must_use]
-pub fn device_link_roster_frame(
+pub fn app_key_link_roster_frame(
     state: &ProfileState,
     sent_at: u64,
-) -> Option<DeviceLinkRosterFrame> {
+) -> Option<AppKeyLinkRosterFrame> {
     if !state.can_admin_profile() || !current_app_key_is_authorized(state) {
         return None;
     }
-    Some(DeviceLinkRosterFrame {
+    Some(AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: state.profile_id,
         admin_app_key_pubkey: state.app_key_pubkey.clone(),
@@ -105,7 +105,7 @@ pub fn device_link_roster_frame(
 }
 
 #[must_use]
-pub fn device_link_roster_recipients(state: &ProfileState) -> Vec<DeviceLinkRosterRecipient> {
+pub fn app_key_link_roster_recipients(state: &ProfileState) -> Vec<AppKeyLinkRosterRecipient> {
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
@@ -113,9 +113,9 @@ pub fn device_link_roster_recipients(state: &ProfileState) -> Vec<DeviceLinkRost
         .app_actors
         .iter()
         .filter(|actor| actor.pubkey != state.app_key_pubkey)
-        .map(|actor| DeviceLinkRosterRecipient {
+        .map(|actor| AppKeyLinkRosterRecipient {
             app_key_pubkey: actor.pubkey.clone(),
-            roster_fingerprint: device_link_roster_fingerprint(
+            roster_fingerprint: app_key_link_roster_fingerprint(
                 &actor.pubkey,
                 state.profile_id,
                 &state.profile_roster_ops,
@@ -125,19 +125,19 @@ pub fn device_link_roster_recipients(state: &ProfileState) -> Vec<DeviceLinkRost
 }
 
 #[must_use]
-pub fn device_link_roster_ack_frame(
+pub fn app_key_link_roster_ack_frame(
     state: &ProfileState,
     admin_app_key_pubkey: &str,
     acknowledged_at: u64,
-) -> Option<DeviceLinkRosterAckFrame> {
+) -> Option<AppKeyLinkRosterAckFrame> {
     if !current_app_key_is_authorized(state) {
         return None;
     }
-    Some(DeviceLinkRosterAckFrame {
+    Some(AppKeyLinkRosterAckFrame {
         schema: 1,
         admin_app_key_pubkey: admin_app_key_pubkey.to_string(),
         app_key_pubkey: state.app_key_pubkey.clone(),
-        roster_fingerprint: device_link_roster_fingerprint(
+        roster_fingerprint: app_key_link_roster_fingerprint(
             &state.app_key_pubkey,
             state.profile_id,
             &state.profile_roster_ops,
@@ -147,9 +147,9 @@ pub fn device_link_roster_ack_frame(
 }
 
 #[must_use]
-pub fn device_link_roster_ack_matches_state(
+pub fn app_key_link_roster_ack_matches_state(
     state: &ProfileState,
-    frame: &DeviceLinkRosterAckFrame,
+    frame: &AppKeyLinkRosterAckFrame,
 ) -> bool {
     state.can_admin_profile()
         && state.app_key_pubkey == frame.admin_app_key_pubkey
@@ -158,7 +158,7 @@ pub fn device_link_roster_ack_matches_state(
             .as_ref()
             .is_some_and(|app_keys| app_keys.contains(&frame.app_key_pubkey))
         && frame.roster_fingerprint
-            == device_link_roster_fingerprint(
+            == app_key_link_roster_fingerprint(
                 &frame.app_key_pubkey,
                 state.profile_id,
                 &state.profile_roster_ops,
@@ -166,7 +166,7 @@ pub fn device_link_roster_ack_matches_state(
 }
 
 #[must_use]
-pub fn device_link_roster_fingerprint(
+pub fn app_key_link_roster_fingerprint(
     app_key_pubkey: &str,
     profile_id: IrisProfileId,
     profile_roster_ops: &[SignedIrisProfileRosterOp],
@@ -178,7 +178,7 @@ pub fn device_link_roster_fingerprint(
     op_ids.sort_unstable();
 
     let mut digest = Sha256::new();
-    digest.update(b"iris-drive:device-link-roster:v1\n");
+    digest.update(b"iris-drive:app-key-link-roster:v1\n");
     digest.update(profile_id.to_string().as_bytes());
     digest.update(b"\n");
     digest.update(app_key_pubkey.as_bytes());
@@ -351,7 +351,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut account = Profile::create(dir.path(), Some("Mac".into())).unwrap();
         let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
-        let before = device_link_roster_fingerprint(
+        let before = app_key_link_roster_fingerprint(
             &app_actor,
             account.state.profile_id,
             &account.state.profile_roster_ops,
@@ -360,7 +360,7 @@ mod tests {
         account
             .approve_app_key(&app_actor, Some("Browser".into()))
             .unwrap();
-        let after = device_link_roster_fingerprint(
+        let after = app_key_link_roster_fingerprint(
             &app_actor,
             account.state.profile_id,
             &account.state.profile_roster_ops,
@@ -378,12 +378,12 @@ mod tests {
             .approve_app_key(&app_actor, Some("Browser".into()))
             .unwrap();
 
-        let recipients = device_link_roster_recipients(&account.state);
+        let recipients = app_key_link_roster_recipients(&account.state);
         let recipient = recipients
             .iter()
             .find(|recipient| recipient.app_key_pubkey == app_actor)
             .expect("approved app actor is a roster recipient");
-        let frame = DeviceLinkRosterAckFrame {
+        let frame = AppKeyLinkRosterAckFrame {
             schema: 1,
             admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
             app_key_pubkey: app_actor,
@@ -391,7 +391,10 @@ mod tests {
             acknowledged_at: 123,
         };
 
-        assert!(device_link_roster_ack_matches_state(&account.state, &frame));
+        assert!(app_key_link_roster_ack_matches_state(
+            &account.state,
+            &frame
+        ));
     }
 
     #[test]

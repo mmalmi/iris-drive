@@ -299,14 +299,14 @@ pub(crate) fn cmd_daemon(
         provider_root_poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
         direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut device_link_timer = tokio::time::interval_at(
+        let mut app_key_link_timer = tokio::time::interval_at(
             tokio::time::Instant::now(),
-            std::time::Duration::from_millis(DEVICE_LINK_TICK_MILLIS),
+            std::time::Duration::from_millis(APP_KEY_LINK_TICK_MILLIS),
         );
-        device_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        app_key_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_app_key_link_requests = BTreeMap::new();
-        let mut sent_device_link_rosters = BTreeMap::new();
-        let mut acked_device_link_rosters = BTreeSet::new();
+        let mut sent_app_key_link_rosters = BTreeMap::new();
+        let mut acked_app_key_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_device_root_key(&config);
 
         loop {
@@ -623,7 +623,7 @@ pub(crate) fn cmd_daemon(
                         ),
                     }
                 }
-                _ = device_link_timer.tick() => {
+                _ = app_key_link_timer.tick() => {
                     match send_pending_app_key_link_request(
                         config_dir,
                         &client,
@@ -639,11 +639,11 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "app_key_link_request_send_error", "error": format!("{error:#}")})
                         ),
                     }
-                    match send_authorized_device_link_rosters(
+                    match send_authorized_app_key_link_rosters(
                         config_dir,
                         fips_blocks.as_deref(),
-                        &mut sent_device_link_rosters,
-                        &acked_device_link_rosters,
+                        &mut sent_app_key_link_rosters,
+                        &acked_app_key_link_rosters,
                     )
                     .await
                     {
@@ -651,7 +651,7 @@ pub(crate) fn cmd_daemon(
                         Ok(None) => {}
                         Err(error) => println!(
                             "{}",
-                            json!({"event": "device_link_roster_send_error", "error": format!("{error:#}")})
+                            json!({"event": "app_key_link_roster_send_error", "error": format!("{error:#}")})
                         ),
                     }
                 }
@@ -664,11 +664,11 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
-                            match handle_device_link_app_message(
+                            match handle_app_key_link_app_message(
                                 config_dir,
                                 &message,
                                 fips_blocks.as_deref(),
-                                &mut acked_device_link_rosters,
+                                &mut acked_app_key_link_rosters,
                             )
                             .await
                             {

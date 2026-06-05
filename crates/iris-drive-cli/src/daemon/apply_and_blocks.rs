@@ -21,7 +21,7 @@ pub(crate) async fn apply_one_event(
                 "outcome": format!("{outcome:?}"),
             }),
         );
-        if matches!(outcome, relay_sync::DeviceLinkRequestApply::Recorded) {
+        if matches!(outcome, relay_sync::AppKeyLinkRequestApply::Recorded) {
             config.save(config_path_in(config_dir))?;
         }
         return Ok(());

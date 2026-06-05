@@ -15,7 +15,7 @@ struct IrisDriveDevice: Identifiable, Equatable {
     var canDemoteAdmin: Bool
 }
 
-struct IrisDriveDeviceLinkRequest: Identifiable, Equatable {
+struct IrisDriveAppKeyLinkRequest: Identifiable, Equatable {
     var id: String { devicePubkey }
     var devicePubkey: String
     var label: String

@@ -28,13 +28,13 @@ enum IrisDriveScreenshotFixtures {
         status.driveName = "My Drive"
         status.currentAppKeyNpub = fakeNpub("appkey")
         status.deviceNpub = fakeNpub("mac")
-        status.deviceLinkInviteURL = "https://drive.iris.to/invite/demo-device-link"
-        status.inboundDeviceLinkRequests = [
-            IrisDriveDeviceLinkRequestStatus(json: [
-                "device_npub": fakeNpub("ipad"),
+        status.appKeyLinkInviteURL = "https://drive.iris.to/invite/demo-app-key-link"
+        status.inboundAppKeyLinkRequests = [
+            IrisDriveAppKeyLinkRequestStatus(json: [
+                "app_key_npub": fakeNpub("ipad"),
                 "label": "iPad Pro",
                 "requested_at": 1_779_900_000,
-                "url": "iris-drive://device-link?owner=demo&device=ipad",
+                "url": "iris-drive://app-key-link?profile=demo-profile&app_key=npub1demo",
             ])
         ]
         status.canAdminProfile = true
@@ -180,7 +180,7 @@ enum IrisDriveScreenshotFixtures {
         let connectionLabel = current ? "This device" : (online ? "Online" : "Offline")
         return IrisDrivePeerStatus(json: [
             "app_key_pubkey": "fixture-\(id)",
-            "device_npub": fakeNpub(id),
+            "app_key_npub": fakeNpub(id),
             "label": label,
             "display_label": current ? "This device" : label,
             "role": role,

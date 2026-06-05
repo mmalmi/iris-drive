@@ -3,7 +3,7 @@
 //! Two layers:
 //!
 //! - **Apply (offline)** — `apply_remote_iris_profile_roster_op_event`,
-//!   `apply_remote_drive_root_event`, and device-link helpers take a parsed
+//!   `apply_remote_drive_root_event`, and app-key-link helpers take a parsed
 //!   Nostr event or direct roster frame plus an `AppConfig` and apply the
 //!   event's effect onto the config. These are pure functions over data, fully
 //!   covered by unit tests.
@@ -20,11 +20,11 @@ use std::time::Duration;
 use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
+use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::app_keys::{AppKeysSnapshot, ApplyDecision};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
-use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
-    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
+    KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
     build_app_key_link_request_event, build_drive_root_publish_event,
     build_private_hashtree_root_event, drive_root_d_tag, parse_app_key_link_request_event,
     parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
@@ -52,13 +52,13 @@ pub enum RelayError {
     Profile(#[from] crate::profile::ProfileError),
     #[error("iris profile: {0}")]
     IrisProfile(#[from] crate::iris_profile::IrisProfileError),
-    #[error("device-link roster: {0}")]
-    DeviceLinkRoster(String),
+    #[error("app-key-link roster: {0}")]
+    AppKeyLinkRoster(String),
 }
 
-/// Result of applying signed profile roster ops over the direct device-link channel.
+/// Result of applying signed profile roster ops over the direct app-key-link channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceLinkRosterApply {
+pub enum AppKeyLinkRosterApply {
     /// The roster op set is not applicable to this profile/install.
     Ignored,
     /// The local roster already matches this event.
@@ -91,9 +91,9 @@ pub struct IrisProfileRestoreCandidate {
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
 }
 
-/// Result of applying a device-link request sent over relay metadata.
+/// Result of applying an app-key-link request sent over relay metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceLinkRequestApply {
+pub enum AppKeyLinkRequestApply {
     /// The event is addressed to another profile.
     NotOurProfile,
     /// This install's `AppKey` is not an admin and cannot approve `AppKeys`.
@@ -106,24 +106,24 @@ pub enum DeviceLinkRequestApply {
     Recorded,
 }
 
-/// Apply a signed device-link request delivered by relay.
+/// Apply a signed app-key-link request delivered by relay.
 pub fn apply_remote_app_key_link_request_event(
     config: &mut AppConfig,
     event: &Event,
-) -> Result<DeviceLinkRequestApply, RelayError> {
+) -> Result<AppKeyLinkRequestApply, RelayError> {
     let frame = parse_app_key_link_request_event(event)?;
     let Some(account) = config.profile.as_mut() else {
         return Err(RelayError::NoAccount);
     };
     if frame.profile_id != account.profile_id {
-        return Ok(DeviceLinkRequestApply::NotOurProfile);
+        return Ok(AppKeyLinkRequestApply::NotOurProfile);
     }
     if !account.can_admin_profile() {
-        return Ok(DeviceLinkRequestApply::NotAdmin);
+        return Ok(AppKeyLinkRequestApply::NotAdmin);
     }
     let expected_secret = account.app_key_link_secret.trim();
     if !expected_secret.is_empty() && frame.link_secret.trim() != expected_secret {
-        return Ok(DeviceLinkRequestApply::InvalidSecret);
+        return Ok(AppKeyLinkRequestApply::InvalidSecret);
     }
 
     let changed = account.record_inbound_app_key_link_request(
@@ -134,42 +134,42 @@ pub fn apply_remote_app_key_link_request_event(
         frame.requested_at,
     )?;
     if changed {
-        Ok(DeviceLinkRequestApply::Recorded)
+        Ok(AppKeyLinkRequestApply::Recorded)
     } else {
-        Ok(DeviceLinkRequestApply::Current)
+        Ok(AppKeyLinkRequestApply::Current)
     }
 }
 
-/// Apply a signed roster delivered over device-link/FIPS.
+/// Apply a signed roster delivered over app-key-link/FIPS.
 ///
 /// A brand-new linked device only accepts the first roster from the admin it
 /// explicitly requested approval from. Once it has a current roster, it must
 /// continue accepting newer rosters signed by a current admin so it learns
 /// about devices approved after itself.
-pub fn apply_device_link_roster_frame(
+pub fn apply_app_key_link_roster_frame(
     config: &mut AppConfig,
-    frame: &DeviceLinkRosterFrame,
+    frame: &AppKeyLinkRosterFrame,
     admin_app_key_pubkey: &str,
-) -> Result<DeviceLinkRosterApply, RelayError> {
+) -> Result<AppKeyLinkRosterApply, RelayError> {
     if frame.schema != 1 {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
     if frame.admin_app_key_pubkey != admin_app_key_pubkey {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
     if !account.profile_roster_ops.is_empty() && account.profile_id != frame.profile_id {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
     let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
     let incoming_snapshot = app_keys_from_profile_projection(&incoming_projection)
-        .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
+        .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
     if !incoming_snapshot.is_admin(admin_app_key_pubkey) {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
 
     let has_current_roster = account.app_keys.is_some() || !account.profile_roster_ops.is_empty();
@@ -178,10 +178,10 @@ pub fn apply_device_link_roster_frame(
         .as_ref()
         .is_some_and(|pending| pending.admin_app_key_pubkey == admin_app_key_pubkey);
     if !has_current_roster && !pending_from_admin {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
     if pending_from_admin && !incoming_projection.can_write_roots(&account.app_key_pubkey) {
-        return Ok(DeviceLinkRosterApply::Ignored);
+        return Ok(AppKeyLinkRosterApply::Ignored);
     }
 
     let merged_ops = if account.profile_id == frame.profile_id {
@@ -193,20 +193,20 @@ pub fn apply_device_link_roster_frame(
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
     let merged_projection = project_iris_profile_roster(frame.profile_id, merged_ops.clone());
     let merged_snapshot = app_keys_from_profile_projection(&merged_projection)
-        .ok_or_else(|| RelayError::DeviceLinkRoster("profile roster has no AppKey epoch".into()))?;
+        .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
 
     if !ops_changed && account.app_keys.as_ref() == Some(&merged_snapshot) {
-        return Ok(DeviceLinkRosterApply::Current);
+        return Ok(AppKeyLinkRosterApply::Current);
     }
 
-    let decision = device_link_roster_apply_decision(
+    let decision = app_key_link_roster_apply_decision(
         account.app_keys.as_ref(),
         &merged_snapshot,
         ops_changed,
         !account.profile_roster_ops.is_empty(),
     );
     if decision == ApplyDecision::Rejected {
-        return Ok(DeviceLinkRosterApply::Applied(decision));
+        return Ok(AppKeyLinkRosterApply::Applied(decision));
     }
 
     let root_scope_id = {
@@ -220,10 +220,10 @@ pub fn apply_device_link_roster_frame(
         account.root_scope_id()
     };
     sync_primary_drive_scope(config, root_scope_id);
-    Ok(DeviceLinkRosterApply::Applied(decision))
+    Ok(AppKeyLinkRosterApply::Applied(decision))
 }
 
-fn device_link_roster_apply_decision(
+fn app_key_link_roster_apply_decision(
     current: Option<&AppKeysSnapshot>,
     merged: &AppKeysSnapshot,
     ops_changed: bool,
@@ -305,11 +305,11 @@ fn verified_profile_roster_ops(
     let mut by_id = BTreeMap::new();
     for op in ops {
         let event = Event::from_json(&op.event_json).map_err(|error| {
-            RelayError::DeviceLinkRoster(format!("parsing profile roster op event: {error}"))
+            RelayError::AppKeyLinkRoster(format!("parsing profile roster op event: {error}"))
         })?;
         let parsed = crate::parse_iris_profile_roster_op_event(&event)?;
         if parsed.content.profile_id != profile_id {
-            return Err(RelayError::DeviceLinkRoster(format!(
+            return Err(RelayError::AppKeyLinkRoster(format!(
                 "profile roster op {} belongs to {}, expected {profile_id}",
                 parsed.op_id, parsed.content.profile_id
             )));
@@ -579,11 +579,11 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
     Ok(client)
 }
 
-/// Publish a signed device-link request from the requesting `AppKey`.
+/// Publish a signed app-key-link request from the requesting `AppKey`.
 pub async fn publish_app_key_link_request(
     client: &Client,
     device_keys: &Keys,
-    frame: &crate::device_link_transport::DeviceLinkRequestFrame,
+    frame: &crate::app_key_link_transport::AppKeyLinkRequestFrame,
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_app_key_link_request_event(device_keys, frame)?;
     let output = client
@@ -868,7 +868,7 @@ pub fn subscription_filters_for_shared_roots(
         filters.push(iris_profile_roster_op_filter(profile_id));
         filters.push(
             Filter::new()
-                .kind(nostr_sdk::Kind::from(KIND_DEVICE_LINK_REQUEST))
+                .kind(nostr_sdk::Kind::from(KIND_APP_KEY_LINK_REQUEST))
                 .custom_tag(
                     SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
                     [app_key_link_request_d_tag(profile_id)],

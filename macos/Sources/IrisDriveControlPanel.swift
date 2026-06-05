@@ -167,7 +167,7 @@ struct IrisDriveControlPanel: View {
         }
     }
 
-    private func refreshApproveDeviceLinkInput(_ value: String) {
+    private func refreshApproveAppKeyLinkInput(_ value: String) {
         let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
         approveDeviceKeyIsComplete = false
         guard !query.isEmpty else { return }
@@ -664,13 +664,13 @@ struct IrisDriveControlPanel: View {
                     )
                 }
             }
-            if !status.inboundDeviceLinkRequests.isEmpty {
+            if !status.inboundAppKeyLinkRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Requests")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    ForEach(status.inboundDeviceLinkRequests) { request in
-                        DeviceLinkRequestRow(request: request, controller: controller)
+                    ForEach(status.inboundAppKeyLinkRequests) { request in
+                        AppKeyLinkRequestRow(request: request, controller: controller)
                     }
                 }
             }
@@ -684,7 +684,7 @@ struct IrisDriveControlPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add a device")
                 .font(.title3.weight(.semibold))
-            if let invite = status.deviceLinkInviteURL, !invite.isEmpty {
+            if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
                 Text("Invite device")
                     .font(.headline)
                 IrisDriveQRCodeView(value: invite)
@@ -701,11 +701,11 @@ struct IrisDriveControlPanel: View {
                     Label("Reset invite", systemImage: "arrow.clockwise")
                 }
             }
-            if !status.inboundDeviceLinkRequests.isEmpty {
+            if !status.inboundAppKeyLinkRequests.isEmpty {
                 Text("Device requests")
                     .font(.headline)
-                ForEach(status.inboundDeviceLinkRequests) { request in
-                    DeviceLinkRequestRow(request: request, controller: controller)
+                ForEach(status.inboundAppKeyLinkRequests) { request in
+                    AppKeyLinkRequestRow(request: request, controller: controller)
                 }
             }
             Text("Paste the Device ID shown on the other device when you link it manually.")
@@ -715,10 +715,10 @@ struct IrisDriveControlPanel: View {
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
-                    refreshApproveDeviceLinkInput(newValue)
+                    refreshApproveAppKeyLinkInput(newValue)
                 }
                 .onAppear {
-                    refreshApproveDeviceLinkInput(approveDeviceKey)
+                    refreshApproveAppKeyLinkInput(approveDeviceKey)
                 }
             TextField("Name (optional)", text: $approveDeviceLabel)
                 .textFieldStyle(.roundedBorder)
@@ -1444,8 +1444,8 @@ private struct PeerRow: View {
 
 }
 
-private struct DeviceLinkRequestRow: View {
-    let request: IrisDriveDeviceLinkRequestStatus
+private struct AppKeyLinkRequestRow: View {
+    let request: IrisDriveAppKeyLinkRequestStatus
     let controller: AppDelegate
 
     var body: some View {

@@ -1,15 +1,15 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-mod device_link_urls;
-pub(crate) use device_link_urls::*;
+mod app_key_link_urls;
+pub(crate) use app_key_link_urls::*;
 #[cfg(test)]
-pub(crate) use iris_drive_core::device_link_transport::device_link_roster_fingerprint;
-pub(crate) use iris_drive_core::device_link_transport::{
-    DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
-    DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
-    device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
-    device_link_roster_recipients,
+pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
+pub(crate) use iris_drive_core::app_key_link_transport::{
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
+    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
+    app_key_link_roster_frame, app_key_link_roster_recipients,
 };
 
 pub(crate) fn cmd_init(
@@ -135,7 +135,7 @@ pub(crate) fn cmd_link_with_admin_app_key(
             &link_secret,
             unix_now_seconds(),
         )
-        .context("queueing device link request")?;
+        .context("queueing app-key link request")?;
     finish_profile_init(config_dir, &profile, None)
 }
 
@@ -532,20 +532,20 @@ fn iris_profile_summary_json(
     })
 }
 
-pub(crate) const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
-pub(crate) const DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
-pub(crate) const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
-pub(crate) const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
-pub(crate) const DEVICE_LINK_TICK_MILLIS: u64 = 250;
+pub(crate) const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
+pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
+pub(crate) const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
+pub(crate) const APP_KEY_LINK_TICK_MILLIS: u64 = 250;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct SentDeviceLinkRequest {
+pub(crate) struct SentAppKeyLinkRequest {
     last_sent: std::time::Instant,
     attempts: u8,
 }
 
 fn app_key_link_request_send_due(
-    sent: Option<SentDeviceLinkRequest>,
+    sent: Option<SentAppKeyLinkRequest>,
     now: std::time::Instant,
 ) -> bool {
     let Some(sent) = sent else {
@@ -555,10 +555,10 @@ fn app_key_link_request_send_due(
 }
 
 fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
-    if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
-        std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
+    if attempts < APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
+        std::time::Duration::from_millis(APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
-        std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
+        std::time::Duration::from_secs(APP_KEY_LINK_REQUEST_RETRY_SECS)
     }
 }
 
@@ -566,7 +566,7 @@ pub(crate) async fn send_pending_app_key_link_request(
     config_dir: &Path,
     client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
-    sent_cache: &mut BTreeMap<String, SentDeviceLinkRequest>,
+    sent_cache: &mut BTreeMap<String, SentAppKeyLinkRequest>,
 ) -> Result<Option<Value>> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(state) = config.profile.as_ref() else {
@@ -592,7 +592,7 @@ pub(crate) async fn send_pending_app_key_link_request(
     }
 
     let Some(frame) =
-        iris_drive_core::device_link_transport::pending_app_key_link_request_frame(state)
+        iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(state)
     else {
         return Ok(None);
     };
@@ -607,7 +607,7 @@ pub(crate) async fn send_pending_app_key_link_request(
     if let Some(sync) = fips_blocks {
         sync.refresh_authorized_peers(&config).await;
         match sync
-            .send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes.clone())
+            .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone())
             .await
         {
             Ok(()) => {
@@ -623,7 +623,7 @@ pub(crate) async fn send_pending_app_key_link_request(
         .map_or(1, |sent| sent.attempts.saturating_add(1));
     sent_cache.insert(
         fingerprint,
-        SentDeviceLinkRequest {
+        SentAppKeyLinkRequest {
             last_sent: now,
             attempts,
         },
@@ -631,9 +631,9 @@ pub(crate) async fn send_pending_app_key_link_request(
 
     Ok(Some(json!({
         "event": "app_key_link_request_sent",
-        "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
+        "topic": APP_KEY_LINK_REQUEST_APP_TOPIC,
         "admin_app_key_npub": admin_npub,
-        "device_npub": pubkey_npub(&state.app_key_pubkey),
+        "app_key_npub": pubkey_npub(&state.app_key_pubkey),
         "requested_at": pending.requested_at,
         "sent_bytes": bytes.len(),
         "relay_event_id": relay_event_id.to_hex(),
@@ -643,7 +643,7 @@ pub(crate) async fn send_pending_app_key_link_request(
     })))
 }
 
-pub(crate) async fn send_authorized_device_link_rosters(
+pub(crate) async fn send_authorized_app_key_link_rosters(
     config_dir: &Path,
     fips_blocks: Option<&FsFipsBlockSync>,
     sent_cache: &mut BTreeMap<String, std::time::Instant>,
@@ -667,7 +667,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
     }
 
     let now = std::time::Instant::now();
-    let due_devices = device_link_roster_recipients(state)
+    let due_devices = app_key_link_roster_recipients(state)
         .into_iter()
         .filter(|recipient| {
             if acked_rosters.contains(&recipient.roster_fingerprint) {
@@ -677,7 +677,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
                 .get(&recipient.roster_fingerprint)
                 .is_some_and(|last_sent| {
                     now.duration_since(*last_sent)
-                        < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+                        < std::time::Duration::from_secs(APP_KEY_LINK_ROSTER_RETRY_SECS)
                 })
         })
         .collect::<Vec<_>>();
@@ -686,44 +686,48 @@ pub(crate) async fn send_authorized_device_link_rosters(
     }
 
     sync.refresh_authorized_peers(&config).await;
-    let Some(frame) = device_link_roster_frame(state, unix_now_seconds()) else {
+    let Some(frame) = app_key_link_roster_frame(state, unix_now_seconds()) else {
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
     let mut recipients = Vec::new();
     for recipient in due_devices {
         let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
-        sync.send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
-            .await?;
+        sync.send_app_message(
+            &recipient_npub,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+            bytes.clone(),
+        )
+        .await?;
         sent_cache.insert(recipient.roster_fingerprint, now);
         recipients.push(recipient_npub);
     }
 
     Ok(Some(json!({
-        "event": "device_link_roster_sent",
-        "topic": DEVICE_LINK_ROSTER_APP_TOPIC,
-        "recipient_device_npubs": recipients,
+        "event": "app_key_link_roster_sent",
+        "topic": APP_KEY_LINK_ROSTER_APP_TOPIC,
+        "recipient_app_key_npubs": recipients,
         "dck_generation": app_keys.dck_generation,
         "created_at": app_keys.created_at,
         "sent_bytes": bytes.len(),
     })))
 }
 
-pub(crate) async fn handle_device_link_app_message(
+pub(crate) async fn handle_app_key_link_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
     fips_blocks: Option<&FsFipsBlockSync>,
     acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool> {
     match message.topic.as_str() {
-        DEVICE_LINK_REQUEST_APP_TOPIC => {
+        APP_KEY_LINK_REQUEST_APP_TOPIC => {
             handle_app_key_link_request_app_message(config_dir, message).await
         }
-        DEVICE_LINK_ROSTER_APP_TOPIC => {
-            handle_device_link_roster_app_message(config_dir, message, fips_blocks).await
+        APP_KEY_LINK_ROSTER_APP_TOPIC => {
+            handle_app_key_link_roster_app_message(config_dir, message, fips_blocks).await
         }
-        DEVICE_LINK_ROSTER_ACK_APP_TOPIC => {
-            handle_device_link_roster_ack_app_message(config_dir, message, acked_rosters)
+        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC => {
+            handle_app_key_link_roster_ack_app_message(config_dir, message, acked_rosters)
         }
         _ => Ok(false),
     }
@@ -733,11 +737,11 @@ async fn handle_app_key_link_request_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool> {
-    let frame: DeviceLinkRequestFrame =
-        serde_json::from_slice(&message.data).context("parsing device link request frame")?;
+    let frame: AppKeyLinkRequestFrame =
+        serde_json::from_slice(&message.data).context("parsing app-key link request frame")?;
     if frame.schema != 1 {
         return Err(anyhow::anyhow!(
-            "unsupported device link request schema {}",
+            "unsupported app-key link request schema {}",
             frame.schema
         ));
     }
@@ -764,16 +768,16 @@ async fn handle_app_key_link_request_app_message(
             &link_secret,
             frame.requested_at,
         )
-        .context("recording inbound device link request")?;
+        .context("recording inbound app-key link request")?;
     if changed {
         config.save(config_path_in(config_dir))?;
         println!(
             "{}",
             json!({
                 "event": "app_key_link_request_received",
-                "topic": DEVICE_LINK_REQUEST_APP_TOPIC,
+                "topic": APP_KEY_LINK_REQUEST_APP_TOPIC,
                 "peer": message.peer_id,
-                "device_npub": pubkey_npub(&app_key_hex),
+                "app_key_npub": pubkey_npub(&app_key_hex),
                 "requested_at": frame.requested_at,
             })
         );
@@ -782,16 +786,16 @@ async fn handle_app_key_link_request_app_message(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn handle_device_link_roster_app_message(
+async fn handle_app_key_link_roster_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<bool> {
-    let frame: DeviceLinkRosterFrame =
-        serde_json::from_slice(&message.data).context("parsing device link roster frame")?;
+    let frame: AppKeyLinkRosterFrame =
+        serde_json::from_slice(&message.data).context("parsing app-key link roster frame")?;
     if frame.schema != 1 {
         return Err(anyhow::anyhow!(
-            "unsupported device link roster schema {}",
+            "unsupported app-key link roster schema {}",
             frame.schema
         ));
     }
@@ -811,27 +815,27 @@ async fn handle_device_link_roster_app_message(
         return Ok(true);
     }
 
-    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    let outcome = iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut config,
         &frame,
         &admin_app_key_hex,
     )
     .context("applying signed profile roster ops")?;
     let accepted = match outcome {
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Current => true,
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision) => {
             decision != iris_drive_core::ApplyDecision::Rejected
         }
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Ignored => false,
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Ignored => false,
     };
     let changed = matches!(
         outcome,
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
     let state = config.profile.as_ref().expect("profile still present");
     let ack_frame = if accepted {
-        device_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
+        app_key_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {
         None
     };
@@ -841,8 +845,8 @@ async fn handle_device_link_roster_app_message(
         println!(
             "{}",
             json!({
-                "event": "device_link_roster_received",
-                "topic": DEVICE_LINK_ROSTER_APP_TOPIC,
+                "event": "app_key_link_roster_received",
+                "topic": APP_KEY_LINK_ROSTER_APP_TOPIC,
                 "peer": message.peer_id,
                 "admin_app_key_npub": pubkey_npub(&admin_app_key_hex),
                 "authorization_state": authorization_state,
@@ -851,21 +855,21 @@ async fn handle_device_link_roster_app_message(
         );
     }
     if let Some(frame) = ack_frame {
-        send_device_link_roster_ack(fips_blocks, &frame).await?;
+        send_app_key_link_roster_ack(fips_blocks, &frame).await?;
     }
     Ok(true)
 }
 
-fn handle_device_link_roster_ack_app_message(
+fn handle_app_key_link_roster_ack_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
     acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool> {
-    let frame: DeviceLinkRosterAckFrame =
-        serde_json::from_slice(&message.data).context("parsing device link roster ack frame")?;
+    let frame: AppKeyLinkRosterAckFrame =
+        serde_json::from_slice(&message.data).context("parsing app-key link roster ack frame")?;
     if frame.schema != 1 {
         return Err(anyhow::anyhow!(
-            "unsupported device link roster ack schema {}",
+            "unsupported app-key link roster ack schema {}",
             frame.schema
         ));
     }
@@ -882,7 +886,7 @@ fn handle_device_link_roster_ack_app_message(
     };
     if admin_app_key_hex != frame.admin_app_key_pubkey
         || app_key_hex != frame.app_key_pubkey
-        || !device_link_roster_ack_matches_state(state, &frame)
+        || !app_key_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
     }
@@ -893,9 +897,9 @@ fn handle_device_link_roster_ack_app_message(
         println!(
             "{}",
             json!({
-                        "event": "device_link_roster_ack_received",
-                        "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
-                        "device_npub": pubkey_npub(&app_key_hex),
+                        "event": "app_key_link_roster_ack_received",
+                        "topic": APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+                        "app_key_npub": pubkey_npub(&app_key_hex),
                 "roster_fingerprint": frame.roster_fingerprint,
                 "dck_generation": app_keys.map(|app_keys| app_keys.dck_generation),
                 "created_at": app_keys.map(|app_keys| app_keys.created_at),
@@ -905,16 +909,16 @@ fn handle_device_link_roster_ack_app_message(
     Ok(true)
 }
 
-async fn send_device_link_roster_ack(
+async fn send_app_key_link_roster_ack(
     fips_blocks: Option<&FsFipsBlockSync>,
-    frame: &DeviceLinkRosterAckFrame,
+    frame: &AppKeyLinkRosterAckFrame,
 ) -> Result<()> {
     let Some(sync) = fips_blocks else {
         return Ok(());
     };
     sync.send_app_message(
         &pubkey_npub(&frame.admin_app_key_pubkey),
-        DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
         serde_json::to_vec(frame)?,
     )
     .await?;

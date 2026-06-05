@@ -21,15 +21,15 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::IrisProfileId;
+use crate::app_key_link_transport::AppKeyLinkRequestFrame;
 use crate::config::DeviceRootRef;
-use crate::device_link_transport::DeviceLinkRequestFrame;
 use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for AppKey-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30078;
 
 /// NIP-78 parameterized-replaceable kind for AppKey-signed join requests.
-pub const KIND_DEVICE_LINK_REQUEST: u16 = 30078;
+pub const KIND_APP_KEY_LINK_REQUEST: u16 = 30078;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
 pub const KIND_HASHTREE_ROOT: u16 = 30_078;
@@ -37,7 +37,7 @@ const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
 
 #[must_use]
 pub fn app_key_link_request_d_tag(profile_id: IrisProfileId) -> String {
-    format!("iris-drive/{profile_id}/device-link-request")
+    format!("iris-drive/{profile_id}/app-key-link-request")
 }
 
 #[must_use]
@@ -55,7 +55,7 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
 
 #[must_use]
 pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
-    event.kind.as_u16() == KIND_DEVICE_LINK_REQUEST
+    event.kind.as_u16() == KIND_APP_KEY_LINK_REQUEST
         && event
             .identifier()
             .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok())
@@ -94,14 +94,14 @@ pub enum WireError {
     #[error("drive-root key is not available for this device")]
     RootKeyUnavailable,
     #[error(
-        "device-link d-tag profile {d_tag_profile} does not match request profile {frame_profile}"
+        "app-key-link d-tag profile {d_tag_profile} does not match request profile {frame_profile}"
     )]
-    DeviceLinkProfileMismatch {
+    AppKeyLinkProfileMismatch {
         d_tag_profile: IrisProfileId,
         frame_profile: IrisProfileId,
     },
-    #[error("device-link event signer {signer} does not match request device {device}")]
-    DeviceLinkSignerMismatch { signer: String, device: String },
+    #[error("app-key-link event signer {signer} does not match request device {device}")]
+    AppKeyLinkSignerMismatch { signer: String, device: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,18 +126,18 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Build a signed device-link request event. Signed by the requesting `AppKey`;
+/// Build a signed app-key-link request event. Signed by the requesting `AppKey`;
 /// the profile-scoped d-tag routes the request to admins for that `IrisProfile`.
 pub fn build_app_key_link_request_event(
     device_keys: &Keys,
-    frame: &DeviceLinkRequestFrame,
+    frame: &AppKeyLinkRequestFrame,
 ) -> Result<Event, WireError> {
     PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     let content_json =
         serde_json::to_string(frame).map_err(|e| WireError::BadContent(e.to_string()))?;
     let builder = EventBuilder::new(
-        Kind::from(KIND_DEVICE_LINK_REQUEST),
+        Kind::from(KIND_APP_KEY_LINK_REQUEST),
         content_json,
         [Tag::identifier(app_key_link_request_d_tag(
             frame.profile_id,
@@ -148,14 +148,14 @@ pub fn build_app_key_link_request_event(
         .map_err(|e| WireError::Event(e.to_string()))
 }
 
-/// Parse + verify a signed device-link request event.
+/// Parse + verify a signed app-key-link request event.
 pub fn parse_app_key_link_request_event(
     event: &Event,
-) -> Result<DeviceLinkRequestFrame, WireError> {
+) -> Result<AppKeyLinkRequestFrame, WireError> {
     let kind = event.kind.as_u16();
-    if kind != KIND_DEVICE_LINK_REQUEST {
+    if kind != KIND_APP_KEY_LINK_REQUEST {
         return Err(WireError::WrongKind {
-            expected: KIND_DEVICE_LINK_REQUEST,
+            expected: KIND_APP_KEY_LINK_REQUEST,
             got: kind,
         });
     }
@@ -164,19 +164,19 @@ pub fn parse_app_key_link_request_event(
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let frame: DeviceLinkRequestFrame =
+    let frame: AppKeyLinkRequestFrame =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
     PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     if d_tag_profile != frame.profile_id {
-        return Err(WireError::DeviceLinkProfileMismatch {
+        return Err(WireError::AppKeyLinkProfileMismatch {
             d_tag_profile,
             frame_profile: frame.profile_id,
         });
     }
     let signer = event.pubkey.to_hex();
     if signer != frame.app_key_pubkey {
-        return Err(WireError::DeviceLinkSignerMismatch {
+        return Err(WireError::AppKeyLinkSignerMismatch {
             signer,
             device: frame.app_key_pubkey,
         });
@@ -188,17 +188,17 @@ fn parse_app_key_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireEr
     let rest = d_tag
         .strip_prefix("iris-drive/")
         .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
-    let profile = rest.strip_suffix("/device-link-request").ok_or_else(|| {
-        WireError::DTagMalformed(format!("no /device-link-request suffix: {d_tag}"))
+    let profile = rest.strip_suffix("/app-key-link-request").ok_or_else(|| {
+        WireError::DTagMalformed(format!("no /app-key-link-request suffix: {d_tag}"))
     })?;
     if profile.is_empty() {
         return Err(WireError::DTagMalformed(format!(
-            "empty device-link profile: {d_tag}"
+            "empty app-key-link profile: {d_tag}"
         )));
     }
     profile
         .parse()
-        .map_err(|error| WireError::DTagMalformed(format!("invalid device-link profile: {error}")))
+        .map_err(|error| WireError::DTagMalformed(format!("invalid app-key-link profile: {error}")))
 }
 
 /// Compute the d-tag for a drive-root event.

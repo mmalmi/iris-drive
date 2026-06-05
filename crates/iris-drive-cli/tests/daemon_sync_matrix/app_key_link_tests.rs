@@ -46,7 +46,7 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
     }
 
     panic!(
-        "device link request did not reach admin within {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
+        "app-key link request did not reach admin within {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
         started_at.elapsed(),
         serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
         serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),

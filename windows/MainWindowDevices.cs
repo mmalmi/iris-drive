@@ -66,7 +66,7 @@ public partial class MainWindow
         });
 
         Window? dialog = null;
-        if (currentStatus?.DeviceLinkRequests.Count > 0)
+        if (currentStatus?.AppKeyLinkRequests.Count > 0)
         {
             body.Children.Add(new TextBlock
             {
@@ -75,7 +75,7 @@ public partial class MainWindow
                 Margin = new Thickness(0, 0, 0, 6),
             });
 
-            foreach (var request in currentStatus.DeviceLinkRequests)
+            foreach (var request in currentStatus.AppKeyLinkRequests)
             {
                 AddDeviceRequestRow(body, notice, request, () => dialog?.Close());
             }
@@ -159,7 +159,7 @@ public partial class MainWindow
     private void AddDeviceRequestRow(
         WpfPanel body,
         TextBlock notice,
-        DeviceLinkRequestRow request,
+        AppKeyLinkRequestRow request,
         Action closeDialog)
     {
         var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };

@@ -14,8 +14,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var currentAppKeyNpub: String?
     @Published var deviceNpub: String?
-    @Published var deviceLinkInviteURL: String?
-    @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequestStatus] = []
+    @Published var appKeyLinkInviteURL: String?
+    @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequestStatus] = []
     @Published var canAdminProfile = false
     @Published var canExportRecoveryPhrase = false
     @Published var setupState = "not_configured"
@@ -57,7 +57,7 @@ final class IrisDriveStatus: ObservableObject {
 
 }
 
-struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
+struct IrisDriveAppKeyLinkRequestStatus: Identifiable, Equatable {
     let id: String
     let deviceNpub: String
     let label: String?
@@ -66,7 +66,7 @@ struct IrisDriveDeviceLinkRequestStatus: Identifiable, Equatable {
 
     init(json: [String: Any]) {
         deviceNpub =
-            json["device_npub"] as? String
+            json["app_key_npub"] as? String
             ?? json["app_key_pubkey"] as? String
             ?? UUID().uuidString
         id = deviceNpub
@@ -324,7 +324,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
             ?? json["is_online"] as? Bool
             ?? false
         id = pubkey
-        npub = json["device_npub"] as? String ?? json["pubkey"] as? String ?? pubkey
+        npub = json["app_key_npub"] as? String ?? json["pubkey"] as? String ?? pubkey
         label = labelValue
         displayLabel = json["display_label"] as? String ?? ""
         role = json["role"] as? String ?? ""

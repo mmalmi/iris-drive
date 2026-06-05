@@ -20,7 +20,7 @@ class IrisDriveBackgroundSyncPolicyTest {
     }
 
     @Test
-    fun backgroundSyncKeepsPendingDeviceLinkRequestsMoving() {
+    fun backgroundSyncKeepsPendingAppKeyLinkRequestsMoving() {
         val state = AppState(
             isAwaitingApproval = true,
             sync = SyncState(running = true),

@@ -181,7 +181,7 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
 #[test]
 fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     let device = Keys::generate();
-    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
         app_key_pubkey: device.public_key().to_hex(),
@@ -205,7 +205,7 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
 #[test]
 fn app_key_link_request_event_d_tag_is_profile_scoped() {
     let device = Keys::generate();
-    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
         app_key_pubkey: device.public_key().to_hex(),
@@ -216,7 +216,7 @@ fn app_key_link_request_event_d_tag_is_profile_scoped() {
     };
     let other_profile = crate::IrisProfileId::new_v4();
     let event = EventBuilder::new(
-        Kind::from(KIND_DEVICE_LINK_REQUEST),
+        Kind::from(KIND_APP_KEY_LINK_REQUEST),
         serde_json::to_string(&frame).unwrap(),
         [Tag::identifier(app_key_link_request_d_tag(other_profile))],
     )
@@ -225,7 +225,7 @@ fn app_key_link_request_event_d_tag_is_profile_scoped() {
 
     assert!(matches!(
         parse_app_key_link_request_event(&event),
-        Err(WireError::DeviceLinkProfileMismatch { .. })
+        Err(WireError::AppKeyLinkProfileMismatch { .. })
     ));
 }
 
@@ -233,7 +233,7 @@ fn app_key_link_request_event_d_tag_is_profile_scoped() {
 fn app_key_link_request_event_must_be_signed_by_requesting_device() {
     let device = Keys::generate();
     let attacker = Keys::generate();
-    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
         app_key_pubkey: device.public_key().to_hex(),
@@ -247,7 +247,7 @@ fn app_key_link_request_event_must_be_signed_by_requesting_device() {
 
     assert!(matches!(
         parse_app_key_link_request_event(&event),
-        Err(WireError::DeviceLinkSignerMismatch { .. })
+        Err(WireError::AppKeyLinkSignerMismatch { .. })
     ));
 }
 

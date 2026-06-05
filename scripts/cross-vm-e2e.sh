@@ -1308,18 +1308,17 @@ done
 
 echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
-owner_npub="$(jq -r '.owner_npub' <<<"$owner_json")"
-owner_admin_npub="$(jq -r '.device_npub' <<<"$owner_json")"
+owner_profile_id="$(jq -r '.profile_id' <<<"$owner_json")"
+admin_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$owner_json")"
 invite_json="$(idrive_cmd "$owner_label" devices invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
-invite_owner_npub="$(jq -r '.owner_npub' <<<"$invite_json")"
-invite_admin_npub="$(jq -r '.admin_device_npub' <<<"$invite_json")"
+invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
 if [[ "$invite_url" != iris-drive://invite/* ]]; then
   echo "owner invite did not use canonical iris-drive://invite/ URL: $invite_url" >&2
   exit 1
 fi
-if [[ "$invite_owner_npub" != "$owner_npub" || "$invite_admin_npub" != "$owner_admin_npub" ]]; then
-  echo "owner invite metadata does not match owner/admin device" >&2
+if [[ "$invite_admin_app_key_npub" != "$admin_app_key_npub" ]]; then
+  echo "owner invite metadata does not match owner admin AppKey" >&2
   exit 1
 fi
 
@@ -1329,23 +1328,23 @@ for label in "${LABELS[@]}"; do
   fi
   echo "requesting invite-based link for $label"
   link_json="$(idrive_cmd "$label" devices request "$invite_url" --label "$label")"
-  linked_device_npub="$(jq -r '.device_npub' <<<"$link_json")"
-  request_url="$(jq -r '.device_link_request.url' <<<"$link_json")"
-  request_owner_npub="$(jq -r '.device_link_request.owner_npub' <<<"$link_json")"
-  request_admin_npub="$(jq -r '.device_link_request.admin_device_npub' <<<"$link_json")"
-  if [[ "$request_url" != iris-drive://device-link\?* ]]; then
-    echo "$label did not create a device-link request URL: $request_url" >&2
+  linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+  request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
+  request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
+  request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
+  if [[ "$request_url" != iris-drive://app-key-link\?* ]]; then
+    echo "$label did not create an app-key-link request URL: $request_url" >&2
     exit 1
   fi
-  if [[ "$request_owner_npub" != "$owner_npub" || "$request_admin_npub" != "$owner_admin_npub" ]]; then
-    echo "$label request metadata does not match invite owner/admin" >&2
+  if [[ "$request_admin_app_key_npub" != "$admin_app_key_npub" || "$request_profile_id" != "$owner_profile_id" ]]; then
+    echo "$label request metadata does not match invite profile/admin AppKey" >&2
     exit 1
   fi
-  if [[ "$request_url" != *"owner=$owner_npub"* || "$request_url" != *"device=$linked_device_npub"* || "$request_url" != *"secret="* ]]; then
-    echo "$label request URL is missing owner/device/secret: $request_url" >&2
+  if [[ "$request_url" != *"profile=$owner_profile_id"* || "$request_url" != *"app_key=$linked_app_key_npub"* || "$request_url" != *"secret="* ]]; then
+    echo "$label request URL is missing profile/app_key/secret: $request_url" >&2
     exit 1
   fi
-  if [[ "$request_url" == *"local-owner"* || "$request_url" == *"device=device-"* ]]; then
+  if [[ "$request_url" == *"local-owner"* || "$request_url" == *"app_key=device-"* ]]; then
     echo "$label request URL leaked placeholder ids: $request_url" >&2
     exit 1
   fi

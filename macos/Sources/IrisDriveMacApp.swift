@@ -1499,15 +1499,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool ?? false
                 let invite = account["app_key_link_invite"] as? String ?? ""
-                status.deviceLinkInviteURL = invite.isEmpty ? nil : invite
-                status.inboundDeviceLinkRequests =
+                status.appKeyLinkInviteURL = invite.isEmpty ? nil : invite
+                status.inboundAppKeyLinkRequests =
                     (account["inbound_app_key_link_requests"] as? [[String: Any]] ?? [])
-                    .map(IrisDriveDeviceLinkRequestStatus.init(json:))
+                    .map(IrisDriveAppKeyLinkRequestStatus.init(json:))
             } else {
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
-                status.deviceLinkInviteURL = nil
-                status.inboundDeviceLinkRequests = []
+                status.appKeyLinkInviteURL = nil
+                status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false
                 status.canExportRecoveryPhrase = false
             }
@@ -1631,17 +1631,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool
                     ?? (status.currentAppKeyNpub == status.deviceNpub && status.currentAppKeyNpub != nil)
-                status.deviceLinkInviteURL =
+                status.appKeyLinkInviteURL =
                     account["app_key_link_invite"] as? String
                     ?? (account["app_key_link_invite"] as? [String: Any])?["url"] as? String
-                status.inboundDeviceLinkRequests =
+                status.inboundAppKeyLinkRequests =
                     (account["inbound_app_key_link_requests"] as? [[String: Any]] ?? [])
-                    .map(IrisDriveDeviceLinkRequestStatus.init(json:))
+                    .map(IrisDriveAppKeyLinkRequestStatus.init(json:))
             } else {
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
-                status.deviceLinkInviteURL = nil
-                status.inboundDeviceLinkRequests = []
+                status.appKeyLinkInviteURL = nil
+                status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false
                 status.canExportRecoveryPhrase = false
             }

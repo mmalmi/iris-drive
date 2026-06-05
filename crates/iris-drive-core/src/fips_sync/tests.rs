@@ -507,7 +507,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
 }
 
 #[test]
-fn pending_device_link_admin_is_allowed_for_roster_app_messages() {
+fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     let admin_keys = nostr_sdk::Keys::generate();
     let admin_pubkey = admin_keys.public_key().to_hex();
     let admin_npub = admin_keys.public_key().to_bech32().unwrap();
@@ -604,7 +604,7 @@ fn admin_endpoint_options_allow_open_app_key_link_requests() {
 
     assert_eq!(
         options.open_discovery_max_pending,
-        DEVICE_LINK_OPEN_DISCOVERY_MAX_PENDING
+        APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING
     );
 }
 
@@ -613,8 +613,8 @@ fn signed_control_topics_are_allowed_before_peer_is_configured() {
     assert_eq!(
         super::unconfigured_app_message_topics(),
         [
-            crate::device_link_transport::DEVICE_LINK_REQUEST_APP_TOPIC,
-            crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC,
+            crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC,
+            crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC,
             crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC,
         ]
     );
@@ -643,7 +643,7 @@ async fn unconfigured_signed_control_app_messages_are_delivered() {
     admin_transport
         .send_app_message(
             "phone",
-            crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC,
+            crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC,
             b"signed roster".to_vec(),
         )
         .await
@@ -656,7 +656,7 @@ async fn unconfigured_signed_control_app_messages_are_delivered() {
     assert_eq!(message.peer_id, "admin");
     assert_eq!(
         message.topic,
-        crate::device_link_transport::DEVICE_LINK_ROSTER_APP_TOPIC
+        crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC
     );
     assert_eq!(message.data, b"signed roster");
 

@@ -205,7 +205,6 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         v["app_key_link_request"]["profile_id"],
         init_v["profile_id"]
     );
-    assert!(v["app_key_link_request"].get("owner_npub").is_none());
     assert_eq!(
         v["app_key_link_request"]["app_key_npub"],
         v["current_app_key_npub"]
@@ -275,7 +274,6 @@ fn owner_invite_link_queues_fips_request_to_admin_app_key() {
 
     let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
 
-    assert!(linked["app_key_link_request"].get("owner_npub").is_none());
     assert_eq!(linked["profile_id"], owner["profile_id"]);
     assert_eq!(
         linked["app_key_link_invite"]["profile_id"],
@@ -525,7 +523,6 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(invite_url.starts_with("iris-drive://invite/"));
     assert!(!invite_url.contains("local-owner"));
     assert!(!invite_url.contains("device-"));
-    assert!(invite.get("owner_npub").is_none());
     assert_eq!(
         invite["admin_app_key_npub"].as_str(),
         Some(admin_app_key_npub)

@@ -44,7 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
-import to.iris.drive.app.core.DeviceLinkRequestState
+import to.iris.drive.app.core.AppKeyLinkRequestState
 import to.iris.drive.app.core.DeviceState
 import to.iris.drive.app.core.NativeCore
 
@@ -52,7 +52,7 @@ import to.iris.drive.app.core.NativeCore
 internal fun DevicesPanel(
     devices: List<DeviceState>,
     linkInvite: String,
-    inboundRequests: List<DeviceLinkRequestState>,
+    inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
     onCopyLinkInvite: () -> Unit,
     onResetInvite: () -> Unit,
@@ -211,7 +211,7 @@ private fun DeleteDeviceDialog(
 @Composable
 private fun AddDeviceDialog(
     linkInvite: String,
-    inboundRequests: List<DeviceLinkRequestState>,
+    inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
     request: String,
     manualRequestIsComplete: Boolean,

@@ -21,9 +21,9 @@ public sealed class IrisDriveStatusData
     public bool Revoked { get; init; }
     public string PrimaryStatus { get; init; } = "not_setup";
     public string PrimaryStatusLabel { get; init; } = "Ready";
-    public string? DeviceLinkRequestUrl { get; init; }
-    public IReadOnlyList<DeviceLinkRequestRow> DeviceLinkRequests { get; init; } =
-        Array.Empty<DeviceLinkRequestRow>();
+    public string? AppKeyLinkRequestUrl { get; init; }
+    public IReadOnlyList<AppKeyLinkRequestRow> AppKeyLinkRequests { get; init; } =
+        Array.Empty<AppKeyLinkRequestRow>();
     public int AuthorizedDeviceCount { get; init; }
     public int OnlineDeviceCount { get; init; }
     public string? ConfigDirectory { get; init; }
@@ -82,12 +82,12 @@ public sealed class IrisDriveStatusData
             Revoked = Bool(ui, "revoked"),
             PrimaryStatus = String(ui, "primary_status") ?? "not_setup",
             PrimaryStatusLabel = String(ui, "primary_status_label") ?? "Ready",
-            DeviceLinkRequestUrl = profile.HasValue
+            AppKeyLinkRequestUrl = profile.HasValue
                 ? EmptyToNull(String(profile.Value, "app_key_link_request"))
                 : null,
-            DeviceLinkRequests = profile.HasValue
-                ? NativeDeviceLinkRequests(profile.Value)
-                : Array.Empty<DeviceLinkRequestRow>(),
+            AppKeyLinkRequests = profile.HasValue
+                ? NativeAppKeyLinkRequests(profile.Value)
+                : Array.Empty<AppKeyLinkRequestRow>(),
             AuthorizedDeviceCount = Int(ui, "authorized_device_count"),
             OnlineDeviceCount = Int(ui, "online_device_count"),
             ConfigDirectory = paths.HasValue ? String(paths.Value, "data_dir") : null,
@@ -159,19 +159,19 @@ public sealed class IrisDriveStatusData
         return rows;
     }
 
-    private static IReadOnlyList<DeviceLinkRequestRow> NativeDeviceLinkRequests(JsonElement account)
+    private static IReadOnlyList<AppKeyLinkRequestRow> NativeAppKeyLinkRequests(JsonElement account)
     {
         if (!account.TryGetProperty("inbound_app_key_link_requests", out var requests) ||
             requests.ValueKind != JsonValueKind.Array)
         {
-            return Array.Empty<DeviceLinkRequestRow>();
+            return Array.Empty<AppKeyLinkRequestRow>();
         }
 
-        var rows = new List<DeviceLinkRequestRow>();
+        var rows = new List<AppKeyLinkRequestRow>();
         foreach (var request in requests.EnumerateArray())
         {
             var device = String(request, "app_key_pubkey") ?? "";
-            rows.Add(new DeviceLinkRequestRow(
+            rows.Add(new AppKeyLinkRequestRow(
                 device,
                 String(request, "label") ?? "",
                 String(request, "request_link") ?? device));
@@ -543,7 +543,7 @@ public sealed record RecoverySecretExport(
     }
 }
 
-public sealed record DeviceLinkRequestRow(
+public sealed record AppKeyLinkRequestRow(
     string DeviceNpub,
     string Label,
     string RequestUrl);

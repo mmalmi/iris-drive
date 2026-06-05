@@ -1,6 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-pub(crate) use iris_drive_core::device_link_transport::{
+pub(crate) use iris_drive_core::app_key_link_transport::{
     encode_app_key_approval_request,
     parse_app_key_approval_request as decode_app_key_approval_request,
 };

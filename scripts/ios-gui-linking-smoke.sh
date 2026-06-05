@@ -182,7 +182,7 @@ wait_for_owner_inbound_request() {
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
-      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_device_link_requests") or []); raise SystemExit(0 if any(r.get("device_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -193,7 +193,7 @@ wait_for_owner_inbound_request() {
 owner_inbound_request_url() {
   local expected_device="$1"
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status \
-    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_device_link_requests") or []); print(next(r["url"] for r in reqs if r.get("device_npub") == expected and r.get("url"))) ' "$expected_device"
+    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and r.get("url"))) ' "$expected_device"
 }
 
 resolve_xctestrun() {
@@ -334,10 +334,10 @@ reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
-owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
-owner_device_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$owner_json")"
+owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
+owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 OWNER_FIPS_PORT="$(unused_loopback_port)"
-owner_fips_peer="$owner_device_npub=127.0.0.1:$OWNER_FIPS_PORT"
+owner_fips_peer="$owner_app_key_npub=127.0.0.1:$OWNER_FIPS_PORT"
 IRIS_DRIVE_FIPS_UDP_BIND_ADDR="127.0.0.1:$OWNER_FIPS_PORT" \
   IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="127.0.0.1:$OWNER_FIPS_PORT" \
   IRIS_DRIVE_FIPS_UDP_PUBLIC=false \
@@ -372,15 +372,15 @@ launch_sim_app \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("app_key_link_request") else 1)' \
   15; then
   echo "FAIL: iOS Link this device UI did not create an awaiting linked-device profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_pubkey"])' <"$STATE_FILE")"
+linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["current_app_key_npub"])' <"$STATE_FILE")"
 if ! wait_for_owner_inbound_request "$linked_device" 30; then
-  echo "FAIL: owner did not receive the iOS GUI device-link request over FIPS." >&2
+  echo "FAIL: owner did not receive the iOS GUI app-key-link request over FIPS." >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
@@ -440,15 +440,15 @@ run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenDriveFolderInFilesA
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("device_link_invite") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("app_key_link_invite") else 1)' \
   15; then
   echo "FAIL: iOS Create profile UI did not initialize an owner profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_link_invite"])' <"$STATE_FILE")"
+app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["app_key_link_invite"])' <"$STATE_FILE")"
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"
-linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$linked_json")"
+linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$linked_json")"
 
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAddLinkedDeviceFromDevices" \

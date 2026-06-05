@@ -14,7 +14,7 @@
 		47C8C9305C692805883C114C /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A13E19A7BB747CF4257EEA /* FileProviderExtension.swift */; };
 		4FD4398E0FAB2A9688A37A03 /* IrisDriveBackupActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */; };
 		6A74754BE3D3C08EAD801E69 /* BackupTargetRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A583172656F67925362E493 /* BackupTargetRow.swift */; };
-		707C7D682947C5945F4085B5 /* DeviceLinkInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E56AE819D7EC088DA526D3B6 /* DeviceLinkInput.swift */; };
+		707C7D682947C5945F4085B5 /* AppKeyLinkInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E56AE819D7EC088DA526D3B6 /* AppKeyLinkInput.swift */; };
 		70911C15097C83604960C147 /* IrisDriveMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */; };
 		71E8FA43E039C6C1E396633A /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA12F04B63DF84E4683B43B /* FileProviderItem.swift */; };
 		862E1F35165835674E7541F7 /* IrisDriveControlPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16433B5A1961F8CE8C1F968A /* IrisDriveControlPanel.swift */; };
@@ -70,7 +70,7 @@
 		D5D3EC3900BAF6B43532C7E9 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DABEA3F9DC2A990742681F74 /* IrisDriveStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveStatus.swift; sourceTree = "<group>"; };
-		E56AE819D7EC088DA526D3B6 /* DeviceLinkInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLinkInput.swift; sourceTree = "<group>"; };
+		E56AE819D7EC088DA526D3B6 /* AppKeyLinkInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppKeyLinkInput.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -99,7 +99,7 @@
 			isa = PBXGroup;
 			children = (
 				9A583172656F67925362E493 /* BackupTargetRow.swift */,
-				E56AE819D7EC088DA526D3B6 /* DeviceLinkInput.swift */,
+				E56AE819D7EC088DA526D3B6 /* AppKeyLinkInput.swift */,
 				060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */,
 				16433B5A1961F8CE8C1F968A /* IrisDriveControlPanel.swift */,
 				2D8F0559841E0DD05F20DA05 /* IrisDriveDesktopCore.swift */,
@@ -245,7 +245,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6A74754BE3D3C08EAD801E69 /* BackupTargetRow.swift in Sources */,
-				707C7D682947C5945F4085B5 /* DeviceLinkInput.swift in Sources */,
+				707C7D682947C5945F4085B5 /* AppKeyLinkInput.swift in Sources */,
 				4FD4398E0FAB2A9688A37A03 /* IrisDriveBackupActions.swift in Sources */,
 				862E1F35165835674E7541F7 /* IrisDriveControlPanel.swift in Sources */,
 				875DCC2030031A178FF45AA5 /* IrisDriveDesktopCore.swift in Sources */,

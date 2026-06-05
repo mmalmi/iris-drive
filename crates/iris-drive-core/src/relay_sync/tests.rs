@@ -1,6 +1,6 @@
 use super::*;
+use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::config::Drive;
-use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileFacet, IrisProfileId, IrisProfileRosterOp,
     build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
@@ -57,8 +57,8 @@ fn roster_frame(
     admin: &Profile,
     profile_roster_ops: Vec<crate::SignedIrisProfileRosterOp>,
     sent_at: u64,
-) -> DeviceLinkRosterFrame {
-    DeviceLinkRosterFrame {
+) -> AppKeyLinkRosterFrame {
+    AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
         admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
@@ -99,11 +99,11 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
 
     let first_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
     let initial =
-        apply_device_link_roster_frame(&mut cfg, &first_frame, &admin.state.app_key_pubkey)
+        apply_app_key_link_roster_frame(&mut cfg, &first_frame, &admin.state.app_key_pubkey)
             .unwrap();
     assert!(matches!(
         initial,
-        DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Adopted)
     ));
     assert_eq!(
         cfg.profile.as_ref().unwrap().authorization_state,
@@ -121,7 +121,7 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
 }
 
 #[test]
-fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() {
+fn apply_app_key_link_roster_accepts_newer_admin_roster_after_initial_approval() {
     let (mut admin, mut cfg) = linked_config_after_initial_roster();
 
     let third_device = Keys::generate().public_key().to_hex();
@@ -131,11 +131,11 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 
     let newer_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
     let update =
-        apply_device_link_roster_frame(&mut cfg, &newer_frame, &admin.state.app_key_pubkey)
+        apply_app_key_link_roster_frame(&mut cfg, &newer_frame, &admin.state.app_key_pubkey)
             .unwrap();
     assert!(matches!(
         update,
-        DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Replaced)
     ));
     let linked_state = cfg.profile.as_ref().unwrap();
     let linked_roster = linked_state.app_keys.as_ref().unwrap();
@@ -145,7 +145,7 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
 }
 
 #[test]
-fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
+fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
@@ -176,11 +176,11 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
 
     let outcome =
-        apply_device_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
+        apply_app_key_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
 
     assert!(matches!(
         outcome,
-        DeviceLinkRosterApply::Applied(ApplyDecision::Adopted)
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Adopted)
     ));
     let linked_state = cfg.profile.as_ref().unwrap();
     assert_eq!(linked_state.profile_id, admin.state.profile_id);
@@ -191,7 +191,7 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
 }
 
 #[test]
-fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
+fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
     let (mut admin, mut cfg) = linked_config_after_initial_roster();
     let branch_base_ops = admin.state.profile_roster_ops.clone();
     let branch_at = branch_base_ops
@@ -226,9 +226,9 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
     let current_epoch = admin.state.app_keys.as_ref().unwrap().dck_generation;
     let current_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 789);
     assert!(matches!(
-        apply_device_link_roster_frame(&mut cfg, &current_frame, &admin.state.app_key_pubkey)
+        apply_app_key_link_roster_frame(&mut cfg, &current_frame, &admin.state.app_key_pubkey)
             .unwrap(),
-        DeviceLinkRosterApply::Applied(ApplyDecision::Replaced)
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Replaced)
     ));
     assert!(
         !cfg.profile
@@ -241,9 +241,9 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 
     let branch_frame = roster_frame(&admin, branch_ops, 999);
     assert!(matches!(
-        apply_device_link_roster_frame(&mut cfg, &branch_frame, &admin.state.app_key_pubkey)
+        apply_app_key_link_roster_frame(&mut cfg, &branch_frame, &admin.state.app_key_pubkey)
             .unwrap(),
-        DeviceLinkRosterApply::Applied(ApplyDecision::Merged)
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Merged)
     ));
 
     let linked_state = cfg.profile.as_ref().unwrap();
@@ -263,7 +263,7 @@ fn apply_device_link_roster_merges_older_branch_without_downgrading_epoch() {
 fn subscription_filters_match_app_key_link_requests_for_profile() {
     let device = Keys::generate();
     let profile_id = IrisProfileId::new_v4();
-    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id,
         app_key_pubkey: device.public_key().to_hex(),
@@ -641,7 +641,7 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
         Some("phone".into()),
     )
     .unwrap();
-    let frame = crate::device_link_transport::DeviceLinkRequestFrame {
+    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
         app_key_pubkey: linked.state.app_key_pubkey.clone(),
@@ -658,7 +658,7 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
 
     let outcome = apply_remote_app_key_link_request_event(&mut cfg, &event).unwrap();
 
-    assert_eq!(outcome, DeviceLinkRequestApply::Recorded);
+    assert_eq!(outcome, AppKeyLinkRequestApply::Recorded);
     let inbound = &cfg.profile.as_ref().unwrap().inbound_app_key_link_requests;
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].app_key_pubkey, linked.state.app_key_pubkey);

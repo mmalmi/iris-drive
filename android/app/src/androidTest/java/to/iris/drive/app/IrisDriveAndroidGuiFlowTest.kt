@@ -447,7 +447,7 @@ class IrisDriveAndroidGuiFlowTest {
         val state = AppState(
             profile = profileState().copy(
                 inboundAppKeyLinkRequests = listOf(
-                    to.iris.drive.app.core.DeviceLinkRequestState(
+                    to.iris.drive.app.core.AppKeyLinkRequestState(
                         devicePubkey = "device-b",
                         label = "Tablet",
                         requestedAt = 42,

@@ -27,10 +27,10 @@ use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+mod app_key_link;
 mod backups;
 mod commands;
 mod daemon;
-mod device_link;
 mod drive;
 mod mount;
 mod profile;
@@ -42,13 +42,13 @@ mod sync;
 mod updater;
 
 #[allow(clippy::wildcard_imports)]
+use app_key_link::*;
+#[allow(clippy::wildcard_imports)]
 use backups::*;
 #[allow(clippy::wildcard_imports)]
 use commands::*;
 #[allow(clippy::wildcard_imports)]
 use daemon::*;
-#[allow(clippy::wildcard_imports)]
-use device_link::*;
 #[allow(clippy::wildcard_imports)]
 use drive::*;
 #[allow(clippy::wildcard_imports)]

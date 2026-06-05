@@ -26,7 +26,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:host="device-link"
+                    android:host="app-key-link"
                     android:scheme="iris-drive" />
             </intent-filter>
             <intent-filter>
@@ -51,7 +51,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:host="drive.iris.to"
-                    android:pathPrefix="/device-link"
+                    android:pathPrefix="/app-key-link"
                     android:scheme="https" />
             </intent-filter>
             <intent-filter android:autoVerify="false">

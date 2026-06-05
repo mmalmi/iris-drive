@@ -401,7 +401,7 @@ public sealed class IrisDriveService
         var value = key switch
         {
             "current_app_key_npub" => status.CurrentAppKeyNpub,
-            "device_npub" => status.DeviceNpub,
+            "app_key_npub" => status.DeviceNpub,
             _ => null,
         };
 

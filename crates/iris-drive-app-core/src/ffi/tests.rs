@@ -1,4 +1,4 @@
-use super::{FfiApp, SentDeviceLinkRequest, app_key_link_request_send_due, normalize_pubkey};
+use super::{FfiApp, SentAppKeyLinkRequest, app_key_link_request_send_due, normalize_pubkey};
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, DeviceRootRef, Drive};
@@ -990,7 +990,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     let now = std::time::Instant::now();
     assert!(app_key_link_request_send_due(None, now));
 
-    let first = SentDeviceLinkRequest {
+    let first = SentAppKeyLinkRequest {
         last_sent: now,
         attempts: 1,
     };
@@ -1003,7 +1003,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
         now + std::time::Duration::from_millis(250)
     ));
 
-    let steady = SentDeviceLinkRequest {
+    let steady = SentAppKeyLinkRequest {
         last_sent: now,
         attempts: 40,
     };
@@ -1106,14 +1106,14 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         ..AppConfig::default()
     };
     linked_config.upsert_drive(iris_drive_core::Drive::primary(owner.state.root_scope_id()));
-    let first_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+    let first_frame = iris_drive_core::app_key_link_transport::AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: owner.state.profile_id,
         admin_app_key_pubkey: owner.state.app_key_pubkey.clone(),
         profile_roster_ops: owner.state.profile_roster_ops.clone(),
         sent_at: 456,
     };
-    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &first_frame,
         &owner.state.app_key_pubkey,
@@ -1127,7 +1127,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     owner
         .approve_app_key(&third_device, Some("Pixel".into()))
         .unwrap();
-    let updated_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+    let updated_frame = iris_drive_core::app_key_link_transport::AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: owner.state.profile_id,
         admin_app_key_pubkey: owner.state.app_key_pubkey.clone(),
@@ -1135,7 +1135,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         sent_at: 789,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &updated_frame,
         &owner.state.app_key_pubkey,
@@ -1159,7 +1159,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
 fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
     let owner_state = owner_config.profile.as_ref().unwrap();
-    let frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
+    let frame = iris_drive_core::app_key_link_transport::AppKeyLinkRosterFrame {
         schema: 1,
         profile_id: owner_state.profile_id,
         admin_app_key_pubkey: owner_state.app_key_pubkey.clone(),
@@ -1167,7 +1167,7 @@ fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
-    iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &frame,
         &owner_state.app_key_pubkey,

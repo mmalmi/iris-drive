@@ -46,7 +46,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var approveDeviceKey = ""
     @Published var approveDeviceLabel = ""
     @Published var devices: [IrisDriveDevice] = []
-    @Published var inboundDeviceLinkRequests: [IrisDriveDeviceLinkRequest] = []
+    @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
     @Published var roots: [IrisDriveRoot] = []
     @Published var fileProviderError = ""
@@ -850,7 +850,7 @@ final class IrisDriveMobileModel: ObservableObject {
             devicePublicKey = "local-device"
             authorizationState = "Not linked"
             devices = []
-            inboundDeviceLinkRequests = []
+            inboundAppKeyLinkRequests = []
             roots = []
             backups = []
             relays = defaultRelays
@@ -897,8 +897,8 @@ final class IrisDriveMobileModel: ObservableObject {
                 canDemoteAdmin: device.canDemoteAdmin
             )
         }
-        inboundDeviceLinkRequests = state.ui.profile?.inboundAppKeyLinkRequests.map { request in
-            IrisDriveDeviceLinkRequest(
+        inboundAppKeyLinkRequests = state.ui.profile?.inboundAppKeyLinkRequests.map { request in
+            IrisDriveAppKeyLinkRequest(
                 devicePubkey: request.devicePubkey,
                 label: request.label,
                 requestedAt: request.requestedAt,

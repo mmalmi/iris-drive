@@ -10,6 +10,16 @@ use anyhow::Context;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hashtree_core::{Cid, NHashData, nhash_encode_full};
+#[cfg(not(test))]
+use iris_drive_core::app_key_link_transport::{
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
+    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
+    app_key_link_roster_frame, app_key_link_roster_recipients, pending_app_key_link_request_frame,
+};
+use iris_drive_core::app_key_link_transport::{
+    AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
+};
 use iris_drive_core::backup_ops::{
     add_backup_target as core_add_backup_target, add_blossom_server as core_add_blossom_server,
     check_backups as core_check_backups, default_backup_check_sample_size,
@@ -18,16 +28,6 @@ use iris_drive_core::backup_ops::{
 };
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
-use iris_drive_core::device_link_transport::{
-    AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
-};
-#[cfg(not(test))]
-use iris_drive_core::device_link_transport::{
-    DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
-    DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
-    device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
-    device_link_roster_recipients, pending_app_key_link_request_frame,
-};
 use iris_drive_core::device_summary::{
     DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
@@ -94,22 +94,22 @@ const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(not(test))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
-const DEVICE_LINK_REQUEST_RETRY_SECS: u64 = 10;
-const DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
-const DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
+const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
+const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
 #[cfg(not(test))]
-const DEVICE_LINK_ROSTER_RETRY_SECS: u64 = 2;
+const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(not(test))]
-const DEVICE_LINK_EXCHANGE_TICK_MILLIS: u64 = 250;
+const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 250;
 
 #[derive(Debug, Clone, Copy)]
-struct SentDeviceLinkRequest {
+struct SentAppKeyLinkRequest {
     last_sent: std::time::Instant,
     attempts: u8,
 }
 
 fn app_key_link_request_send_due(
-    sent: Option<SentDeviceLinkRequest>,
+    sent: Option<SentAppKeyLinkRequest>,
     now: std::time::Instant,
 ) -> bool {
     let Some(sent) = sent else {
@@ -119,10 +119,10 @@ fn app_key_link_request_send_due(
 }
 
 fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
-    if attempts < DEVICE_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
-        std::time::Duration::from_millis(DEVICE_LINK_REQUEST_STARTUP_RETRY_MILLIS)
+    if attempts < APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
+        std::time::Duration::from_millis(APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
-        std::time::Duration::from_secs(DEVICE_LINK_REQUEST_RETRY_SECS)
+        std::time::Duration::from_secs(APP_KEY_LINK_REQUEST_RETRY_SECS)
     }
 }
 
@@ -225,9 +225,9 @@ struct NativeAppRuntime {
     data_dir: String,
     app_version: String,
     #[cfg(not(test))]
-    device_link_exchange_running: Arc<AtomicBool>,
+    app_key_link_exchange_running: Arc<AtomicBool>,
     #[cfg(not(test))]
-    device_link_exchange_stop: Arc<AtomicBool>,
+    app_key_link_exchange_stop: Arc<AtomicBool>,
 }
 
 impl NativeAppRuntime {
@@ -245,12 +245,12 @@ impl NativeAppRuntime {
             data_dir,
             app_version,
             #[cfg(not(test))]
-            device_link_exchange_running: Arc::new(AtomicBool::new(false)),
+            app_key_link_exchange_running: Arc::new(AtomicBool::new(false)),
             #[cfg(not(test))]
-            device_link_exchange_stop: Arc::new(AtomicBool::new(false)),
+            app_key_link_exchange_stop: Arc::new(AtomicBool::new(false)),
         };
         runtime.reload_from_disk();
-        runtime.start_device_link_exchange_if_needed();
+        runtime.start_app_key_link_exchange_if_needed();
         runtime
     }
 
@@ -334,7 +334,7 @@ impl NativeAppRuntime {
             }
         }
         self.reload_from_disk_preserving_error();
-        self.start_device_link_exchange_if_needed();
+        self.start_app_key_link_exchange_if_needed();
     }
 
     fn create_profile(&mut self, app_key_label: &str) {
@@ -465,7 +465,7 @@ impl NativeAppRuntime {
             &link_secret,
             unix_now_seconds(),
         ) {
-            self.state.error = format!("queueing device link request: {error}");
+            self.state.error = format!("queueing app-key link request: {error}");
             return;
         }
         if let Err(error) = self.finish_profile_init(&account) {
@@ -478,7 +478,7 @@ impl NativeAppRuntime {
     fn logout(&mut self) {
         match iris_drive_core::logout_local_profile(Path::new(&self.data_dir)) {
             Ok(_) => {
-                self.stop_device_link_exchange();
+                self.stop_app_key_link_exchange();
                 self.state.ui.roots.clear();
                 self.state.ui.devices.clear();
                 self.set_sync_running(false);
@@ -862,7 +862,7 @@ impl NativeAppRuntime {
     }
 
     #[allow(clippy::unused_self)]
-    fn start_device_link_exchange_if_needed(&mut self) {
+    fn start_app_key_link_exchange_if_needed(&mut self) {
         #[cfg(not(test))]
         {
             let Ok(config) = self.load_config() else {
@@ -872,20 +872,20 @@ impl NativeAppRuntime {
                 return;
             }
             if self
-                .device_link_exchange_running
+                .app_key_link_exchange_running
                 .swap(true, Ordering::AcqRel)
             {
                 return;
             }
 
-            self.device_link_exchange_stop
+            self.app_key_link_exchange_stop
                 .store(false, Ordering::Release);
             let data_dir = self.data_dir.clone();
-            let running = self.device_link_exchange_running.clone();
-            let stop = self.device_link_exchange_stop.clone();
+            let running = self.app_key_link_exchange_running.clone();
+            let stop = self.app_key_link_exchange_stop.clone();
             std::thread::spawn(move || {
-                if let Err(error) = run_device_link_exchange(&data_dir, stop) {
-                    tracing::warn!(error = %error, "native device-link FIPS exchange stopped");
+                if let Err(error) = run_app_key_link_exchange(&data_dir, stop) {
+                    tracing::warn!(error = %error, "native app-key-link FIPS exchange stopped");
                 }
                 running.store(false, Ordering::Release);
             });
@@ -893,10 +893,10 @@ impl NativeAppRuntime {
     }
 
     #[allow(clippy::unused_self)]
-    fn stop_device_link_exchange(&mut self) {
+    fn stop_app_key_link_exchange(&mut self) {
         #[cfg(not(test))]
         {
-            self.device_link_exchange_stop
+            self.app_key_link_exchange_stop
                 .store(true, Ordering::Release);
         }
     }
@@ -1144,19 +1144,19 @@ impl NativeAppRuntime {
 #[cfg(not(test))]
 impl Drop for NativeAppRuntime {
     fn drop(&mut self) {
-        self.device_link_exchange_stop
+        self.app_key_link_exchange_stop
             .store(true, Ordering::Release);
     }
 }
 
 #[cfg(not(test))]
-fn run_device_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(), String> {
+fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .map_err(|error| format!("building device-link exchange runtime: {error}"))?;
-    let result = runtime.block_on(run_device_link_exchange_async(data_dir, stop));
+        .map_err(|error| format!("building app-key-link exchange runtime: {error}"))?;
+    let result = runtime.block_on(run_app_key_link_exchange_async(data_dir, stop));
     if let Err(error) = &result {
         write_native_fips_error(Path::new(data_dir), error);
     }
@@ -1165,7 +1165,7 @@ fn run_device_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(),
 
 #[cfg(not(test))]
 #[allow(clippy::too_many_lines)]
-async fn run_device_link_exchange_async(
+async fn run_app_key_link_exchange_async(
     data_dir: &str,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -1196,18 +1196,18 @@ async fn run_device_link_exchange_async(
     );
     let relay_client = iris_drive_core::relay_sync::connect(&relays)
         .await
-        .map_err(|error| format!("connecting device-link relays: {error}"))?;
+        .map_err(|error| format!("connecting app-key-link relays: {error}"))?;
     relay_client
         .subscribe(relay_filters, None)
         .await
-        .map_err(|error| format!("subscribing device-link relays: {error}"))?;
+        .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
     let mut relay_notifications = relay_client.notifications();
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
     let sync = iris_drive_core::FipsBlockSync::start(&device, local, &startup_config)
         .await
-        .map_err(|error| format!("starting FIPS device-link exchange: {error}"))?;
+        .map_err(|error| format!("starting FIPS app-key-link exchange: {error}"))?;
     if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
         tracing::warn!(error = %error, "writing native FIPS status failed");
     }
@@ -1217,10 +1217,10 @@ async fn run_device_link_exchange_async(
     let mut acked_rosters = BTreeSet::new();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(
-        DEVICE_LINK_EXCHANGE_TICK_MILLIS,
+        APP_KEY_LINK_EXCHANGE_TICK_MILLIS,
     ));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let _ = drive_device_link_exchange_tick(
+    let _ = drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
         device.keys(),
@@ -1237,7 +1237,7 @@ async fn run_device_link_exchange_async(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                let _ = drive_device_link_exchange_tick(
+                let _ = drive_app_key_link_exchange_tick(
                     config_dir,
                     &relay_client,
                     device.keys(),
@@ -1256,13 +1256,13 @@ async fn run_device_link_exchange_async(
             message = app_messages.recv() => {
                 match message {
                     Ok(message) => {
-                        if let Err(error) = handle_native_device_link_app_message(
+                        if let Err(error) = handle_native_app_key_link_app_message(
                             config_dir,
                             &sync,
                             &message,
                             &mut acked_rosters,
                         ).await {
-                            tracing::warn!(error = %error, topic = message.topic, "handling native device-link FIPS message failed");
+                            tracing::warn!(error = %error, topic = message.topic, "handling native app-key-link FIPS message failed");
                             continue;
                         }
                         if let Err(error) = direct_roots.handle_app_message(
@@ -1274,7 +1274,7 @@ async fn run_device_link_exchange_async(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(skipped, "native device-link FIPS receiver lagged");
+                        tracing::warn!(skipped, "native app-key-link FIPS receiver lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -1283,15 +1283,15 @@ async fn run_device_link_exchange_async(
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
                         if let Err(error) = handle_native_app_key_link_request_event(config_dir, &event) {
-                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native device-link relay request failed");
+                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay request failed");
                         }
                     }
                     Ok(nostr_sdk::RelayPoolNotification::Shutdown) => {
-                        tracing::warn!("native device-link relay notifications shut down");
+                        tracing::warn!("native app-key-link relay notifications shut down");
                     }
                     Ok(_) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(skipped, "native device-link relay receiver lagged");
+                        tracing::warn!(skipped, "native app-key-link relay receiver lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -1303,12 +1303,12 @@ async fn run_device_link_exchange_async(
 }
 
 #[cfg(not(test))]
-async fn drive_device_link_exchange_tick(
+async fn drive_app_key_link_exchange_tick(
     config_dir: &Path,
     relay_client: &nostr_sdk::Client,
     device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
-    sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
+    sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<bool, String> {
@@ -1321,7 +1321,7 @@ async fn drive_device_link_exchange_tick(
     sync.refresh_authorized_peers(&config).await;
     send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
         .await?;
-    send_native_authorized_device_link_rosters(
+    send_native_authorized_app_key_link_rosters(
         config_dir,
         sync,
         state,
@@ -1341,7 +1341,7 @@ async fn send_native_pending_app_key_link_request(
     device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::ProfileState,
-    sent_requests: &mut BTreeMap<String, SentDeviceLinkRequest>,
+    sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
 ) -> Result<(), String> {
     let Some(frame) = pending_app_key_link_request_frame(state) else {
         return Ok(());
@@ -1359,26 +1359,26 @@ async fn send_native_pending_app_key_link_request(
     }
     let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let bytes = serde_json::to_vec(&frame)
-        .map_err(|error| format!("encoding device link request: {error}"))?;
+        .map_err(|error| format!("encoding app-key link request: {error}"))?;
     let relay_event_id = iris_drive_core::relay_sync::publish_app_key_link_request(
         relay_client,
         device_keys,
         &frame,
     )
     .await
-    .map_err(|error| format!("publishing device link request relay event: {error}"))?;
+    .map_err(|error| format!("publishing app-key link request relay event: {error}"))?;
     let attempts = sent_requests
         .get(&fingerprint)
         .map_or(1, |sent| sent.attempts.saturating_add(1));
     sent_requests.insert(
         fingerprint,
-        SentDeviceLinkRequest {
+        SentAppKeyLinkRequest {
             last_sent: now,
             attempts,
         },
     );
     match sync
-        .send_app_message(&admin_npub, DEVICE_LINK_REQUEST_APP_TOPIC, bytes)
+        .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes)
         .await
     {
         Ok(()) => {
@@ -1386,21 +1386,21 @@ async fn send_native_pending_app_key_link_request(
                 admin_npub,
                 relay_event_id = %relay_event_id.to_hex(),
                 requested_at = frame.requested_at,
-                "sent native device-link request over relay and FIPS"
+                "sent native app-key-link request over relay and FIPS"
             );
         }
         Err(error) => tracing::warn!(
             admin_npub,
             relay_event_id = %relay_event_id.to_hex(),
             error = %error,
-            "sent native device-link request over relay, FIPS send failed"
+            "sent native app-key-link request over relay, FIPS send failed"
         ),
     }
     Ok(())
 }
 
 #[cfg(not(test))]
-async fn send_native_authorized_device_link_rosters(
+async fn send_native_authorized_app_key_link_rosters(
     _config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::ProfileState,
@@ -1418,7 +1418,7 @@ async fn send_native_authorized_device_link_rosters(
     }
 
     let now = std::time::Instant::now();
-    let due_devices = device_link_roster_recipients(state)
+    let due_devices = app_key_link_roster_recipients(state)
         .into_iter()
         .filter(|recipient| {
             if acked_rosters.contains(&recipient.roster_fingerprint) {
@@ -1428,7 +1428,7 @@ async fn send_native_authorized_device_link_rosters(
                 .get(&recipient.roster_fingerprint)
                 .is_some_and(|last_sent| {
                     now.duration_since(*last_sent)
-                        < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+                        < std::time::Duration::from_secs(APP_KEY_LINK_ROSTER_RETRY_SECS)
                 })
         })
         .collect::<Vec<_>>();
@@ -1436,15 +1436,19 @@ async fn send_native_authorized_device_link_rosters(
         return Ok(());
     }
 
-    let Some(frame) = device_link_roster_frame(state, unix_now_seconds()) else {
+    let Some(frame) = app_key_link_roster_frame(state, unix_now_seconds()) else {
         return Ok(());
     };
     let bytes = serde_json::to_vec(&frame)
-        .map_err(|error| format!("encoding device link roster: {error}"))?;
+        .map_err(|error| format!("encoding app-key link roster: {error}"))?;
     for recipient in due_devices {
         let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
         match sync
-            .send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
+            .send_app_message(
+                &recipient_npub,
+                APP_KEY_LINK_ROSTER_APP_TOPIC,
+                bytes.clone(),
+            )
             .await
         {
             Ok(()) => {
@@ -1452,13 +1456,13 @@ async fn send_native_authorized_device_link_rosters(
                 tracing::debug!(
                     recipient_npub,
                     dck_generation = app_keys.dck_generation,
-                    "sent native device-link roster over FIPS"
+                    "sent native app-key-link roster over FIPS"
                 );
             }
             Err(error) => tracing::warn!(
                 recipient_npub,
                 error = %error,
-                "sending native device-link roster over FIPS failed"
+                "sending native app-key-link roster over FIPS failed"
             ),
         }
     }
@@ -1466,19 +1470,19 @@ async fn send_native_authorized_device_link_rosters(
 }
 
 #[cfg(not(test))]
-async fn handle_native_device_link_app_message(
+async fn handle_native_app_key_link_app_message(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
     message: &iris_drive_core::FipsAppMessage,
     acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool, String> {
     match message.topic.as_str() {
-        DEVICE_LINK_REQUEST_APP_TOPIC => handle_native_app_key_link_request(config_dir, message),
-        DEVICE_LINK_ROSTER_APP_TOPIC => {
-            handle_native_device_link_roster(config_dir, sync, message).await
+        APP_KEY_LINK_REQUEST_APP_TOPIC => handle_native_app_key_link_request(config_dir, message),
+        APP_KEY_LINK_ROSTER_APP_TOPIC => {
+            handle_native_app_key_link_roster(config_dir, sync, message).await
         }
-        DEVICE_LINK_ROSTER_ACK_APP_TOPIC => {
-            handle_native_device_link_roster_ack(config_dir, message, acked_rosters)
+        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC => {
+            handle_native_app_key_link_roster_ack(config_dir, message, acked_rosters)
         }
         _ => Ok(false),
     }
@@ -1489,11 +1493,11 @@ fn handle_native_app_key_link_request(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool, String> {
-    let frame: DeviceLinkRequestFrame = serde_json::from_slice(&message.data)
-        .map_err(|error| format!("parsing device link request frame: {error}"))?;
+    let frame: AppKeyLinkRequestFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing app-key link request frame: {error}"))?;
     if frame.schema != 1 {
         return Err(format!(
-            "unsupported device link request schema {}",
+            "unsupported app-key link request schema {}",
             frame.schema
         ));
     }
@@ -1517,7 +1521,7 @@ fn handle_native_app_key_link_request(
             &link_secret,
             frame.requested_at,
         )
-        .map_err(|error| format!("recording inbound device link request: {error}"))?;
+        .map_err(|error| format!("recording inbound app-key link request: {error}"))?;
     if changed {
         config
             .save(config_path_in(config_dir))
@@ -1526,7 +1530,7 @@ fn handle_native_app_key_link_request(
             peer = message.peer_id,
             device_npub = pubkey_npub(&app_key_hex),
             requested_at = frame.requested_at,
-            "received native device-link request over FIPS"
+            "received native app-key-link request over FIPS"
         );
     }
     Ok(true)
@@ -1544,10 +1548,10 @@ fn handle_native_app_key_link_request_event(
         .map_err(|error| format!("loading config: {error}"))?;
     let outcome =
         iris_drive_core::relay_sync::apply_remote_app_key_link_request_event(&mut config, event)
-            .map_err(|error| format!("applying device link request relay event: {error}"))?;
+            .map_err(|error| format!("applying app-key link request relay event: {error}"))?;
     if matches!(
         outcome,
-        iris_drive_core::relay_sync::DeviceLinkRequestApply::Recorded
+        iris_drive_core::relay_sync::AppKeyLinkRequestApply::Recorded
     ) {
         config
             .save(config_path_in(config_dir))
@@ -1555,7 +1559,7 @@ fn handle_native_app_key_link_request_event(
         tracing::debug!(
             event_id = %event.id.to_hex(),
             device_npub = pubkey_npub(&event.pubkey.to_hex()),
-            "received native device-link request over relay"
+            "received native app-key-link request over relay"
         );
     }
     Ok(true)
@@ -1563,16 +1567,16 @@ fn handle_native_app_key_link_request_event(
 
 #[cfg(not(test))]
 #[allow(clippy::too_many_lines)]
-async fn handle_native_device_link_roster(
+async fn handle_native_app_key_link_roster(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool, String> {
-    let frame: DeviceLinkRosterFrame = serde_json::from_slice(&message.data)
-        .map_err(|error| format!("parsing device link roster frame: {error}"))?;
+    let frame: AppKeyLinkRosterFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing app-key link roster frame: {error}"))?;
     if frame.schema != 1 {
         return Err(format!(
-            "unsupported device link roster schema {}",
+            "unsupported app-key link roster schema {}",
             frame.schema
         ));
     }
@@ -1591,27 +1595,27 @@ async fn handle_native_device_link_roster(
         return Ok(true);
     }
 
-    let outcome = iris_drive_core::relay_sync::apply_device_link_roster_frame(
+    let outcome = iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut config,
         &frame,
         &admin_app_key_hex,
     )
-    .map_err(|error| format!("applying signed device-link profile roster ops: {error}"))?;
+    .map_err(|error| format!("applying signed app-key-link profile roster ops: {error}"))?;
     let accepted = match outcome {
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Current => true,
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision) => {
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Current => true,
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision) => {
             decision != iris_drive_core::ApplyDecision::Rejected
         }
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Ignored => false,
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Ignored => false,
     };
     let changed = matches!(
         outcome,
-        iris_drive_core::relay_sync::DeviceLinkRosterApply::Applied(decision)
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
     let state = config.profile.as_ref().expect("account still present");
     let ack_frame = if accepted {
-        device_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
+        app_key_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {
         None
     };
@@ -1623,11 +1627,11 @@ async fn handle_native_device_link_roster(
             peer = message.peer_id,
             admin_app_key_npub = pubkey_npub(&admin_app_key_hex),
             apply_outcome = ?outcome,
-            "accepted native device-link roster over FIPS"
+            "accepted native app-key-link roster over FIPS"
         );
     }
     if let Some(frame) = ack_frame {
-        send_native_device_link_roster_ack(sync, &frame).await?;
+        send_native_app_key_link_roster_ack(sync, &frame).await?;
     }
     let should_sync_roots = changed
         && config
@@ -1647,11 +1651,11 @@ async fn handle_native_device_link_roster(
                 drive_root_events_applied = report.drive_root_events_applied,
                 fips_download = report.fips_download.is_some(),
                 blossom_download = report.blossom_download.is_some(),
-                "synced drive roots after native device-link roster"
+                "synced drive roots after native app-key-link roster"
             ),
             Err(error) => tracing::warn!(
                 error = %error,
-                "syncing drive roots after native device-link roster failed"
+                "syncing drive roots after native app-key-link roster failed"
             ),
         }
     }
@@ -1659,16 +1663,16 @@ async fn handle_native_device_link_roster(
 }
 
 #[cfg(not(test))]
-fn handle_native_device_link_roster_ack(
+fn handle_native_app_key_link_roster_ack(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
     acked_rosters: &mut BTreeSet<String>,
 ) -> Result<bool, String> {
-    let frame: DeviceLinkRosterAckFrame = serde_json::from_slice(&message.data)
-        .map_err(|error| format!("parsing device link roster ack frame: {error}"))?;
+    let frame: AppKeyLinkRosterAckFrame = serde_json::from_slice(&message.data)
+        .map_err(|error| format!("parsing app-key link roster ack frame: {error}"))?;
     if frame.schema != 1 {
         return Err(format!(
-            "unsupported device link roster ack schema {}",
+            "unsupported app-key link roster ack schema {}",
             frame.schema
         ));
     }
@@ -1685,7 +1689,7 @@ fn handle_native_device_link_roster_ack(
     };
     if admin_app_key_hex != frame.admin_app_key_pubkey
         || app_key_hex != frame.app_key_pubkey
-        || !device_link_roster_ack_matches_state(state, &frame)
+        || !app_key_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
     }
@@ -1695,18 +1699,18 @@ fn handle_native_device_link_roster_ack(
 }
 
 #[cfg(not(test))]
-async fn send_native_device_link_roster_ack(
+async fn send_native_app_key_link_roster_ack(
     sync: &iris_drive_core::FsFipsBlockSync,
-    frame: &DeviceLinkRosterAckFrame,
+    frame: &AppKeyLinkRosterAckFrame,
 ) -> Result<(), String> {
     sync.send_app_message(
         &pubkey_npub(&frame.admin_app_key_pubkey),
-        DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
+        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
         serde_json::to_vec(frame)
-            .map_err(|error| format!("encoding device-link roster ack: {error}"))?,
+            .map_err(|error| format!("encoding app-key-link roster ack: {error}"))?,
     )
     .await
-    .map_err(|error| format!("sending device-link roster ack over FIPS: {error}"))?;
+    .map_err(|error| format!("sending app-key-link roster ack over FIPS: {error}"))?;
     Ok(())
 }
 

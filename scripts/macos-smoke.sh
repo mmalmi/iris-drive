@@ -797,7 +797,7 @@ run_user_journey() {
   local owner_config_dir="$SMOKE_DIR/owner/Config"
   local source_dir="$SMOKE_DIR/source"
   local backup_dir="$SMOKE_DIR/filesystem-backup"
-  local owner_json owner_npub linked_json linked_device_npub authorization_state
+  local owner_json admin_app_key_npub linked_json linked_app_key_npub authorization_state
   local approve_json roster_size roster_json roster_devices import_json list_json
   local sync_json check_json
 
@@ -806,8 +806,8 @@ run_user_journey() {
     echo "FAIL: could not initialize owner profile for link journey." >&2
     return 1
   }
-  owner_npub="$(printf '%s' "$owner_json" | json_get owner_npub)" || {
-    echo "FAIL: owner init did not return owner_npub." >&2
+  admin_app_key_npub="$(printf '%s' "$owner_json" | json_get current_app_key_npub)" || {
+    echo "FAIL: owner init did not return current_app_key_npub." >&2
     echo "$owner_json" >&2
     return 1
   }
@@ -823,7 +823,7 @@ run_user_journey() {
     return 1
   fi
 
-  if ! request_show_control_panel || ! drive_link_device_gui "$owner_npub"; then
+  if ! request_show_control_panel || ! drive_link_device_gui "$admin_app_key_npub"; then
     echo "FAIL: could not complete the Link this device GUI journey." >&2
     return 1
   fi
@@ -841,8 +841,8 @@ run_user_journey() {
     echo "FAIL: linked device profile is not readable." >&2
     return 1
   }
-  linked_device_npub="$(printf '%s' "$linked_json" | json_get device_npub)" || {
-    echo "FAIL: linked profile did not return device_npub." >&2
+  linked_app_key_npub="$(printf '%s' "$linked_json" | json_get current_app_key_npub)" || {
+    echo "FAIL: linked profile did not return current_app_key_npub." >&2
     echo "$linked_json" >&2
     return 1
   }
@@ -857,7 +857,7 @@ run_user_journey() {
     return 1
   fi
 
-  approve_json="$("$idrive" --config-dir "$owner_config_dir" approve "$linked_device_npub" --label "Mac GUI linked")" || {
+  approve_json="$("$idrive" --config-dir "$owner_config_dir" approve "$linked_app_key_npub" --label "Mac GUI linked")" || {
     echo "FAIL: owner could not approve linked GUI device." >&2
     return 1
   }

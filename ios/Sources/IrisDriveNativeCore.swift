@@ -435,7 +435,7 @@ struct NativeProfile: Codable {
     var canExportRecoveryPhrase: Bool
     var appKeyLinkRequest: String
     var appKeyLinkInvite: String
-    var inboundAppKeyLinkRequests: [NativeDeviceLinkRequest]
+    var inboundAppKeyLinkRequests: [NativeAppKeyLinkRequest]
 
     var devicePubkey: String { currentAppKeyNpub }
 
@@ -471,7 +471,7 @@ struct NativeRecoverySecretExport: Codable {
     }
 }
 
-struct NativeDeviceLinkRequest: Codable {
+struct NativeAppKeyLinkRequest: Codable {
     var devicePubkey: String
     var label: String
     var requestedAt: UInt64

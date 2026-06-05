@@ -151,7 +151,7 @@ wait_for_owner_inbound_request() {
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
-      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_device_link_requests") or []); raise SystemExit(0 if any(r.get("device_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -162,7 +162,7 @@ wait_for_owner_inbound_request() {
 owner_inbound_request_url() {
   local expected_device="$1"
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status \
-    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_device_link_requests") or []); print(next(r["url"] for r in reqs if r.get("device_npub") == expected and r.get("url"))) ' "$expected_device"
+    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and r.get("url"))) ' "$expected_device"
 }
 
 wait_for_android_authorized() {
@@ -273,8 +273,8 @@ if ! wait_for_debug_state \
 fi
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
-owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_link_invite"]["url"])' <<<"$owner_json")"
-owner_device_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$owner_json")"
+owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
+owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.txt"
 "$IDRIVE" --config-dir "$OWNER_CONFIG" import "$OWNER_SOURCE_DIR" >/dev/null
 owner_fips_addr="default-graph"
@@ -289,7 +289,7 @@ android_fips_args=(
 if bool_true "$USE_DIRECT_STATIC_PEER"; then
   OWNER_FIPS_PORT="$(unused_loopback_port)"
   owner_host_addr="$(android_host_addr)"
-  owner_fips_peer="$owner_device_npub=$owner_host_addr:$OWNER_FIPS_PORT"
+  owner_fips_peer="$owner_app_key_npub=$owner_host_addr:$OWNER_FIPS_PORT"
   owner_fips_addr="$owner_host_addr:$OWNER_FIPS_PORT"
   owner_daemon_env+=(
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$OWNER_FIPS_PORT"
@@ -318,7 +318,7 @@ fi
   "${android_fips_args[@]}" >/dev/null
 
 if ! wait_for_debug_state \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("app_key_link_request") else 1)' \
   15; then
   echo "FAIL: Android did not create a real awaiting linked-device profile after the GUI link-this-device test." >&2
   dump_android_debug_files
@@ -326,9 +326,9 @@ if ! wait_for_debug_state \
 fi
 
 linked_device="$("$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_pubkey"])')"
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["current_app_key_npub"])')"
 if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
-  echo "FAIL: owner did not receive the Android GUI device-link request over FIPS." >&2
+  echo "FAIL: owner did not receive the Android GUI app-key-link request over FIPS." >&2
   dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
