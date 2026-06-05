@@ -11,7 +11,7 @@ fn init_account_config(dir: &Path) {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    cfg.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
+    cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
     cfg.save(config_path_in(dir)).unwrap();
 }
 

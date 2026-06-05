@@ -62,7 +62,7 @@ fn root_update_debounce_has_fast_floor() {
 fn stale_root_apply_followup_detects_superseded_device_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
-        owner_pubkey: "owner".to_string(),
+        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,

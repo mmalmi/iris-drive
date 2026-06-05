@@ -20,11 +20,18 @@ pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
             "{:<24}  {:<7}  {:<32}  {}",
             d.drive_id,
             drive_role_label(d.role),
-            short_pubkey(&d.owner_pubkey),
+            short_scope_id(&d.root_scope_id),
             d.display_name,
         );
     }
     Ok(())
+}
+
+fn short_scope_id(scope_id: &str) -> String {
+    if scope_id.len() <= 16 {
+        return scope_id.to_owned();
+    }
+    format!("{}…{}", &scope_id[..8], &scope_id[scope_id.len() - 8..])
 }
 
 pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::Path) -> Result<()> {

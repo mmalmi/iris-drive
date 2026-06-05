@@ -279,7 +279,7 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
         account: Some(owner.state.clone()),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&owner.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(owner.state.root_scope_id()));
     config.save(config_path_in(dir.path())).unwrap();
 
     let linked_npub = account_npub(&linked_device);
@@ -426,7 +426,7 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
     let dir = tempfile::tempdir().unwrap();
     let owner = Account::create(dir.path(), Some("Mac".into())).unwrap();
     let root_cid = Cid::encrypted([0x11; 32], [0x22; 32]).to_string();
-    let mut drive = Drive::primary(&owner.state.owner_pubkey);
+    let mut drive = Drive::primary(owner.state.root_scope_id());
     drive.device_roots.insert(
         owner.state.device_pubkey.clone(),
         DeviceRootRef::legacy(&root_cid, 10, 1),

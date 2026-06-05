@@ -706,7 +706,7 @@ mod tests {
         let local_root_string = local_root.to_string();
 
         let mut config = AppConfig::default();
-        let mut drive = Drive::primary("owner");
+        let mut drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
         drive.device_roots.insert(
             "device-a".into(),
             DeviceRootRef::legacy(local_root_string.clone(), 10, 1),

@@ -456,7 +456,7 @@ fn snapshot_link_uses_drive_iris_nhash_route() {
 
     let config_path = config_path_in(dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let mut drive = Drive::primary(&account.owner_pubkey);
+    let mut drive = Drive::primary(account.profile_id.clone());
     drive.last_root_cid = Some(root_cid.clone());
     drive.device_roots.insert(
         account.device_pubkey.clone(),
@@ -1086,7 +1086,7 @@ fn native_direct_root_app_keys_refreshes_authorized_member_roster() {
         account: Some(linked.state.clone()),
         ..AppConfig::default()
     };
-    linked_config.upsert_drive(iris_drive_core::Drive::primary(&owner.state.owner_pubkey));
+    linked_config.upsert_drive(iris_drive_core::Drive::primary(owner.state.root_scope_id()));
     let first_frame = iris_drive_core::device_link_transport::DeviceLinkRosterFrame {
         schema: 1,
         profile_id: owner.state.profile_id,

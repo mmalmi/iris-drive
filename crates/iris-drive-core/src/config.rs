@@ -364,11 +364,11 @@ impl DriveRole {
 }
 
 /// A drive is one logical mount-point. The user's primary "My Drive" is
-/// stored as `drive_id = "main", role = Owner, owner_pubkey = self`.
+/// stored as `drive_id = "main", role = Owner, root_scope_id = IrisProfileId`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Drive {
-    pub owner_pubkey: String,
+    pub root_scope_id: String,
     pub drive_id: String,
     pub display_name: String,
     pub role: DriveRole,
@@ -467,9 +467,9 @@ impl DeviceRootRef {
 }
 
 impl Drive {
-    pub fn primary(owner_pubkey: impl Into<String>) -> Self {
+    pub fn primary(root_scope_id: impl Into<String>) -> Self {
         Self {
-            owner_pubkey: owner_pubkey.into(),
+            root_scope_id: root_scope_id.into(),
             drive_id: "main".into(),
             display_name: "My Drive".into(),
             role: DriveRole::Owner,
@@ -534,7 +534,7 @@ relays = ["wss://relay.example"]
 blossom_servers = ["https://upload.example"]
 
 [[drives]]
-owner_pubkey = "owner"
+root_scope_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
 drive_id = "main"
 display_name = "My Drive"
 role = "owner"
@@ -582,9 +582,9 @@ dck_generation = 1
     #[test]
     fn round_trip_through_toml() {
         let mut cfg = AppConfig::default();
-        cfg.upsert_drive(Drive::primary("abc123"));
+        cfg.upsert_drive(Drive::primary(crate::IrisProfileId::new_v4().to_string()));
         cfg.upsert_drive(Drive {
-            owner_pubkey: "def456".into(),
+            root_scope_id: crate::IrisProfileId::new_v4().to_string(),
             drive_id: "shared-photos".into(),
             display_name: "Photos from Alice".into(),
             role: DriveRole::Reader,
@@ -623,7 +623,7 @@ dck_generation = 1
             }),
             ..AppConfig::default()
         };
-        let mut newer_drive = Drive::primary("owner");
+        let mut newer_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
         newer_drive.device_roots.insert(
             "device-a".into(),
             DeviceRootRef {
@@ -675,7 +675,7 @@ dck_generation = 1
         let path = dir.path().join("config.toml");
 
         let mut older = AppConfig::default();
-        let mut older_drive = Drive::primary("owner");
+        let mut older_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
         older_drive.device_roots.insert(
             "device-a".into(),
             DeviceRootRef {
@@ -733,8 +733,9 @@ dck_generation = 1
     #[test]
     fn upsert_replaces_by_drive_id() {
         let mut cfg = AppConfig::default();
-        assert!(cfg.upsert_drive(Drive::primary("abc")));
-        let mut updated = Drive::primary("abc");
+        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        assert!(cfg.upsert_drive(Drive::primary(root_scope_id.clone())));
+        let mut updated = Drive::primary(root_scope_id);
         updated.display_name = "Renamed".into();
         assert!(!cfg.upsert_drive(updated)); // not new
         assert_eq!(cfg.drives.len(), 1);
@@ -744,9 +745,10 @@ dck_generation = 1
     #[test]
     fn remove_drive_returns_removed() {
         let mut cfg = AppConfig::default();
-        cfg.upsert_drive(Drive::primary("abc"));
+        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        cfg.upsert_drive(Drive::primary(root_scope_id.clone()));
         let removed = cfg.remove_drive("main").unwrap();
-        assert_eq!(removed.owner_pubkey, "abc");
+        assert_eq!(removed.root_scope_id, root_scope_id);
         assert!(cfg.drives.is_empty());
         assert!(cfg.remove_drive("main").is_none());
     }
@@ -774,9 +776,11 @@ dck_generation = 1
     }
 
     #[test]
-    fn primary_drive_is_owner_named_main() {
-        let d = Drive::primary("abc");
+    fn primary_drive_uses_root_scope_named_main() {
+        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        let d = Drive::primary(root_scope_id.clone());
         assert_eq!(d.drive_id, "main");
+        assert_eq!(d.root_scope_id, root_scope_id);
         assert_eq!(d.role, DriveRole::Owner);
         assert_eq!(d.display_name, "My Drive");
     }

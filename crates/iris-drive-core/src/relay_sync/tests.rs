@@ -129,7 +129,7 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
         account: Some(linked.state.clone()),
         ..AppConfig::default()
     };
-    cfg.upsert_drive(Drive::primary(admin.state.owner_pubkey.clone()));
+    cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
 
     let first_frame = DeviceLinkRosterFrame {
         schema: 1,
@@ -162,7 +162,7 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
         admin.state.profile_id
     );
     assert_eq!(
-        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
         admin.state.profile_id.to_string()
     );
 
@@ -245,7 +245,7 @@ fn bare_app_keys_event_does_not_bootstrap_pending_iris_profile_link() {
     );
     assert!(linked_state.app_keys.is_none());
     assert_eq!(
-        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
         temporary_profile_id.to_string()
     );
 }
@@ -426,7 +426,7 @@ fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
     );
     assert!(state.app_keys.as_ref().unwrap().contains(&new_app));
     assert_eq!(
-        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().owner_pubkey,
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
         state.profile_id.to_string()
     );
 }
@@ -589,7 +589,7 @@ fn apply_drive_root_event_without_local_wrap_is_skipped() {
         account: Some(linked_state),
         ..AppConfig::default()
     };
-    cfg.upsert_drive(Drive::primary(owner_acct.state.owner_pubkey.clone()));
+    cfg.upsert_drive(Drive::primary(owner_acct.state.root_scope_id()));
 
     let root = encrypted_root(0xac, 0, 1);
     let event = build_drive_root_event(

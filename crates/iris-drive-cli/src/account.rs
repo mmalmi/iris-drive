@@ -971,11 +971,3 @@ pub(crate) fn drive_role_label(role: DriveRole) -> &'static str {
         DriveRole::Reader => "reader",
     }
 }
-
-pub(crate) fn short_pubkey(pk: &str) -> String {
-    if pk.len() > 14 {
-        format!("{}…{}", &pk[..6], &pk[pk.len() - 6..])
-    } else {
-        pk.to_string()
-    }
-}

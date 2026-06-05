@@ -115,9 +115,9 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
 
 - **Identity**: `idrive init` creates an IrisProfile UUID, a fresh per-install
   AppKey under `~/.config/iris-drive/key`, and a recovery phrase authority.
-- **Drive model**: primary My Drive is scoped by `IrisProfileId` with
-  per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets can admit fresh
-  AppKeys and optionally decrypt key epochs but do not sign drive roots.
+- **Drive model**: primary My Drive is scoped by `IrisProfileId` (`root_scope_id`
+  in config) with per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets
+  can admit fresh AppKeys and optionally decrypt key epochs but do not sign drive roots.
 - **Embedded daemon**: link `hashtree-embedded`, start on app launch with the
   config dir as block store path.
 - **Indexer**: maintain the htree directory tree from the present working set.

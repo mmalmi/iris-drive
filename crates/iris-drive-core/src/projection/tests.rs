@@ -62,7 +62,7 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
@@ -130,7 +130,7 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
@@ -234,7 +234,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         account: Some(account_state),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(local_root.to_string(), 101, &local_meta),
@@ -301,7 +301,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(source_root.to_string(), 1, &meta),
@@ -349,7 +349,7 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
@@ -398,7 +398,7 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
         account: Some(account_state),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
@@ -525,7 +525,7 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         account: Some(account_state),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(owner_edit_root.to_string(), 10, &owner_edit_meta),
@@ -627,7 +627,7 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
         account: Some(account_state),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),
@@ -694,7 +694,7 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
         account: Some(account_state),
         ..AppConfig::default()
     };
-    let mut drive = Drive::primary(account.state.owner_pubkey.clone());
+    let mut drive = Drive::primary(account.state.root_scope_id());
     drive.device_roots.insert(
         account.state.device_pubkey.clone(),
         DeviceRootRef::from_meta(owner_mirror.to_string(), 20, &owner_mirror_meta),

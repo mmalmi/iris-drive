@@ -142,7 +142,8 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     assert!(v["drives"][0].get("working_dir").is_none());
     assert_eq!(v["hashtree"]["current_root_cid"], root_cid);
     assert_eq!(v["hashtree"]["current_root_private"], true);
-    let drive_scope = v["drives"][0]["owner_pubkey"].as_str().unwrap();
+    assert!(v["drives"][0].get("owner_pubkey").is_none());
+    let drive_scope = v["drives"][0]["root_scope_id"].as_str().unwrap();
     assert!(
         drive_scope
             .parse::<iris_drive_core::IrisProfileId>()

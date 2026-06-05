@@ -71,7 +71,7 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
@@ -118,7 +118,7 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&account.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
@@ -201,7 +201,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         account: Some(joiner.state.clone()),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&admin.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(joiner_dir.path())).unwrap();
 
     assert!(
@@ -229,7 +229,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         account: Some(requested),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&admin.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(joiner_dir.path())).unwrap();
 
     assert!(
@@ -242,7 +242,7 @@ async fn device_link_roster_message_authorizes_only_after_local_request() {
         saved
             .drive(iris_drive_core::PRIMARY_DRIVE_ID)
             .unwrap()
-            .owner_pubkey,
+            .root_scope_id,
         admin.state.profile_id.to_string()
     );
     let state = saved.account.unwrap();
@@ -306,7 +306,7 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
         account: Some(admin.state.clone()),
         ..AppConfig::default()
     };
-    config.upsert_drive(Drive::primary(&admin.state.owner_pubkey));
+    config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(admin_dir.path())).unwrap();
 
     let app_keys = admin.state.app_keys.as_ref().unwrap();

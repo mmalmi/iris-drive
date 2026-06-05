@@ -409,7 +409,7 @@ fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
         .iter_mut()
         .find(|drive| drive.drive_id == crate::daemon::PRIMARY_DRIVE_ID)
     {
-        drive.owner_pubkey = root_scope_id;
+        drive.root_scope_id = root_scope_id;
     } else {
         config.upsert_drive(Drive::primary(root_scope_id));
     }

@@ -14,7 +14,7 @@ fn init_config(dir: &Path) -> Identity {
     let identity = Identity::generate(key_path_in(dir));
     identity.save().unwrap();
     let mut cfg = AppConfig::default();
-    cfg.upsert_drive(Drive::primary(identity.pubkey_hex()));
+    cfg.upsert_drive(Drive::primary(crate::IrisProfileId::new_v4().to_string()));
     cfg.save(config_path_in(dir)).unwrap();
     identity
 }
@@ -28,7 +28,7 @@ fn init_config_with_account(dir: &Path) -> crate::account::Account {
         account: Some(account.state.clone()),
         ..AppConfig::default()
     };
-    cfg.upsert_drive(Drive::primary(account.state.owner_pubkey.clone()));
+    cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
     cfg.save(config_path_in(dir)).unwrap();
     account
 }

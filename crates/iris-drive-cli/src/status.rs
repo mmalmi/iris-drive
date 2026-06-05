@@ -119,7 +119,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             "drives": config.drives.iter().map(|d| json!({
                 "drive_id": d.drive_id,
                 "display_name": d.display_name,
-                "owner_pubkey": d.owner_pubkey,
+                "root_scope_id": d.root_scope_id,
                 "role": drive_role_label(d.role),
                 "last_root_cid": d.last_root_cid,
                 "device_root_count": d.device_roots.len(),
@@ -691,15 +691,15 @@ const DRIVE_IRIS_TO_ORIGIN: &str = "https://drive.iris.to";
 pub(crate) fn drive_iris_to_url_for_primary_drive(config: &AppConfig) -> Option<String> {
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
     Some(drive_iris_to_url_for_drive(
-        &drive.owner_pubkey,
+        &drive.root_scope_id,
         &drive.drive_id,
     ))
 }
 
-pub(crate) fn drive_iris_to_url_for_drive(owner_pubkey_hex: &str, drive_id: &str) -> String {
+pub(crate) fn drive_iris_to_url_for_drive(root_scope_id: &str, drive_id: &str) -> String {
     format!(
         "{DRIVE_IRIS_TO_ORIGIN}/#/{}/{}",
-        account_npub(owner_pubkey_hex),
+        percent_encode_path_segment(root_scope_id),
         percent_encode_path_segment(drive_id)
     )
 }
