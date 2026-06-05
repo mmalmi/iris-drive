@@ -37,8 +37,7 @@ use crate::paths::{
     config_path_in, key_path_in, owner_key_path_in, recovery_phrase_path_in, sync_cache_path_in,
 };
 use crate::recovery_phrase::{
-    RecoveryPhraseError, generate_recovery_phrase, recovery_phrase_to_profile_id,
-    save_recovery_phrase, validate_recovery_phrase,
+    RecoveryPhraseError, generate_recovery_phrase, save_recovery_phrase, validate_recovery_phrase,
 };
 
 #[derive(Debug, Error)]
@@ -49,11 +48,6 @@ pub enum ProfileError {
     IrisProfile(#[from] IrisProfileError),
     #[error("recovery phrase: {0}")]
     RecoveryPhrase(#[from] RecoveryPhraseError),
-    #[error("recovery phrase belongs to profile {found}, expected {expected}")]
-    RecoveryProfileMismatch {
-        expected: IrisProfileId,
-        found: IrisProfileId,
-    },
     #[error("recovery authority is not active in this IrisProfile")]
     RecoveryAuthorityUnavailable,
     #[error("recovery authority cannot rotate key epochs")]
@@ -437,7 +431,7 @@ impl Profile {
     /// `AppKeys` snapshot.
     pub fn create(config_dir: &Path, device_label: Option<String>) -> Result<Self, ProfileError> {
         let recovery_phrase = generate_recovery_phrase()?;
-        let profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
+        let profile_id = IrisProfileId::new_v4();
         let recovery_key =
             OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(config_dir))?;
         let device = DeviceIdentity::generate(key_path_in(config_dir));
@@ -492,11 +486,7 @@ impl Profile {
         } else {
             OwnerKey::from_secret(recovery_secret, owner_key_path_in(config_dir))?
         };
-        let profile_id = if let Some(phrase) = recovery_phrase.as_deref() {
-            recovery_phrase_to_profile_id(phrase)?
-        } else {
-            IrisProfileId::new_v4()
-        };
+        let profile_id = IrisProfileId::new_v4();
         let device = DeviceIdentity::generate(key_path_in(config_dir));
         device.save()?;
         if let Some(phrase) = recovery_phrase.as_deref() {
@@ -535,6 +525,65 @@ impl Profile {
             device,
             owner_key: None,
         };
+        Ok(profile)
+    }
+
+    /// Restore an existing `IrisProfile` when the UUID and roster log came
+    /// from verified evidence such as relay roster ops, an invite, or an
+    /// export. The recovery secret proves authority; it does not determine the
+    /// UUID.
+    pub fn restore_with_profile_roster_ops(
+        config_dir: &Path,
+        recovery_secret: &str,
+        profile_id: IrisProfileId,
+        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        device_label: Option<String>,
+    ) -> Result<Self, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
+        let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
+            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(config_dir))?
+        } else {
+            OwnerKey::from_secret(recovery_secret, owner_key_path_in(config_dir))?
+        };
+        let authority_pubkey = recovery_key.pubkey_hex();
+        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let expected_purpose = recovery_authority_purpose(
+            &projection,
+            &authority_pubkey,
+            recovery_phrase
+                .as_ref()
+                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+        )?;
+
+        let device = DeviceIdentity::generate(key_path_in(config_dir));
+        device.save()?;
+        if let Some(phrase) = recovery_phrase.as_deref() {
+            save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
+        }
+        let device_label = resolve_device_label(device_label, &device.pubkey_hex());
+        let mut state = ProfileState {
+            profile_id,
+            device_pubkey: device.pubkey_hex(),
+            profile_roster_ops,
+            device_link_secret: default_device_link_secret(),
+            authorization_state: DeviceAuthorizationState::AwaitingApproval,
+            device_label: device_label.clone(),
+            app_keys: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        };
+        state.sync_app_keys_from_profile();
+
+        let mut profile = Self {
+            state,
+            device,
+            owner_key: None,
+        };
+        profile.admit_current_app_key_with_authority_keys(
+            recovery_key.keys(),
+            expected_purpose,
+            device_label,
+        )?;
         Ok(profile)
     }
 
@@ -735,13 +784,6 @@ impl Profile {
         label: Option<String>,
     ) -> Result<&AppKeysSnapshot, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
-        let found_profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
-        if found_profile_id != self.state.profile_id {
-            return Err(ProfileError::RecoveryProfileMismatch {
-                expected: self.state.profile_id,
-                found: found_profile_id,
-            });
-        }
         let recovery_key =
             OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
         self.admit_current_app_key_with_authority_keys(
@@ -1063,15 +1105,9 @@ impl Profile {
         &self,
         recovery_phrase: &str,
     ) -> Result<[u8; 32], ProfileError> {
-        let profile_id = recovery_phrase_to_profile_id(recovery_phrase)?;
-        if profile_id != self.state.profile_id {
-            return Err(ProfileError::RecoveryProfileMismatch {
-                expected: self.state.profile_id,
-                found: profile_id,
-            });
-        }
+        let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
         let recovery_key =
-            OwnerKey::from_recovery_phrase(recovery_phrase, owner_key_path_in(Path::new("")))?;
+            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
         self.current_dck_from_authority_keys(
             recovery_key.keys(),
             IrisProfileKeyPurpose::RecoveryPhrase,
@@ -1204,6 +1240,33 @@ fn initial_profile_roster_ops(
     )?;
     ops.push(epoch_op);
     Ok(ops)
+}
+
+fn recovery_authority_purpose(
+    projection: &IrisProfileRosterProjection,
+    authority_pubkey: &str,
+    expected_purpose: Option<IrisProfileKeyPurpose>,
+) -> Result<IrisProfileKeyPurpose, ProfileError> {
+    let Some(facet) = projection.active_facets.get(authority_pubkey) else {
+        return Err(ProfileError::RecoveryAuthorityUnavailable);
+    };
+    if !facet.capabilities.can_recover_app_keys {
+        return Err(ProfileError::RecoveryAuthorityUnavailable);
+    }
+    if let Some(expected_purpose) = expected_purpose {
+        return if facet.has_purpose(expected_purpose) {
+            Ok(expected_purpose)
+        } else {
+            Err(ProfileError::RecoveryAuthorityUnavailable)
+        };
+    }
+    [
+        IrisProfileKeyPurpose::RecoveryPhrase,
+        IrisProfileKeyPurpose::Nip46Signer,
+    ]
+    .into_iter()
+    .find(|purpose| facet.has_purpose(*purpose))
+    .ok_or(ProfileError::RecoveryAuthorityUnavailable)
 }
 
 fn signed_profile_roster_op(

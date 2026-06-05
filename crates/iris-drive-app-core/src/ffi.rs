@@ -1953,17 +1953,28 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             };
         }
     };
-    let phrase_profile_id =
-        match iris_drive_core::recovery_phrase::recovery_phrase_to_profile_id(&phrase) {
-            Ok(profile_id) => profile_id,
-            Err(error) => {
-                return RecoverySecretExport {
-                    error: format!("validating recovery phrase profile: {error}"),
-                    ..RecoverySecretExport::default()
-                };
-            }
-        };
-    if phrase_profile_id != account.profile_id {
+    let recovery_key = match iris_drive_core::identity::OwnerKey::from_recovery_phrase(
+        &phrase,
+        config_dir.join("recovery-export-check"),
+    ) {
+        Ok(key) => key,
+        Err(error) => {
+            return RecoverySecretExport {
+                error: format!("validating recovery phrase key: {error}"),
+                ..RecoverySecretExport::default()
+            };
+        }
+    };
+    let projection = account.profile_projection();
+    let recovery_pubkey = recovery_key.pubkey_hex();
+    let phrase_matches_profile =
+        projection
+            .active_facets
+            .get(&recovery_pubkey)
+            .is_some_and(|facet| {
+                facet.has_purpose(iris_drive_core::IrisProfileKeyPurpose::RecoveryPhrase)
+            });
+    if !phrase_matches_profile {
         return RecoverySecretExport {
             error: "recovery phrase does not match IrisProfile".to_owned(),
             ..RecoverySecretExport::default()

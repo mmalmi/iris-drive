@@ -21,10 +21,7 @@ fn create_yields_admin_authorized_account() {
         recovery_keys.pubkey_hex(),
         "the 12-word recovery phrase must not be the app key"
     );
-    assert_eq!(
-        acct.state.profile_id,
-        crate::recovery_phrase::recovery_phrase_to_profile_id(&phrase).unwrap()
-    );
+    assert_eq!(acct.state.profile_id.as_uuid().get_version_num(), 4);
     // Roster admin authority is not a second key.
     assert!(dir.path().join("key").exists());
     assert!(dir.path().join("recovery_phrase").exists());
@@ -107,7 +104,7 @@ fn restore_from_raw_secret_creates_fresh_profile_with_fresh_app_key() {
 }
 
 #[test]
-fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
+fn offline_restore_from_recovery_phrase_creates_fresh_profile_and_export_phrase() {
     let dir_a = tempdir().unwrap();
     let original = Profile::create(dir_a.path(), None).unwrap();
     let phrase = crate::recovery_phrase::load_recovery_phrase(
@@ -118,7 +115,7 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
 
     let dir_b = tempdir().unwrap();
     let restored = Profile::restore(dir_b.path(), &phrase, None).unwrap();
-    assert_eq!(restored.state.profile_id, original.state.profile_id);
+    assert_ne!(restored.state.profile_id, original.state.profile_id);
     assert_ne!(
         restored.state.device_pubkey, original.state.device_pubkey,
         "recovery creates a fresh app key instead of cloning the old one"
@@ -130,6 +127,46 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
         .unwrap(),
         phrase
     );
+}
+
+#[test]
+fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_derivation() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(owner_dir.path()),
+    )
+    .unwrap();
+
+    let restored_dir = tempdir().unwrap();
+    let restored = Profile::restore_with_profile_roster_ops(
+        restored_dir.path(),
+        &phrase,
+        owner.state.profile_id,
+        owner.state.profile_roster_ops.clone(),
+        Some("restored laptop".into()),
+    )
+    .unwrap();
+
+    assert_eq!(restored.state.profile_id, owner.state.profile_id);
+    assert_ne!(restored.state.device_pubkey, owner.state.device_pubkey);
+    assert!(restored.state.is_authorized());
+    assert!(restored.state.can_manage_devices());
+    assert_eq!(
+        restored.state.device_label.as_deref(),
+        Some("restored laptop")
+    );
+    assert_eq!(
+        crate::recovery_phrase::load_recovery_phrase(crate::paths::recovery_phrase_path_in(
+            restored_dir.path()
+        ))
+        .unwrap(),
+        phrase
+    );
+    let projection = restored.state.profile_projection();
+    assert!(projection.can_write_roots(&restored.state.device_pubkey));
+    assert!(projection.can_admin_profile(&restored.state.device_pubkey));
+    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
 }
 
 #[test]

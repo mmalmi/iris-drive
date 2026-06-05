@@ -77,7 +77,7 @@ fn logout_removes_local_account_and_key_material() {
 }
 
 #[test]
-fn recovery_phrase_restore_keeps_profile_and_uses_fresh_app_key() {
+fn recovery_phrase_restore_creates_fresh_profile_and_uses_fresh_app_key() {
     let dir_a = tempdir().unwrap();
     idrive(dir_a.path()).arg("init").assert().success();
     let recovery_phrase = std::fs::read_to_string(dir_a.path().join("recovery_phrase"))
@@ -87,7 +87,6 @@ fn recovery_phrase_restore_keeps_profile_and_uses_fresh_app_key() {
     let original_owner =
         String::from_utf8(idrive(dir_a.path()).arg("whoami").output().unwrap().stdout).unwrap();
     let original_v: serde_json::Value = serde_json::from_str(&original_owner).unwrap();
-    let original_profile_id = original_v["profile_id"].as_str().unwrap().to_string();
     let original_app_key_npub = current_app_key_npub(&original_v).to_string();
 
     let dir_b = tempdir().unwrap();
@@ -98,7 +97,7 @@ fn recovery_phrase_restore_keeps_profile_and_uses_fresh_app_key() {
     assert!(out.status.success(), "{out:?}");
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
-    assert_eq!(v["profile_id"], original_profile_id);
+    assert_ne!(v["profile_id"], original_v["profile_id"]);
     assert_eq!(v["can_admin_profile"], true);
     assert_ne!(v["current_app_key_npub"], original_app_key_npub);
     assert!(!dir_b.path().join("owner_key").exists());
@@ -142,7 +141,6 @@ fn macos_login_restore_can_replace_existing_local_setup_with_force() {
         .trim()
         .to_string();
     let original = run_json(original_dir.path(), &["whoami"]);
-    let original_profile_id = original["profile_id"].as_str().unwrap();
     let original_app_key = current_app_key_npub(&original);
 
     let macos_dir = tempdir().unwrap();
@@ -162,7 +160,7 @@ fn macos_login_restore_can_replace_existing_local_setup_with_force() {
         .stderr(contains("already initialized"));
 
     let restored = run_json(macos_dir.path(), &["restore", &recovery_phrase, "--force"]);
-    assert_eq!(restored["profile_id"].as_str(), Some(original_profile_id));
+    assert_ne!(restored["profile_id"], original["profile_id"]);
     assert_ne!(
         restored["current_app_key_npub"].as_str(),
         Some(original_app_key)

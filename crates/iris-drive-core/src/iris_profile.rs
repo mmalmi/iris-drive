@@ -689,6 +689,32 @@ where
         .collect()
 }
 
+pub fn iris_profile_candidate_ids_for_pubkey_from_events<'a, I>(
+    pubkey: &str,
+    events: I,
+) -> Result<Vec<IrisProfileId>, IrisProfileError>
+where
+    I: IntoIterator<Item = &'a Event>,
+{
+    validate_pubkey(pubkey)?;
+    let mut profile_ids = BTreeSet::new();
+    for event in events {
+        if is_iris_profile_facet_acceptance_event_coordinate(event) {
+            if let Ok(acceptance) = parse_iris_profile_facet_acceptance_event(event)
+                && acceptance.content.facet_pubkey == pubkey
+            {
+                profile_ids.insert(acceptance.content.profile_id);
+            }
+        } else if is_iris_profile_roster_op_event_coordinate(event)
+            && let Ok(op) = parse_iris_profile_roster_op_event(event)
+            && (op.signer_pubkey == pubkey || op.content.op.mentioned_pubkeys().contains(pubkey))
+        {
+            profile_ids.insert(op.content.profile_id);
+        }
+    }
+    Ok(profile_ids.into_iter().collect())
+}
+
 fn parse_iris_profile_roster_op_d_tag(
     d_tag: &str,
 ) -> Result<(IrisProfileId, String), IrisProfileError> {
@@ -1308,6 +1334,70 @@ mod tests {
             parse_iris_profile_facet_acceptance_event(&event),
             Err(IrisProfileError::FacetSignerMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn candidate_profile_ids_are_discovered_from_roster_and_acceptance_events() {
+        let profile_a = IrisProfileId::new_v4();
+        let profile_b = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let recovery = Keys::generate();
+        let app = Keys::generate();
+        let recovery_pubkey = recovery.public_key().to_hex();
+        let mentioned_event = build_iris_profile_roster_op_event(
+            &admin,
+            profile_a,
+            Vec::new(),
+            None,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
+            },
+            11,
+        )
+        .unwrap();
+        let acceptance_event = build_iris_profile_facet_acceptance_event(
+            &recovery,
+            profile_a,
+            [IrisProfileKeyPurpose::RecoveryPhrase],
+            None,
+            12,
+        )
+        .unwrap();
+        let signer_event = build_iris_profile_roster_op_event(
+            &recovery,
+            profile_b,
+            Vec::new(),
+            None,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    app.public_key().to_hex(),
+                    13,
+                    None,
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            13,
+        )
+        .unwrap();
+        let unrelated_event = EventBuilder::new(Kind::from(1_u16), "hello", [])
+            .custom_created_at(nostr_sdk::Timestamp::from(14))
+            .to_event(&admin)
+            .unwrap();
+
+        let candidates = iris_profile_candidate_ids_for_pubkey_from_events(
+            &recovery_pubkey,
+            [
+                &mentioned_event,
+                &acceptance_event,
+                &signer_event,
+                &unrelated_event,
+            ],
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+        assert_eq!(candidates, BTreeSet::from([profile_a, profile_b]));
     }
 
     #[test]

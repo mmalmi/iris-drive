@@ -168,7 +168,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
 }
 
 #[test]
-fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
+fn recovery_phrase_export_restores_fresh_profile_without_roster_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let created = app.dispatch(NativeAppAction::CreateProfile {
@@ -195,7 +195,7 @@ fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
 
     assert!(restored.error.is_empty(), "{}", restored.error);
     let restored_account = restored.ui.profile.expect("restored account exists");
-    assert_eq!(restored_account.profile_id, created_account.profile_id);
+    assert_ne!(restored_account.profile_id, created_account.profile_id);
     assert_ne!(
         restored_account.current_app_key_npub,
         created_account.current_app_key_npub
@@ -239,6 +239,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let mut restored_config =
         AppConfig::load_or_default(config_path_in(restored_dir.path())).expect("config loads");
     let mut awaiting_state = restored_config.profile.take().expect("state exists");
+    awaiting_state.profile_id = owner_state.profile_id;
     awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
     awaiting_state.app_keys = None;
     awaiting_state.authorization_state =
