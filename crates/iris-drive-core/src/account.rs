@@ -74,6 +74,8 @@ pub enum AccountError {
     CannotRemoveLastAdmin,
     #[error("no AppKeys snapshot yet")]
     NoCurrentSnapshot,
+    #[error("AppKeys snapshot is missing an explicit signing AppKey")]
+    MissingSnapshotSigner,
     #[error("no DCK wrap for this device (revoked or never authorized)")]
     NoWrapForThisDevice,
     #[error("current AppKey cannot repair key epoch signed by {signed_by_pubkey}")]
@@ -411,7 +413,7 @@ pub fn app_keys_from_profile_projection(
         .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
         .collect();
     Some(AppKeysSnapshot {
-        owner_pubkey: projection.profile_id.to_string(),
+        profile_id: projection.profile_id.to_string(),
         signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
         created_at: key_epoch.created_at,
         app_actors,
@@ -1045,7 +1047,10 @@ impl Account {
             .wrapped_dck
             .get(&self.state.device_pubkey)
             .ok_or(AccountError::NoWrapForThisDevice)?;
-        let signer_pk = PublicKey::from_hex(snap.signer_pubkey())
+        let signer_pubkey = snap
+            .signer_pubkey()
+            .ok_or(AccountError::MissingSnapshotSigner)?;
+        let signer_pk = PublicKey::from_hex(signer_pubkey)
             .map_err(|e| AccountError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.device.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| AccountError::Unwrap(e.to_string()))?;

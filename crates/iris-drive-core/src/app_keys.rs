@@ -1,9 +1,8 @@
 //! Admin-signed `AppKey` actor roster.
 //!
-//! Iris Drive stores one account roster, signed by an authorized admin `AppKey`.
-//! The historical field name `owner_pubkey` remains the stable account id; new
-//! `IrisProfile`-derived snapshots set it to the profile UUID string instead of
-//! any Nostr pubkey. This module owns the snapshot **data model and timeline
+//! Iris Drive stores one profile roster, signed by an authorized admin `AppKey`.
+//! `profile_id` is an `IrisProfile` UUID string, never a Nostr pubkey. This
+//! module owns the snapshot **data model and timeline
 //! rules** — wire format (Nostr event kind, `d` tag, NIP-44 envelope) is the
 //! publishing layer's problem, not this module's.
 //!
@@ -87,9 +86,8 @@ impl AppActorEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppKeysSnapshot {
-    /// Stable roster id. Historically this was a separate owner key; new
-    /// `IrisProfile`-derived snapshots set it to the profile UUID string.
-    pub owner_pubkey: String,
+    /// Stable `IrisProfile` UUID string that scopes this roster.
+    pub profile_id: String,
     /// Pubkey of the admin `AppKey` that signed this snapshot. Local snapshots
     /// created before their Nostr event is built set this to the local `AppKey`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,10 +132,8 @@ impl AppKeysSnapshot {
     }
 
     #[must_use]
-    pub fn signer_pubkey(&self) -> &str {
-        self.signed_by_pubkey
-            .as_deref()
-            .unwrap_or(&self.owner_pubkey)
+    pub fn signer_pubkey(&self) -> Option<&str> {
+        self.signed_by_pubkey.as_deref()
     }
 }
 
@@ -150,7 +146,7 @@ pub enum ApplyDecision {
     Replaced,
     /// Incoming is same-second; the union of `AppKey` actors is taken.
     Merged,
-    /// Incoming is older or from a different owner; ignored.
+    /// Incoming is older or from a different profile; ignored.
     Rejected,
 }
 
@@ -170,7 +166,7 @@ pub fn apply_snapshot(
             ApplyDecision::Adopted
         }
         Some(existing) => {
-            if existing.owner_pubkey != incoming.owner_pubkey {
+            if existing.profile_id != incoming.profile_id {
                 return ApplyDecision::Rejected;
             }
             match incoming.created_at.cmp(&existing.created_at) {
@@ -222,11 +218,11 @@ fn merge_same_second(existing: &mut AppKeysSnapshot, incoming: &AppKeysSnapshot)
 /// snapshots get merged additively.
 pub fn select_latest<I: IntoIterator<Item = AppKeysSnapshot>>(
     snapshots: I,
-    owner_pubkey: &str,
+    profile_id: &str,
 ) -> Option<AppKeysSnapshot> {
     let mut current = None;
     for snap in snapshots {
-        if snap.owner_pubkey == owner_pubkey {
+        if snap.profile_id == profile_id {
             apply_snapshot(&mut current, snap);
         }
     }
@@ -237,10 +233,10 @@ pub fn select_latest<I: IntoIterator<Item = AppKeysSnapshot>>(
 mod tests {
     use super::*;
 
-    fn snap(owner: &str, created_at: i64, app_actors: &[(&str, i64)]) -> AppKeysSnapshot {
+    fn snap(profile_id: &str, created_at: i64, app_actors: &[(&str, i64)]) -> AppKeysSnapshot {
         AppKeysSnapshot {
-            owner_pubkey: owner.into(),
-            signed_by_pubkey: Some(owner.into()),
+            profile_id: profile_id.into(),
+            signed_by_pubkey: Some("admin".into()),
             created_at,
             app_actors: app_actors
                 .iter()
@@ -254,7 +250,7 @@ mod tests {
     #[test]
     fn adopts_first_snapshot() {
         let mut current = None;
-        let s = snap("owner", 100, &[("dev-a", 100)]);
+        let s = snap("profile", 100, &[("dev-a", 100)]);
         assert_eq!(
             apply_snapshot(&mut current, s.clone()),
             ApplyDecision::Adopted
@@ -264,8 +260,8 @@ mod tests {
 
     #[test]
     fn newer_snapshot_replaces() {
-        let mut current = Some(snap("owner", 100, &[("dev-a", 100)]));
-        let next = snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]);
+        let mut current = Some(snap("profile", 100, &[("dev-a", 100)]));
+        let next = snap("profile", 200, &[("dev-a", 100), ("dev-b", 200)]);
         assert_eq!(apply_snapshot(&mut current, next), ApplyDecision::Replaced);
         let s = current.unwrap();
         assert_eq!(s.created_at, 200);
@@ -274,16 +270,16 @@ mod tests {
 
     #[test]
     fn older_snapshot_rejected() {
-        let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]));
-        let stale = snap("owner", 100, &[("dev-a", 100)]);
+        let mut current = Some(snap("profile", 200, &[("dev-a", 100), ("dev-b", 200)]));
+        let stale = snap("profile", 100, &[("dev-a", 100)]);
         assert_eq!(apply_snapshot(&mut current, stale), ApplyDecision::Rejected);
         assert_eq!(current.unwrap().app_actors.len(), 2);
     }
 
     #[test]
     fn same_second_merges_additively() {
-        let mut current = Some(snap("owner", 200, &[("dev-a", 100)]));
-        let racing = snap("owner", 200, &[("dev-b", 200)]);
+        let mut current = Some(snap("profile", 200, &[("dev-a", 100)]));
+        let racing = snap("profile", 200, &[("dev-b", 200)]);
         assert_eq!(apply_snapshot(&mut current, racing), ApplyDecision::Merged);
         let s = current.unwrap();
         assert_eq!(s.app_actors.len(), 2);
@@ -293,11 +289,11 @@ mod tests {
 
     #[test]
     fn same_second_reduced_set_still_keeps_existing() {
-        // Two owner-capable app_actors race; each thinks the other shouldn't
+        // Two admin-capable app actors race; each thinks the other shouldn't
         // exist. Without monotonic merge, one would silently revoke the
         // other.
-        let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 150)]));
-        let reduced = snap("owner", 200, &[("dev-a", 100)]); // omits dev-b
+        let mut current = Some(snap("profile", 200, &[("dev-a", 100), ("dev-b", 150)]));
+        let reduced = snap("profile", 200, &[("dev-a", 100)]); // omits dev-b
         assert_eq!(apply_snapshot(&mut current, reduced), ApplyDecision::Merged);
         let s = current.unwrap();
         assert_eq!(s.app_actors.len(), 2, "dev-b must not be silently revoked");
@@ -306,8 +302,8 @@ mod tests {
 
     #[test]
     fn newer_snapshot_can_legitimately_reduce_set() {
-        let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]));
-        let revoke = snap("owner", 300, &[("dev-a", 100)]);
+        let mut current = Some(snap("profile", 200, &[("dev-a", 100), ("dev-b", 200)]));
+        let revoke = snap("profile", 300, &[("dev-a", 100)]);
         assert_eq!(
             apply_snapshot(&mut current, revoke),
             ApplyDecision::Replaced
@@ -318,20 +314,20 @@ mod tests {
     }
 
     #[test]
-    fn different_owner_rejected() {
-        let mut current = Some(snap("owner-a", 100, &[("dev-a", 100)]));
-        let foreign = snap("owner-b", 200, &[("dev-x", 200)]);
+    fn different_profile_rejected() {
+        let mut current = Some(snap("profile-a", 100, &[("dev-a", 100)]));
+        let foreign = snap("profile-b", 200, &[("dev-x", 200)]);
         assert_eq!(
             apply_snapshot(&mut current, foreign),
             ApplyDecision::Rejected
         );
-        assert_eq!(current.unwrap().owner_pubkey, "owner-a");
+        assert_eq!(current.unwrap().profile_id, "profile-a");
     }
 
     #[test]
     fn merge_keeps_earliest_added_at_per_app_actor() {
-        let mut current = Some(snap("owner", 200, &[("dev-a", 100)]));
-        let mut variant = snap("owner", 200, &[("dev-a", 50)]);
+        let mut current = Some(snap("profile", 200, &[("dev-a", 100)]));
+        let mut variant = snap("profile", 200, &[("dev-a", 50)]);
         // dev-a actually first appeared earlier than current's record
         variant.app_actors[0].added_at = 50;
         apply_snapshot(&mut current, variant);
@@ -340,10 +336,10 @@ mod tests {
 
     #[test]
     fn select_latest_collapses_relay_set() {
-        let s1 = snap("owner", 100, &[("dev-a", 100)]);
-        let s2 = snap("owner", 300, &[("dev-a", 100), ("dev-b", 300)]);
-        let s3 = snap("owner", 200, &[("dev-a", 100), ("dev-c", 200)]);
-        let result = select_latest(vec![s1, s2, s3], "owner").unwrap();
+        let s1 = snap("profile", 100, &[("dev-a", 100)]);
+        let s2 = snap("profile", 300, &[("dev-a", 100), ("dev-b", 300)]);
+        let s3 = snap("profile", 200, &[("dev-a", 100), ("dev-c", 200)]);
+        let result = select_latest(vec![s1, s2, s3], "profile").unwrap();
         assert_eq!(result.created_at, 300);
         assert_eq!(result.app_actors.len(), 2);
         assert!(result.contains("dev-b"));
@@ -351,17 +347,17 @@ mod tests {
     }
 
     #[test]
-    fn select_latest_filters_foreign_owners() {
-        let mine = snap("owner", 100, &[("dev-a", 100)]);
+    fn select_latest_filters_foreign_profiles() {
+        let mine = snap("profile", 100, &[("dev-a", 100)]);
         let other = snap("attacker", 999, &[("evil", 100)]);
-        let result = select_latest(vec![other, mine], "owner").unwrap();
-        assert_eq!(result.owner_pubkey, "owner");
+        let result = select_latest(vec![other, mine], "profile").unwrap();
+        assert_eq!(result.profile_id, "profile");
         assert_eq!(result.created_at, 100);
     }
 
     #[test]
     fn normalize_dedupes_and_sorts() {
-        let mut s = snap("owner", 100, &[("z", 100), ("a", 100), ("a", 200)]);
+        let mut s = snap("profile", 100, &[("z", 100), ("a", 100), ("a", 200)]);
         s.normalize();
         assert_eq!(
             s.app_actors
@@ -375,7 +371,7 @@ mod tests {
     #[test]
     fn round_trip_through_toml() {
         let s = AppKeysSnapshot {
-            owner_pubkey: "abc123".into(),
+            profile_id: "abc123".into(),
             signed_by_pubkey: Some("admin".into()),
             created_at: 1_700_000_000,
             app_actors: vec![AppActorEntry {
@@ -388,9 +384,25 @@ mod tests {
             wrapped_dck: BTreeMap::from([("dev1".to_string(), "abcdef".to_string())]),
         };
         let serialized = toml::to_string(&s).unwrap();
+        assert!(serialized.contains("profile_id = \"abc123\""));
+        assert!(!serialized.contains("owner_pubkey"));
         assert!(serialized.contains("role = \"admin\""));
         let back: AppKeysSnapshot = toml::from_str(&serialized).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn signer_pubkey_is_explicit_not_profile_id_fallback() {
+        let snap = AppKeysSnapshot {
+            profile_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            signed_by_pubkey: None,
+            created_at: 1,
+            app_actors: vec![AppActorEntry::admin("admin".into(), 1, None)],
+            dck_generation: 1,
+            wrapped_dck: BTreeMap::new(),
+        };
+
+        assert_eq!(snap.signer_pubkey(), None);
     }
 
     #[test]
@@ -409,7 +421,7 @@ added_at = 1
     #[test]
     fn snapshot_identifies_admin_app_actors() {
         let snap = AppKeysSnapshot {
-            owner_pubkey: "acct".into(),
+            profile_id: "acct".into(),
             signed_by_pubkey: Some("admin".into()),
             created_at: 1,
             app_actors: vec![

@@ -31,11 +31,14 @@ fn create_yields_admin_authorized_account() {
     assert!(!dir.path().join("owner_key").exists());
     // AppKeys lists one device — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
-    assert_eq!(snap.owner_pubkey, acct.state.profile_id.to_string());
+    assert_eq!(snap.profile_id, acct.state.profile_id.to_string());
     assert_eq!(snap.app_actors.len(), 1);
     assert_eq!(snap.app_actors[0].pubkey, acct.state.device_pubkey);
     assert!(snap.app_actors[0].is_admin());
-    assert_eq!(snap.signer_pubkey(), acct.state.device_pubkey);
+    assert_eq!(
+        snap.signer_pubkey(),
+        Some(acct.state.device_pubkey.as_str())
+    );
     assert!(!acct.state.profile_roster_ops.is_empty());
     assert!(acct.state.profile_roster_ops.iter().all(|op| {
         op.signer_pubkey == acct.state.device_pubkey
@@ -162,7 +165,10 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
         .unwrap();
 
     assert!(snap.is_admin(&recovered_pubkey));
-    assert_eq!(snap.signer_pubkey(), recovery_key.pubkey_hex());
+    assert_eq!(
+        snap.signer_pubkey(),
+        Some(recovery_key.pubkey_hex().as_str())
+    );
     assert!(recovered.state.is_authorized());
     assert!(recovered.state.can_manage_devices());
     let projection = recovered.state.profile_projection();
@@ -242,7 +248,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
         .unwrap();
 
     assert!(snap.is_admin(&recovered_pubkey));
-    assert_eq!(snap.signer_pubkey(), nip46_pubkey);
+    assert_eq!(snap.signer_pubkey(), Some(nip46_pubkey.as_str()));
     assert!(recovered.state.is_authorized());
     assert!(recovered.state.can_manage_devices());
     let projection = recovered.state.profile_projection();
@@ -293,7 +299,10 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
         .unwrap();
 
     assert!(snap.contains(&recovered_pubkey));
-    assert_eq!(snap.signer_pubkey(), owner.state.device_pubkey);
+    assert_eq!(
+        snap.signer_pubkey(),
+        Some(owner.state.device_pubkey.as_str())
+    );
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(1));

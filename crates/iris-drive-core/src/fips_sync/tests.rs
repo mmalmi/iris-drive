@@ -454,6 +454,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let first_pubkey = first_keys.public_key().to_hex();
     let second_pubkey = second_keys.public_key().to_hex();
     let first_npub = first_keys.public_key().to_bech32().unwrap();
+    let profile_id = crate::IrisProfileId::new_v4();
     let settings = FipsTransportSettings {
         static_peer_hints: parse_static_peer_hints(&format!(
             "linux-peer=10.44.214.2:22121,{first_npub}=10.44.34.102:22121"
@@ -462,14 +463,14 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     };
     let config = AppConfig {
         account: Some(crate::AccountState {
-            profile_id: crate::IrisProfileId::new_v4(),
+            profile_id,
             device_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             authorization_state: crate::DeviceAuthorizationState::Authorized,
             device_label: None,
             app_keys: Some(crate::app_keys::AppKeysSnapshot {
-                owner_pubkey: "aa".repeat(32),
+                profile_id: profile_id.to_string(),
                 signed_by_pubkey: Some("dd".repeat(32)),
                 created_at: 1,
                 app_actors: vec![
@@ -566,16 +567,17 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 #[test]
 fn admin_endpoint_options_allow_open_device_link_requests() {
     let settings = FipsTransportSettings::default();
+    let profile_id = crate::IrisProfileId::new_v4();
     let config = AppConfig {
         account: Some(crate::AccountState {
-            profile_id: crate::IrisProfileId::new_v4(),
+            profile_id,
             device_pubkey: "aa".repeat(32),
             profile_roster_ops: Vec::new(),
             device_link_secret: "link-secret".into(),
             authorization_state: crate::DeviceAuthorizationState::Authorized,
             device_label: None,
             app_keys: Some(crate::app_keys::AppKeysSnapshot {
-                owner_pubkey: crate::IrisProfileId::new_v4().to_string(),
+                profile_id: profile_id.to_string(),
                 signed_by_pubkey: Some("aa".repeat(32)),
                 created_at: 1,
                 app_actors: vec![crate::app_keys::AppActorEntry::admin(

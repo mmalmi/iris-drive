@@ -218,7 +218,7 @@ fn device_link_roster_apply_decision(
     let Some(current) = current else {
         return ApplyDecision::Adopted;
     };
-    if current.owner_pubkey != merged.owner_pubkey {
+    if current.profile_id != merged.profile_id {
         return ApplyDecision::Rejected;
     }
     match merged.created_at.cmp(&current.created_at) {

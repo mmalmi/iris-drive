@@ -183,7 +183,7 @@ fn apply_device_link_roster_is_profile_scoped_and_ownerless() {
     let linked_state = cfg.account.as_ref().unwrap();
     assert_eq!(linked_state.profile_id, admin.state.profile_id);
     assert_eq!(
-        linked_state.app_keys.as_ref().unwrap().owner_pubkey,
+        linked_state.app_keys.as_ref().unwrap().profile_id,
         admin.state.profile_id.to_string()
     );
 }
