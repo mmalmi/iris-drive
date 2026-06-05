@@ -157,11 +157,14 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert_eq!(share.shared_with_me_path, "Shared with me/Alpha");
     assert_eq!(share.role, "admin");
     assert_eq!(share.role_label, "Admin");
+    assert_eq!(share.key_status, "available");
+    assert_eq!(share.key_status_label, "Available");
     assert!(share.can_write);
     assert!(share.can_admin);
     assert_eq!(share.current_key_epoch, Some(1));
     assert!(share.has_current_key_wrap);
     assert!(!share.key_unavailable);
+    assert!(!share.repair_needed);
     assert_eq!(share.participant_count, 1);
     assert_eq!(share.shortcut_paths, vec!["Projects/Alpha shared"]);
 }

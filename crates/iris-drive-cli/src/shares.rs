@@ -96,11 +96,14 @@ fn share_views_json(views: Vec<iris_drive_core::SharedFolderView>) -> Vec<Value>
                 "source_path": view.source_path,
                 "shared_with_me_path": view.shared_with_me_path,
                 "local_role": share_role_label(view.local_role),
+                "key_status": view.key_status.as_str(),
+                "key_status_label": view.key_status.label(),
                 "can_write": view.can_write,
                 "can_admin": view.can_admin,
                 "current_key_epoch": view.current_key_epoch,
                 "has_current_key_wrap": view.has_current_key_wrap,
                 "key_unavailable": view.key_unavailable,
+                "repair_needed": view.repair_needed,
                 "missing_key_wraps": view
                     .missing_key_wrap_pubkeys
                     .iter()

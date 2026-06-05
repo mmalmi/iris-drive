@@ -12,7 +12,8 @@ discovery. P2P as far as each OS allows.
 - Each app install seeds its blocks P2P to authorized peers through
   hashtree-over-FIPS.
 - **Share** folders with specific other IrisProfiles/AppKeys. A share has its
-  own cryptographic root, roster, roles, key epochs, and wraps; recipients see
+  own cryptographic root, roster, roles, key epochs, wraps, and core-derived key
+  status (`available`, `repair_needed`, `key_unavailable`, etc.); recipients see
   it under **Shared with me** and may add shortcuts into My Drive.
 - No DNS, SSL, CDNs, or centralized servers. Identity = IrisProfile UUID plus
   signed AppKey/recovery/social facets, not a primary Nostr pubkey.
@@ -211,8 +212,8 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 1. **Identity model**: IrisProfile UUID plus typed facets. Every app install
    has its own AppKey. There is no primary Nostr pubkey.
 2. **Authority model**: signed append-only roster op logs with deterministic
-   projection, tombstones, and key-wrap repair state. Do not add a general CRDT
-   library unless it clearly simplifies this model.
+   projection, tombstones, and key-wrap status/repair state derived in Rust
+   core. Do not add a general CRDT library unless it clearly simplifies this model.
 3. **Drive granularity**: one user-facing My Drive, with internal share roots
    for shared folders. Recipients see Shared with me and optional shortcuts,
    not a pile of separate sidebar drives.

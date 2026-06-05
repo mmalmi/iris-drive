@@ -143,14 +143,53 @@ pub struct SharedFolderView {
     pub shared_with_me_path: String,
     pub local_role: ShareRole,
     pub current_app_pubkey: String,
+    pub key_status: SharedFolderKeyStatus,
     pub can_write: bool,
     pub can_admin: bool,
     pub current_key_epoch: Option<u64>,
     pub has_current_key_wrap: bool,
     pub key_unavailable: bool,
+    pub repair_needed: bool,
     pub missing_key_wrap_pubkeys: Vec<String>,
     pub participant_count: usize,
     pub shortcut_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedFolderKeyStatus {
+    Available,
+    RepairNeeded,
+    KeyUnavailable,
+    NoKeyEpoch,
+    NotARecipient,
+    Revoked,
+}
+
+impl SharedFolderKeyStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::RepairNeeded => "repair_needed",
+            Self::KeyUnavailable => "key_unavailable",
+            Self::NoKeyEpoch => "no_key_epoch",
+            Self::NotARecipient => "not_a_recipient",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Available => "Available",
+            Self::RepairNeeded => "Repair needed",
+            Self::KeyUnavailable => "Key unavailable",
+            Self::NoKeyEpoch => "No share key",
+            Self::NotARecipient => "No access",
+            Self::Revoked => "Revoked",
+        }
+    }
 }
 
 #[must_use]
@@ -179,12 +218,18 @@ pub fn shared_folder_view(
 ) -> SharedFolderView {
     let projection = folder.projection();
     let current_key_epoch = projection.key_epochs.keys().next_back().copied();
-    let has_current_key_wrap = current_key_epoch.is_some_and(|epoch| {
-        projection.key_wrap_status(current_app_pubkey, epoch) == crate::KeyWrapStatus::Available
-    });
     let missing_key_wrap_pubkeys = current_key_epoch.map_or_else(Vec::new, |epoch| {
         projection.active_key_recipients_missing_wraps(epoch)
     });
+    let key_status = share_key_status(
+        &projection,
+        current_app_pubkey,
+        current_key_epoch,
+        &missing_key_wrap_pubkeys,
+    );
+    let has_current_key_wrap = key_status_has_current_wrap(key_status);
+    let key_unavailable = key_status == SharedFolderKeyStatus::KeyUnavailable;
+    let repair_needed = !missing_key_wrap_pubkeys.is_empty();
     let mut shortcut_paths = share_shortcuts
         .iter()
         .filter(|shortcut| shortcut.share_id == folder.share_id)
@@ -198,11 +243,13 @@ pub fn shared_folder_view(
         shared_with_me_path: folder.shared_with_me_path(),
         local_role: share_role_for_pubkey(&projection, current_app_pubkey),
         current_app_pubkey: current_app_pubkey.to_string(),
+        key_status,
         can_write: projection.can_write_roots(current_app_pubkey),
         can_admin: projection.can_admin_profile(current_app_pubkey),
         current_key_epoch,
         has_current_key_wrap,
-        key_unavailable: !has_current_key_wrap,
+        key_unavailable,
+        repair_needed,
         missing_key_wrap_pubkeys,
         participant_count: projection.active_facets.len(),
         shortcut_paths,
@@ -247,6 +294,36 @@ fn share_role_for_pubkey(
     } else {
         ShareRole::Reader
     }
+}
+
+fn share_key_status(
+    projection: &IrisProfileRosterProjection,
+    current_app_pubkey: &str,
+    current_key_epoch: Option<u64>,
+    missing_key_wrap_pubkeys: &[String],
+) -> SharedFolderKeyStatus {
+    let Some(epoch) = current_key_epoch else {
+        return SharedFolderKeyStatus::NoKeyEpoch;
+    };
+    match projection.key_wrap_status(current_app_pubkey, epoch) {
+        crate::KeyWrapStatus::Available if missing_key_wrap_pubkeys.is_empty() => {
+            SharedFolderKeyStatus::Available
+        }
+        crate::KeyWrapStatus::Available => SharedFolderKeyStatus::RepairNeeded,
+        crate::KeyWrapStatus::RepairNeeded => SharedFolderKeyStatus::KeyUnavailable,
+        crate::KeyWrapStatus::NotAKeyRecipient | crate::KeyWrapStatus::NoSuchFacet => {
+            SharedFolderKeyStatus::NotARecipient
+        }
+        crate::KeyWrapStatus::Tombstoned => SharedFolderKeyStatus::Revoked,
+        crate::KeyWrapStatus::NoSuchEpoch => SharedFolderKeyStatus::NoKeyEpoch,
+    }
+}
+
+fn key_status_has_current_wrap(status: SharedFolderKeyStatus) -> bool {
+    matches!(
+        status,
+        SharedFolderKeyStatus::Available | SharedFolderKeyStatus::RepairNeeded
+    )
 }
 
 fn unique_share_shortcut_path(
@@ -519,11 +596,140 @@ mod tests {
         assert_eq!(view.local_role, ShareRole::Editor);
         assert!(view.can_write);
         assert!(!view.can_admin);
+        assert_eq!(view.key_status, SharedFolderKeyStatus::Available);
         assert_eq!(view.current_key_epoch, Some(1));
         assert!(view.has_current_key_wrap);
         assert!(!view.key_unavailable);
+        assert!(!view.repair_needed);
         assert!(view.missing_key_wrap_pubkeys.is_empty());
         assert_eq!(view.participant_count, 2);
+    }
+
+    #[test]
+    fn shared_folder_view_distinguishes_missing_epoch_from_unavailable_key() {
+        let owner_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+        let share_id = IrisProfileId::new_v4();
+        let folder = SharedFolder {
+            share_id,
+            owner_profile_id: IrisProfileId::new_v4(),
+            source_path: "Projects/Alpha".to_string(),
+            display_name: "Alpha".to_string(),
+            local_role: ShareRole::Admin,
+            participant_profiles: BTreeMap::from([(owner_pubkey.clone(), IrisProfileId::new_v4())]),
+            device_roots: BTreeMap::new(),
+            roster_ops: vec![
+                sign_share_roster_op(
+                    &owner_keys,
+                    share_id,
+                    IrisProfileRosterOp::AddFacet {
+                        facet: IrisProfileFacet::app_key(
+                            owner_pubkey.clone(),
+                            10,
+                            Some("Desktop".to_string()),
+                            ShareRole::Admin.capabilities(),
+                        ),
+                    },
+                    10,
+                )
+                .unwrap(),
+            ],
+        };
+
+        let view = shared_folder_view(&folder, &[], &owner_pubkey);
+
+        assert_eq!(view.current_key_epoch, None);
+        assert_eq!(view.key_status, SharedFolderKeyStatus::NoKeyEpoch);
+        assert!(!view.has_current_key_wrap);
+        assert!(!view.key_unavailable);
+        assert!(!view.repair_needed);
+        assert!(view.missing_key_wrap_pubkeys.is_empty());
+    }
+
+    #[test]
+    fn shared_folder_view_surfaces_repair_needed_and_key_unavailable() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+        let share_id = IrisProfileId::new_v4();
+        let mut wrapped_dck = BTreeMap::new();
+        wrapped_dck.insert(owner_pubkey.clone(), "owner-wrap".to_string());
+        let folder = SharedFolder {
+            share_id,
+            owner_profile_id: IrisProfileId::new_v4(),
+            source_path: "Projects/Alpha".to_string(),
+            display_name: "Alpha".to_string(),
+            local_role: ShareRole::Admin,
+            participant_profiles: BTreeMap::from([
+                (owner_pubkey.clone(), IrisProfileId::new_v4()),
+                (recipient_pubkey.clone(), IrisProfileId::new_v4()),
+            ]),
+            device_roots: BTreeMap::new(),
+            roster_ops: vec![
+                sign_share_roster_op(
+                    &owner_keys,
+                    share_id,
+                    IrisProfileRosterOp::AddFacet {
+                        facet: IrisProfileFacet::app_key(
+                            owner_pubkey.clone(),
+                            10,
+                            Some("Desktop".to_string()),
+                            ShareRole::Admin.capabilities(),
+                        ),
+                    },
+                    10,
+                )
+                .unwrap(),
+                sign_share_roster_op(
+                    &owner_keys,
+                    share_id,
+                    IrisProfileRosterOp::AddFacet {
+                        facet: IrisProfileFacet::app_key(
+                            recipient_pubkey.clone(),
+                            11,
+                            Some("Phone".to_string()),
+                            ShareRole::Editor.capabilities(),
+                        ),
+                    },
+                    11,
+                )
+                .unwrap(),
+                sign_share_roster_op(
+                    &owner_keys,
+                    share_id,
+                    IrisProfileRosterOp::RotateKeyEpoch {
+                        epoch: 1,
+                        wrapped_dck,
+                    },
+                    12,
+                )
+                .unwrap(),
+            ],
+        };
+
+        let owner_view = shared_folder_view(&folder, &[], &owner_pubkey);
+        let recipient_view = shared_folder_view(&folder, &[], &recipient_pubkey);
+
+        assert_eq!(owner_view.key_status, SharedFolderKeyStatus::RepairNeeded);
+        assert!(owner_view.has_current_key_wrap);
+        assert!(!owner_view.key_unavailable);
+        assert!(owner_view.repair_needed);
+        assert_eq!(
+            owner_view.missing_key_wrap_pubkeys,
+            vec![recipient_pubkey.clone()]
+        );
+        assert_eq!(
+            recipient_view.key_status,
+            SharedFolderKeyStatus::KeyUnavailable
+        );
+        assert!(!recipient_view.has_current_key_wrap);
+        assert!(recipient_view.key_unavailable);
+        assert!(recipient_view.repair_needed);
+        assert_eq!(
+            recipient_view.missing_key_wrap_pubkeys,
+            vec![recipient_pubkey]
+        );
     }
 
     #[test]

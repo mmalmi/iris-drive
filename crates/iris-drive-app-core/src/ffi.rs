@@ -2232,11 +2232,14 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         shared_with_me_path: share.shared_with_me_path,
         role: share_role_key(share.local_role).to_owned(),
         role_label: share_role_label(share.local_role).to_owned(),
+        key_status: share.key_status.as_str().to_owned(),
+        key_status_label: share.key_status.label().to_owned(),
         can_write: share.can_write,
         can_admin: share.can_admin,
         current_key_epoch: share.current_key_epoch,
         has_current_key_wrap: share.has_current_key_wrap,
         key_unavailable: share.key_unavailable,
+        repair_needed: share.repair_needed,
         missing_key_wraps: share
             .missing_key_wrap_pubkeys
             .into_iter()

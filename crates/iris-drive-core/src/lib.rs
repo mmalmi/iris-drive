@@ -109,9 +109,9 @@ pub use projection::{
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sharing::{
-    SHARED_WITH_ME_DIR, ShareRecipient, ShareRole, ShareShortcut, SharedFolder, SharedFolderView,
-    SharingError, create_shared_folder, default_share_shortcut_path, shared_folder_view,
-    shared_folder_views, shared_with_me_path,
+    SHARED_WITH_ME_DIR, ShareRecipient, ShareRole, ShareShortcut, SharedFolder,
+    SharedFolderKeyStatus, SharedFolderView, SharingError, create_shared_folder,
+    default_share_shortcut_path, shared_folder_view, shared_folder_views, shared_with_me_path,
 };
 pub use sync::{
     ConflictResolution, SyncBaseState, SyncError, SyncReport, sync as run_sync, sync_with_base,
