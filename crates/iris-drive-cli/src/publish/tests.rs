@@ -124,6 +124,88 @@ fn direct_root_publish_includes_profile_roster_ops() {
 }
 
 #[test]
+fn direct_root_publish_includes_share_roster_ops_and_roots() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let account = Account::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let mut initial_config = AppConfig {
+        account: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
+    initial_config
+        .save(config_path_in(config_dir.path()))
+        .unwrap();
+    std::fs::write(work.path().join("alpha.txt"), b"share root").unwrap();
+    let mut daemon = Daemon::open(config_dir.path()).unwrap();
+    let report = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(daemon.import_source_dir(work.path()))
+        .unwrap();
+    let root = daemon
+        .config()
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .unwrap()
+        .device_roots
+        .get(&account.state.device_pubkey)
+        .unwrap()
+        .clone();
+    assert_eq!(root.root_cid, report.root_cid);
+    let mut folder = iris_drive_core::create_shared_folder(
+        account.device.keys(),
+        account.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("native".to_string()),
+        Vec::new(),
+        10,
+    )
+    .unwrap();
+    folder
+        .device_roots
+        .insert(account.state.device_pubkey.clone(), root);
+    let config = AppConfig {
+        account: Some(account.state.clone()),
+        shared_folders: vec![folder.clone()],
+        ..AppConfig::default()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let events = runtime
+        .block_on(build_current_sync_events(
+            config_dir.path(),
+            &config,
+            &account.state,
+        ))
+        .unwrap();
+
+    assert!(events.iter().any(|event| {
+        event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
+            && event
+                .key
+                .starts_with(&format!("share-profile-op:{}:", folder.share_id))
+    }));
+    let share_root = events
+        .iter()
+        .find(|event| {
+            event
+                .key
+                .starts_with(&format!("share-root:{}:", folder.share_id))
+        })
+        .expect("share root event should be announced");
+    let event = nostr_sdk::Event::from_json(&share_root.json).unwrap();
+    let (_, root_scope, drive_id) =
+        iris_drive_core::nostr_events::parse_drive_root_event_header(&event).unwrap();
+    assert_eq!(root_scope, folder.share_id.to_string());
+    assert_eq!(drive_id, iris_drive_core::PRIMARY_DRIVE_ID);
+}
+
+#[test]
 fn unchanged_mount_visible_root_is_not_publishable() {
     let root = Cid::encrypted([0x11; 32], [0x22; 32]);
     let other = Cid::encrypted([0x33; 32], [0x44; 32]);

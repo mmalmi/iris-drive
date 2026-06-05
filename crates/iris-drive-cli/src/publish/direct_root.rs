@@ -324,6 +324,19 @@ pub(crate) async fn build_current_sync_events(
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
+    append_profile_roster_events(&mut events, state)?;
+    append_share_roster_events(&mut events, config)?;
+    append_app_keys_event(&mut events, config_dir, state)?;
+    append_primary_drive_root_events(&mut events, config_dir, config, state).await?;
+    append_share_root_events(&mut events, config_dir, config, state).await?;
+
+    Ok(events)
+}
+
+fn append_profile_roster_events(
+    events: &mut Vec<DirectRootEvent>,
+    state: &AccountState,
+) -> Result<()> {
     for op in &state.profile_roster_ops {
         let event =
             Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
@@ -332,7 +345,31 @@ pub(crate) async fn build_current_sync_events(
             &event,
         )?);
     }
+    Ok(())
+}
 
+fn append_share_roster_events(
+    events: &mut Vec<DirectRootEvent>,
+    config: &AppConfig,
+) -> Result<()> {
+    for folder in &config.shared_folders {
+        for op in &folder.roster_ops {
+            let event =
+                Event::from_json(&op.event_json).context("parsing share roster op event")?;
+            events.push(direct_root_event(
+                format!("share-profile-op:{}:{}", folder.share_id, op.op_id),
+                &event,
+            )?);
+        }
+    }
+    Ok(())
+}
+
+fn append_app_keys_event(
+    events: &mut Vec<DirectRootEvent>,
+    config_dir: &Path,
+    state: &AccountState,
+) -> Result<()> {
     if state.can_manage_devices()
         && let Some(snap) = state.app_keys.as_ref()
     {
@@ -354,7 +391,15 @@ pub(crate) async fn build_current_sync_events(
             &event,
         )?);
     }
+    Ok(())
+}
 
+async fn append_primary_drive_root_events(
+    events: &mut Vec<DirectRootEvent>,
+    config_dir: &Path,
+    config: &AppConfig,
+    state: &AccountState,
+) -> Result<()> {
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_device_root(config_dir, drive, state).await?
     {
@@ -399,8 +444,57 @@ pub(crate) async fn build_current_sync_events(
             )?);
         }
     }
+    Ok(())
+}
 
-    Ok(events)
+async fn append_share_root_events(
+    events: &mut Vec<DirectRootEvent>,
+    config_dir: &Path,
+    config: &AppConfig,
+    state: &AccountState,
+) -> Result<()> {
+    let device = iris_drive_core::identity::DeviceIdentity::load(key_path_in(config_dir))
+        .context("loading device key")?;
+    for folder in &config.shared_folders {
+        let projection = folder.projection();
+        if !projection.can_write_roots(&state.device_pubkey) {
+            continue;
+        }
+        let Some(root) = folder.device_roots.get(&state.device_pubkey) else {
+            continue;
+        };
+        if root.local_only {
+            continue;
+        }
+        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+        let authorized_recipients = projection
+            .active_facets
+            .values()
+            .filter(|facet| facet.capabilities.can_receive_key_wraps)
+            .map(|facet| facet.pubkey.clone())
+            .collect::<Vec<_>>();
+        let event = iris_drive_core::nostr_events::build_drive_root_event(
+            device.keys(),
+            &folder.share_id.to_string(),
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            root,
+            &authorized_recipients,
+        )
+        .context("building share-root event")?;
+        events.push(direct_root_event(
+            format!(
+                "share-root:{}:{}:{}:{}:{}",
+                folder.share_id,
+                state.device_pubkey,
+                root.device_seq,
+                root.root_cid,
+                authorized_recipients.join(",")
+            ),
+            &event,
+        )?);
+    }
+
+    Ok(())
 }
 
 pub(crate) async fn publishable_device_root(

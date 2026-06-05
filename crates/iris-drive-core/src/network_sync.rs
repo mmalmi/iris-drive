@@ -100,6 +100,26 @@ pub async fn sync_once_with_fips(
             report.profile_roster_ops_applied += 1;
         }
     }
+    let share_ids = config
+        .shared_folders
+        .iter()
+        .map(|folder| folder.share_id)
+        .collect::<Vec<_>>();
+    for share_id in share_ids {
+        let share_events = relay_sync::fetch_iris_profile_roster_ops(&client, share_id, timeout)
+            .await
+            .with_context(|| format!("fetching share roster ops for {share_id}"))?;
+        report.profile_roster_ops_seen += share_events.len();
+        for event in &share_events {
+            if matches!(
+                relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)
+                    .with_context(|| format!("applying share roster op for {share_id}"))?,
+                relay_sync::IrisProfileRosterOpApply::Applied
+            ) {
+                report.profile_roster_ops_applied += 1;
+            }
+        }
+    }
 
     let authorized_devices = config
         .account
@@ -116,6 +136,26 @@ pub async fn sync_once_with_fips(
     )
     .await
     .context("fetching drive roots")?;
+    let mut drive_root_events = drive_root_events;
+    for folder in &config.shared_folders {
+        let share_writers = folder
+            .projection()
+            .active_facets
+            .values()
+            .filter(|facet| facet.capabilities.can_write_roots)
+            .map(|facet| facet.pubkey.clone())
+            .collect::<Vec<_>>();
+        let mut share_events = relay_sync::fetch_drive_roots(
+            &client,
+            &folder.share_id.to_string(),
+            PRIMARY_DRIVE_ID,
+            &share_writers,
+            timeout,
+        )
+        .await
+        .with_context(|| format!("fetching share roots for {}", folder.share_id))?;
+        drive_root_events.append(&mut share_events);
+    }
     let drive_roots = apply_drive_root_events(config_dir, &mut config, &drive_root_events)
         .context("applying drive-root events")?;
     report.drive_root_events_seen = drive_roots.seen;

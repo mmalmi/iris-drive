@@ -274,27 +274,44 @@ pub fn apply_remote_iris_profile_roster_op_event(
     let Some(account) = config.account.as_ref() else {
         return Err(RelayError::NoAccount);
     };
-    if op.content.profile_id != account.profile_id {
-        return Ok(IrisProfileRosterOpApply::NotOurProfile);
+    if op.content.profile_id == account.profile_id {
+        if account
+            .profile_roster_ops
+            .iter()
+            .any(|current| current.op_id == op.op_id)
+        {
+            return Ok(IrisProfileRosterOpApply::Current);
+        }
+
+        let root_scope_id = {
+            let Some(account) = config.account.as_mut() else {
+                return Err(RelayError::NoAccount);
+            };
+            account.profile_roster_ops =
+                merge_profile_roster_ops(&account.profile_roster_ops, &[op]);
+            account.sync_app_keys_from_profile();
+            account.recompute_authorization();
+            account.root_scope_id()
+        };
+        sync_primary_drive_scope(config, root_scope_id);
+        return Ok(IrisProfileRosterOpApply::Applied);
     }
-    if account
-        .profile_roster_ops
+
+    let Some(shared_folder) = config
+        .shared_folders
+        .iter_mut()
+        .find(|folder| folder.share_id == op.content.profile_id)
+    else {
+        return Ok(IrisProfileRosterOpApply::NotOurProfile);
+    };
+    if shared_folder
+        .roster_ops
         .iter()
         .any(|current| current.op_id == op.op_id)
     {
         return Ok(IrisProfileRosterOpApply::Current);
     }
-
-    let root_scope_id = {
-        let Some(account) = config.account.as_mut() else {
-            return Err(RelayError::NoAccount);
-        };
-        account.profile_roster_ops = merge_profile_roster_ops(&account.profile_roster_ops, &[op]);
-        account.sync_app_keys_from_profile();
-        account.recompute_authorization();
-        account.root_scope_id()
-    };
-    sync_primary_drive_scope(config, root_scope_id);
+    shared_folder.roster_ops = merge_profile_roster_ops(&shared_folder.roster_ops, &[op]);
     Ok(IrisProfileRosterOpApply::Applied)
 }
 
@@ -831,6 +848,16 @@ pub fn subscription_filters(
     root_scope_id: &str,
     drive_id: &str,
 ) -> Vec<Filter> {
+    subscription_filters_for_shared_roots(owner_pubkey_hex, root_scope_id, drive_id, &[])
+}
+
+#[must_use]
+pub fn subscription_filters_for_shared_roots(
+    owner_pubkey_hex: &str,
+    root_scope_id: &str,
+    drive_id: &str,
+    share_ids: &[IrisProfileId],
+) -> Vec<Filter> {
     let mut filters = Vec::new();
     if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
         filters.push(iris_profile_roster_op_filter(profile_id));
@@ -843,6 +870,31 @@ pub fn subscription_filters(
                 [device_link_request_d_tag(owner_pubkey_hex)],
             ),
     );
+    push_drive_root_filters(&mut filters, root_scope_id, drive_id);
+    for share_id in share_ids {
+        let share_scope = share_id.to_string();
+        if share_scope == root_scope_id {
+            continue;
+        }
+        filters.push(iris_profile_roster_op_filter(*share_id));
+        push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
+    }
+    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
+        filters.push(
+            Filter::new()
+                .author(owner)
+                .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
+                .identifier(drive_id)
+                .custom_tag(
+                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+                    [hashtree_nostr::HASHTREE_LABEL],
+                ),
+        );
+    }
+    filters
+}
+
+fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive_id: &str) {
     let d_tag = drive_root_d_tag(root_scope_id, drive_id);
     filters.push(
         Filter::new()
@@ -857,19 +909,6 @@ pub fn subscription_filters(
             .kind(nostr_sdk::Kind::from(KIND_LEGACY_DRIVE_ROOT))
             .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
     );
-    if let Ok(owner) = PublicKey::from_hex(owner_pubkey_hex) {
-        filters.push(
-            Filter::new()
-                .author(owner)
-                .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
-                .identifier(drive_id)
-                .custom_tag(
-                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-                    [hashtree_nostr::HASHTREE_LABEL],
-                ),
-        );
-    }
-    filters
 }
 
 fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {

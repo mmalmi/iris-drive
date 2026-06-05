@@ -300,6 +300,99 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
 }
 
 #[test]
+fn subscription_filters_match_share_roster_ops_and_roots() {
+    let dir = tempdir().unwrap();
+    let (_, owner) = config_with_owner_account(dir.path());
+    let reader = Keys::generate();
+    let folder = crate::create_shared_folder(
+        owner.device.keys(),
+        owner.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Owner".into()),
+        vec![ShareRecipient {
+            profile_id: IrisProfileId::new_v4(),
+            app_pubkey: reader.public_key().to_hex(),
+            role: ShareRole::Reader,
+            label: Some("Reader".into()),
+        }],
+        10,
+    )
+    .unwrap();
+    let share_op = profile_event(&folder.roster_ops[0]);
+    let root = encrypted_root(0x55, 20, 1);
+    let root_event = build_drive_root_event(
+        owner.device.keys(),
+        &folder.share_id.to_string(),
+        crate::PRIMARY_DRIVE_ID,
+        &root,
+        &[
+            owner.state.device_pubkey.clone(),
+            reader.public_key().to_hex(),
+        ],
+    )
+    .unwrap();
+
+    let filters = subscription_filters_for_shared_roots(
+        &owner.state.owner_pubkey,
+        &owner.state.root_scope_id(),
+        crate::PRIMARY_DRIVE_ID,
+        &[folder.share_id],
+    );
+
+    assert!(filters.iter().any(|filter| filter.match_event(&share_op)));
+    assert!(filters.iter().any(|filter| filter.match_event(&root_event)));
+}
+
+#[test]
+fn apply_share_roster_op_event_merges_known_shared_folder() {
+    let dir = tempdir().unwrap();
+    let (_, owner) = config_with_owner_account(dir.path());
+    let editor = Keys::generate();
+    let mut folder = crate::create_shared_folder(
+        owner.device.keys(),
+        owner.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Owner".into()),
+        Vec::new(),
+        10,
+    )
+    .unwrap();
+    let op_event = build_iris_profile_roster_op_event(
+        owner.device.keys(),
+        folder.share_id,
+        Vec::new(),
+        None,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                editor.public_key().to_hex(),
+                20,
+                Some("Editor".into()),
+                IrisProfileCapabilities::app_writer(),
+            ),
+        },
+        20,
+    )
+    .unwrap();
+    let mut cfg = AppConfig {
+        account: Some(owner.state.clone()),
+        shared_folders: vec![folder.clone()],
+        ..AppConfig::default()
+    };
+
+    let outcome = apply_remote_iris_profile_roster_op_event(&mut cfg, &op_event).unwrap();
+
+    assert_eq!(outcome, IrisProfileRosterOpApply::Applied);
+    folder = cfg.shared_folder(folder.share_id).unwrap().clone();
+    assert!(
+        folder
+            .projection()
+            .can_write_roots(&editor.public_key().to_hex())
+    );
+}
+
+#[test]
 fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());

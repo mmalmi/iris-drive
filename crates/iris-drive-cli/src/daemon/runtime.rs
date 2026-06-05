@@ -51,10 +51,16 @@ pub(crate) fn cmd_daemon(
     }
     let relays = pick_relays(&config, relay_override);
     let root_scope_id = state.root_scope_id();
-    let filters = relay_sync::subscription_filters(
+    let share_ids = config
+        .shared_folders
+        .iter()
+        .map(|folder| folder.share_id)
+        .collect::<Vec<_>>();
+    let filters = relay_sync::subscription_filters_for_shared_roots(
         &state.owner_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
+        &share_ids,
     );
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
