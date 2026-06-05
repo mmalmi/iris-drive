@@ -3,9 +3,13 @@ use super::*;
 
 mod device_link_urls;
 pub(crate) use device_link_urls::*;
+#[cfg(test)]
+pub(crate) use iris_drive_core::device_link_transport::device_link_roster_fingerprint;
 pub(crate) use iris_drive_core::device_link_transport::{
     DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
     DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
+    device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
+    device_link_roster_recipients,
 };
 
 pub(crate) fn cmd_init(
@@ -588,45 +592,35 @@ pub(crate) async fn send_authorized_device_link_rosters(
     }
 
     let now = std::time::Instant::now();
-    let due_devices = app_keys
-        .app_actors
-        .iter()
-        .filter(|device| device.pubkey != state.device_pubkey)
-        .filter(|device| {
-            let fingerprint = device_link_roster_fingerprint(device.pubkey.as_str(), app_keys);
-            if acked_rosters.contains(&fingerprint) {
+    let due_devices = device_link_roster_recipients(state)
+        .into_iter()
+        .filter(|recipient| {
+            if acked_rosters.contains(&recipient.roster_fingerprint) {
                 return false;
             }
-            !sent_cache.get(&fingerprint).is_some_and(|last_sent| {
-                now.duration_since(*last_sent)
-                    < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
-            })
+            !sent_cache
+                .get(&recipient.roster_fingerprint)
+                .is_some_and(|last_sent| {
+                    now.duration_since(*last_sent)
+                        < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+                })
         })
-        .map(|device| device.pubkey.clone())
         .collect::<Vec<_>>();
     if due_devices.is_empty() {
         return Ok(None);
     }
 
     sync.refresh_authorized_peers(&config).await;
-    let frame = DeviceLinkRosterFrame {
-        schema: 1,
-        profile_id: state.profile_id,
-        owner_pubkey: state.owner_pubkey.clone(),
-        admin_device_pubkey: state.device_pubkey.clone(),
-        profile_roster_ops: state.profile_roster_ops.clone(),
-        sent_at: unix_now_seconds(),
+    let Some(frame) = device_link_roster_frame(state, unix_now_seconds()) else {
+        return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
     let mut recipients = Vec::new();
-    for device_pubkey in due_devices {
-        let recipient_npub = account_npub(&device_pubkey);
+    for recipient in due_devices {
+        let recipient_npub = account_npub(&recipient.device_pubkey);
         sync.send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
             .await?;
-        sent_cache.insert(
-            device_link_roster_fingerprint(&device_pubkey, app_keys),
-            now,
-        );
+        sent_cache.insert(recipient.roster_fingerprint, now);
         recipients.push(recipient_npub);
     }
 
@@ -638,16 +632,6 @@ pub(crate) async fn send_authorized_device_link_rosters(
         "created_at": app_keys.created_at,
         "sent_bytes": bytes.len(),
     })))
-}
-
-fn device_link_roster_fingerprint(
-    device_pubkey: &str,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
-) -> String {
-    format!(
-        "{}:{}:{}",
-        device_pubkey, app_keys.created_at, app_keys.dck_generation
-    )
 }
 
 pub(crate) async fn handle_device_link_app_message(
@@ -773,15 +757,8 @@ async fn handle_device_link_roster_app_message(
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
     let state = config.account.as_ref().expect("account still present");
-    let ack_data = if accepted {
-        Some((
-            state.device_pubkey.clone(),
-            state
-                .app_keys
-                .as_ref()
-                .expect("accepted/current app keys")
-                .clone(),
-        ))
+    let ack_frame = if accepted {
+        device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
     } else {
         None
     };
@@ -800,15 +777,8 @@ async fn handle_device_link_roster_app_message(
             })
         );
     }
-    if let Some((device_pubkey, app_keys)) = ack_data {
-        send_device_link_roster_ack(
-            fips_blocks,
-            &admin_device_hex,
-            &owner_hex,
-            &device_pubkey,
-            &app_keys,
-        )
-        .await?;
+    if let Some(frame) = ack_frame {
+        send_device_link_roster_ack(fips_blocks, &frame).await?;
     }
     Ok(true)
 }
@@ -838,30 +808,26 @@ fn handle_device_link_roster_ack_app_message(
     let Some(state) = config.account.as_ref() else {
         return Ok(true);
     };
-    let Some(app_keys) = state.app_keys.as_ref() else {
-        return Ok(true);
-    };
-    if !state.can_manage_devices()
-        || state.owner_pubkey != owner_hex
-        || state.device_pubkey != admin_device_hex
-        || !app_keys.contains(&device_hex)
-        || app_keys.created_at != frame.app_keys_created_at
-        || app_keys.dck_generation != frame.dck_generation
+    if owner_hex != frame.owner_pubkey
+        || admin_device_hex != frame.admin_device_pubkey
+        || device_hex != frame.device_pubkey
+        || !device_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
     }
 
-    let fingerprint = device_link_roster_fingerprint(&device_hex, app_keys);
-    let changed = acked_rosters.insert(fingerprint);
+    let changed = acked_rosters.insert(frame.roster_fingerprint.clone());
     if changed {
+        let app_keys = state.app_keys.as_ref();
         println!(
             "{}",
             json!({
                         "event": "device_link_roster_ack_received",
                         "topic": DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
                         "device_npub": account_npub(&device_hex),
-                "dck_generation": app_keys.dck_generation,
-                "created_at": app_keys.created_at,
+                "roster_fingerprint": frame.roster_fingerprint,
+                "dck_generation": app_keys.map(|app_keys| app_keys.dck_generation),
+                "created_at": app_keys.map(|app_keys| app_keys.created_at),
             })
         );
     }
@@ -870,27 +836,15 @@ fn handle_device_link_roster_ack_app_message(
 
 async fn send_device_link_roster_ack(
     fips_blocks: Option<&FsFipsBlockSync>,
-    admin_device_hex: &str,
-    owner_hex: &str,
-    device_hex: &str,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
+    frame: &DeviceLinkRosterAckFrame,
 ) -> Result<()> {
     let Some(sync) = fips_blocks else {
         return Ok(());
     };
-    let frame = DeviceLinkRosterAckFrame {
-        schema: 1,
-        owner_pubkey: owner_hex.to_string(),
-        admin_device_pubkey: admin_device_hex.to_string(),
-        device_pubkey: device_hex.to_string(),
-        app_keys_created_at: app_keys.created_at,
-        dck_generation: app_keys.dck_generation,
-        acknowledged_at: unix_now_seconds(),
-    };
     sync.send_app_message(
-        &account_npub(admin_device_hex),
+        &account_npub(&frame.admin_device_pubkey),
         DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
-        serde_json::to_vec(&frame)?,
+        serde_json::to_vec(frame)?,
     )
     .await?;
     Ok(())

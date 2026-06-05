@@ -292,14 +292,16 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(admin_dir.path())).unwrap();
 
-    let app_keys = admin.state.app_keys.as_ref().unwrap();
     let frame = DeviceLinkRosterAckFrame {
         schema: 1,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         admin_device_pubkey: admin.state.device_pubkey.clone(),
         device_pubkey: joiner_pubkey.clone(),
-        app_keys_created_at: app_keys.created_at,
-        dck_generation: app_keys.dck_generation,
+        roster_fingerprint: device_link_roster_fingerprint(
+            &joiner_pubkey,
+            admin.state.profile_id,
+            &admin.state.profile_roster_ops,
+        ),
         acknowledged_at: 789,
     };
     let message = iris_drive_core::FipsAppMessage {
@@ -315,7 +317,11 @@ async fn device_link_roster_ack_marks_delivery_for_admin() {
             .unwrap()
     );
 
-    assert!(acked.contains(&device_link_roster_fingerprint(&joiner_pubkey, app_keys)));
+    assert!(acked.contains(&device_link_roster_fingerprint(
+        &joiner_pubkey,
+        admin.state.profile_id,
+        &admin.state.profile_roster_ops,
+    )));
 }
 
 #[test]

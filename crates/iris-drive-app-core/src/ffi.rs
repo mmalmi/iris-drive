@@ -22,7 +22,8 @@ use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 use iris_drive_core::device_link_transport::{
     DEVICE_LINK_REQUEST_APP_TOPIC, DEVICE_LINK_ROSTER_ACK_APP_TOPIC, DEVICE_LINK_ROSTER_APP_TOPIC,
     DeviceLinkRequestFrame, DeviceLinkRosterAckFrame, DeviceLinkRosterFrame,
-    pending_device_link_request_frame,
+    device_link_roster_ack_frame, device_link_roster_ack_matches_state, device_link_roster_frame,
+    device_link_roster_recipients, pending_device_link_request_frame,
 };
 use iris_drive_core::device_summary::{
     DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
@@ -1395,47 +1396,37 @@ async fn send_native_authorized_device_link_rosters(
     }
 
     let now = std::time::Instant::now();
-    let due_devices = app_keys
-        .app_actors
-        .iter()
-        .filter(|device| device.pubkey != state.device_pubkey)
-        .filter(|device| {
-            let fingerprint = device_link_roster_fingerprint(device.pubkey.as_str(), app_keys);
-            if acked_rosters.contains(&fingerprint) {
+    let due_devices = device_link_roster_recipients(state)
+        .into_iter()
+        .filter(|recipient| {
+            if acked_rosters.contains(&recipient.roster_fingerprint) {
                 return false;
             }
-            !sent_rosters.get(&fingerprint).is_some_and(|last_sent| {
-                now.duration_since(*last_sent)
-                    < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
-            })
+            !sent_rosters
+                .get(&recipient.roster_fingerprint)
+                .is_some_and(|last_sent| {
+                    now.duration_since(*last_sent)
+                        < std::time::Duration::from_secs(DEVICE_LINK_ROSTER_RETRY_SECS)
+                })
         })
-        .map(|device| device.pubkey.clone())
         .collect::<Vec<_>>();
     if due_devices.is_empty() {
         return Ok(());
     }
 
-    let frame = DeviceLinkRosterFrame {
-        schema: 1,
-        profile_id: state.profile_id,
-        owner_pubkey: state.owner_pubkey.clone(),
-        admin_device_pubkey: state.device_pubkey.clone(),
-        profile_roster_ops: state.profile_roster_ops.clone(),
-        sent_at: unix_now_seconds(),
+    let Some(frame) = device_link_roster_frame(state, unix_now_seconds()) else {
+        return Ok(());
     };
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding device link roster: {error}"))?;
-    for device_pubkey in due_devices {
-        let recipient_npub = account_npub(&device_pubkey);
+    for recipient in due_devices {
+        let recipient_npub = account_npub(&recipient.device_pubkey);
         match sync
             .send_app_message(&recipient_npub, DEVICE_LINK_ROSTER_APP_TOPIC, bytes.clone())
             .await
         {
             Ok(()) => {
-                sent_rosters.insert(
-                    device_link_roster_fingerprint(&device_pubkey, app_keys),
-                    now,
-                );
+                sent_rosters.insert(recipient.roster_fingerprint, now);
                 tracing::debug!(
                     recipient_npub,
                     dck_generation = app_keys.dck_generation,
@@ -1599,15 +1590,8 @@ async fn handle_native_device_link_roster(
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
     let state = config.account.as_ref().expect("account still present");
-    let ack_data = if accepted {
-        Some((
-            state.device_pubkey.clone(),
-            state
-                .app_keys
-                .as_ref()
-                .expect("accepted/current app keys")
-                .clone(),
-        ))
+    let ack_frame = if accepted {
+        device_link_roster_ack_frame(state, &admin_device_hex, unix_now_seconds())
     } else {
         None
     };
@@ -1622,15 +1606,8 @@ async fn handle_native_device_link_roster(
             "accepted native device-link roster over FIPS"
         );
     }
-    if let Some((device_pubkey, app_keys)) = ack_data {
-        send_native_device_link_roster_ack(
-            sync,
-            &admin_device_hex,
-            &owner_hex,
-            &device_pubkey,
-            &app_keys,
-        )
-        .await?;
+    if let Some(frame) = ack_frame {
+        send_native_device_link_roster_ack(sync, &frame).await?;
     }
     let should_sync_roots = changed
         && config
@@ -1687,60 +1664,32 @@ fn handle_native_device_link_roster_ack(
     let Some(state) = config.account.as_ref() else {
         return Ok(true);
     };
-    let Some(app_keys) = state.app_keys.as_ref() else {
-        return Ok(true);
-    };
-    if !state.can_manage_devices()
-        || state.owner_pubkey != owner_hex
-        || state.device_pubkey != admin_device_hex
-        || !app_keys.contains(&device_hex)
-        || app_keys.created_at != frame.app_keys_created_at
-        || app_keys.dck_generation != frame.dck_generation
+    if owner_hex != frame.owner_pubkey
+        || admin_device_hex != frame.admin_device_pubkey
+        || device_hex != frame.device_pubkey
+        || !device_link_roster_ack_matches_state(state, &frame)
     {
         return Ok(true);
     }
 
-    acked_rosters.insert(device_link_roster_fingerprint(&device_hex, app_keys));
+    acked_rosters.insert(frame.roster_fingerprint);
     Ok(true)
 }
 
 #[cfg(not(test))]
 async fn send_native_device_link_roster_ack(
     sync: &iris_drive_core::FsFipsBlockSync,
-    admin_device_hex: &str,
-    owner_hex: &str,
-    device_hex: &str,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
+    frame: &DeviceLinkRosterAckFrame,
 ) -> Result<(), String> {
-    let frame = DeviceLinkRosterAckFrame {
-        schema: 1,
-        owner_pubkey: owner_hex.to_owned(),
-        admin_device_pubkey: admin_device_hex.to_owned(),
-        device_pubkey: device_hex.to_owned(),
-        app_keys_created_at: app_keys.created_at,
-        dck_generation: app_keys.dck_generation,
-        acknowledged_at: unix_now_seconds(),
-    };
     sync.send_app_message(
-        &account_npub(admin_device_hex),
+        &account_npub(&frame.admin_device_pubkey),
         DEVICE_LINK_ROSTER_ACK_APP_TOPIC,
-        serde_json::to_vec(&frame)
+        serde_json::to_vec(frame)
             .map_err(|error| format!("encoding device-link roster ack: {error}"))?,
     )
     .await
     .map_err(|error| format!("sending device-link roster ack over FIPS: {error}"))?;
     Ok(())
-}
-
-#[cfg(not(test))]
-fn device_link_roster_fingerprint(
-    device_pubkey: &str,
-    app_keys: &iris_drive_core::AppKeysSnapshot,
-) -> String {
-    format!(
-        "{}:{}:{}",
-        device_pubkey, app_keys.created_at, app_keys.dck_generation
-    )
 }
 
 fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
