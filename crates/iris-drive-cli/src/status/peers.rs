@@ -172,7 +172,7 @@ fn peer_detail(
 ) -> String {
     let mut parts = Vec::new();
     if device.is_current_device {
-        parts.push("this device".to_owned());
+        parts.push("This AppKey".to_owned());
     }
     if !device.role_label.trim().is_empty() {
         parts.push(device.role_label.clone());

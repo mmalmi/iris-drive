@@ -401,6 +401,7 @@ fn link_starts_awaiting_approval_no_owner_key() {
 fn inbound_device_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
+    let profile_id = acct.state.profile_id;
     let owner = acct.state.owner_pubkey.clone();
     let link_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
@@ -408,6 +409,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     assert!(
         acct.state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner,
                 &device,
                 Some(" phone ".to_string()),
@@ -426,6 +428,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
         !acct
             .state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner,
                 &device,
                 Some("phone".to_string()),
@@ -437,6 +440,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
     assert!(
         acct.state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner,
                 &device,
                 Some("tablet".to_string()),
@@ -456,6 +460,7 @@ fn inbound_device_link_requests_are_deduped_and_bounded() {
 fn inbound_device_link_request_requires_link_secret() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
+    let profile_id = acct.state.profile_id;
     let owner = acct.state.owner_pubkey.clone();
     let device = fresh_device_pubkey();
 
@@ -463,6 +468,7 @@ fn inbound_device_link_request_requires_link_secret() {
         !acct
             .state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner,
                 &device,
                 Some("phone".to_string()),
@@ -478,12 +484,14 @@ fn inbound_device_link_request_requires_link_secret() {
 fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
+    let profile_id = acct.state.profile_id;
     let owner = acct.state.owner_pubkey.clone();
     let old_secret = acct.state.device_link_secret.clone();
     let device = fresh_device_pubkey();
 
     acct.state
         .record_inbound_device_link_request(
+            profile_id,
             &owner,
             &device,
             Some("phone".to_string()),
@@ -500,6 +508,7 @@ fn reset_device_link_secret_rotates_invite_and_clears_pending_requests() {
         !acct
             .state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner,
                 &fresh_device_pubkey(),
                 Some("old".to_string()),

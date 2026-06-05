@@ -9,6 +9,8 @@ use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 
+use crate::IrisProfileId;
+
 pub const DEVICE_LINK_INVITE_PREFIX: &str = "iris-drive://invite/";
 const DEVICE_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 pub const DEVICE_LINK_INVITE_WEB_PREFIX: &str = "https://drive.iris.to/invite/";
@@ -18,6 +20,8 @@ pub const DEVICE_LINK_INVITE_VERSION: u8 = 1;
 #[serde(rename_all = "camelCase")]
 struct DeviceLinkInvitePayload {
     v: u8,
+    #[serde(alias = "profile", alias = "profile_id")]
+    profile_id: IrisProfileId,
     #[serde(alias = "owner")]
     owner_npub: String,
     #[serde(alias = "admin")]
@@ -28,18 +32,21 @@ struct DeviceLinkInvitePayload {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedDeviceLinkInvite {
+    pub profile_id: Option<IrisProfileId>,
     pub owner_hex: String,
     pub admin_device_hex: String,
     pub link_secret: String,
 }
 
 pub fn encode_device_link_invite(
+    profile_id: IrisProfileId,
     owner_hex: &str,
     admin_device_hex: &str,
     link_secret: &str,
 ) -> Result<String> {
     let payload = DeviceLinkInvitePayload {
         v: DEVICE_LINK_INVITE_VERSION,
+        profile_id,
         owner_npub: pubkey_to_npub(owner_hex).context("encoding invite owner")?,
         admin_device_npub: pubkey_to_npub(admin_device_hex)
             .context("encoding invite admin device")?,
@@ -112,6 +119,7 @@ fn normalize_invite_payload(invite: &DeviceLinkInvitePayload) -> Result<ParsedDe
         return Err(anyhow!("device link invite is missing secret"));
     }
     Ok(ParsedDeviceLinkInvite {
+        profile_id: Some(invite.profile_id),
         owner_hex: normalize_pubkey_hex(&invite.owner_npub).context("parsing invite owner")?,
         admin_device_hex: normalize_pubkey_hex(&invite.admin_device_npub)
             .context("parsing invite admin device")?,
@@ -120,6 +128,7 @@ fn normalize_invite_payload(invite: &DeviceLinkInvitePayload) -> Result<ParsedDe
 }
 
 fn parse_legacy_query_invite(query: &str) -> Result<ParsedDeviceLinkInvite> {
+    let mut profile_id = None;
     let mut owner = None;
     let mut admin = None;
     let mut link_secret = None;
@@ -131,6 +140,9 @@ fn parse_legacy_query_invite(query: &str) -> Result<ParsedDeviceLinkInvite> {
         let key = percent_decode_component(raw_key)?;
         let value = percent_decode_component(raw_value)?;
         match key.as_str() {
+            "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
+                profile_id = Some(value.trim().parse().context("parsing invite profile id")?);
+            }
             "owner" if !value.trim().is_empty() => owner = Some(value),
             "admin" | "admin_device" if !value.trim().is_empty() => admin = Some(value),
             "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
@@ -142,6 +154,7 @@ fn parse_legacy_query_invite(query: &str) -> Result<ParsedDeviceLinkInvite> {
     let admin = admin.ok_or_else(|| anyhow!("device link invite is missing admin"))?;
     let link_secret = link_secret.ok_or_else(|| anyhow!("device link invite is missing secret"))?;
     Ok(ParsedDeviceLinkInvite {
+        profile_id,
         owner_hex: normalize_pubkey_hex(&owner).context("parsing invite owner")?,
         admin_device_hex: normalize_pubkey_hex(&admin).context("parsing invite admin device")?,
         link_secret: link_secret.trim().to_string(),
@@ -219,17 +232,24 @@ mod tests {
     use nostr_sdk::Keys;
 
     #[test]
-    fn canonical_invite_round_trips_owner_admin_and_secret() {
+    fn canonical_invite_round_trips_profile_owner_admin_and_secret() {
+        let profile_id = IrisProfileId::new_v4();
         let owner = Keys::generate().public_key();
         let admin = Keys::generate().public_key();
 
-        let url = encode_device_link_invite(&owner.to_hex(), &admin.to_hex(), " join-secret ")
-            .expect("encode invite");
+        let url = encode_device_link_invite(
+            profile_id,
+            &owner.to_hex(),
+            &admin.to_hex(),
+            " join-secret ",
+        )
+        .expect("encode invite");
         let parsed = parse_device_link_invite(&url)
             .expect("parse invite")
             .expect("invite");
 
         assert!(url.starts_with(DEVICE_LINK_INVITE_PREFIX));
+        assert_eq!(parsed.profile_id, Some(profile_id));
         assert_eq!(parsed.owner_hex, owner.to_hex());
         assert_eq!(parsed.admin_device_hex, admin.to_hex());
         assert_eq!(parsed.link_secret, "join-secret");
@@ -239,16 +259,19 @@ mod tests {
 
     #[test]
     fn single_slash_custom_scheme_invite_imports() {
+        let profile_id = IrisProfileId::new_v4();
         let owner = Keys::generate().public_key();
         let admin = Keys::generate().public_key();
-        let url = encode_device_link_invite(&owner.to_hex(), &admin.to_hex(), "join-secret")
-            .expect("encode invite");
+        let url =
+            encode_device_link_invite(profile_id, &owner.to_hex(), &admin.to_hex(), "join-secret")
+                .expect("encode invite");
         let single_slash = url.replacen("iris-drive://invite/", "iris-drive:/invite/", 1);
 
         let parsed = parse_device_link_invite(&single_slash)
             .expect("parse invite")
             .expect("invite");
 
+        assert_eq!(parsed.profile_id, Some(profile_id));
         assert_eq!(parsed.owner_hex, owner.to_hex());
         assert_eq!(parsed.admin_device_hex, admin.to_hex());
         assert_eq!(parsed.link_secret, "join-secret");

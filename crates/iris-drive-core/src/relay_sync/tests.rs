@@ -218,6 +218,7 @@ fn subscription_filters_match_device_link_requests_for_owner() {
     let owner_hex = owner.public_key().to_hex();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: IrisProfileId::new_v4(),
         owner_pubkey: owner_hex.clone(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
@@ -474,6 +475,7 @@ fn apply_device_link_request_event_records_admin_inbound_request() {
     .unwrap();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: admin.state.profile_id,
         owner_pubkey: admin.state.owner_pubkey.clone(),
         device_pubkey: linked.state.device_pubkey.clone(),
         link_secret: admin.state.device_link_secret.clone(),

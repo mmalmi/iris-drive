@@ -505,6 +505,7 @@ fn link_action_tracks_pending_approval() {
         device_label: "Owner".to_owned(),
     });
     let owner_account = owner.ui.account.unwrap();
+    let owner_profile_id = owner_account.profile_id.clone();
     let invite = owner_account.device_link_invite.clone();
 
     let dir = tempfile::tempdir().unwrap();
@@ -516,10 +517,16 @@ fn link_action_tracks_pending_approval() {
     });
 
     let account = state.ui.account.expect("account exists");
+    assert_eq!(account.profile_id, owner_profile_id);
     assert_eq!(account.device_label, "iPhone");
     assert_eq!(account.authorization_state, "awaiting_approval");
     assert!(!account.can_admin_profile);
     assert!(account.device_link_request.contains("device=npub1"));
+    assert!(
+        account
+            .device_link_request
+            .contains(&format!("profile={owner_profile_id}"))
+    );
     assert!(account.device_link_request.contains("secret="));
     assert!(!account.device_link_request.contains("local-owner"));
     assert!(!account.device_link_request.contains("device=device-"));
@@ -852,10 +859,12 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
+    let profile_id = state.profile_id;
     let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
+            profile_id,
             &owner_hex,
             &linked_device_hex,
             Some("Phone".to_owned()),
@@ -910,10 +919,12 @@ fn owner_can_reject_inbound_device_link_request() {
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
+    let profile_id = state.profile_id;
     let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
+            profile_id,
             &owner_hex,
             &linked_device_hex,
             Some("Phone".to_owned()),
@@ -1024,12 +1035,14 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
+    let profile_id = state.profile_id;
     let owner_hex = state.owner_pubkey.clone();
     let link_secret = state.device_link_secret.clone();
     let linked_device =
         iris_drive_core::DeviceIdentity::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
     state
         .record_inbound_device_link_request(
+            profile_id,
             &owner_hex,
             &linked_device,
             Some("Phone".to_owned()),

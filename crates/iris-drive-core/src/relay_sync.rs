@@ -101,6 +101,9 @@ pub fn apply_remote_device_link_request_event(
     let Some(account) = config.account.as_mut() else {
         return Err(RelayError::NoAccount);
     };
+    if frame.profile_id != account.profile_id {
+        return Ok(DeviceLinkRequestApply::NotOurOwner);
+    }
     if frame.owner_pubkey != account.owner_pubkey {
         return Ok(DeviceLinkRequestApply::NotOurOwner);
     }
@@ -113,6 +116,7 @@ pub fn apply_remote_device_link_request_event(
     }
 
     let changed = account.record_inbound_device_link_request(
+        frame.profile_id,
         &frame.owner_pubkey,
         &frame.device_pubkey,
         frame.label,

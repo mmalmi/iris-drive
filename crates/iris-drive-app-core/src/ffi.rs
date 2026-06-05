@@ -424,11 +424,21 @@ impl NativeAppRuntime {
             "already initialized".clone_into(&mut self.state.error);
             return;
         }
-        let mut account = match Account::link(
-            Path::new(&self.data_dir),
-            target.owner_hex,
-            label_option(device_label),
-        ) {
+        let link_result = if let Some(profile_id) = target.profile_id {
+            Account::link_to_profile(
+                Path::new(&self.data_dir),
+                profile_id,
+                target.owner_hex,
+                label_option(device_label),
+            )
+        } else {
+            Account::link(
+                Path::new(&self.data_dir),
+                target.owner_hex,
+                label_option(device_label),
+            )
+        };
+        let mut account = match link_result {
             Ok(account) => account,
             Err(error) => {
                 self.state.error = format!("linking device: {error}");
@@ -478,7 +488,7 @@ impl NativeAppRuntime {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let (owner_hex, device_hex, request_label) = match decode_device_approval_request(request) {
+        let request = match decode_device_approval_request(request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
@@ -500,11 +510,18 @@ impl NativeAppRuntime {
             "owner profile is required to approve devices".clone_into(&mut self.state.error);
             return;
         }
-        if !owner_hex.is_empty() && state.owner_pubkey != owner_hex {
+        if request
+            .profile_id
+            .is_some_and(|profile_id| profile_id != state.profile_id)
+        {
+            "device request is for a different profile".clone_into(&mut self.state.error);
+            return;
+        }
+        if !request.owner_hex.is_empty() && state.owner_pubkey != request.owner_hex {
             "device request is for a different owner".clone_into(&mut self.state.error);
             return;
         }
-        let label = label_option(label).or(request_label);
+        let label = label_option(label).or(request.label);
         let mut account = match Account::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
@@ -512,7 +529,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.approve_device(&device_hex, label) {
+        if let Err(error) = account.approve_device(&request.device_hex, label) {
             self.state.error = format!("approving device: {error}");
             return;
         }
@@ -550,7 +567,7 @@ impl NativeAppRuntime {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let (owner_hex, device_hex, _) = match decode_device_approval_request(request) {
+        let request = match decode_device_approval_request(request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
@@ -572,11 +589,18 @@ impl NativeAppRuntime {
             "owner profile is required to reject devices".clone_into(&mut self.state.error);
             return;
         }
-        if !owner_hex.is_empty() && state.owner_pubkey != owner_hex {
+        if request
+            .profile_id
+            .is_some_and(|profile_id| profile_id != state.profile_id)
+        {
+            "device request is for a different profile".clone_into(&mut self.state.error);
+            return;
+        }
+        if !request.owner_hex.is_empty() && state.owner_pubkey != request.owner_hex {
             "device request is for a different owner".clone_into(&mut self.state.error);
             return;
         }
-        if let Err(error) = state.reject_inbound_device_link_request(&device_hex) {
+        if let Err(error) = state.reject_inbound_device_link_request(&request.device_hex) {
             self.state.error = format!("rejecting device: {error}");
             return;
         }
@@ -1487,6 +1511,7 @@ fn handle_native_device_link_request(
     };
     let changed = state
         .record_inbound_device_link_request(
+            frame.profile_id,
             &owner_hex,
             &device_hex,
             frame.label,
@@ -2190,9 +2215,18 @@ fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceCon
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DeviceLinkTarget {
+    profile_id: Option<iris_drive_core::IrisProfileId>,
     owner_hex: String,
     admin_device_hex: Option<String>,
     link_secret: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceApprovalRequest {
+    profile_id: Option<iris_drive_core::IrisProfileId>,
+    owner_hex: String,
+    device_hex: String,
+    label: Option<String>,
 }
 
 fn classify_link_input_value(input: &str) -> LinkInputClassification {
@@ -2266,10 +2300,10 @@ fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassific
     };
     if is_complete {
         match decode_device_approval_request(input) {
-            Ok((owner_hex, device_hex, _label)) => {
+            Ok(request) => {
                 classification.is_valid = true;
-                classification.owner_pubkey = account_npub(&owner_hex);
-                classification.device_pubkey = account_npub(&device_hex);
+                classification.owner_pubkey = account_npub(&request.owner_hex);
+                classification.device_pubkey = account_npub(&request.device_hex);
             }
             Err(error) => classification.error = error,
         }
@@ -2374,6 +2408,7 @@ fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {
         return String::new();
     }
     encode_device_approval_request(
+        state.profile_id,
         &state.owner_pubkey,
         &state.device_pubkey,
         state
@@ -2392,6 +2427,7 @@ fn device_link_invite_url(state: &iris_drive_core::AccountState) -> String {
         return String::new();
     }
     iris_drive_core::device_link_invite::encode_device_link_invite(
+        state.profile_id,
         &state.owner_pubkey,
         &state.device_pubkey,
         &state.device_link_secret,
@@ -2411,6 +2447,7 @@ fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<Ui
             label: request.label.clone().unwrap_or_default(),
             requested_at: request.requested_at,
             request_link: encode_device_approval_request(
+                state.profile_id,
                 &state.owner_pubkey,
                 &request.device_pubkey,
                 &request.link_secret,
@@ -2421,13 +2458,15 @@ fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<Ui
 }
 
 fn encode_device_approval_request(
+    profile_id: iris_drive_core::IrisProfileId,
     owner_hex: &str,
     device_hex: &str,
     link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
-        "iris-drive://device-link?owner={}&device={}",
+        "iris-drive://device-link?profile={}&owner={}&device={}",
+        profile_id,
         account_npub(owner_hex),
         account_npub(device_hex)
     );
@@ -2447,6 +2486,7 @@ fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
         return Ok(target);
     }
     Ok(DeviceLinkTarget {
+        profile_id: None,
         owner_hex: normalize_pubkey(input)?,
         admin_device_hex: None,
         link_secret: String::new(),
@@ -2457,6 +2497,7 @@ fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, 
     iris_drive_core::device_link_invite::parse_device_link_invite(request)
         .map(|target| {
             target.map(|target| DeviceLinkTarget {
+                profile_id: target.profile_id,
                 owner_hex: target.owner_hex,
                 admin_device_hex: Some(target.admin_device_hex),
                 link_secret: target.link_secret,
@@ -2465,24 +2506,41 @@ fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, 
         .map_err(|error| error.to_string())
 }
 
-fn decode_device_approval_request(
-    request: &str,
-) -> Result<(String, String, Option<String>), String> {
+fn decode_device_approval_request(request: &str) -> Result<DeviceApprovalRequest, String> {
     let lower = request.to_ascii_lowercase();
     if link_route_matches(&lower, "iris-drive://device-link", false)
         || link_route_matches(&lower, "iris-drive:/device-link", false)
         || link_route_matches(&lower, "https://drive.iris.to/device-link", false)
     {
         let query = request.split_once('?').map_or("", |(_, query)| query);
+        let profile_id = query_value(query, "profile")
+            .or_else(|| query_value(query, "profile_id"))
+            .or_else(|| query_value(query, "profileId"))
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|error| format!("parsing profile id: {error}"))
+            })
+            .transpose()?;
         let owner = query_value(query, "owner")
             .ok_or_else(|| "device request is missing owner".to_owned())?;
         let device = query_value(query, "device")
             .ok_or_else(|| "device request is missing device".to_owned())?;
         let label = query_value(query, "label");
-        return Ok((normalize_pubkey(&owner)?, normalize_pubkey(&device)?, label));
+        return Ok(DeviceApprovalRequest {
+            profile_id,
+            owner_hex: normalize_pubkey(&owner)?,
+            device_hex: normalize_pubkey(&device)?,
+            label,
+        });
     }
     let device = normalize_pubkey(request)?;
-    Ok((String::new(), device, None))
+    Ok(DeviceApprovalRequest {
+        profile_id: None,
+        owner_hex: String::new(),
+        device_hex: device,
+        label: None,
+    })
 }
 
 #[cfg(not(test))]

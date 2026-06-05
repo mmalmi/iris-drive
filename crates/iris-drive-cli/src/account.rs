@@ -115,8 +115,12 @@ pub(crate) fn cmd_link_with_admin_device(
         ));
     }
     let target = resolve_device_link_target_with_admin(owner, admin_device)?;
-    let mut account =
-        Account::link(config_dir, target.owner_hex, label).context("linking device")?;
+    let mut account = if let Some(profile_id) = target.profile_id {
+        Account::link_to_profile(config_dir, profile_id, target.owner_hex, label)
+    } else {
+        Account::link(config_dir, target.owner_hex, label)
+    }
+    .context("linking device")?;
     let link_secret = if target.link_secret.trim().is_empty() {
         account.state.device_link_secret.clone()
     } else {
@@ -205,8 +209,9 @@ pub(crate) fn cmd_approve(
         .account
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let (device_hex, label) = resolve_device_approval_input(device, &state.owner_pubkey, label)
-        .context("parsing AppKey approval request")?;
+    let (device_hex, label) =
+        resolve_device_approval_input(device, &state.owner_pubkey, state.profile_id, label)
+            .context("parsing AppKey approval request")?;
     let approved_app_key_npub = account_npub(&device_hex);
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
@@ -236,8 +241,9 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
             "this AppKey is not an admin - only admin AppKeys can reject AppKey-link requests"
         ));
     }
-    let (device_hex, _) = resolve_device_approval_input(device, &state.owner_pubkey, None)
-        .context("parsing AppKey rejection request")?;
+    let (device_hex, _) =
+        resolve_device_approval_input(device, &state.owner_pubkey, state.profile_id, None)
+            .context("parsing AppKey rejection request")?;
     let rejected = state
         .reject_inbound_device_link_request(&device_hex)
         .context("rejecting device request")?;
@@ -755,6 +761,7 @@ async fn handle_device_link_request_app_message(
     };
     let changed = state
         .record_inbound_device_link_request(
+            frame.profile_id,
             &owner_hex,
             &device_hex,
             frame.label,

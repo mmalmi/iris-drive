@@ -17,6 +17,7 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeviceApprovalRequest {
+    pub(crate) profile_id: Option<iris_drive_core::IrisProfileId>,
     pub(crate) owner_hex: String,
     pub(crate) device_hex: String,
     pub(crate) link_secret: String,
@@ -25,6 +26,7 @@ pub(crate) struct DeviceApprovalRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeviceLinkTarget {
+    pub(crate) profile_id: Option<iris_drive_core::IrisProfileId>,
     pub(crate) owner_hex: String,
     pub(crate) admin_device_hex: Option<String>,
     pub(crate) link_secret: String,
@@ -33,9 +35,18 @@ pub(crate) struct DeviceLinkTarget {
 pub(crate) fn resolve_device_approval_input(
     input: &str,
     expected_owner_hex: &str,
+    expected_profile_id: iris_drive_core::IrisProfileId,
     explicit_label: Option<String>,
 ) -> Result<(String, Option<String>)> {
     if let Some(request) = decode_device_approval_request(input)? {
+        if request
+            .profile_id
+            .is_some_and(|profile_id| profile_id != expected_profile_id)
+        {
+            return Err(anyhow::anyhow!(
+                "AppKey-link request belongs to a different profile"
+            ));
+        }
         if request.owner_hex != expected_owner_hex {
             return Err(anyhow::anyhow!(
                 "AppKey-link request belongs to a different owner"
@@ -62,6 +73,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
             ));
         }
         return Ok(DeviceLinkTarget {
+            profile_id: invite.profile_id,
             owner_hex: invite.owner_hex,
             admin_device_hex: Some(invite.admin_device_hex),
             link_secret: invite.link_secret,
@@ -72,6 +84,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
         .map(|admin| normalize_pubkey(admin).context("parsing admin AppKey pubkey"))
         .transpose()?;
     Ok(DeviceLinkTarget {
+        profile_id: None,
         owner_hex: normalize_pubkey(input).context("parsing owner pubkey")?,
         admin_device_hex,
         link_secret: String::new(),
@@ -86,6 +99,7 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     }
 
     let url = encode_device_approval_request(
+        state.profile_id,
         &state.owner_pubkey,
         &state.device_pubkey,
         state
@@ -100,6 +114,7 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
 
     json!({
         "url": url,
+        "profile_id": state.profile_id.to_string(),
         "owner_npub": account_npub(&state.owner_pubkey),
         "app_key_npub": account_npub(&state.device_pubkey),
         "label": state.device_label.as_deref(),
@@ -121,6 +136,7 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
         return Value::Null;
     }
     let Ok(url) = iris_drive_core::device_link_invite::encode_device_link_invite(
+        state.profile_id,
         &state.owner_pubkey,
         &state.device_pubkey,
         &state.device_link_secret,
@@ -130,6 +146,7 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
     json!({
         "url": url,
         "web_url": device_link_web_url(&url),
+        "profile_id": state.profile_id.to_string(),
         "owner_npub": account_npub(&state.owner_pubkey),
         "admin_app_key_npub": account_npub(&state.device_pubkey),
     })
@@ -142,11 +159,13 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
         .map(|request| {
             json!({
                 "url": encode_device_approval_request(
+                    state.profile_id,
                     &state.owner_pubkey,
                     &request.device_pubkey,
                     &request.link_secret,
                     request.label.as_deref(),
                 ),
+                "profile_id": state.profile_id.to_string(),
                 "owner_npub": account_npub(&state.owner_pubkey),
                 "app_key_npub": account_npub(&request.device_pubkey),
                 "label": request.label.as_deref(),
@@ -157,13 +176,15 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
 }
 
 pub(crate) fn encode_device_approval_request(
+    profile_id: iris_drive_core::IrisProfileId,
     owner_hex: &str,
     device_hex: &str,
     link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
-        "iris-drive://device-link?owner={}&device={}",
+        "iris-drive://device-link?profile={}&owner={}&device={}",
+        profile_id,
         account_npub(owner_hex),
         account_npub(device_hex)
     );
@@ -195,6 +216,7 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
     };
 
     let mut owner = None;
+    let mut profile_id = None;
     let mut device = None;
     let mut link_secret = None;
     let mut label = None;
@@ -206,6 +228,9 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
         let key = percent_decode_component(raw_key)?;
         let value = percent_decode_component(raw_value)?;
         match key.as_str() {
+            "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
+                profile_id = Some(value.trim().parse().context("parsing request profile id")?);
+            }
             "owner" if !value.trim().is_empty() => owner = Some(value),
             "device" if !value.trim().is_empty() => device = Some(value),
             "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
@@ -218,6 +243,7 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
     let device = device.ok_or_else(|| anyhow::anyhow!("AppKey-link request is missing AppKey"))?;
 
     Ok(Some(DeviceApprovalRequest {
+        profile_id,
         owner_hex: normalize_pubkey(&owner).context("parsing request owner")?,
         device_hex: normalize_pubkey(&device).context("parsing request AppKey")?,
         link_secret: link_secret.unwrap_or_default().trim().to_string(),

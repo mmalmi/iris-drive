@@ -12,6 +12,7 @@ pub const DEVICE_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/device-link/v1/ro
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeviceLinkRequestFrame {
     pub schema: u32,
+    pub profile_id: IrisProfileId,
     pub owner_pubkey: String,
     pub device_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -63,12 +64,14 @@ pub fn pending_device_link_request_frame(state: &AccountState) -> Option<DeviceL
     };
     Some(DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: state.profile_id,
         owner_pubkey: state.owner_pubkey.clone(),
         device_pubkey: state.device_pubkey.clone(),
         link_secret: link_secret.clone(),
         label: state.device_label.clone(),
         requested_at: pending.requested_at,
         url: encode_device_approval_request(
+            state.profile_id,
             &state.owner_pubkey,
             &state.device_pubkey,
             &link_secret,
@@ -191,13 +194,15 @@ fn current_app_key_is_authorized(state: &AccountState) -> bool {
 
 #[must_use]
 pub fn encode_device_approval_request(
+    profile_id: IrisProfileId,
     owner_hex: &str,
     device_hex: &str,
     link_secret: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
-        "iris-drive://device-link?owner={}&device={}",
+        "iris-drive://device-link?profile={}&owner={}&device={}",
+        profile_id,
         account_npub(owner_hex),
         account_npub(device_hex)
     );
@@ -293,5 +298,36 @@ mod tests {
         };
 
         assert!(device_link_roster_ack_matches_state(&account.state, &frame));
+    }
+
+    #[test]
+    fn pending_request_frame_carries_profile_id_in_frame_and_url() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Account::create(owner_dir.path(), Some("Mac".into())).unwrap();
+        let linked_dir = tempdir().unwrap();
+        let mut linked = Account::link_to_profile(
+            linked_dir.path(),
+            owner.state.profile_id,
+            owner.state.owner_pubkey.clone(),
+            Some("Phone".into()),
+        )
+        .unwrap();
+        linked
+            .state
+            .queue_outbound_device_link_request(
+                owner.state.device_pubkey.clone(),
+                &owner.state.device_link_secret,
+                123,
+            )
+            .unwrap();
+
+        let frame = pending_device_link_request_frame(&linked.state).expect("pending frame");
+
+        assert_eq!(frame.profile_id, owner.state.profile_id);
+        assert!(
+            frame
+                .url
+                .contains(&format!("profile={}", owner.state.profile_id))
+        );
     }
 }

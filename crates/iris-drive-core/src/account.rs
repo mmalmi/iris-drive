@@ -281,13 +281,17 @@ impl AccountState {
 
     pub fn record_inbound_device_link_request(
         &mut self,
+        profile_id: IrisProfileId,
         owner_pubkey: &str,
         device_pubkey: &str,
         label: Option<String>,
         link_secret: &str,
         requested_at: u64,
     ) -> Result<bool, AccountError> {
-        if owner_pubkey != self.owner_pubkey || !self.can_manage_devices() {
+        if profile_id != self.profile_id
+            || owner_pubkey != self.owner_pubkey
+            || !self.can_manage_devices()
+        {
             return Ok(false);
         }
         let link_secret = link_secret.trim();
@@ -561,6 +565,20 @@ impl Account {
         owner_pubkey_hex: String,
         device_label: Option<String>,
     ) -> Result<Self, AccountError> {
+        Self::link_to_profile(
+            config_dir,
+            IrisProfileId::new_v4(),
+            owner_pubkey_hex,
+            device_label,
+        )
+    }
+
+    pub fn link_to_profile(
+        config_dir: &Path,
+        profile_id: IrisProfileId,
+        owner_pubkey_hex: String,
+        device_label: Option<String>,
+    ) -> Result<Self, AccountError> {
         if !is_pubkey_hex(&owner_pubkey_hex) {
             return Err(AccountError::InvalidOwnerPubkey(owner_pubkey_hex));
         }
@@ -569,7 +587,7 @@ impl Account {
         let device_label = resolve_device_label(device_label, &device.pubkey_hex());
 
         let state = AccountState {
-            profile_id: IrisProfileId::new_v4(),
+            profile_id,
             owner_pubkey: owner_pubkey_hex,
             device_pubkey: device.pubkey_hex(),
             profile_roster_ops: Vec::new(),

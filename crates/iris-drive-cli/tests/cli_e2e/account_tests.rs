@@ -173,6 +173,12 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["can_admin_profile"], false);
     assert_eq!(v["authorization_state"], "awaiting_approval");
+    assert_eq!(v["profile_id"], init_v["profile_id"]);
+    assert_eq!(
+        v["device_link_invite"]["profile_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(v["device_link_request"]["profile_id"], init_v["profile_id"]);
     assert_eq!(
         v["device_link_request"]["owner_npub"],
         init_v["device_link_invite"]["owner_npub"]
@@ -248,6 +254,15 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
     let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
 
     assert_eq!(linked["device_link_request"]["owner_npub"], owner_npub);
+    assert_eq!(linked["profile_id"], owner["profile_id"]);
+    assert_eq!(
+        linked["device_link_invite"]["profile_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        linked["device_link_request"]["profile_id"],
+        owner["profile_id"]
+    );
     assert_eq!(
         linked["device_link_request"]["admin_app_key_npub"],
         admin_app_key_npub
@@ -404,7 +419,7 @@ fn owner_approves_device_request_link() {
         .args(["approve", request_url])
         .assert()
         .failure()
-        .stderr(contains("different owner"));
+        .stderr(contains("different profile"));
 
     let approved = run_json(owner_dir.path(), &["approve", request_url]);
     assert_eq!(approved["roster_size"], 2);
@@ -436,6 +451,7 @@ fn owner_rejects_device_request_link() {
         let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
         let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
         let state = config.account.as_mut().unwrap();
+        let profile_id = state.profile_id;
         let owner_hex = state.owner_pubkey.clone();
         let link_secret = state.device_link_secret.clone();
         let linked_hex = iris_drive_core::AppConfig::load_or_default(
@@ -447,6 +463,7 @@ fn owner_rejects_device_request_link() {
         .device_pubkey;
         state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner_hex,
                 &linked_hex,
                 Some("rejected-phone".into()),
@@ -578,10 +595,12 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.account.as_mut().unwrap();
+    let profile_id = state.profile_id;
     let owner_hex = state.owner_pubkey.clone();
     let old_secret = state.device_link_secret.clone();
     state
         .record_inbound_device_link_request(
+            profile_id,
             &owner_hex,
             &linked_app_key,
             Some("phone".to_string()),
@@ -611,6 +630,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     assert!(
         !state
             .record_inbound_device_link_request(
+                profile_id,
                 &owner_hex,
                 &linked_app_key,
                 Some("phone".to_string()),

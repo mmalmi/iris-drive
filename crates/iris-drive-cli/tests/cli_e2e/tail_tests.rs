@@ -375,9 +375,14 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
         &["sync", "--relay", &relay.url, "--timeout", "2"],
     );
     assert!(sync_b.get("app_keys_event_applied").is_none());
-    assert_eq!(sync_b["profile_roster_ops_applied"], 0);
-    assert_eq!(sync_b["drive_root_events_applied"], 0);
-    assert_list_paths(cfg_b.path(), &[]);
+    assert!(
+        sync_b["profile_roster_ops_applied"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(sync_b["drive_root_events_applied"], 1);
+    assert_list_paths(cfg_b.path(), &["from-a.txt"]);
 }
 
 fn assert_list_paths(config_dir: &std::path::Path, expected: &[&str]) {

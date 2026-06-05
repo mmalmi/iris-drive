@@ -77,12 +77,14 @@ async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     let link_secret = account.state.device_link_secret.clone();
     let frame = DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: account.state.profile_id,
         owner_pubkey: account.state.owner_pubkey.clone(),
         device_pubkey: linked_device.clone(),
         link_secret: link_secret.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_device_approval_request(
+            account.state.profile_id,
             &account.state.owner_pubkey,
             &linked_device,
             &link_secret,
@@ -123,12 +125,14 @@ async fn device_link_app_message_ignores_wrong_link_secret() {
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
     let frame = DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: account.state.profile_id,
         owner_pubkey: account.state.owner_pubkey.clone(),
         device_pubkey: linked_device.clone(),
         link_secret: "wrong-secret".into(),
         label: Some("phone".into()),
         requested_at: 123,
         url: encode_device_approval_request(
+            account.state.profile_id,
             &account.state.owner_pubkey,
             &linked_device,
             "wrong-secret",

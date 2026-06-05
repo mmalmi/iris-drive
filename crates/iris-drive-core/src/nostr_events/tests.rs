@@ -184,6 +184,7 @@ fn device_link_request_event_round_trips_and_is_its_own_coordinate() {
     let device = Keys::generate();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: crate::IrisProfileId::new_v4(),
         owner_pubkey: owner.public_key().to_hex(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
@@ -210,6 +211,7 @@ fn device_link_request_event_must_be_signed_by_requesting_device() {
     let attacker = Keys::generate();
     let frame = crate::device_link_transport::DeviceLinkRequestFrame {
         schema: 1,
+        profile_id: crate::IrisProfileId::new_v4(),
         owner_pubkey: owner.public_key().to_hex(),
         device_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
