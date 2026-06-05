@@ -7,8 +7,8 @@ use crate::iris_profile::{
     build_iris_profile_roster_op_event,
 };
 use crate::nostr_events::{
-    build_app_keys_event, build_device_link_request_event, build_drive_root_event,
-    build_private_hashtree_root_event, device_link_request_d_tag,
+    build_device_link_request_event, build_drive_root_event, build_private_hashtree_root_event,
+    device_link_request_d_tag,
 };
 use crate::sharing::{ShareRecipient, ShareRole};
 use hashtree_core::Cid;
@@ -51,52 +51,6 @@ fn causal_encrypted_root(
         observed: std::collections::BTreeMap::new(),
         local_only: false,
     }
-}
-
-#[test]
-fn apply_app_keys_event_from_our_owner_replaces() {
-    let dir = tempdir().unwrap();
-    let (mut cfg, mut acct) = config_with_owner_account(dir.path());
-
-    // Owner approves a fake device — produces a newer snapshot.
-    let new_device = Keys::generate().public_key().to_hex();
-    acct.approve_device(&new_device, None).unwrap();
-    let newer_snap = acct.state.app_keys.clone().unwrap();
-    let event = build_app_keys_event(acct.device.keys(), &newer_snap).unwrap();
-
-    // Older state in config.
-    let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
-    let applied = matches!(
-        outcome,
-        AppKeysApply::Applied(ApplyDecision::Replaced | ApplyDecision::Adopted)
-    );
-    assert!(applied, "unexpected outcome {outcome:?}");
-    assert_eq!(
-        cfg.account
-            .as_ref()
-            .unwrap()
-            .app_keys
-            .as_ref()
-            .unwrap()
-            .app_actors
-            .len(),
-        2,
-    );
-}
-
-#[test]
-fn apply_app_keys_event_from_attacker_ignored() {
-    let dir = tempdir().unwrap();
-    let (mut cfg, _) = config_with_owner_account(dir.path());
-    let attacker = Keys::generate();
-    // Attacker publishes their own AppKeys claiming to be the owner —
-    // we ignore because their pubkey isn't our owner.
-    let mut snap = cfg.account.as_ref().unwrap().app_keys.clone().unwrap();
-    snap.owner_pubkey = attacker.public_key().to_hex();
-    snap.created_at = i64::MAX;
-    let event = build_app_keys_event(&attacker, &snap).unwrap();
-    let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
-    assert_eq!(outcome, AppKeysApply::NotOurOwner);
 }
 
 #[test]
@@ -180,54 +134,6 @@ fn apply_device_link_roster_accepts_newer_admin_roster_after_initial_approval() 
     assert!(linked_roster.contains(&linked_pubkey));
     assert!(linked_roster.contains(&third_device));
     assert!(linked_state.outbound_device_link_request.is_none());
-}
-
-#[test]
-fn bare_app_keys_event_does_not_bootstrap_pending_iris_profile_link() {
-    let admin_dir = tempdir().unwrap();
-    let mut admin = Account::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let linked_dir = tempdir().unwrap();
-    let mut linked = Account::link(
-        linked_dir.path(),
-        admin.state.owner_pubkey.clone(),
-        Some("phone".into()),
-    )
-    .unwrap();
-    let linked_pubkey = linked.state.device_pubkey.clone();
-    let temporary_profile_id = linked.state.profile_id;
-    linked
-        .state
-        .queue_outbound_device_link_request(
-            admin.state.device_pubkey.clone(),
-            &admin.state.device_link_secret,
-            123,
-        )
-        .unwrap();
-    admin
-        .approve_device(&linked_pubkey, Some("phone".into()))
-        .unwrap();
-    let event =
-        build_app_keys_event(admin.device.keys(), admin.state.app_keys.as_ref().unwrap()).unwrap();
-    let mut cfg = AppConfig {
-        account: Some(linked.state.clone()),
-        ..AppConfig::default()
-    };
-    cfg.upsert_drive(Drive::primary(linked.state.root_scope_id()));
-
-    let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
-
-    assert_eq!(outcome, AppKeysApply::UnauthorizedSigner);
-    let linked_state = cfg.account.as_ref().unwrap();
-    assert_eq!(linked_state.profile_id, temporary_profile_id);
-    assert_eq!(
-        linked_state.authorization_state,
-        DeviceAuthorizationState::AwaitingApproval
-    );
-    assert!(linked_state.app_keys.is_none());
-    assert_eq!(
-        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
-        temporary_profile_id.to_string()
-    );
 }
 
 #[test]
@@ -1016,32 +922,4 @@ fn same_second_drive_root_selection_prefers_higher_device_seq() {
 
     assert!(drive_root_event_is_newer(&newer_event, &older_event));
     assert!(!drive_root_event_is_newer(&older_event, &newer_event));
-}
-
-#[test]
-fn apply_app_keys_event_revokes_legacy_snapshot_state_when_we_get_removed() {
-    let dir = tempdir().unwrap();
-    let (mut cfg, mut acct) = config_with_owner_account(dir.path());
-    cfg.account.as_mut().unwrap().profile_roster_ops.clear();
-    assert_eq!(
-        cfg.account.as_ref().unwrap().authorization_state,
-        DeviceAuthorizationState::Authorized
-    );
-    // Owner publishes a new snapshot removing this device.
-    let other_device = Keys::generate().public_key().to_hex();
-    acct.approve_device(&other_device, None).unwrap();
-    acct.appoint_admin(&other_device).unwrap();
-    acct.revoke_device(&cfg.account.as_ref().unwrap().device_pubkey)
-        .unwrap();
-    let event =
-        build_app_keys_event(acct.device.keys(), acct.state.app_keys.as_ref().unwrap()).unwrap();
-    let outcome = apply_remote_app_keys_event(&mut cfg, &event).unwrap();
-    assert!(
-        matches!(outcome, AppKeysApply::Applied(_)),
-        "expected Applied, got {outcome:?}"
-    );
-    assert_eq!(
-        cfg.account.as_ref().unwrap().authorization_state,
-        DeviceAuthorizationState::Revoked
-    );
 }

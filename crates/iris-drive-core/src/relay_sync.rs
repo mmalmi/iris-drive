@@ -2,10 +2,11 @@
 //!
 //! Two layers:
 //!
-//! - **Apply (offline)** — `apply_remote_app_keys_event` and
-//!   `apply_remote_drive_root_event` take a parsed Nostr event and an
-//!   `AppConfig` and apply the event's effect onto the config. These are
-//!   pure functions over data, fully covered by unit tests.
+//! - **Apply (offline)** — `apply_remote_iris_profile_roster_op_event`,
+//!   `apply_remote_drive_root_event`, and device-link helpers take a parsed
+//!   Nostr event or direct roster frame plus an `AppConfig` and apply the
+//!   event's effect onto the config. These are pure functions over data, fully
+//!   covered by unit tests.
 //!
 //! - **Network (live)** — `publish_iris_profile_roster_ops`,
 //!   `publish_drive_root`, `fetch_iris_profile_roster_ops`, and
@@ -27,11 +28,11 @@ use crate::nostr_events::{
     KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT,
     build_device_link_request_event, build_drive_root_publish_event,
     build_private_hashtree_root_event, device_link_request_d_tag, drive_root_d_tag,
-    parse_app_keys_event, parse_device_link_request_event, parse_drive_root_event,
-    parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    parse_device_link_request_event, parse_drive_root_event, parse_drive_root_event_for_device,
+    parse_drive_root_event_preview,
 };
 use crate::{
-    AppKeysSnapshot, IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
+    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
     parse_iris_profile_roster_op_event,
 };
 
@@ -55,18 +56,6 @@ pub enum RelayError {
     DeviceLinkRoster(String),
 }
 
-/// Result of applying a remote `AppKeys` event.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AppKeysApply {
-    /// Event from someone other than our owner — silently ignored.
-    NotOurOwner,
-    /// Event is for our account, but it was not signed by an accepted admin.
-    UnauthorizedSigner,
-    /// Applied to the local state; carries the apply decision so callers
-    /// can log "first snapshot adopted", "newer snapshot replaced", etc.
-    Applied(ApplyDecision),
-}
-
 /// Result of applying signed profile roster ops over the direct device-link channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceLinkRosterApply {
@@ -87,28 +76,6 @@ pub enum IrisProfileRosterOpApply {
     Current,
     /// The verified op was unioned into the local profile log.
     Applied,
-}
-
-/// Apply a remote `AppKeys` event to `config`. The event may be signed by any
-/// current admin device. The parsed snapshot carries the stable account id;
-/// the event author becomes the roster signer and DCK wrapping key.
-pub fn apply_remote_app_keys_event(
-    config: &mut AppConfig,
-    event: &Event,
-) -> Result<AppKeysApply, RelayError> {
-    let snapshot = parse_app_keys_event(event)?;
-    let signer_pubkey = event.pubkey.to_hex();
-    let Some(account) = config.account.as_mut() else {
-        return Err(RelayError::NoAccount);
-    };
-    if snapshot.owner_pubkey != account.owner_pubkey {
-        return Ok(AppKeysApply::NotOurOwner);
-    }
-    if !can_accept_app_keys_from(account, &signer_pubkey, &snapshot) {
-        return Ok(AppKeysApply::UnauthorizedSigner);
-    }
-    let decision = account.apply_app_keys(snapshot);
-    Ok(AppKeysApply::Applied(decision))
 }
 
 /// Result of applying a device-link request sent over relay metadata.
@@ -351,20 +318,6 @@ fn sync_primary_drive_scope(config: &mut AppConfig, root_scope_id: String) {
     } else {
         config.upsert_drive(Drive::primary(root_scope_id));
     }
-}
-
-fn can_accept_app_keys_from(
-    account: &crate::account::AccountState,
-    signer_pubkey: &str,
-    _snapshot: &AppKeysSnapshot,
-) -> bool {
-    if let Some(current) = account.app_keys.as_ref() {
-        return current.is_admin(signer_pubkey);
-    }
-    // A bare AppKeys snapshot has no IrisProfileId. New links must be
-    // admitted by DeviceLinkRosterFrame/profile roster ops so they do not
-    // become authorized under their temporary local profile id.
-    false
 }
 
 /// Result of applying a remote drive-root event.

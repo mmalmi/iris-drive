@@ -1,22 +1,9 @@
 use super::*;
-use crate::iris_profile::IrisProfileId;
+use crate::iris_profile::{
+    IrisProfileCapabilities, IrisProfileFacet, IrisProfileId, IrisProfileRosterOp,
+};
 use nostr_sdk::JsonUtil;
 use std::collections::BTreeMap;
-
-fn fake_snapshot(owner_pubkey: &str) -> AppKeysSnapshot {
-    AppKeysSnapshot {
-        owner_pubkey: owner_pubkey.to_string(),
-        signed_by_pubkey: Some(owner_pubkey.to_string()),
-        created_at: 1_700_000_000,
-        app_actors: vec![AppActorEntry::admin(
-            "ab".repeat(32),
-            1_699_000_000,
-            Some("Mac mini".into()),
-        )],
-        dck_generation: 5,
-        wrapped_dck: BTreeMap::from([("ab".repeat(32), "base64ciphertext".into())]),
-    }
-}
 
 fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
     event.tags.iter().find_map(|tag| {
@@ -27,82 +14,6 @@ fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
             None
         }
     })
-}
-
-#[test]
-fn app_keys_event_roundtrip() {
-    let account = Keys::generate();
-    let admin = Keys::generate();
-    let snap = fake_snapshot(&account.public_key().to_hex());
-    let event = build_app_keys_event(&admin, &snap).unwrap();
-    let parsed = parse_app_keys_event(&event).unwrap();
-    let account_hex = account.public_key().to_hex();
-    let admin_hex = admin.public_key().to_hex();
-
-    // owner_pubkey is the stable account id; signer is the admin event author.
-    assert_eq!(parsed.owner_pubkey, account_hex);
-    assert_eq!(parsed.signed_by_pubkey.as_deref(), Some(admin_hex.as_str()));
-    let expected_d_tag = app_keys_d_tag(&parsed.owner_pubkey);
-    assert_eq!(event.identifier(), Some(expected_d_tag.as_str()));
-    // The snapshot's created_at IS the event's created_at — round-trip stable.
-    assert_eq!(parsed.created_at, snap.created_at);
-    assert_eq!(parsed.app_actors, snap.app_actors);
-    assert_eq!(parsed.dck_generation, snap.dck_generation);
-    assert_eq!(parsed.wrapped_dck, snap.wrapped_dck);
-}
-
-#[test]
-fn event_author_attributes_to_actual_signer() {
-    let account = Keys::generate();
-    let snap = fake_snapshot(&account.public_key().to_hex());
-    let signer = Keys::generate();
-    let event = build_app_keys_event(&signer, &snap).unwrap();
-    let parsed = parse_app_keys_event(&event).unwrap();
-    assert_eq!(parsed.owner_pubkey, account.public_key().to_hex());
-    let signer_hex = signer.public_key().to_hex();
-    assert_eq!(
-        parsed.signed_by_pubkey.as_deref(),
-        Some(signer_hex.as_str())
-    );
-}
-
-#[test]
-fn app_keys_event_wrong_kind_rejected() {
-    let owner = Keys::generate();
-    let other_kind_event = EventBuilder::new(
-        Kind::from(1u16),
-        "{}".to_string(),
-        [Tag::identifier(D_TAG_APP_KEYS)],
-    )
-    .to_event(&owner)
-    .unwrap();
-    match parse_app_keys_event(&other_kind_event) {
-        Err(WireError::WrongKind { expected, got }) => {
-            assert_eq!(expected, KIND_APP_KEYS);
-            assert_eq!(got, 1);
-        }
-        other => panic!("expected WrongKind, got {other:?}"),
-    }
-}
-
-#[test]
-fn app_keys_event_missing_d_tag_rejected() {
-    let owner = Keys::generate();
-    let snap = fake_snapshot(&owner.public_key().to_hex());
-    let content = serde_json::to_string(&AppKeysWireContent {
-        owner_pubkey: Some(snap.owner_pubkey.clone()),
-        app_actors: snap.app_actors.clone(),
-        dck_generation: snap.dck_generation,
-        wrapped_dck: snap.wrapped_dck.clone(),
-    })
-    .unwrap();
-    let event = EventBuilder::new(Kind::from(KIND_APP_KEYS), content, [])
-        .to_event(&owner)
-        .unwrap();
-    match parse_app_keys_event(&event) {
-        Err(WireError::MissingDTag) => {}
-        other => panic!("expected MissingDTag, got {other:?}"),
-    }
 }
 
 #[test]
@@ -268,8 +179,24 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
     let files_event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
     assert!(!is_drive_root_event_coordinate(&files_event));
 
-    let app_keys_event = build_app_keys_event(&owner, &fake_snapshot(&owner_hex)).unwrap();
-    assert!(!is_drive_root_event_coordinate(&app_keys_event));
+    let profile_id = IrisProfileId::new_v4();
+    let profile_event = crate::build_iris_profile_roster_op_event(
+        &owner,
+        profile_id,
+        Vec::new(),
+        Some(1),
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                owner.public_key().to_hex(),
+                1_700_000_000,
+                Some("owner app".to_string()),
+                IrisProfileCapabilities::app_admin(),
+            ),
+        },
+        1_700_000_000,
+    )
+    .unwrap();
+    assert!(!is_drive_root_event_coordinate(&profile_event));
 }
 
 #[test]
@@ -289,7 +216,6 @@ fn device_link_request_event_round_trips_and_is_its_own_coordinate() {
     let event = build_device_link_request_event(&device, &frame).unwrap();
 
     assert!(is_device_link_request_event_coordinate(&event));
-    assert!(!is_app_keys_event_coordinate(&event));
     assert!(!is_drive_root_event_coordinate(&event));
     assert_eq!(
         event.identifier(),
