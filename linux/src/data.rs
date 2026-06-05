@@ -32,8 +32,8 @@ pub(crate) fn snapshot_link(state: &NativeAppState) -> Option<&str> {
     (!state.ui.snapshot_link.is_empty()).then_some(state.ui.snapshot_link.as_str())
 }
 
-pub(crate) fn account(state: &NativeAppState) -> Option<&iris_drive_app_core::state::UiAccount> {
-    state.ui.account.as_ref()
+pub(crate) fn profile(state: &NativeAppState) -> Option<&iris_drive_app_core::state::UiProfile> {
+    state.ui.profile.as_ref()
 }
 
 pub(crate) fn setup_label_value(state: &NativeAppState) -> &str {

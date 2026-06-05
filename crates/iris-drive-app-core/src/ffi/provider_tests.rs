@@ -206,7 +206,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
     let owner_state = owner_app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_account = owner_state.ui.account.unwrap();
+    let owner_account = owner_state.ui.profile.unwrap();
 
     let source_dir = tempfile::tempdir().unwrap();
     std::fs::write(source_dir.path().join("owner-note.txt"), b"from owner").unwrap();
@@ -222,7 +222,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         link_target: owner_account.device_link_invite,
         device_label: "Phone".to_owned(),
     });
-    let linked_account = linked.ui.account.unwrap();
+    let linked_account = linked.ui.profile.unwrap();
     let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
         request: linked_account.device_link_request,
         label: "Phone".to_owned(),

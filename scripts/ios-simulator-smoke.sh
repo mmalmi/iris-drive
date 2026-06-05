@@ -238,14 +238,14 @@ SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
   15; then
   echo "FAIL: iOS GUI did not create a real awaiting linked-device profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
 
-request_url="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_link_request"])' <"$STATE_FILE")"
+request_url="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_link_request"])' <"$STATE_FILE")"
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS GUI")"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then

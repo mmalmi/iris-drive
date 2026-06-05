@@ -372,13 +372,13 @@ launch_sim_app \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
   15; then
   echo "FAIL: iOS Link this device UI did not create an awaiting linked-device profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_pubkey"])' <"$STATE_FILE")"
+linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_pubkey"])' <"$STATE_FILE")"
 if ! wait_for_owner_inbound_request "$linked_device" 30; then
   echo "FAIL: owner did not receive the iOS GUI device-link request over FIPS." >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -404,7 +404,7 @@ launch_sim_app \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
   45; then
   echo "FAIL: iOS GUI device did not ingest owner approval before the approved-device UI check." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
@@ -424,7 +424,7 @@ run_ui_test \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); a=ui.get("account") or {}; current=a.get("device_pubkey"); devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == current and d.get("is_current_device") and d.get("is_online") and d.get("state") == "Linked" for d in devices); raise SystemExit(0 if ok else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); a=ui.get("profile") or {}; current=a.get("device_pubkey"); devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == current and d.get("is_current_device") and d.get("is_online") and d.get("state") == "Linked" for d in devices); raise SystemExit(0 if ok else 1)' \
   45; then
   echo "FAIL: iOS GUI device did not show linked/online after the owner approved its FIPS request." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
@@ -440,13 +440,13 @@ run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenDriveFolderInFilesA
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("device_link_invite") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("device_link_invite") else 1)' \
   15; then
   echo "FAIL: iOS Create profile UI did not initialize an owner profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_link_invite"])' <"$STATE_FILE")"
+app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_link_invite"])' <"$STATE_FILE")"
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"
 linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["device_npub"])' <<<"$linked_json")"
 

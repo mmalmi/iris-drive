@@ -195,9 +195,9 @@ private fun DevicesContent(
         item {
             DevicesPanel(
                 devices = state.devices,
-                linkInvite = state.account?.deviceLinkInvite.orEmpty(),
-                inboundRequests = state.account?.inboundDeviceLinkRequests.orEmpty(),
-                canApprove = state.account?.canAdminProfile == true,
+                linkInvite = state.profile?.deviceLinkInvite.orEmpty(),
+                inboundRequests = state.profile?.inboundDeviceLinkRequests.orEmpty(),
+                canApprove = state.profile?.canAdminProfile == true,
                 onCopyLinkInvite = onCopyLinkInvite,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
@@ -515,7 +515,7 @@ private fun SettingsPanel(
     var confirmLogout by remember { mutableStateOf(false) }
     var recoveryExport by remember { mutableStateOf<RecoverySecretExport?>(null) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
-    val account = state.account
+    val profile = state.profile
 
     if (confirmLogout) {
         AlertDialog(
@@ -591,9 +591,9 @@ private fun SettingsPanel(
             }
         }
         Text("Owner key", fontWeight = FontWeight.SemiBold)
-        Text(account?.ownerPubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(profile?.ownerPubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Device key", fontWeight = FontWeight.SemiBold)
-        Text(account?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopyOwnerKey) {
                 Text("Copy owner key")
@@ -602,7 +602,7 @@ private fun SettingsPanel(
                 Text("Copy device key")
             }
         }
-        if (account?.canExportRecoveryPhrase == true) {
+        if (profile?.canExportRecoveryPhrase == true) {
             OutlinedButton(
                 onClick = {
                     recoveryExport = onExportRecoverySecret()

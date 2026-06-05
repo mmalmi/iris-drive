@@ -190,7 +190,7 @@ internal fun IrisDriveAndroidApp(
     onStopSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsState()
-    val account = state.account
+    val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
 
     IrisDriveTheme {
@@ -212,18 +212,18 @@ internal fun IrisDriveAndroidApp(
             },
         ) { padding ->
             if (!state.isSetupComplete) {
-                if (state.isRevoked && account != null) {
+                if (state.isRevoked && profile != null) {
                     RevokedDeviceContent(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
                         onRelink = {
-                            val label = account.deviceLabel.ifBlank { "Android" }
-                            onLinkDevice(account.ownerPubkey, label)
+                            val label = profile.deviceLabel.ifBlank { "Android" }
+                            onLinkDevice(profile.ownerPubkey, label)
                         },
                         onLogout = onLogout,
                     )
-                } else if (state.isAwaitingApproval && account != null) {
+                } else if (state.isAwaitingApproval && profile != null) {
                     AwaitingApprovalContent(
                         padding = padding,
                         state = state,
@@ -248,7 +248,7 @@ internal fun IrisDriveAndroidApp(
                 )
                 }
             } else {
-                val activeAccount = account ?: return@Scaffold
+                val activeProfile = profile ?: return@Scaffold
                 AuthenticatedContent(
                     padding = padding,
                     selectedTab = selectedTab,
@@ -256,11 +256,11 @@ internal fun IrisDriveAndroidApp(
                     state = state,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyOwnerKey = { onCopyText("Owner key", activeAccount.ownerPubkey) },
-                    onCopyDeviceKey = { onCopyText("Device key", activeAccount.devicePubkey) },
+                    onCopyOwnerKey = { onCopyText("Owner key", activeProfile.ownerPubkey) },
+                    onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
-                    onCopyLinkInvite = { onCopyText("Invite link", activeAccount.deviceLinkInvite) },
+                    onCopyLinkInvite = { onCopyText("Invite link", activeProfile.deviceLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenDriveFolder = onOpenDriveFolder,
@@ -294,7 +294,7 @@ private fun RevokedDeviceContent(
     onRelink: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    val account = state.account ?: return
+    val profile = state.profile ?: return
     Box(
         modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
         contentAlignment = Alignment.Center,
@@ -307,8 +307,8 @@ private fun RevokedDeviceContent(
             SetupBrand()
             Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
             Text("This device no longer has access to Iris Drive.", color = Muted)
-            Text(account.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(account.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupPrimaryButton(
                 text = "Link this device again",
                 onClick = onRelink,
@@ -316,7 +316,7 @@ private fun RevokedDeviceContent(
             )
             SetupSecondaryButton(
                 text = "Copy device ID",
-                onClick = { onCopyText("Device key", account.devicePubkey) },
+                onClick = { onCopyText("Device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -336,7 +336,7 @@ private fun AwaitingApprovalContent(
     onCopyText: (String, String) -> Unit,
     onLogout: () -> Unit,
 ) {
-    val account = state.account ?: return
+    val profile = state.profile ?: return
     Box(
         modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
         contentAlignment = Alignment.Center,
@@ -348,11 +348,11 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            Text(account.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(account.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.ownerPubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
                 text = "Copy device ID",
-                onClick = { onCopyText("Device key", account.devicePubkey) },
+                onClick = { onCopyText("Device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,

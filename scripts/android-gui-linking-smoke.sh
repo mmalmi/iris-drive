@@ -170,7 +170,7 @@ wait_for_android_authorized() {
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
-      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; ui=s.get("ui",{}); a=ui.get("account") or {}; devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == expected and d.get("is_current_device") for d in devices); raise SystemExit(0 if ok else 1)' "$expected_device" >/dev/null 2>&1; then
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; ui=s.get("ui",{}); a=ui.get("profile") or {}; devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == expected and d.get("is_current_device") for d in devices); raise SystemExit(0 if ok else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -265,7 +265,7 @@ fi
   --es "$DEBUG_ACTION_EXTRA" create-profile >/dev/null
 
 if ! wait_for_debug_state \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("can_admin_profile") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" and a.get("can_admin_profile") else 1)' \
   15; then
   echo "FAIL: Android did not create a real owner profile after the GUI create-profile test." >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
@@ -318,7 +318,7 @@ fi
   "${android_fips_args[@]}" >/dev/null
 
 if ! wait_for_debug_state \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("account") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("device_link_request") else 1)' \
   15; then
   echo "FAIL: Android did not create a real awaiting linked-device profile after the GUI link-this-device test." >&2
   dump_android_debug_files
@@ -326,7 +326,7 @@ if ! wait_for_debug_state \
 fi
 
 linked_device="$("$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["account"]["device_pubkey"])')"
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["device_pubkey"])')"
 if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
   echo "FAIL: owner did not receive the Android GUI device-link request over FIPS." >&2
   dump_android_debug_files

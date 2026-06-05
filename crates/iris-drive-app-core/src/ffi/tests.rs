@@ -54,7 +54,7 @@ fn profile_actions_populate_mobile_parity_state() {
         device_label: "Pixel".to_owned(),
     });
 
-    let account = state.ui.account.as_ref().expect("account exists");
+    let account = state.ui.profile.as_ref().expect("account exists");
     assert_eq!(account.device_label, "Pixel");
     assert_eq!(account.authorization_state, "authorized");
     assert!(account.current_app_key_npub.starts_with("npub1"));
@@ -174,7 +174,7 @@ fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
     let created = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Pixel".to_owned(),
     });
-    let created_account = created.ui.account.as_ref().expect("account exists");
+    let created_account = created.ui.profile.as_ref().expect("account exists");
     assert!(created_account.can_export_recovery_phrase);
 
     let export = super::export_recovery_secret(dir.path().display().to_string());
@@ -194,7 +194,7 @@ fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
     });
 
     assert!(restored.error.is_empty(), "{}", restored.error);
-    let restored_account = restored.ui.account.expect("restored account exists");
+    let restored_account = restored.ui.profile.expect("restored account exists");
     assert_eq!(restored_account.profile_id, created_account.profile_id);
     assert_ne!(
         restored_account.current_app_key_npub,
@@ -220,7 +220,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let created = owner_app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Native".to_owned(),
     });
-    let created_account = created.ui.account.expect("created account exists");
+    let created_account = created.ui.profile.expect("created account exists");
     let owner_config =
         AppConfig::load_or_default(config_path_in(owner_dir.path())).expect("owner config loads");
     let owner_state = owner_config.account.expect("owner state exists");
@@ -234,7 +234,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
         device_label: "Browser".to_owned(),
     });
     assert!(restored.error.is_empty(), "{}", restored.error);
-    let restored_account = restored.ui.account.expect("restored account exists");
+    let restored_account = restored.ui.profile.expect("restored account exists");
 
     let mut restored_config =
         AppConfig::load_or_default(config_path_in(restored_dir.path())).expect("config loads");
@@ -254,7 +254,7 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     });
 
     assert!(recovered.error.is_empty(), "{}", recovered.error);
-    let recovered_account = recovered.ui.account.expect("recovered account exists");
+    let recovered_account = recovered.ui.profile.expect("recovered account exists");
     assert_eq!(recovered_account.profile_id, created_account.profile_id);
     assert_eq!(
         recovered_account.current_app_key_pubkey,
@@ -277,7 +277,7 @@ fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
     let created = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Pixel".to_owned(),
     });
-    let created_account = created.ui.account.as_ref().expect("account exists");
+    let created_account = created.ui.profile.as_ref().expect("account exists");
     let export = super::export_recovery_secret(dir.path().display().to_string());
     assert!(export.error.is_empty(), "{}", export.error);
 
@@ -289,7 +289,7 @@ fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
     });
 
     assert!(restored.error.is_empty(), "{}", restored.error);
-    let restored_account = restored.ui.account.expect("restored account exists");
+    let restored_account = restored.ui.profile.expect("restored account exists");
     assert_ne!(restored_account.profile_id, created_account.profile_id);
     assert_ne!(
         restored_account.current_app_key_npub,
@@ -387,7 +387,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_account = owner.ui.account.unwrap();
+    let owner_account = owner.ui.profile.unwrap();
 
     let invite = super::classify_link_input(owner_account.device_link_invite.clone());
     assert_eq!(invite.kind, "invite");
@@ -442,7 +442,7 @@ fn link_device_rejects_bare_app_key_without_profile_target() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_account = owner.ui.account.unwrap();
+    let owner_account = owner.ui.profile.unwrap();
 
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
@@ -451,7 +451,7 @@ fn link_device_rejects_bare_app_key_without_profile_target() {
         device_label: "Phone".to_owned(),
     });
 
-    assert!(state.ui.account.is_none());
+    assert!(state.ui.profile.is_none());
     assert!(
         state
             .error
@@ -467,7 +467,7 @@ fn snapshot_link_uses_drive_iris_nhash_route() {
     let created = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Pixel".to_owned(),
     });
-    let account = created.ui.account.as_ref().expect("account exists");
+    let account = created.ui.profile.as_ref().expect("account exists");
     let root_cid = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
                     :1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
         .replace(char::is_whitespace, "");
@@ -502,13 +502,13 @@ fn logout_clears_local_profile_state_and_key_material() {
     let created = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "iPhone".to_owned(),
     });
-    assert!(created.ui.account.is_some());
+    assert!(created.ui.profile.is_some());
     assert!(dir.path().join("key").exists());
 
     let state = app.dispatch(NativeAppAction::Logout);
 
     assert!(state.error.is_empty());
-    assert!(state.ui.account.is_none());
+    assert!(state.ui.profile.is_none());
     assert!(state.ui.devices.is_empty());
     assert!(state.ui.roots.is_empty());
     assert!(!state.ui.sync.running);
@@ -527,7 +527,7 @@ fn link_action_tracks_pending_approval() {
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Owner".to_owned(),
     });
-    let owner_account = owner.ui.account.unwrap();
+    let owner_account = owner.ui.profile.unwrap();
     let owner_profile_id = owner_account.profile_id.clone();
     let invite = owner_account.device_link_invite.clone();
 
@@ -539,7 +539,7 @@ fn link_action_tracks_pending_approval() {
         device_label: "iPhone".to_owned(),
     });
 
-    let account = state.ui.account.expect("account exists");
+    let account = state.ui.profile.expect("account exists");
     assert_eq!(account.profile_id, owner_profile_id);
     assert_eq!(account.device_label, "iPhone");
     assert_eq!(account.authorization_state, "awaiting_approval");
@@ -573,14 +573,14 @@ fn owner_can_approve_and_revoke_linked_devices() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_invite = owner.ui.account.unwrap().device_link_invite;
+    let owner_invite = owner.ui.profile.unwrap().device_link_invite;
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
         link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
-    let linked_account = linked.ui.account.unwrap();
+    let linked_account = linked.ui.profile.unwrap();
     let request = linked_account.device_link_request;
     let linked_device = linked_account.current_app_key_npub;
     let state = app.dispatch(NativeAppAction::ApproveDevice {
@@ -638,14 +638,14 @@ fn delete_device_json_action_revokes_linked_device() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_invite = owner.ui.account.unwrap().device_link_invite;
+    let owner_invite = owner.ui.profile.unwrap().device_link_invite;
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
     let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
         link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
-    let linked_account = linked.ui.account.unwrap();
+    let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub.clone();
     let state = app.dispatch(NativeAppAction::ApproveDevice {
         request: linked_account.device_link_request,
@@ -684,7 +684,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_account = owner.ui.account.unwrap();
+    let owner_account = owner.ui.profile.unwrap();
     let owner_invite = owner_account.device_link_invite.clone();
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
@@ -692,7 +692,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
         link_target: owner_invite.clone(),
         device_label: "Phone".to_owned(),
     });
-    let linked_account = linked.ui.account.unwrap();
+    let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub.clone();
     let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
         request: linked_account.device_link_request,
@@ -702,7 +702,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
     let authorized = linked_app.refresh();
-    let account = authorized.ui.account.as_ref().expect("account exists");
+    let account = authorized.ui.profile.as_ref().expect("account exists");
     assert_eq!(account.authorization_state, "authorized");
     assert!(authorized.ui.devices.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.is_current_device
@@ -718,7 +718,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
     let refreshed = linked_app.refresh();
-    let account = refreshed.ui.account.as_ref().expect("account exists");
+    let account = refreshed.ui.profile.as_ref().expect("account exists");
     assert_eq!(account.authorization_state, "revoked");
     assert_eq!(account.current_app_key_npub, linked_device);
     assert_eq!(account.device_label, "Phone");
@@ -736,7 +736,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
         link_target: owner_invite,
         device_label: "Phone".to_owned(),
     });
-    let account = relinked.ui.account.as_ref().expect("account exists");
+    let account = relinked.ui.profile.as_ref().expect("account exists");
     assert!(relinked.error.is_empty(), "{}", relinked.error);
     assert_eq!(account.authorization_state, "awaiting_approval");
     assert_ne!(account.current_app_key_npub, linked_device);
@@ -753,7 +753,7 @@ fn native_fips_status_drives_device_online_presence() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let owner_account = owner.ui.account.unwrap();
+    let owner_account = owner.ui.profile.unwrap();
     let owner_invite = owner_account.device_link_invite;
     let current_device = owner_account.current_app_key_npub;
 
@@ -763,7 +763,7 @@ fn native_fips_status_drives_device_online_presence() {
         link_target: owner_invite,
         device_label: "Phone".to_owned(),
     });
-    let linked_account = linked.ui.account.unwrap();
+    let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub;
 
     let approved = app.dispatch(NativeAppAction::ApproveDevice {
@@ -867,7 +867,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let invite = owner.ui.account.unwrap().device_link_invite;
+    let invite = owner.ui.profile.unwrap().device_link_invite;
 
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
@@ -875,7 +875,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
         link_target: invite,
         device_label: "Phone".to_owned(),
     });
-    let linked_device = linked.ui.account.unwrap().current_app_key_npub;
+    let linked_device = linked.ui.profile.unwrap().current_app_key_npub;
     let linked_device_hex = normalize_pubkey(&linked_device).unwrap();
 
     let config_path = config_path_in(owner_dir.path());
@@ -895,7 +895,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     config.save(&config_path).unwrap();
 
     let refreshed = app.refresh();
-    let account = refreshed.ui.account.unwrap();
+    let account = refreshed.ui.profile.unwrap();
     assert_eq!(account.inbound_device_link_requests.len(), 1);
     let request = &account.inbound_device_link_requests[0];
     assert_eq!(request.device_pubkey, linked_device);
@@ -925,7 +925,7 @@ fn owner_can_reject_inbound_device_link_request() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let invite = owner.ui.account.unwrap().device_link_invite;
+    let invite = owner.ui.profile.unwrap().device_link_invite;
 
     let linked_dir = tempfile::tempdir().unwrap();
     let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
@@ -933,7 +933,7 @@ fn owner_can_reject_inbound_device_link_request() {
         link_target: invite,
         device_label: "Phone".to_owned(),
     });
-    let linked_device = linked.ui.account.unwrap().current_app_key_npub;
+    let linked_device = linked.ui.profile.unwrap().current_app_key_npub;
     let linked_device_hex = normalize_pubkey(&linked_device).unwrap();
 
     let config_path = config_path_in(owner_dir.path());
@@ -953,7 +953,7 @@ fn owner_can_reject_inbound_device_link_request() {
     config.save(&config_path).unwrap();
 
     let refreshed = app.refresh();
-    let request = refreshed.ui.account.unwrap().inbound_device_link_requests[0]
+    let request = refreshed.ui.profile.unwrap().inbound_device_link_requests[0]
         .request_link
         .clone();
     let rejected = app.dispatch(NativeAppAction::RejectDevice { request });
@@ -962,7 +962,7 @@ fn owner_can_reject_inbound_device_link_request() {
     assert!(
         rejected
             .ui
-            .account
+            .profile
             .unwrap()
             .inbound_device_link_requests
             .is_empty()
@@ -1048,7 +1048,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let owner = app.dispatch(NativeAppAction::CreateProfile {
         device_label: "Mac".to_owned(),
     });
-    let old_invite = owner.ui.account.unwrap().device_link_invite;
+    let old_invite = owner.ui.profile.unwrap().device_link_invite;
 
     let config_path = config_path_in(owner_dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
@@ -1070,7 +1070,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
 
     let reset = app.dispatch(NativeAppAction::ResetInvite);
     assert!(reset.error.is_empty());
-    let account = reset.ui.account.unwrap();
+    let account = reset.ui.profile.unwrap();
     assert_ne!(account.device_link_invite, old_invite);
     assert!(account.inbound_device_link_requests.is_empty());
 }

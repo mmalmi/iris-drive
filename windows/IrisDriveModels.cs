@@ -58,23 +58,23 @@ public sealed class IrisDriveStatusData
         }
 
         JsonElement ui = Object(root, "ui") ?? default;
-        var account = ui.ValueKind == JsonValueKind.Object ? Object(ui, "account") : null;
+        var profile = ui.ValueKind == JsonValueKind.Object ? Object(ui, "profile") : null;
         var paths = ui.ValueKind == JsonValueKind.Object ? Object(ui, "paths") : null;
         var setupComplete = ui.ValueKind == JsonValueKind.Object && Bool(ui, "setup_complete");
 
         var backupTargets = NativeBackupRows(ui);
         return new IrisDriveStatusData
         {
-            Initialized = account.HasValue,
+            Initialized = profile.HasValue,
             DriveName = NativeDriveName(ui),
-            OwnerNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
-            DeviceNpub = account.HasValue ? String(account.Value, "current_app_key_npub") : null,
+            OwnerNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
+            DeviceNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
             CanAdminProfile =
-                account.HasValue && Bool(account.Value, "can_admin_profile"),
+                profile.HasValue && Bool(profile.Value, "can_admin_profile"),
             CanExportRecoveryPhrase =
-                account.HasValue && Bool(account.Value, "can_export_recovery_phrase"),
+                profile.HasValue && Bool(profile.Value, "can_export_recovery_phrase"),
             AuthorizationState =
-                account.HasValue ? String(account.Value, "authorization_state") : null,
+                profile.HasValue ? String(profile.Value, "authorization_state") : null,
             SetupState = String(ui, "setup_state") ?? "not_configured",
             SetupLabel = String(ui, "setup_label") ?? "Not linked",
             SetupComplete = setupComplete,
@@ -82,11 +82,11 @@ public sealed class IrisDriveStatusData
             Revoked = Bool(ui, "revoked"),
             PrimaryStatus = String(ui, "primary_status") ?? "not_setup",
             PrimaryStatusLabel = String(ui, "primary_status_label") ?? "Ready",
-            DeviceLinkRequestUrl = account.HasValue
-                ? EmptyToNull(String(account.Value, "device_link_request"))
+            DeviceLinkRequestUrl = profile.HasValue
+                ? EmptyToNull(String(profile.Value, "device_link_request"))
                 : null,
-            DeviceLinkRequests = account.HasValue
-                ? NativeDeviceLinkRequests(account.Value)
+            DeviceLinkRequests = profile.HasValue
+                ? NativeDeviceLinkRequests(profile.Value)
                 : Array.Empty<DeviceLinkRequestRow>(),
             AuthorizedDeviceCount = Int(ui, "authorized_device_count"),
             OnlineDeviceCount = Int(ui, "online_device_count"),

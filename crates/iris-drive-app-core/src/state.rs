@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct UiState {
     pub roots: Vec<UiSyncRoot>,
     pub shares: Vec<UiShare>,
-    pub account: Option<UiAccount>,
+    pub profile: Option<UiProfile>,
     pub devices: Vec<UiDevice>,
     pub relays: Vec<String>,
     pub relay_statuses: Vec<UiRelayStatus>,
@@ -58,7 +58,7 @@ pub struct UiShare {
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct UiAccount {
+pub struct UiProfile {
     pub profile_id: String,
     pub current_app_key_pubkey: String,
     pub current_app_key_npub: String,

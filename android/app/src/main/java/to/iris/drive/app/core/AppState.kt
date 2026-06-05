@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal data class AppState(
-    val account: AccountState? = null,
+    val profile: ProfileState? = null,
     val roots: List<SyncRoot> = emptyList(),
     val devices: List<DeviceState> = emptyList(),
     val relays: List<String> = emptyList(),
@@ -34,7 +34,7 @@ internal data class AppState(
             }
             val ui = json.optJSONObject("ui") ?: JSONObject()
             return AppState(
-                account = ui.optJSONObject("account")?.toAccount(),
+                profile = ui.optJSONObject("profile")?.toProfile(),
                 roots = ui.optJSONArray("roots").toRoots(),
                 devices = ui.optJSONArray("devices").toDevices(),
                 relays = ui.optJSONArray("relays").toStrings(),
@@ -61,7 +61,7 @@ internal data class AppState(
     }
 }
 
-internal data class AccountState(
+internal data class ProfileState(
     val ownerPubkey: String,
     val devicePubkey: String,
     val deviceLabel: String,
@@ -304,8 +304,8 @@ internal object NativeActions {
             .toString()
 }
 
-private fun JSONObject.toAccount(): AccountState =
-    AccountState(
+private fun JSONObject.toProfile(): ProfileState =
+    ProfileState(
         ownerPubkey = optString("current_app_key_npub"),
         devicePubkey = optString("current_app_key_npub"),
         deviceLabel = optString("device_label"),

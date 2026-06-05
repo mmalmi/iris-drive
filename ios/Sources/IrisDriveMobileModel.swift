@@ -115,11 +115,11 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var deviceLinkRequest: String {
-        lastState?.ui.account?.deviceLinkRequest ?? ""
+        lastState?.ui.profile?.deviceLinkRequest ?? ""
     }
 
     var deviceLinkInvite: String {
-        lastState?.ui.account?.deviceLinkInvite ?? ""
+        lastState?.ui.profile?.deviceLinkInvite ?? ""
     }
 
     var hasLocalProfile: Bool {
@@ -143,11 +143,11 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var hasOwnerAuthority: Bool {
-        lastState?.ui.account?.canAdminProfile ?? false
+        lastState?.ui.profile?.canAdminProfile ?? false
     }
 
     var canExportRecoveryPhrase: Bool {
-        lastState?.ui.account?.canExportRecoveryPhrase ?? false
+        lastState?.ui.profile?.canExportRecoveryPhrase ?? false
     }
 
     func ensureFileProviderDomainIfProfileExists() {
@@ -367,7 +367,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private var fileProviderRegistrationIdentity: String {
         guard isSetupComplete,
-              let account = lastState?.ui.account,
+              let account = lastState?.ui.profile,
               !account.ownerPubkey.isEmpty,
               !account.devicePubkey.isEmpty
         else {
@@ -864,10 +864,10 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
 
-        ownerPublicKey = state.ui.account?.ownerPubkey ?? ""
-        devicePublicKey = state.ui.account?.devicePubkey ?? "local-device"
-        deviceLabel = state.ui.account?.deviceLabel.isEmpty == false
-            ? state.ui.account?.deviceLabel ?? deviceLabel
+        ownerPublicKey = state.ui.profile?.ownerPubkey ?? ""
+        devicePublicKey = state.ui.profile?.devicePubkey ?? "local-device"
+        deviceLabel = state.ui.profile?.deviceLabel.isEmpty == false
+            ? state.ui.profile?.deviceLabel ?? deviceLabel
             : deviceLabel
         syncRunning = state.ui.sync.running
         authorizationState = state.ui.setupLabel
@@ -895,7 +895,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 canDemoteAdmin: device.canDemoteAdmin
             )
         }
-        inboundDeviceLinkRequests = state.ui.account?.inboundDeviceLinkRequests.map { request in
+        inboundDeviceLinkRequests = state.ui.profile?.inboundDeviceLinkRequests.map { request in
             IrisDriveDeviceLinkRequest(
                 devicePubkey: request.devicePubkey,
                 label: request.label,

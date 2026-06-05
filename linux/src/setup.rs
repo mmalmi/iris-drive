@@ -27,7 +27,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let account = account(state);
+    let account = profile(state);
     let owner = readonly_entry(
         account
             .map(|account| account.current_app_key_npub.as_str())
@@ -101,7 +101,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     detail.set_xalign(0.0);
     container.append(&detail);
 
-    let account = account(state);
+    let account = profile(state);
     let owner_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");

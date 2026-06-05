@@ -140,7 +140,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     body.append(&title);
 
     if let Ok(state) = desktop_state() {
-        if let Some(requests) = account(&state)
+        if let Some(requests) = profile(&state)
             .map(|account| account.inbound_device_link_requests.as_slice())
             .filter(|requests| !requests.is_empty())
         {
@@ -561,7 +561,7 @@ pub(crate) fn current_snapshot_link() -> Result<String, String> {
 
 pub(crate) fn current_account_value(key: &str) -> Result<String, String> {
     let state = desktop_state()?;
-    let account = account(&state).ok_or_else(|| "No account key available".to_string())?;
+    let account = profile(&state).ok_or_else(|| "No account key available".to_string())?;
     match key {
         "owner_npub" | "current_app_key_npub" => Ok(account.current_app_key_npub.clone()),
         "device_npub" => Ok(account.device_pubkey.clone()),

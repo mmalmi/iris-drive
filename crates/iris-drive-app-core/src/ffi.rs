@@ -63,8 +63,8 @@ pub(crate) use crate::native_provider::{
     native_provider_resolve_path_json, native_provider_write_json,
 };
 use crate::state::{
-    NativeAppState, UiAccount, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus,
-    UiFipsStatus, UiPaths, UiRelayStatus, UiShare, UiState, UiSyncRoot, UiSyncStatus,
+    NativeAppState, UiBackup, UiDevice, UiDeviceLinkRequest, UiFipsPeerStatus, UiFipsStatus,
+    UiPaths, UiProfile, UiRelayStatus, UiShare, UiState, UiSyncRoot, UiSyncStatus,
 };
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -840,7 +840,7 @@ impl NativeAppRuntime {
     fn current_device_is_revoked(&self) -> bool {
         self.state
             .ui
-            .account
+            .profile
             .as_ref()
             .is_some_and(|account| account.authorization_state == "revoked")
             || self.current_authorization_state() == Some(DeviceAuthorizationState::Revoked)
@@ -958,7 +958,7 @@ impl NativeAppRuntime {
         let mut account = raw_account.clone();
         account.recompute_authorization();
         let profile = iris_profile_summary(&account);
-        self.state.ui.account = Some(UiAccount {
+        self.state.ui.profile = Some(UiProfile {
             profile_id: profile.profile_id,
             current_app_key_pubkey: profile.current_app_key_pubkey_hex,
             current_app_key_npub: profile.current_app_key_npub,
@@ -1028,7 +1028,7 @@ impl NativeAppRuntime {
     }
 
     fn refresh_ui_summary(&mut self, fips_status: Option<UiFipsStatus>) {
-        let setup_state = self.state.ui.account.as_ref().map_or_else(
+        let setup_state = self.state.ui.profile.as_ref().map_or_else(
             || "not_configured".to_owned(),
             |account| account.authorization_state.clone(),
         );

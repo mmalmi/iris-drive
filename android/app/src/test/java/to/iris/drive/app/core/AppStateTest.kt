@@ -113,7 +113,7 @@ class AppStateTest {
             """
             {
               "ui": {
-                "account": {
+                "profile": {
                   "current_app_key_npub": "npub1app",
                   "can_export_recovery_phrase": true
                 }
@@ -133,7 +133,7 @@ class AppStateTest {
             """.trimIndent(),
         )
 
-        assertTrue(state.account?.canExportRecoveryPhrase == true)
+        assertTrue(state.profile?.canExportRecoveryPhrase == true)
         assertTrue(export.canExport)
         assertEquals(12, export.words.size)
         assertEquals("abandon", export.words.first())
@@ -144,7 +144,7 @@ class AppStateTest {
     @Test
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
-            account = AccountState(
+            profile = ProfileState(
                 ownerPubkey = "owner",
                 devicePubkey = "device-a",
                 deviceLabel = "Pixel",
@@ -214,7 +214,7 @@ class AppStateTest {
     @Test
     fun pendingApprovalDoesNotCompleteSetup() {
         val state = AppState(
-            account = AccountState(
+            profile = ProfileState(
                 ownerPubkey = "owner",
                 devicePubkey = "device-a",
                 deviceLabel = "Pixel",
@@ -236,7 +236,7 @@ class AppStateTest {
     @Test
     fun revokedDeviceDoesNotCompleteSetup() {
         val state = AppState(
-            account = AccountState(
+            profile = ProfileState(
                 ownerPubkey = "owner",
                 devicePubkey = "device-a",
                 deviceLabel = "Pixel",

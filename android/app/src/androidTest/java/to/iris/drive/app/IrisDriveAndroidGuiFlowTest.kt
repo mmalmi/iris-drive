@@ -40,6 +40,7 @@ import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.RelayStatus
+import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.core.SyncState
 import to.iris.drive.app.provider.IrisDriveDocumentStore
 
@@ -78,8 +79,8 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().activate()
 
         val state = appState(handle)
-        assertEquals("authorized", state.account?.authorizationState)
-        assertTrue(state.account?.canAdminProfile == true)
+        assertEquals("authorized", state.profile?.authorizationState)
+        assertTrue(state.profile?.canAdminProfile == true)
         assertEquals(1, state.roots.size)
     }
 
@@ -100,7 +101,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput(owner.invite)
         dismissSoftKeyboard()
 
-        val linked = appState(linkedHandle).account
+        val linked = appState(linkedHandle).profile
         assertEquals("awaiting_approval", linked?.authorizationState)
         assertTrue(linked?.deviceLinkRequest?.isNotBlank() == true)
 
@@ -127,7 +128,7 @@ class IrisDriveAndroidGuiFlowTest {
 
         render(
             state = AppState(
-                account = accountState(),
+                profile = profileState(),
                 setupState = "authorized",
                 isSetupComplete = true,
             ),
@@ -152,7 +153,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun addDeviceDialogRequiresCompleteNativeLinkInput() {
         val state = AppState(
-            account = accountState(),
+            profile = profileState(),
             setupState = "authorized",
             isSetupComplete = true,
         )
@@ -212,11 +213,11 @@ class IrisDriveAndroidGuiFlowTest {
         val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val linked = dispatch(
             linkedHandle,
-            NativeActions.linkDevice(owner.account!!.deviceLinkInvite, "Pixel"),
+            NativeActions.linkDevice(owner.profile!!.deviceLinkInvite, "Pixel"),
         )
         val approved = dispatch(
             ownerHandle,
-            NativeActions.approveDevice(linked.account!!.deviceLinkRequest, "Pixel"),
+            NativeActions.approveDevice(linked.profile!!.deviceLinkRequest, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
 
@@ -229,7 +230,7 @@ class IrisDriveAndroidGuiFlowTest {
         assertTrue(applied.optString("error"), applied.optString("error").isBlank())
 
         val linkedState = refreshedAppState(linkedHandle)
-        assertEquals("authorized", linkedState.account?.authorizationState)
+        assertEquals("authorized", linkedState.profile?.authorizationState)
         assertEquals(1, linkedState.fileCount)
 
         render(state = linkedState)
@@ -257,11 +258,11 @@ class IrisDriveAndroidGuiFlowTest {
         val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val linked = dispatch(
             linkedHandle,
-            NativeActions.linkDevice(owner.account!!.deviceLinkInvite, "Pixel"),
+            NativeActions.linkDevice(owner.profile!!.deviceLinkInvite, "Pixel"),
         )
         val approved = dispatch(
             ownerHandle,
-            NativeActions.approveDevice(linked.account!!.deviceLinkRequest, "Pixel"),
+            NativeActions.approveDevice(linked.profile!!.deviceLinkRequest, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
 
@@ -277,8 +278,8 @@ class IrisDriveAndroidGuiFlowTest {
 
         val restartedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
         val restarted = refreshedAppState(restartedHandle)
-        assertEquals("authorized", restarted.account?.authorizationState)
-        assertEquals("Pixel", restarted.account?.deviceLabel)
+        assertEquals("authorized", restarted.profile?.authorizationState)
+        assertEquals("Pixel", restarted.profile?.deviceLabel)
         assertEquals(1, restarted.fileCount)
 
         render(state = restarted)
@@ -307,7 +308,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun settingsViewUsesNativeRelayStatusRows() {
         val state = AppState(
-            account = accountState(),
+            profile = profileState(),
             setupState = "authorized",
             isSetupComplete = true,
             relayStatuses = listOf(
@@ -331,7 +332,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun devicesViewUsesOnlineStatusDots() {
         val state = AppState(
-            account = accountState(),
+            profile = profileState(),
             setupState = "authorized",
             isSetupComplete = true,
             devices = listOf(
@@ -404,7 +405,7 @@ class IrisDriveAndroidGuiFlowTest {
     fun deleteDeviceRequiresConfirmation() {
         val deletedDevices = mutableListOf<String>()
         val state = AppState(
-            account = accountState(),
+            profile = profileState(),
             setupState = "authorized",
             isSetupComplete = true,
             devices = listOf(
@@ -444,7 +445,7 @@ class IrisDriveAndroidGuiFlowTest {
         val rejectedRequests = mutableListOf<String>()
         val requestLink = "iris-drive://request/device-b"
         val state = AppState(
-            account = accountState().copy(
+            profile = profileState().copy(
                 inboundDeviceLinkRequests = listOf(
                     to.iris.drive.app.core.DeviceLinkRequestState(
                         devicePubkey = "device-b",
@@ -480,6 +481,13 @@ class IrisDriveAndroidGuiFlowTest {
         onRejectDevice: (String) -> Unit = {},
         onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
+        onExportRecoverySecret: () -> RecoverySecretExport = { RecoverySecretExport() },
+        onAddBackupTarget: (String, String) -> Unit = { _, _ -> },
+        onRemoveBackupTarget: (String) -> Unit = {},
+        onAddBlossomServer: (String) -> Unit = {},
+        onRemoveBlossomServer: (String) -> Unit = {},
+        onSyncBackups: (String) -> Unit = {},
+        onCheckBackups: (String) -> Unit = {},
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
         compose.setContent {
@@ -489,6 +497,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onRestoreProfile = { _, _ -> },
                 onLinkDevice = onLinkDevice,
                 onCopyText = { _, _ -> },
+                onExportRecoverySecret = onExportRecoverySecret,
                 onOpenUrl = { _ -> },
                 onOpenDriveFolder = {},
                 onApproveDevice = onApproveDevice,
@@ -502,6 +511,12 @@ class IrisDriveAndroidGuiFlowTest {
                 onRemoveRelay = { _ -> },
                 onResetRelays = {},
                 onAddRoot = onAddRoot,
+                onAddBackupTarget = onAddBackupTarget,
+                onRemoveBackupTarget = onRemoveBackupTarget,
+                onAddBlossomServer = onAddBlossomServer,
+                onRemoveBlossomServer = onRemoveBlossomServer,
+                onSyncBackups = onSyncBackups,
+                onCheckBackups = onCheckBackups,
                 onStartSync = {},
                 onStopSync = {},
             )
@@ -524,23 +539,23 @@ class IrisDriveAndroidGuiFlowTest {
     private fun createOwnerProfile(label: String): TestProfile {
         val handle = newNativeHandle()
         val state = dispatch(handle, NativeActions.createProfile(label))
-        val account = state.account ?: error("owner account missing")
+        val profile = state.profile ?: error("owner account missing")
         return TestProfile(
             handle = handle,
-            invite = account.deviceLinkInvite,
-            devicePubkey = account.devicePubkey,
+            invite = profile.deviceLinkInvite,
+            devicePubkey = profile.devicePubkey,
         )
     }
 
     private fun createLinkedProfile(invite: String): TestProfile {
         val handle = newNativeHandle()
         val state = dispatch(handle, NativeActions.linkDevice(invite, "Android UI linked"))
-        val account = state.account ?: error("linked account missing")
-        assertEquals("awaiting_approval", account.authorizationState)
+        val profile = state.profile ?: error("linked account missing")
+        assertEquals("awaiting_approval", profile.authorizationState)
         return TestProfile(
             handle = handle,
-            invite = account.deviceLinkInvite,
-            devicePubkey = account.devicePubkey,
+            invite = profile.deviceLinkInvite,
+            devicePubkey = profile.devicePubkey,
         )
     }
 
@@ -572,7 +587,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.waitForIdle()
     }
 
-    private fun accountState() = to.iris.drive.app.core.AccountState(
+    private fun profileState() = to.iris.drive.app.core.ProfileState(
         ownerPubkey = "owner",
         devicePubkey = "device-a",
         deviceLabel = "Pixel",

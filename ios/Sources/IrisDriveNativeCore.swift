@@ -317,7 +317,7 @@ struct NativeAppState: Codable {
 
 struct NativeUiState: Codable {
     var roots: [NativeSyncRoot]
-    var account: NativeAccount?
+    var profile: NativeProfile?
     var devices: [NativeDevice]
     var relays: [String]
     var relayStatuses: [NativeRelayStatus]
@@ -342,7 +342,7 @@ struct NativeUiState: Codable {
 
     enum CodingKeys: String, CodingKey {
         case roots
-        case account
+        case profile
         case devices
         case relays
         case relayStatuses = "relay_statuses"
@@ -425,7 +425,7 @@ struct NativeSyncRoot: Codable {
     }
 }
 
-struct NativeAccount: Codable {
+struct NativeProfile: Codable {
     var profileId: String
     var currentAppKeyPubkey: String
     var currentAppKeyNpub: String
