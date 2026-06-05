@@ -230,6 +230,8 @@ fn status_before_init_reports_uninitialized() {
     let body = String::from_utf8(out.stdout).unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["initialized"], false);
+    assert!(v.get("account").is_none());
+    assert!(v["profile"].is_null());
     assert!(v["drives"].as_array().unwrap().is_empty());
     assert_eq!(v["hashtree"]["local_block_count"], 0);
     assert_eq!(v["hashtree"]["local_block_bytes"], 0);
@@ -254,7 +256,18 @@ fn status_after_init_reports_initialized() {
     let v: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(v["initialized"], true);
-    assert!(v["pubkey_npub"].as_str().unwrap().starts_with("npub1"));
+    assert!(v.get("account").is_none());
+    assert!(v.get("pubkey_npub").is_none());
+    assert!(
+        v["current_app_key_npub"]
+            .as_str()
+            .unwrap()
+            .starts_with("npub1")
+    );
+    assert_eq!(
+        v["profile"]["current_app_key_npub"],
+        v["current_app_key_npub"]
+    );
     let drives = v["drives"].as_array().unwrap();
     assert_eq!(drives.len(), 1);
     assert_eq!(drives[0]["drive_id"], "main");

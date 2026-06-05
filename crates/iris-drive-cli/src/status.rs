@@ -97,18 +97,18 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
-    let account_block = status_account_block(&config);
+    let profile_block = status_profile_block(&config);
     let sync_status = daemon_sync_status(daemon_status.as_ref());
     println!(
         "{}",
         json!({
             "initialized": initialized,
             "config_dir": config_dir.display().to_string(),
-            "pubkey_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
-            "account": account_block,
+            "current_app_key_npub": config.account.as_ref().map(|s| account_npub(&s.device_pubkey)),
+            "profile": profile_block,
             "summary": status_summary(
                 initialized,
-                account_block.as_ref(),
+                profile_block.as_ref(),
                 authorized_device_count,
                 online_device_count,
                 file_count,
@@ -162,7 +162,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn status_summary(
     initialized: bool,
-    account: Option<&Value>,
+    profile: Option<&Value>,
     authorized_device_count: usize,
     online_device_count: usize,
     file_count: Option<usize>,
@@ -171,8 +171,8 @@ pub(crate) fn status_summary(
     provider_refresh_key: &str,
 ) -> Value {
     let setup_state = if initialized {
-        account
-            .and_then(|account| account.get("authorization_state"))
+        profile
+            .and_then(|profile| profile.get("authorization_state"))
             .and_then(Value::as_str)
             .unwrap_or("not_configured")
     } else {
@@ -298,7 +298,7 @@ pub(crate) fn local_nhash_resolver_status(
     })
 }
 
-pub(crate) fn status_account_block(config: &AppConfig) -> Option<Value> {
+pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
     config.account.as_ref().map(|state| {
         let mut state = state.clone();
         state.recompute_authorization();
@@ -455,7 +455,7 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         .get("running")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let account_block = status_account_block(&config);
+    let profile_block = status_profile_block(&config);
     let (authorized_device_count, online_device_count) =
         daemon_summary_device_counts(&config, payload);
     let file_count = payload
@@ -488,7 +488,7 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         );
     let summary = status_summary(
         already_initialized(config_dir),
-        account_block.as_ref(),
+        profile_block.as_ref(),
         authorized_device_count,
         online_device_count,
         file_count,

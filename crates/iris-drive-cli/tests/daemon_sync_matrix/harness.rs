@@ -178,7 +178,7 @@ impl SyncCluster {
                 .filter(|client| *client != Client::Windows)
                 .all(|client| {
                     let status = run_json(self.config_path(client), &["status"]);
-                    status["account"]["authorization_state"] == "authorized"
+                    status["profile"]["authorization_state"] == "authorized"
                 })
         })
         .await;

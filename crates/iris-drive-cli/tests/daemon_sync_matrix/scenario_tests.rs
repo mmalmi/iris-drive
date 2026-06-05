@@ -112,7 +112,7 @@ async fn live_daemons_running_device_link_approval_clears_waiting_quickly() {
     let fast_window = Duration::from_secs(6);
     while approved_at.elapsed() < fast_window {
         let status = run_json(linked_cfg.path(), &["status"]);
-        if status["account"]["authorization_state"] == "authorized" {
+        if status["profile"]["authorization_state"] == "authorized" {
             return;
         }
         tokio::time::sleep(POLL_INTERVAL).await;

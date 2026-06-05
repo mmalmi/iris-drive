@@ -36,7 +36,7 @@ async fn live_daemons_device_link_request_reaches_admin_quickly() {
     let fast_window = Duration::from_secs(6);
     while started_at.elapsed() < fast_window {
         let status = run_json(owner_cfg.path(), &["status"]);
-        if status["account"]["inbound_device_link_requests"]
+        if status["profile"]["inbound_device_link_requests"]
             .as_array()
             .is_some_and(|requests| !requests.is_empty())
         {
