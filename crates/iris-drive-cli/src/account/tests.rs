@@ -50,7 +50,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
             .app_keys
             .as_ref()
             .unwrap()
-            .device(&recovered_pubkey)
+            .app_actor(&recovered_pubkey)
             .and_then(|device| device.label.as_deref()),
         Some("Recovered browser")
     );

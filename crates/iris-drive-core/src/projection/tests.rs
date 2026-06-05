@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use crate::account::Account;
-use crate::app_keys::DeviceEntry;
+use crate::app_keys::AppActorEntry;
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
 use crate::merge::DeviceFileEntry;
@@ -223,8 +223,8 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
         .app_keys
         .as_mut()
         .expect("created account has app keys")
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote_device.clone(),
             1,
             Some("remote".into()),
@@ -387,8 +387,8 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
         .app_keys
         .as_mut()
         .expect("created account has app keys")
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             peer_device.clone(),
             1,
             Some("peer".into()),
@@ -514,8 +514,8 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
         .app_keys
         .as_mut()
         .expect("created account has app keys")
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             peer_device.clone(),
             1,
             Some("peer".into()),
@@ -616,8 +616,8 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
         .app_keys
         .as_mut()
         .expect("created account has app keys")
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             peer_device.clone(),
             1,
             Some("peer".into()),
@@ -683,8 +683,8 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
         .app_keys
         .as_mut()
         .expect("created account has app keys")
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             peer_device.clone(),
             1,
             Some("peer".into()),

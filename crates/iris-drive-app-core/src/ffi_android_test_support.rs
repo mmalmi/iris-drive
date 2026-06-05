@@ -60,7 +60,7 @@ fn native_apply_owner_snapshot_for_test(
         .app_keys
         .as_ref()
         .context("owner app keys missing")?
-        .devices
+        .app_actors
         .iter()
         .map(|device| device.pubkey.clone())
         .collect::<Vec<_>>();

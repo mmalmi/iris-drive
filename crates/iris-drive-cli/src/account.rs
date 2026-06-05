@@ -207,7 +207,7 @@ pub(crate) fn cmd_approve(
     let snap = account
         .approve_device(&device_hex, label)
         .context("approving device")?;
-    let device_count = snap.devices.len();
+    let device_count = snap.app_actors.len();
     config.account = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
@@ -264,7 +264,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     let snap = account
         .revoke_device(&device_hex)
         .context("revoking device")?;
-    let device_count = snap.devices.len();
+    let device_count = snap.app_actors.len();
     let dck_generation = snap.dck_generation;
     config.account = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
@@ -309,8 +309,8 @@ fn set_device_admin_role(
             .context("demoting device admin")?
     };
     let role = snap
-        .device(&device_hex)
-        .map_or(iris_drive_core::DeviceRole::Member, |device| device.role);
+        .app_actor(&device_hex)
+        .map_or(iris_drive_core::AppActorRole::Member, |actor| actor.role);
     let dck_generation = snap.dck_generation;
     config.account = Some(account.state.clone());
     config.save(config_path_in(config_dir))?;
@@ -318,7 +318,7 @@ fn set_device_admin_role(
         "{}",
         json!({
             "device_npub": account_npub(&device_hex),
-            "role": device_role_label(role),
+            "role": app_actor_role_label(role),
             "dck_generation": dck_generation,
         })
     );
@@ -343,14 +343,14 @@ pub(crate) fn cmd_roster(config_dir: &std::path::Path) -> Result<()> {
             "app_keys": snap.map(|s| json!({
                 "created_at": s.created_at,
                 "dck_generation": s.dck_generation,
-                "devices": s.devices.iter().map(|d| json!({
-                    "pubkey": d.pubkey,
-                    "npub": account_npub(&d.pubkey),
-                    "added_at": d.added_at,
-                    "label": d.label,
-                    "role": device_role_label(d.role),
-                    "is_current_device": d.pubkey == state.device_pubkey,
-                    "has_dck_wrap": s.wrapped_dck.contains_key(&d.pubkey),
+                "app_actors": s.app_actors.iter().map(|actor| json!({
+                    "pubkey": actor.pubkey,
+                    "npub": account_npub(&actor.pubkey),
+                    "added_at": actor.added_at,
+                    "label": actor.label,
+                    "role": app_actor_role_label(actor.role),
+                    "is_current_app_key": actor.pubkey == state.device_pubkey,
+                    "has_dck_wrap": s.wrapped_dck.contains_key(&actor.pubkey),
                 })).collect::<Vec<_>>(),
             })),
         })
@@ -589,7 +589,7 @@ pub(crate) async fn send_authorized_device_link_rosters(
 
     let now = std::time::Instant::now();
     let due_devices = app_keys
-        .devices
+        .app_actors
         .iter()
         .filter(|device| device.pubkey != state.device_pubkey)
         .filter(|device| {
@@ -960,7 +960,7 @@ pub(crate) fn authorization_state_label(state: &AccountState) -> &'static str {
     iris_drive_core::device_summary::authorization_state_key(state.authorization_state)
 }
 
-pub(crate) fn device_role_label(role: iris_drive_core::DeviceRole) -> &'static str {
+pub(crate) fn app_actor_role_label(role: iris_drive_core::AppActorRole) -> &'static str {
     iris_drive_core::device_summary::device_role_key(role)
 }
 

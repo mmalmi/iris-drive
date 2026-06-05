@@ -78,7 +78,7 @@ fn apply_app_keys_event_from_our_owner_replaces() {
             .app_keys
             .as_ref()
             .unwrap()
-            .devices
+            .app_actors
             .len(),
         2,
     );

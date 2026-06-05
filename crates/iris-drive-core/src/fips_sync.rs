@@ -507,7 +507,7 @@ fn authorized_device_fips_peers(
     if let Some(app_keys) = account.app_keys.as_ref() {
         peers.extend(
             app_keys
-                .devices
+                .app_actors
                 .iter()
                 .filter(|device| device.pubkey != *local_device)
                 .filter_map(|device| {
@@ -625,7 +625,7 @@ fn normalize_fips_peer_npub(value: &str) -> Option<String> {
 
 fn static_peer_addresses_for_device(
     hints: &[(String, Vec<String>)],
-    device: &crate::app_keys::DeviceEntry,
+    device: &crate::app_keys::AppActorEntry,
     npub: &str,
 ) -> Vec<String> {
     let mut keys = vec![device.pubkey.as_str(), npub];

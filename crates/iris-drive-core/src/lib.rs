@@ -60,8 +60,8 @@ pub use account::{
     logout_local_account,
 };
 pub use app_keys::{
-    AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
-    select_latest,
+    AppActorEntry, AppActorRole, AppKeysEventRecord, AppKeysSnapshot, ApplyDecision,
+    apply_snapshot, select_latest,
 };
 pub use config::{
     AppConfig, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, ConfigError,

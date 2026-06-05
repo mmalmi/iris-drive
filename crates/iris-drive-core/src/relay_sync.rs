@@ -480,7 +480,7 @@ pub fn apply_remote_drive_root_event(
         let authorized: BTreeSet<String> = account
             .app_keys
             .as_ref()
-            .map(|s| s.devices.iter().map(|d| d.pubkey.clone()).collect())
+            .map(|s| s.app_actors.iter().map(|d| d.pubkey.clone()).collect())
             .unwrap_or_default();
         if !authorized.contains(&device_hex) {
             return Ok(DriveRootApply::UnauthorizedDevice);

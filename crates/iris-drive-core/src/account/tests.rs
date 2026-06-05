@@ -32,9 +32,9 @@ fn create_yields_admin_authorized_account() {
     assert!(!dir.path().join("owner_key").exists());
     // AppKeys lists one device — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
-    assert_eq!(snap.devices.len(), 1);
-    assert_eq!(snap.devices[0].pubkey, acct.state.device_pubkey);
-    assert!(snap.devices[0].is_admin());
+    assert_eq!(snap.app_actors.len(), 1);
+    assert_eq!(snap.app_actors[0].pubkey, acct.state.device_pubkey);
+    assert!(snap.app_actors[0].is_admin());
     assert_eq!(snap.signer_pubkey(), acct.state.device_pubkey);
     let record = acct.state.app_keys_event.as_ref().unwrap();
     assert_eq!(record.signer_pubkey, acct.state.device_pubkey);
@@ -470,7 +470,7 @@ fn approve_adds_device_to_roster() {
     let snap = acct
         .approve_device(&new_device, Some("phone".into()))
         .unwrap();
-    assert_eq!(snap.devices.len(), 2);
+    assert_eq!(snap.app_actors.len(), 2);
     assert!(snap.contains(&new_device));
 
     let projection = acct.state.profile_projection();
@@ -624,8 +624,8 @@ fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
         .unwrap();
     assert!(snap.dck_generation > gen_before);
     // Every authorized device has a wrap.
-    assert_eq!(snap.wrapped_dck.len(), snap.devices.len());
-    for d in &snap.devices {
+    assert_eq!(snap.wrapped_dck.len(), snap.app_actors.len());
+    for d in &snap.app_actors {
         assert!(snap.wrapped_dck.contains_key(&d.pubkey));
     }
 }
@@ -667,7 +667,7 @@ fn rotate_dck_preserves_roster() {
         .app_keys
         .as_ref()
         .unwrap()
-        .devices
+        .app_actors
         .iter()
         .map(|d| d.pubkey.clone())
         .collect();
@@ -686,7 +686,7 @@ fn rotate_dck_preserves_roster() {
         .app_keys
         .as_ref()
         .unwrap()
-        .devices
+        .app_actors
         .iter()
         .map(|d| d.pubkey.clone())
         .collect();

@@ -262,15 +262,15 @@ pub fn apply_drive_root_events(
 
 #[must_use]
 pub fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
-    let mut devices: Vec<String> = state
+    let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
-        .map(|snap| snap.devices.iter().map(|d| d.pubkey.clone()).collect())
+        .map(|snap| snap.app_actors.iter().map(|d| d.pubkey.clone()).collect())
         .unwrap_or_default();
-    if !devices.contains(&state.device_pubkey) {
-        devices.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.device_pubkey) {
+        app_actors.push(state.device_pubkey.clone());
     }
-    devices
+    app_actors
 }
 
 fn pick_relays(config: &AppConfig, relay_override: &[String]) -> Vec<String> {

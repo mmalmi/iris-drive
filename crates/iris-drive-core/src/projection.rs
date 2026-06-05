@@ -591,20 +591,20 @@ fn collect_user_directory_paths<'a, S: Store>(
 }
 
 fn authorized_device_pubkeys(state: &AccountState) -> Vec<String> {
-    let mut devices: Vec<String> = state
+    let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
         .map(|snap| {
-            snap.devices
+            snap.app_actors
                 .iter()
                 .map(|device| device.pubkey.clone())
                 .collect()
         })
         .unwrap_or_default();
-    if !devices.contains(&state.device_pubkey) {
-        devices.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.device_pubkey) {
+        app_actors.push(state.device_pubkey.clone());
     }
-    devices
+    app_actors
 }
 
 #[must_use]

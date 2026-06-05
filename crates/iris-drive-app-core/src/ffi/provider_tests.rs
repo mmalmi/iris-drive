@@ -255,7 +255,7 @@ fn native_sync_applies_remote_drive_root_into_provider_listing() {
         .app_keys
         .as_ref()
         .unwrap()
-        .devices
+        .app_actors
         .iter()
         .map(|device| device.pubkey.clone())
         .collect::<Vec<_>>();

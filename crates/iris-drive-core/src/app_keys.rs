@@ -1,63 +1,62 @@
-//! Admin-signed device roster.
+//! Admin-signed `AppKey` actor roster.
 //!
-//! Iris Drive stores one account roster, signed by an authorized admin
-//! device. The historical field name `owner_pubkey` remains the stable
-//! account id, but it is no longer a separate owner secret. This module
-//! owns the snapshot **data model and timeline rules** — wire format
-//! (Nostr event kind, `d` tag, NIP-44 envelope) is the publishing
-//! layer's problem, not this module's.
+//! Iris Drive stores one account roster, signed by an authorized admin `AppKey`.
+//! The historical field name `owner_pubkey` remains the stable account id, but
+//! it is no longer a separate owner secret. This module owns the snapshot **data
+//! model and timeline rules** — wire format (Nostr event kind, `d` tag, NIP-44
+//! envelope) is the publishing layer's problem, not this module's.
 //!
 //! Timeline rules (from nostr-double-ratchet's published guidance):
 //!
 //! - Order snapshots by `created_at` (Nostr publish time).
 //! - Newer fully replaces older.
 //! - Same-second collisions merge **monotonically** — the union of
-//!   devices is taken, never the intersection. This prevents two
-//!   owner-capable devices from racing each other into revoking each
+//!   app actors is taken, never the intersection. This prevents two
+//!   admin-capable app installs from racing each other into revoking each
 //!   other's pending additions.
-//! - A reduced set (fewer devices) is **only** valid when the new
+//! - A reduced set (fewer app actors) is **only** valid when the new
 //!   snapshot is strictly newer in time; same-second can never shrink.
-//! - First-device bootstrap may publish a single-entry snapshot freely.
+//! - First-`AppKey` bootstrap may publish a single-entry snapshot freely.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Privilege level for a device in the roster.
+/// Privilege level for an app actor in the roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum DeviceRole {
+pub enum AppActorRole {
     /// Can sign and publish future roster events.
     Admin,
-    /// Can decrypt and publish its own drive roots, but cannot alter roster
-    /// membership or roles.
+    /// Can decrypt and publish its own drive/share roots, but cannot alter
+    /// roster membership or roles.
     #[default]
     Member,
 }
 
-/// One authorized device.
+/// One authorized per-install `AppKey` actor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeviceEntry {
-    /// Hex-encoded device pubkey.
+pub struct AppActorEntry {
+    /// Hex-encoded `AppKey` pubkey.
     pub pubkey: String,
-    /// When this device was first added (unix seconds).
+    /// When this `AppKey` actor was first added (unix seconds).
     pub added_at: i64,
-    /// Optional human-readable label (e.g. "Mac mini").
+    /// Optional human-readable label (e.g. "Mac native app").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Whether this device may sign future roster updates.
+    /// Whether this `AppKey` actor may sign future roster updates.
     #[serde(default)]
-    pub role: DeviceRole,
+    pub role: AppActorRole,
 }
 
-impl DeviceEntry {
+impl AppActorEntry {
     #[must_use]
     pub fn admin(pubkey: String, added_at: i64, label: Option<String>) -> Self {
         Self {
             pubkey,
             added_at,
             label,
-            role: DeviceRole::Admin,
+            role: AppActorRole::Admin,
         }
     }
 
@@ -67,13 +66,13 @@ impl DeviceEntry {
             pubkey,
             added_at,
             label,
-            role: DeviceRole::Member,
+            role: AppActorRole::Member,
         }
     }
 
     #[must_use]
     pub fn is_admin(&self) -> bool {
-        self.role == DeviceRole::Admin
+        self.role == AppActorRole::Admin
     }
 }
 
@@ -86,58 +85,60 @@ pub struct AppKeysEventRecord {
     pub event_json: String,
 }
 
-/// A complete, owner-signed roster snapshot. Replaceable by `created_at`.
+/// A complete, admin-signed `AppKey` actor roster snapshot. Replaceable by `created_at`.
 ///
 /// Carries the current drive content key (DCK) NIP-44–wrapped to each
-/// authorized device's pubkey. Rotating the DCK on every membership
-/// change gives forward secrecy against device revocation: a revoked
-/// device retains anything it already downloaded but cannot decrypt the
-/// drive's new root once the next rotation lands.
+/// authorized `AppKey` pubkey. Rotating the DCK on every membership change gives
+/// forward secrecy against `AppKey` revocation: a revoked app install retains
+/// anything it already downloaded but cannot decrypt the drive's new root once
+/// the next rotation lands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppKeysSnapshot {
     /// Stable account id. Historically this was a separate owner key; new
-    /// installs set it to the first admin device pubkey.
+    /// installs set it to the first admin `AppKey` pubkey.
     pub owner_pubkey: String,
-    /// Pubkey of the admin device that signed this snapshot. Local snapshots
-    /// created before their Nostr event is built set this to the local device.
+    /// Pubkey of the admin `AppKey` that signed this snapshot. Local snapshots
+    /// created before their Nostr event is built set this to the local `AppKey`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_by_pubkey: Option<String>,
     pub created_at: i64,
-    pub devices: Vec<DeviceEntry>,
+    pub app_actors: Vec<AppActorEntry>,
     /// Monotonically-increasing counter. Bumped each time the DCK
     /// rotates (on approve, revoke, or explicit `rotate_dck`).
     #[serde(default)]
     pub dck_generation: u64,
-    /// NIP-44 wraps of the current DCK, keyed by device pubkey hex.
-    /// Encrypted by the roster-signing admin device to each device's
-    /// pubkey. Devices not present in the map are effectively revoked from
+    /// NIP-44 wraps of the current DCK, keyed by `AppKey` pubkey hex.
+    /// Encrypted by the roster-signing admin `AppKey` to each `AppKey`'s
+    /// pubkey. `AppKeys` not present in the map are effectively revoked from
     /// the current content.
     #[serde(default)]
     pub wrapped_dck: BTreeMap<String, String>,
 }
 
 impl AppKeysSnapshot {
-    /// Sort device list deterministically (by pubkey). Use after merges
+    /// Sort app actor list deterministically (by pubkey). Use after merges
     /// so equality checks and serialization are stable.
     pub fn normalize(&mut self) {
-        self.devices.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
-        self.devices.dedup_by(|a, b| a.pubkey == b.pubkey);
+        self.app_actors.sort_by(|a, b| a.pubkey.cmp(&b.pubkey));
+        self.app_actors.dedup_by(|a, b| a.pubkey == b.pubkey);
     }
 
     #[must_use]
-    pub fn contains(&self, device_pubkey: &str) -> bool {
-        self.devices.iter().any(|d| d.pubkey == device_pubkey)
+    pub fn contains(&self, app_actor_pubkey: &str) -> bool {
+        self.app_actors
+            .iter()
+            .any(|actor| actor.pubkey == app_actor_pubkey)
     }
 
     #[must_use]
-    pub fn device(&self, pubkey: &str) -> Option<&DeviceEntry> {
-        self.devices.iter().find(|d| d.pubkey == pubkey)
+    pub fn app_actor(&self, pubkey: &str) -> Option<&AppActorEntry> {
+        self.app_actors.iter().find(|actor| actor.pubkey == pubkey)
     }
 
     #[must_use]
     pub fn is_admin(&self, pubkey: &str) -> bool {
-        self.device(pubkey).is_some_and(DeviceEntry::is_admin)
+        self.app_actor(pubkey).is_some_and(AppActorEntry::is_admin)
     }
 
     #[must_use]
@@ -155,7 +156,7 @@ pub enum ApplyDecision {
     Adopted,
     /// Incoming is strictly newer and fully replaces current.
     Replaced,
-    /// Incoming is same-second; the union of devices is taken.
+    /// Incoming is same-second; the union of `AppKey` actors is taken.
     Merged,
     /// Incoming is older or from a different owner; ignored.
     Rejected,
@@ -198,26 +199,26 @@ pub fn apply_snapshot(
 }
 
 /// Same-second additive merge: union by pubkey, earliest `added_at`
-/// wins per device, labels keep first non-empty.
+/// wins per `AppKey` actor, labels keep first non-empty.
 fn merge_same_second(existing: &mut AppKeysSnapshot, incoming: &AppKeysSnapshot) {
-    let mut by_pubkey: BTreeMap<String, DeviceEntry> = BTreeMap::new();
-    for d in existing.devices.iter().chain(incoming.devices.iter()) {
+    let mut by_pubkey: BTreeMap<String, AppActorEntry> = BTreeMap::new();
+    for actor in existing.app_actors.iter().chain(incoming.app_actors.iter()) {
         by_pubkey
-            .entry(d.pubkey.clone())
+            .entry(actor.pubkey.clone())
             .and_modify(|cur| {
-                if d.added_at < cur.added_at {
-                    cur.added_at = d.added_at;
+                if actor.added_at < cur.added_at {
+                    cur.added_at = actor.added_at;
                 }
                 if cur.label.is_none() {
-                    cur.label.clone_from(&d.label);
+                    cur.label.clone_from(&actor.label);
                 }
-                if d.role == DeviceRole::Admin {
-                    cur.role = DeviceRole::Admin;
+                if actor.role == AppActorRole::Admin {
+                    cur.role = AppActorRole::Admin;
                 }
             })
-            .or_insert_with(|| d.clone());
+            .or_insert_with(|| actor.clone());
     }
-    existing.devices = by_pubkey.into_values().collect();
+    existing.app_actors = by_pubkey.into_values().collect();
     existing.normalize();
     if existing.signed_by_pubkey != incoming.signed_by_pubkey {
         existing.signed_by_pubkey = None;
@@ -244,14 +245,14 @@ pub fn select_latest<I: IntoIterator<Item = AppKeysSnapshot>>(
 mod tests {
     use super::*;
 
-    fn snap(owner: &str, created_at: i64, devices: &[(&str, i64)]) -> AppKeysSnapshot {
+    fn snap(owner: &str, created_at: i64, app_actors: &[(&str, i64)]) -> AppKeysSnapshot {
         AppKeysSnapshot {
             owner_pubkey: owner.into(),
             signed_by_pubkey: Some(owner.into()),
             created_at,
-            devices: devices
+            app_actors: app_actors
                 .iter()
-                .map(|(pk, added)| DeviceEntry::member((*pk).into(), *added, None))
+                .map(|(pk, added)| AppActorEntry::member((*pk).into(), *added, None))
                 .collect(),
             dck_generation: 0,
             wrapped_dck: BTreeMap::new(),
@@ -266,7 +267,7 @@ mod tests {
             apply_snapshot(&mut current, s.clone()),
             ApplyDecision::Adopted
         );
-        assert_eq!(current.as_ref().unwrap().devices.len(), 1);
+        assert_eq!(current.as_ref().unwrap().app_actors.len(), 1);
     }
 
     #[test]
@@ -276,7 +277,7 @@ mod tests {
         assert_eq!(apply_snapshot(&mut current, next), ApplyDecision::Replaced);
         let s = current.unwrap();
         assert_eq!(s.created_at, 200);
-        assert_eq!(s.devices.len(), 2);
+        assert_eq!(s.app_actors.len(), 2);
     }
 
     #[test]
@@ -284,7 +285,7 @@ mod tests {
         let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 200)]));
         let stale = snap("owner", 100, &[("dev-a", 100)]);
         assert_eq!(apply_snapshot(&mut current, stale), ApplyDecision::Rejected);
-        assert_eq!(current.unwrap().devices.len(), 2);
+        assert_eq!(current.unwrap().app_actors.len(), 2);
     }
 
     #[test]
@@ -293,21 +294,21 @@ mod tests {
         let racing = snap("owner", 200, &[("dev-b", 200)]);
         assert_eq!(apply_snapshot(&mut current, racing), ApplyDecision::Merged);
         let s = current.unwrap();
-        assert_eq!(s.devices.len(), 2);
+        assert_eq!(s.app_actors.len(), 2);
         assert!(s.contains("dev-a"));
         assert!(s.contains("dev-b"));
     }
 
     #[test]
     fn same_second_reduced_set_still_keeps_existing() {
-        // Two owner-capable devices race; each thinks the other shouldn't
+        // Two owner-capable app_actors race; each thinks the other shouldn't
         // exist. Without monotonic merge, one would silently revoke the
         // other.
         let mut current = Some(snap("owner", 200, &[("dev-a", 100), ("dev-b", 150)]));
         let reduced = snap("owner", 200, &[("dev-a", 100)]); // omits dev-b
         assert_eq!(apply_snapshot(&mut current, reduced), ApplyDecision::Merged);
         let s = current.unwrap();
-        assert_eq!(s.devices.len(), 2, "dev-b must not be silently revoked");
+        assert_eq!(s.app_actors.len(), 2, "dev-b must not be silently revoked");
         assert!(s.contains("dev-b"));
     }
 
@@ -320,7 +321,7 @@ mod tests {
             ApplyDecision::Replaced
         );
         let s = current.unwrap();
-        assert_eq!(s.devices.len(), 1);
+        assert_eq!(s.app_actors.len(), 1);
         assert!(!s.contains("dev-b"));
     }
 
@@ -336,13 +337,13 @@ mod tests {
     }
 
     #[test]
-    fn merge_keeps_earliest_added_at_per_device() {
+    fn merge_keeps_earliest_added_at_per_app_actor() {
         let mut current = Some(snap("owner", 200, &[("dev-a", 100)]));
         let mut variant = snap("owner", 200, &[("dev-a", 50)]);
         // dev-a actually first appeared earlier than current's record
-        variant.devices[0].added_at = 50;
+        variant.app_actors[0].added_at = 50;
         apply_snapshot(&mut current, variant);
-        assert_eq!(current.unwrap().devices[0].added_at, 50);
+        assert_eq!(current.unwrap().app_actors[0].added_at, 50);
     }
 
     #[test]
@@ -352,7 +353,7 @@ mod tests {
         let s3 = snap("owner", 200, &[("dev-a", 100), ("dev-c", 200)]);
         let result = select_latest(vec![s1, s2, s3], "owner").unwrap();
         assert_eq!(result.created_at, 300);
-        assert_eq!(result.devices.len(), 2);
+        assert_eq!(result.app_actors.len(), 2);
         assert!(result.contains("dev-b"));
         assert!(!result.contains("dev-c"));
     }
@@ -371,7 +372,7 @@ mod tests {
         let mut s = snap("owner", 100, &[("z", 100), ("a", 100), ("a", 200)]);
         s.normalize();
         assert_eq!(
-            s.devices
+            s.app_actors
                 .iter()
                 .map(|d| d.pubkey.as_str())
                 .collect::<Vec<_>>(),
@@ -385,11 +386,11 @@ mod tests {
             owner_pubkey: "abc123".into(),
             signed_by_pubkey: Some("admin".into()),
             created_at: 1_700_000_000,
-            devices: vec![DeviceEntry {
+            app_actors: vec![AppActorEntry {
                 pubkey: "dev1".into(),
                 added_at: 1_699_000_000,
                 label: Some("Mac mini".into()),
-                role: DeviceRole::Admin,
+                role: AppActorRole::Admin,
             }],
             dck_generation: 1,
             wrapped_dck: BTreeMap::from([("dev1".to_string(), "abcdef".to_string())]),
@@ -401,27 +402,27 @@ mod tests {
     }
 
     #[test]
-    fn device_role_defaults_to_member_for_legacy_configs() {
-        let entry: DeviceEntry = toml::from_str(
+    fn app_actor_role_defaults_to_member() {
+        let entry: AppActorEntry = toml::from_str(
             r#"
 pubkey = "dev"
 added_at = 1
 "#,
         )
         .unwrap();
-        assert_eq!(entry.role, DeviceRole::Member);
+        assert_eq!(entry.role, AppActorRole::Member);
         assert!(!entry.is_admin());
     }
 
     #[test]
-    fn snapshot_identifies_admin_devices() {
+    fn snapshot_identifies_admin_app_actors() {
         let snap = AppKeysSnapshot {
             owner_pubkey: "acct".into(),
             signed_by_pubkey: Some("admin".into()),
             created_at: 1,
-            devices: vec![
-                DeviceEntry::admin("admin".into(), 1, None),
-                DeviceEntry::member("phone".into(), 1, None),
+            app_actors: vec![
+                AppActorEntry::admin("admin".into(), 1, None),
+                AppActorEntry::member("phone".into(), 1, None),
             ],
             dck_generation: 1,
             wrapped_dck: BTreeMap::new(),

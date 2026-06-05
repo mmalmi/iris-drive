@@ -37,7 +37,7 @@ fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
     };
 
     snapshot
-        .devices
+        .app_actors
         .iter()
         .filter(|device| device.pubkey != account.device_pubkey)
         .map(|device| account_npub(&device.pubkey))

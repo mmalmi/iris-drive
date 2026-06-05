@@ -66,7 +66,7 @@ pub(crate) fn peer_statuses(
     let can_manage_devices = account.can_manage_devices();
 
     device_roster_rows(
-        &snapshot.devices,
+        &snapshot.app_actors,
         &account.device_pubkey,
         can_manage_devices,
         daemon_running,

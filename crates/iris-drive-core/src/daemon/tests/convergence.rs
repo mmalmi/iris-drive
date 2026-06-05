@@ -42,8 +42,8 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote.clone(),
             100,
             Some("Pixel".into()),
@@ -105,7 +105,7 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
+        .app_actors
         .retain(|device| device.pubkey != remote);
     converged
         .account

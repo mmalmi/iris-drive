@@ -291,7 +291,7 @@ pub fn build_current_direct_root_events(
                 snapshot.created_at,
                 snapshot.dck_generation,
                 snapshot
-                    .devices
+                    .app_actors
                     .iter()
                     .map(|device| device.pubkey.as_str())
                     .collect::<Vec<_>>()

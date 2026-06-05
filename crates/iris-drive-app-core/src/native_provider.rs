@@ -498,20 +498,20 @@ pub(crate) fn native_sync_status_label(
 }
 
 fn authorized_device_pubkeys(state: &iris_drive_core::AccountState) -> Vec<String> {
-    let mut devices: Vec<String> = state
+    let mut app_actors: Vec<String> = state
         .app_keys
         .as_ref()
         .map(|snap| {
-            snap.devices
+            snap.app_actors
                 .iter()
                 .map(|device| device.pubkey.clone())
                 .collect()
         })
         .unwrap_or_default();
-    if !devices.contains(&state.device_pubkey) {
-        devices.push(state.device_pubkey.clone());
+    if !app_actors.contains(&state.device_pubkey) {
+        app_actors.push(state.device_pubkey.clone());
     }
-    devices
+    app_actors
 }
 
 async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>

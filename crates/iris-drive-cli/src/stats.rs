@@ -48,7 +48,7 @@ pub(crate) fn cmd_stats(config_dir: &std::path::Path) -> Result<()> {
         .account
         .as_ref()
         .and_then(|state| state.app_keys.as_ref())
-        .map_or(0, |snap| snap.devices.len());
+        .map_or(0, |snap| snap.app_actors.len());
     let published_device_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .map_or(0, |drive| drive.device_roots.len());

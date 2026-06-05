@@ -3,11 +3,11 @@
 //! One replaceable event kind (NIP-78 parameterized-replaceable range),
 //! separated by Iris-specific `d` tags:
 //!
-//! - **`KIND_APP_KEYS = 30078`** — admin-device-signed `AppKeys` roster.
+//! - **`KIND_APP_KEYS = 30078`** — admin `AppKey`-signed actor roster.
 //!   d-tag: `"iris-drive/<account_pubkey>/app-keys"`. Pubkey = signing
-//!   admin device. Content = JSON `{ owner_pubkey, devices, dck_generation,
+//!   admin `AppKey`. Content = JSON `{ owner_pubkey, app_actors, dck_generation,
 //!   wrapped_dck }`. The event's `created_at` doubles as the snapshot's
-//!   `created_at`. The legacy d-tag `"iris-drive/app-keys"` is still parsed.
+//!   `created_at`.
 //!
 //! - **`KIND_DRIVE_ROOT = 30078`** — AppKey-signed drive-root reference.
 //!   d-tag: `"iris-drive/<profile_or_share_id>/<drive_id>/root"`.
@@ -27,12 +27,12 @@ use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::app_keys::{AppKeysSnapshot, DeviceEntry};
+use crate::app_keys::{AppActorEntry, AppKeysSnapshot};
 use crate::config::DeviceRootRef;
 use crate::device_link_transport::DeviceLinkRequestFrame;
 use crate::root_meta::{RootObservation, RootParent};
 
-/// NIP-78 parameterized-replaceable kind for owner-signed `AppKeys`.
+/// NIP-78 parameterized-replaceable kind for admin `AppKey`-signed `AppKeys`.
 pub const KIND_APP_KEYS: u16 = 30078;
 
 /// NIP-78 parameterized-replaceable kind for device-signed drive roots.
@@ -139,7 +139,7 @@ struct AppKeysWireContent {
         skip_serializing_if = "Option::is_none"
     )]
     owner_pubkey: Option<String>,
-    devices: Vec<DeviceEntry>,
+    app_actors: Vec<AppActorEntry>,
     #[serde(default)]
     dck_generation: u64,
     #[serde(default)]
@@ -169,7 +169,7 @@ fn is_zero(value: &u64) -> bool {
 }
 
 /// Build a signed `AppKeys` event from a snapshot. The signing key is the
-/// current admin device; the stable account id lives in the event content and
+/// current admin `AppKey`; the stable account id lives in the event content and
 /// account-scoped d-tag.
 pub fn build_app_keys_event(
     admin_keys: &Keys,
@@ -177,7 +177,7 @@ pub fn build_app_keys_event(
 ) -> Result<Event, WireError> {
     let content = AppKeysWireContent {
         owner_pubkey: Some(snapshot.owner_pubkey.clone()),
-        devices: snapshot.devices.clone(),
+        app_actors: snapshot.app_actors.clone(),
         dck_generation: snapshot.dck_generation,
         wrapped_dck: snapshot.wrapped_dck.clone(),
     };
@@ -202,7 +202,7 @@ pub fn build_app_keys_event(
 /// Parse + verify an `AppKeys` event into a snapshot. The event must
 /// have the right kind, an Iris Drive app-keys d-tag, and a valid signature.
 /// The snapshot's `owner_pubkey` is the stable account id, while
-/// `signed_by_pubkey` is the admin device that authored the event.
+/// `signed_by_pubkey` is the admin `AppKey` that authored the event.
 pub fn parse_app_keys_event(event: &Event) -> Result<AppKeysSnapshot, WireError> {
     let kind = event.kind.as_u16();
     if kind != KIND_APP_KEYS {
@@ -242,7 +242,7 @@ pub fn parse_app_keys_event(event: &Event) -> Result<AppKeysSnapshot, WireError>
         owner_pubkey,
         signed_by_pubkey: Some(event.pubkey.to_hex()),
         created_at: i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX),
-        devices: content.devices,
+        app_actors: content.app_actors,
         dck_generation: content.dck_generation,
         wrapped_dck: content.wrapped_dck,
     };

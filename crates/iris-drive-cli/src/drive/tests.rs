@@ -18,16 +18,13 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Account, String, DriveR
         iris_drive_core::identity::Identity::generate(config_dir.join("remote.key")).pubkey_hex();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
     let state = config.account.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .devices
-        .push(iris_drive_core::app_keys::DeviceEntry::member(
+    state.app_keys.as_mut().unwrap().app_actors.push(
+        iris_drive_core::app_keys::AppActorEntry::member(
             remote.clone(),
             100,
             Some("remote".into()),
-        ));
+        ),
+    );
     state.app_keys.as_mut().unwrap().normalize();
     config.save(config_path_in(config_dir)).unwrap();
 

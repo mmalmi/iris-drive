@@ -300,7 +300,7 @@ fn link_then_approve_authorizes_the_linked_device() {
         serde_json::from_str(&String::from_utf8(approve.stdout).unwrap()).unwrap();
     assert_eq!(v["roster_size"], 2);
 
-    // Roster on the owner side now has 2 devices.
+    // Roster on the owner side now has 2 AppKey actors.
     let roster = serde_json::from_str::<serde_json::Value>(
         &String::from_utf8(
             idrive(owner_dir.path())
@@ -312,7 +312,10 @@ fn link_then_approve_authorizes_the_linked_device() {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(roster["app_keys"]["devices"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        roster["app_keys"]["app_actors"].as_array().unwrap().len(),
+        2
+    );
 }
 
 #[test]
@@ -341,7 +344,7 @@ fn devices_can_appoint_and_demote_admin() {
     }));
     let roster = run_json(owner_dir.path(), &["devices", "list"]);
     assert!(
-        roster["app_keys"]["devices"]
+        roster["app_keys"]["app_actors"]
             .as_array()
             .unwrap()
             .iter()
@@ -382,9 +385,9 @@ fn owner_approves_device_request_link() {
     assert_eq!(approved["roster_size"], 2);
 
     let roster = run_json(owner_dir.path(), &["roster"]);
-    let devices = roster["app_keys"]["devices"].as_array().unwrap();
+    let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
     assert!(
-        devices
+        app_actors
             .iter()
             .any(|device| device["label"].as_str() == Some("windows-peer"))
     );
@@ -440,7 +443,7 @@ fn owner_rejects_device_request_link() {
 
     let roster = run_json(owner_dir.path(), &["devices", "list"]);
     assert!(
-        roster["app_keys"]["devices"]
+        roster["app_keys"]["app_actors"]
             .as_array()
             .unwrap()
             .iter()
@@ -496,7 +499,10 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     assert_eq!(approved["roster_size"], 2);
 
     let devices = run_json(owner_dir.path(), &["devices", "list"]);
-    assert_eq!(devices["app_keys"]["devices"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        devices["app_keys"]["app_actors"].as_array().unwrap().len(),
+        2
+    );
 }
 
 #[test]
@@ -642,9 +648,9 @@ fn owner_can_revoke_a_linked_device() {
     assert!(revoked["dck_generation"].as_u64().unwrap() > 1);
 
     let roster = run_json(owner_dir.path(), &["roster"]);
-    let devices = roster["app_keys"]["devices"].as_array().unwrap();
-    assert_eq!(devices.len(), 1);
-    assert_ne!(devices[0]["npub"], linked_device_npub);
+    let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
+    assert_eq!(app_actors.len(), 1);
+    assert_ne!(app_actors[0]["npub"], linked_device_npub);
 }
 
 #[test]
@@ -698,10 +704,10 @@ fn roster_after_init_shows_dck_generation_and_self_wrap() {
         v["profile"]["missing_key_wraps"].as_array().unwrap().len(),
         0
     );
-    let devices = v["app_keys"]["devices"].as_array().unwrap();
-    assert_eq!(devices.len(), 1);
-    assert_eq!(devices[0]["has_dck_wrap"], true);
-    assert_eq!(devices[0]["is_current_device"], true);
+    let app_actors = v["app_keys"]["app_actors"].as_array().unwrap();
+    assert_eq!(app_actors.len(), 1);
+    assert_eq!(app_actors[0]["has_dck_wrap"], true);
+    assert_eq!(app_actors[0]["is_current_app_key"], true);
 }
 
 #[test]

@@ -477,13 +477,13 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
                 owner_pubkey: "aa".repeat(32),
                 signed_by_pubkey: Some("dd".repeat(32)),
                 created_at: 1,
-                devices: vec![
-                    crate::app_keys::DeviceEntry::member(
+                app_actors: vec![
+                    crate::app_keys::AppActorEntry::member(
                         first_pubkey,
                         1,
                         Some("macos-peer".into()),
                     ),
-                    crate::app_keys::DeviceEntry::member(
+                    crate::app_keys::AppActorEntry::member(
                         second_pubkey,
                         1,
                         Some("linux-peer".into()),

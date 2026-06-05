@@ -8,7 +8,7 @@ fn fake_snapshot(owner_pubkey: &str) -> AppKeysSnapshot {
         owner_pubkey: owner_pubkey.to_string(),
         signed_by_pubkey: Some(owner_pubkey.to_string()),
         created_at: 1_700_000_000,
-        devices: vec![DeviceEntry::admin(
+        app_actors: vec![AppActorEntry::admin(
             "ab".repeat(32),
             1_699_000_000,
             Some("Mac mini".into()),
@@ -46,7 +46,7 @@ fn app_keys_event_roundtrip() {
     assert_eq!(event.identifier(), Some(expected_d_tag.as_str()));
     // The snapshot's created_at IS the event's created_at — round-trip stable.
     assert_eq!(parsed.created_at, snap.created_at);
-    assert_eq!(parsed.devices, snap.devices);
+    assert_eq!(parsed.app_actors, snap.app_actors);
     assert_eq!(parsed.dck_generation, snap.dck_generation);
     assert_eq!(parsed.wrapped_dck, snap.wrapped_dck);
 }
@@ -91,7 +91,7 @@ fn app_keys_event_missing_d_tag_rejected() {
     let snap = fake_snapshot(&owner.public_key().to_hex());
     let content = serde_json::to_string(&AppKeysWireContent {
         owner_pubkey: Some(snap.owner_pubkey.clone()),
-        devices: snap.devices.clone(),
+        app_actors: snap.app_actors.clone(),
         dck_generation: snap.dck_generation,
         wrapped_dck: snap.wrapped_dck.clone(),
     })

@@ -382,7 +382,7 @@ fn append_app_keys_event(
                 snap.owner_pubkey,
                 snap.created_at,
                 snap.dck_generation,
-                snap.devices
+                snap.app_actors
                     .iter()
                     .map(|device| device.pubkey.as_str())
                     .collect::<Vec<_>>()

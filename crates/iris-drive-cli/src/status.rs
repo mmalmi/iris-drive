@@ -307,7 +307,7 @@ pub(crate) fn status_account_block(config: &AppConfig) -> Option<Value> {
             "device_npub": account_npub(&state.device_pubkey),
             "has_owner_signing_authority": state.has_owner_signing_authority,
             "authorization_state": authorization_state_label(&state),
-            "roster_size": state.app_keys.as_ref().map_or(0, |s| s.devices.len()),
+            "roster_size": state.app_keys.as_ref().map_or(0, |s| s.app_actors.len()),
             "profile": config.user_profile.as_ref().map(|profile| json!({
                 "username": profile.username,
                 "photo_path": profile.photo_path,
@@ -525,7 +525,7 @@ fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, 
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let rows = device_roster_rows(
-        &snapshot.devices,
+        &snapshot.app_actors,
         &account.device_pubkey,
         account.can_manage_devices(),
         daemon_running,

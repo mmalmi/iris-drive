@@ -25,7 +25,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::app_keys::{
-    AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, DeviceEntry, DeviceRole, apply_snapshot,
+    AppActorEntry, AppActorRole, AppKeysEventRecord, AppKeysSnapshot, ApplyDecision, apply_snapshot,
 };
 use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
@@ -425,17 +425,17 @@ pub fn app_keys_from_profile_projection(
     if app_key_pubkeys.is_empty() {
         return None;
     }
-    let mut devices = projection
+    let mut app_actors = projection
         .active_facets
         .values()
         .filter(|facet| facet.is_app_key())
         .map(|facet| {
             let role = if facet.capabilities.can_admin_profile {
-                DeviceRole::Admin
+                AppActorRole::Admin
             } else {
-                DeviceRole::Member
+                AppActorRole::Member
             };
-            DeviceEntry {
+            AppActorEntry {
                 pubkey: facet.pubkey.clone(),
                 added_at: facet.added_at,
                 label: facet.label.clone(),
@@ -443,7 +443,7 @@ pub fn app_keys_from_profile_projection(
             }
         })
         .collect::<Vec<_>>();
-    devices.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
+    app_actors.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
     let wrapped_dck = key_epoch
         .wrapped_dck
         .iter()
@@ -454,7 +454,7 @@ pub fn app_keys_from_profile_projection(
         owner_pubkey: owner_pubkey.to_string(),
         signed_by_pubkey: Some(key_epoch.signed_by_pubkey.clone()),
         created_at: key_epoch.created_at,
-        devices,
+        app_actors,
         dck_generation: key_epoch.epoch,
         wrapped_dck,
     })
@@ -499,18 +499,18 @@ impl Account {
         };
 
         let now = current_unix_seconds();
-        let devices = vec![DeviceEntry::admin(
+        let app_actors = vec![AppActorEntry::admin(
             state.device_pubkey.clone(),
             now,
             device_label,
         )];
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_app_actors(device.keys().secret_key(), &app_actors, &dck)?;
         let recovery_pubkey = recovery_key.pubkey_hex();
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
-            &devices[0],
+            &app_actors[0],
             Some(&recovery_pubkey),
             &dck,
             now,
@@ -519,7 +519,7 @@ impl Account {
             owner_pubkey: state.owner_pubkey.clone(),
             signed_by_pubkey: Some(state.device_pubkey.clone()),
             created_at: now,
-            devices,
+            app_actors,
             dck_generation: 1,
             wrapped_dck: wraps,
         };
@@ -577,18 +577,18 @@ impl Account {
         };
 
         let now = current_unix_seconds();
-        let devices = vec![DeviceEntry::admin(
+        let app_actors = vec![AppActorEntry::admin(
             state.device_pubkey.clone(),
             now,
             device_label,
         )];
         let dck = generate_dck();
-        let wraps = wrap_dck_for_devices(device.keys().secret_key(), &devices, &dck)?;
+        let wraps = wrap_dck_for_app_actors(device.keys().secret_key(), &app_actors, &dck)?;
         let recovery_pubkey = recovery_key.as_ref().map(OwnerKey::pubkey_hex);
         state.profile_roster_ops = initial_profile_roster_ops(
             device.keys(),
             profile_id,
-            &devices[0],
+            &app_actors[0],
             recovery_pubkey.as_deref(),
             &dck,
             now,
@@ -597,7 +597,7 @@ impl Account {
             owner_pubkey: state.owner_pubkey.clone(),
             signed_by_pubkey: Some(state.device_pubkey.clone()),
             created_at: now,
-            devices,
+            app_actors,
             dck_generation: 1,
             wrapped_dck: wraps,
         };
@@ -721,7 +721,7 @@ impl Account {
             return Err(AccountError::DeviceNotInRoster);
         }
         if snap.is_admin(device_pubkey_hex)
-            && snap.devices.iter().filter(|d| d.is_admin()).count() <= 1
+            && snap.app_actors.iter().filter(|d| d.is_admin()).count() <= 1
         {
             return Err(AccountError::CannotRemoveLastAdmin);
         }
@@ -909,20 +909,20 @@ impl Account {
         &mut self,
         device_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, AccountError> {
-        self.set_device_role(device_pubkey_hex, DeviceRole::Admin)
+        self.set_device_role(device_pubkey_hex, AppActorRole::Admin)
     }
 
     pub fn demote_admin(
         &mut self,
         device_pubkey_hex: &str,
     ) -> Result<&AppKeysSnapshot, AccountError> {
-        self.set_device_role(device_pubkey_hex, DeviceRole::Member)
+        self.set_device_role(device_pubkey_hex, AppActorRole::Member)
     }
 
     fn set_device_role(
         &mut self,
         device_pubkey_hex: &str,
-        role: DeviceRole,
+        role: AppActorRole,
     ) -> Result<&AppKeysSnapshot, AccountError> {
         if !self.state.can_manage_devices() {
             return Err(AccountError::NoOwnerAuthority);
@@ -933,15 +933,15 @@ impl Account {
             .as_ref()
             .ok_or(AccountError::NoCurrentSnapshot)?;
         let current = snap
-            .device(device_pubkey_hex)
+            .app_actor(device_pubkey_hex)
             .ok_or(AccountError::DeviceNotInRoster)?;
         if current.role == role {
             return Ok(self.state.app_keys.as_ref().expect("checked above"));
         }
         if current.is_admin()
-            && role != DeviceRole::Admin
+            && role != AppActorRole::Admin
             && snap
-                .devices
+                .app_actors
                 .iter()
                 .filter(|device| device.is_admin())
                 .count()
@@ -950,8 +950,8 @@ impl Account {
             return Err(AccountError::CannotRemoveLastAdmin);
         }
         let capabilities = match role {
-            DeviceRole::Admin => IrisProfileCapabilities::app_admin(),
-            DeviceRole::Member => IrisProfileCapabilities::app_writer(),
+            AppActorRole::Admin => IrisProfileCapabilities::app_admin(),
+            AppActorRole::Member => IrisProfileCapabilities::app_writer(),
         };
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
@@ -1148,14 +1148,14 @@ fn default_device_link_secret() -> String {
     URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
 }
 
-fn wrap_dck_for_devices(
+fn wrap_dck_for_app_actors(
     owner_secret: &SecretKey,
-    devices: &[DeviceEntry],
+    app_actors: &[AppActorEntry],
     dck: &[u8; 32],
 ) -> Result<BTreeMap<String, String>, AccountError> {
     wrap_dck_for_pubkeys(
         owner_secret,
-        devices.iter().map(|device| device.pubkey.as_str()),
+        app_actors.iter().map(|actor| actor.pubkey.as_str()),
         dck,
     )
 }
@@ -1182,7 +1182,7 @@ where
 fn initial_profile_roster_ops(
     signer_keys: &Keys,
     profile_id: IrisProfileId,
-    app_entry: &DeviceEntry,
+    app_entry: &AppActorEntry,
     recovery_pubkey: Option<&str>,
     dck: &[u8; 32],
     created_at: i64,

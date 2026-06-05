@@ -1398,7 +1398,7 @@ async fn send_native_authorized_device_link_rosters(
 
     let now = std::time::Instant::now();
     let due_devices = app_keys
-        .devices
+        .app_actors
         .iter()
         .filter(|device| device.pubkey != state.device_pubkey)
         .filter(|device| {
@@ -2192,7 +2192,7 @@ fn devices_from_account(
     let connectivity = device_connectivity_from_fips_status(fips_status);
 
     device_roster_rows(
-        &app_keys.devices,
+        &app_keys.app_actors,
         &state.device_pubkey,
         state.can_manage_devices(),
         current_device_online,

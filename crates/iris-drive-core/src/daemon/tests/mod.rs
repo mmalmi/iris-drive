@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::app_keys::DeviceEntry;
+use crate::app_keys::AppActorEntry;
 use crate::config::Drive;
 use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
 use crate::identity::Identity;
@@ -105,8 +105,8 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote.clone(),
             100,
             Some("remote".into()),
@@ -218,8 +218,8 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote.clone(),
             100,
             Some("remote".into()),
@@ -321,8 +321,8 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote.clone(),
             100,
             Some("remote".into()),
@@ -436,8 +436,8 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
         .app_keys
         .as_mut()
         .unwrap()
-        .devices
-        .push(DeviceEntry::member(
+        .app_actors
+        .push(AppActorEntry::member(
             remote.clone(),
             100,
             Some("remote".into()),

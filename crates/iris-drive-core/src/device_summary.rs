@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::account::{AccountState, DeviceAuthorizationState};
-use crate::app_keys::{DeviceEntry, DeviceRole};
+use crate::app_keys::{AppActorEntry, AppActorRole};
 use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -77,18 +77,18 @@ pub fn sync_status_label(sync_status: &str) -> String {
 }
 
 #[must_use]
-pub fn device_role_key(role: DeviceRole) -> &'static str {
+pub fn device_role_key(role: AppActorRole) -> &'static str {
     match role {
-        DeviceRole::Admin => "admin",
-        DeviceRole::Member => "member",
+        AppActorRole::Admin => "admin",
+        AppActorRole::Member => "member",
     }
 }
 
 #[must_use]
-pub fn device_role_label(role: DeviceRole) -> &'static str {
+pub fn device_role_label(role: AppActorRole) -> &'static str {
     match role {
-        DeviceRole::Admin => "Admin",
-        DeviceRole::Member => "Member",
+        AppActorRole::Admin => "Admin",
+        AppActorRole::Member => "Member",
     }
 }
 
@@ -289,7 +289,7 @@ pub fn iris_profile_summary(state: &AccountState) -> IrisProfileSummary {
             state
                 .app_keys
                 .as_ref()
-                .map_or(0, |snapshot| snapshot.devices.len())
+                .map_or(0, |snapshot| snapshot.app_actors.len())
         } else {
             projection.active_app_key_pubkeys().len()
         },
@@ -321,18 +321,18 @@ fn facet_count_for_purpose(
 
 #[must_use]
 pub fn device_roster_rows(
-    devices: &[DeviceEntry],
+    app_actors: &[AppActorEntry],
     current_device_pubkey: &str,
     can_manage_devices: bool,
     current_device_online: bool,
     connectivity: &DeviceConnectivity,
 ) -> Vec<DeviceRosterRow> {
-    let admin_count = devices
+    let admin_count = app_actors
         .iter()
-        .filter(|device| device.role == DeviceRole::Admin)
+        .filter(|device| device.role == AppActorRole::Admin)
         .count();
 
-    devices
+    app_actors
         .iter()
         .map(|device| {
             let npub = pubkey_npub(&device.pubkey);
@@ -354,7 +354,7 @@ pub fn device_roster_rows(
             let actions = device_management_actions(
                 can_manage_devices,
                 is_current_device,
-                device.role == DeviceRole::Admin,
+                device.role == AppActorRole::Admin,
                 admin_count,
             );
             DeviceRosterRow {
@@ -413,7 +413,7 @@ fn device_online_via(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Account, DeviceAuthorizationState, DeviceRole};
+    use crate::{Account, AppActorRole, DeviceAuthorizationState};
     use tempfile::tempdir;
 
     #[test]
@@ -466,8 +466,8 @@ mod tests {
         assert_eq!(sync_status_label("up to date"), "Up to date");
         assert_eq!(sync_status_label("paused"), "Sync paused");
 
-        assert_eq!(device_role_key(DeviceRole::Admin), "admin");
-        assert_eq!(device_role_label(DeviceRole::Member), "Member");
+        assert_eq!(device_role_key(AppActorRole::Admin), "admin");
+        assert_eq!(device_role_label(AppActorRole::Member), "Member");
         assert_eq!(
             device_display_label(true, Some("Mac"), "npub1x"),
             "This device"
@@ -513,8 +513,8 @@ mod tests {
         let current_npub = pubkey_npub(current);
         let remote_npub = pubkey_npub(remote);
         let devices = vec![
-            crate::app_keys::DeviceEntry::admin(current.to_owned(), 10, Some("Mac".to_owned())),
-            crate::app_keys::DeviceEntry::member(remote.to_owned(), 11, Some("Phone".to_owned())),
+            crate::app_keys::AppActorEntry::admin(current.to_owned(), 10, Some("Mac".to_owned())),
+            crate::app_keys::AppActorEntry::member(remote.to_owned(), 11, Some("Phone".to_owned())),
         ];
         let connectivity = DeviceConnectivity {
             online_devices: [remote_npub.clone()].into_iter().collect(),
