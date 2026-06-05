@@ -8,7 +8,6 @@
 //!   Pubkey = `AppKey` pubkey. Content = JSON root hash/key-wrap metadata,
 //!   DCK generation, and optional causal fields. The event's `created_at`
 //!   doubles as `DeviceRootRef::published_at`.
-//!   Legacy kind `30079` events are still accepted while old installs drain.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -31,9 +30,6 @@ pub const KIND_DRIVE_ROOT: u16 = 30078;
 /// NIP-78 parameterized-replaceable kind for device-signed join requests.
 pub const KIND_DEVICE_LINK_REQUEST: u16 = 30078;
 
-/// Legacy transition kind accepted by readers but no longer published.
-pub const KIND_LEGACY_DRIVE_ROOT: u16 = 30079;
-
 /// Standard hashtree mutable-root kind used by drive.iris.to.
 pub const KIND_HASHTREE_ROOT: u16 = 30_078;
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
@@ -45,7 +41,7 @@ pub fn device_link_request_d_tag(owner_pubkey_hex: &str) -> String {
 
 #[must_use]
 pub fn is_drive_root_event_kind(kind: u16) -> bool {
-    kind == KIND_DRIVE_ROOT || kind == KIND_LEGACY_DRIVE_ROOT
+    kind == KIND_DRIVE_ROOT
 }
 
 #[must_use]

@@ -816,7 +816,7 @@ fn apply_drive_root_event_stale_timestamp_ignored() {
 }
 
 #[test]
-fn apply_drive_root_event_ignores_same_legacy_root_with_newer_timestamp() {
+fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let device_b = Keys::generate();

@@ -111,48 +111,27 @@ fn drive_root_event_does_not_publish_root_key_in_cleartext() {
 }
 
 #[test]
-fn legacy_drive_root_kind_still_parses() {
+fn retired_drive_root_kind_is_rejected() {
     let device = Keys::generate();
-    let owner = Keys::generate().public_key().to_hex();
-    let root_key = [0x44; 32];
-    let root = DeviceRootRef::legacy(
-        Cid::encrypted([0x33; 32], root_key).to_string(),
-        1_700_000_000,
-        1,
-    );
-    let root_cid = Cid::parse(&root.root_cid).unwrap();
-    let root_key_hex = hex::encode(root_cid.key.unwrap());
-    let ciphertext = nip44::encrypt(
-        device.secret_key(),
-        &device.public_key(),
-        root_key_hex,
-        Nip44Version::V2,
-    )
-    .unwrap();
-    let content = DriveRootWireContent {
-        root_cid: None,
-        root_hash: Some(to_hex(&root_cid.hash)),
-        root_key_wraps: BTreeMap::from([(device.public_key().to_hex(), ciphertext)]),
-        dck_generation: 1,
-        device_seq: 0,
-        parents: Vec::new(),
-        observed: BTreeMap::new(),
-    };
     let event = EventBuilder::new(
-        Kind::from(KIND_LEGACY_DRIVE_ROOT),
-        serde_json::to_string(&content).unwrap(),
-        [Tag::identifier(drive_root_d_tag(&owner, "main"))],
+        Kind::from(30079u16),
+        "{}".to_string(),
+        [Tag::identifier(drive_root_d_tag(
+            &IrisProfileId::new_v4().to_string(),
+            "main",
+        ))],
     )
     .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
     .to_event(&device)
     .unwrap();
 
-    let (_, parsed_owner, drive_id, parsed_root) =
-        parse_drive_root_event_for_device(&event, &device).unwrap();
-
-    assert_eq!(parsed_owner, owner);
-    assert_eq!(drive_id, "main");
-    assert_eq!(parsed_root.root_cid, root.root_cid);
+    assert!(matches!(
+        parse_drive_root_event_for_device(&event, &device),
+        Err(WireError::WrongKind {
+            expected: KIND_DRIVE_ROOT,
+            got: 30079
+        })
+    ));
 }
 
 #[test]

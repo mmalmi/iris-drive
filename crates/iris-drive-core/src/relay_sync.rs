@@ -25,11 +25,10 @@ use crate::app_keys::{ApplyDecision, apply_snapshot};
 use crate::config::{AppConfig, DeviceRootRef, Drive};
 use crate::device_link_transport::DeviceLinkRosterFrame;
 use crate::nostr_events::{
-    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, KIND_LEGACY_DRIVE_ROOT,
-    build_device_link_request_event, build_drive_root_publish_event,
-    build_private_hashtree_root_event, device_link_request_d_tag, drive_root_d_tag,
-    parse_device_link_request_event, parse_drive_root_event, parse_drive_root_event_for_device,
-    parse_drive_root_event_preview,
+    KIND_DEVICE_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_device_link_request_event,
+    build_drive_root_publish_event, build_private_hashtree_root_event, device_link_request_d_tag,
+    drive_root_d_tag, parse_device_link_request_event, parse_drive_root_event,
+    parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 use crate::{
     IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
@@ -736,14 +735,6 @@ fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive
     filters.push(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-            .custom_tag(
-                SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                [d_tag.clone()],
-            ),
-    );
-    filters.push(
-        Filter::new()
-            .kind(nostr_sdk::Kind::from(KIND_LEGACY_DRIVE_ROOT))
             .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
     );
 }
@@ -776,27 +767,12 @@ pub async fn fetch_drive_roots(
             .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
     }
     let d_tag = drive_root_d_tag(root_scope_id, drive_id);
-    let new_filter = Filter::new()
+    let filter = Filter::new()
         .authors(authors)
         .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-        .custom_tag(
-            SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-            [d_tag.clone()],
-        );
-    let mut legacy_authors = Vec::with_capacity(authorized_devices.len());
-    for hex in authorized_devices {
-        legacy_authors
-            .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
-    }
-    let legacy_filter = Filter::new()
-        .authors(legacy_authors)
-        .kind(nostr_sdk::Kind::from(KIND_LEGACY_DRIVE_ROOT))
         .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]);
     let events = client
-        .get_events_of(
-            vec![new_filter, legacy_filter],
-            nostr_sdk::EventSource::relays(Some(timeout)),
-        )
+        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     // Pick the latest root per author. Device roots carry a monotonic
