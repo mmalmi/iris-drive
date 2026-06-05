@@ -5,25 +5,7 @@ pub(crate) use iris_drive_core::device_link_transport::{
 };
 
 pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
-    let trimmed = input.trim();
-    if trimmed.starts_with("npub1") {
-        let pk = PublicKey::from_bech32(trimmed).context("parsing npub")?;
-        Ok(pk.to_hex())
-    } else if trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(trimmed.to_string())
-    } else {
-        Err(anyhow::anyhow!(
-            "expected npub1... or 64-char hex pubkey, got {trimmed}"
-        ))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeviceLinkTarget {
-    pub(crate) profile_id: iris_drive_core::IrisProfileId,
-    pub(crate) owner_hex: String,
-    pub(crate) admin_device_hex: String,
-    pub(crate) link_secret: String,
+    iris_drive_core::normalize_app_key_pubkey(input)
 }
 
 pub(crate) fn resolve_device_approval_input(
@@ -53,47 +35,8 @@ pub(crate) fn resolve_device_approval_input(
 pub(crate) fn resolve_device_link_target_with_admin(
     input: &str,
     admin_device: Option<&str>,
-) -> Result<DeviceLinkTarget> {
-    if let Some(invite) = decode_device_link_invite(input)? {
-        if admin_device.is_some() {
-            return Err(anyhow::anyhow!(
-                "--admin-app-key is only valid with a manual IrisProfile UUID, not an invite URL"
-            ));
-        }
-        let admin_device_hex = invite.admin_device_hex;
-        let profile_id = invite
-            .profile_id
-            .ok_or_else(|| anyhow::anyhow!("AppKey invite is missing IrisProfile id"))?;
-        return Ok(DeviceLinkTarget {
-            profile_id,
-            owner_hex: admin_device_hex.clone(),
-            admin_device_hex,
-            link_secret: invite.link_secret,
-        });
-    }
-
-    let Some(admin_device) = admin_device else {
-        return Err(anyhow::anyhow!(
-            "manual AppKey linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL"
-        ));
-    };
-    let trimmed = input.trim();
-    if normalize_pubkey(trimmed).is_ok() {
-        return Err(anyhow::anyhow!(
-            "manual AppKey linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL"
-        ));
-    }
-    let profile_id = input
-        .trim()
-        .parse::<iris_drive_core::IrisProfileId>()
-        .context("parsing IrisProfile UUID")?;
-    let admin_device_hex = normalize_pubkey(admin_device).context("parsing admin AppKey pubkey")?;
-    Ok(DeviceLinkTarget {
-        profile_id,
-        owner_hex: admin_device_hex.clone(),
-        admin_device_hex,
-        link_secret: String::new(),
-    })
+) -> Result<iris_drive_core::AppKeyLinkTarget> {
+    iris_drive_core::resolve_app_key_link_target(input, admin_device)
 }
 
 pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
@@ -176,10 +119,4 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
 
 pub(crate) fn device_link_web_url(invite_url: &str) -> String {
     iris_drive_core::device_link_invite::device_link_invite_web_url(invite_url)
-}
-
-pub(crate) fn decode_device_link_invite(
-    input: &str,
-) -> Result<Option<iris_drive_core::device_link_invite::ParsedDeviceLinkInvite>> {
-    iris_drive_core::device_link_invite::parse_device_link_invite(input)
 }

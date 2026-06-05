@@ -26,8 +26,7 @@ use iris_drive_core::device_link_transport::{
     device_link_roster_recipients, pending_device_link_request_frame,
 };
 use iris_drive_core::device_link_transport::{
-    DeviceApprovalRequest, device_approval_query, encode_device_approval_request,
-    parse_device_approval_request,
+    DeviceApprovalRequest, encode_device_approval_request, parse_device_approval_request,
 };
 use iris_drive_core::device_summary::{
     DeviceConnectionDetails, DeviceConnectivity, device_roster_rows, iris_profile_summary,
@@ -44,7 +43,7 @@ use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{Account, AppConfig, BackupTarget, DeviceAuthorizationState, Drive};
 use nostr_sdk::PublicKey;
-use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
+use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(not(test))]
@@ -140,18 +139,34 @@ pub struct LinkInputClassification {
     pub error: String,
 }
 
+impl From<iris_drive_core::LinkInputClassification> for LinkInputClassification {
+    fn from(value: iris_drive_core::LinkInputClassification) -> Self {
+        Self {
+            kind: value.kind,
+            is_complete: value.is_complete,
+            is_valid: value.is_valid,
+            normalized_input: value.normalized_input,
+            owner_pubkey: value.owner_pubkey,
+            device_pubkey: value.device_pubkey,
+            admin_device_pubkey: value.admin_device_pubkey,
+            has_link_secret: value.has_link_secret,
+            error: value.error,
+        }
+    }
+}
+
 #[uniffi::export]
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
 pub fn classify_link_input(input: String) -> LinkInputClassification {
-    classify_link_input_value(&input)
+    iris_drive_core::classify_link_input(&input).into()
 }
 
 #[uniffi::export]
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
 pub fn validate_link_input(input: String) -> LinkInputClassification {
-    classify_link_input_value(&input)
+    iris_drive_core::classify_link_input(&input).into()
 }
 
 #[derive(uniffi::Object, Debug)]
@@ -431,7 +446,7 @@ impl NativeAppRuntime {
         let link_result = Account::link_to_profile(
             Path::new(&self.data_dir),
             target.profile_id,
-            target.owner_hex,
+            target.admin_app_key_hex.clone(),
             label_option(device_label),
         );
         let mut account = match link_result {
@@ -447,7 +462,7 @@ impl NativeAppRuntime {
             target.link_secret
         };
         if let Err(error) = account.state.queue_outbound_device_link_request(
-            target.admin_device_hex,
+            target.admin_app_key_hex,
             &link_secret,
             unix_now_seconds(),
         ) {
@@ -2056,21 +2071,7 @@ fn label_option(value: &str) -> Option<String> {
 }
 
 fn normalize_pubkey(input: &str) -> Result<String, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err("public key is required".to_owned());
-    }
-    if trimmed.starts_with("npub1") {
-        return PublicKey::from_bech32(trimmed)
-            .map(|pubkey| pubkey.to_hex())
-            .map_err(|error| format!("parsing npub: {error}"));
-    }
-    if trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Ok(trimmed.to_owned());
-    }
-    Err(format!(
-        "expected npub1... or 64-char hex pubkey, got {trimmed}"
-    ))
+    iris_drive_core::normalize_app_key_pubkey(input).map_err(|error| error.to_string())
 }
 
 fn account_npub(hex: &str) -> String {
@@ -2193,168 +2194,6 @@ fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> DeviceCon
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DeviceLinkTarget {
-    profile_id: iris_drive_core::IrisProfileId,
-    owner_hex: String,
-    admin_device_hex: String,
-    link_secret: String,
-}
-
-fn classify_link_input_value(input: &str) -> LinkInputClassification {
-    let trimmed = input.trim();
-    let mut classification = LinkInputClassification {
-        kind: "empty".to_owned(),
-        normalized_input: trimmed.to_owned(),
-        ..LinkInputClassification::default()
-    };
-    if trimmed.is_empty() {
-        return classification;
-    }
-    if trimmed.contains(char::is_whitespace) {
-        "unknown".clone_into(&mut classification.kind);
-        "link input must not contain whitespace".clone_into(&mut classification.error);
-        return classification;
-    }
-
-    if let Some(result) = classify_device_approval_link_input(trimmed) {
-        return result;
-    }
-    if let Some(result) = classify_invite_link_input(trimmed) {
-        return result;
-    }
-    if looks_like_owner_pubkey_input(trimmed) {
-        "app_key_pubkey".clone_into(&mut classification.kind);
-        classification.is_complete = owner_pubkey_input_is_complete(trimmed);
-        if classification.is_complete {
-            match normalize_pubkey(trimmed) {
-                Ok(app_key_hex) => {
-                    classification.is_valid = true;
-                    classification.admin_device_pubkey = account_npub(&app_key_hex);
-                    classification
-                        .normalized_input
-                        .clone_from(&classification.admin_device_pubkey);
-                }
-                Err(error) => {
-                    classification.error = error;
-                }
-            }
-        }
-        return classification;
-    }
-
-    "unknown".clone_into(&mut classification.kind);
-    "expected AppKey pubkey or IrisProfile invite link".clone_into(&mut classification.error);
-    classification
-}
-
-fn classify_device_approval_link_input(input: &str) -> Option<LinkInputClassification> {
-    let query = device_approval_query(input)?;
-    let profile =
-        raw_query_value(query, "profile").or_else(|| raw_query_value(query, "profile_id"));
-    let device = raw_query_value(query, "device");
-    let is_complete = profile
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && device
-            .as_deref()
-            .is_some_and(owner_pubkey_input_is_complete);
-    let mut classification = LinkInputClassification {
-        kind: "device_approval".to_owned(),
-        normalized_input: input.to_owned(),
-        is_complete,
-        ..LinkInputClassification::default()
-    };
-    if is_complete {
-        match decode_device_approval_request(input) {
-            Ok(request) => {
-                classification.is_valid = true;
-                classification.device_pubkey = account_npub(&request.device_hex);
-            }
-            Err(error) => classification.error = error,
-        }
-    }
-    classification.has_link_secret =
-        device_approval_link_secret_value(input).is_some_and(|secret| !secret.trim().is_empty());
-    Some(classification)
-}
-
-fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
-    let lower = input.to_ascii_lowercase();
-    let is_canonical = [
-        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_PREFIX,
-        "iris-drive:/invite/",
-        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_WEB_PREFIX,
-    ]
-    .iter()
-    .any(|prefix| lower.starts_with(prefix))
-        || link_route_matches(&lower, "iris-drive://invite", true)
-        || link_route_matches(&lower, "iris-drive:/invite", true)
-        || link_route_matches(&lower, "https://drive.iris.to/invite", true);
-    let is_json = input.starts_with('{');
-    if !(is_canonical || is_json) {
-        return None;
-    }
-
-    let mut classification = LinkInputClassification {
-        kind: "invite".to_owned(),
-        normalized_input: input.to_owned(),
-        is_complete: invite_link_input_is_complete(input),
-        ..LinkInputClassification::default()
-    };
-    match iris_drive_core::device_link_invite::parse_device_link_invite(input) {
-        Ok(Some(invite)) => {
-            classification.is_complete = true;
-            classification.is_valid = true;
-            classification.admin_device_pubkey = account_npub(&invite.admin_device_hex);
-            classification.has_link_secret = !invite.link_secret.trim().is_empty();
-        }
-        Ok(None) => {
-            "device invite was not recognized".clone_into(&mut classification.error);
-        }
-        Err(error) if classification.is_complete => {
-            classification.error = error.to_string();
-        }
-        Err(_) => {}
-    }
-    Some(classification)
-}
-
-fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool {
-    let Some(rest) = input.strip_prefix(route) else {
-        return false;
-    };
-    rest.is_empty() || rest.starts_with('?') || (allow_path_suffix && rest.starts_with('/'))
-}
-
-fn invite_link_input_is_complete(input: &str) -> bool {
-    let lower = input.to_ascii_lowercase();
-    for prefix in [
-        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_PREFIX,
-        "iris-drive:/invite/",
-        iris_drive_core::device_link_invite::DEVICE_LINK_INVITE_WEB_PREFIX,
-    ] {
-        if lower.starts_with(prefix) {
-            return input[prefix.len()..].len() >= 32;
-        }
-    }
-    input.starts_with('{') && input.ends_with('}')
-}
-
-fn looks_like_owner_pubkey_input(input: &str) -> bool {
-    let lower = input.to_ascii_lowercase();
-    lower.starts_with("npub1")
-        || (input.len() <= 64 && input.chars().all(|ch| ch.is_ascii_hexdigit()))
-}
-
-fn owner_pubkey_input_is_complete(input: &str) -> bool {
-    let lower = input.to_ascii_lowercase();
-    if lower.starts_with("npub1") {
-        return input.len() >= 63;
-    }
-    input.len() == 64 && input.chars().all(|ch| ch.is_ascii_hexdigit())
-}
-
 fn device_link_request_url(state: &iris_drive_core::AccountState) -> String {
     if state.can_manage_devices()
         || state.authorization_state != DeviceAuthorizationState::AwaitingApproval
@@ -2408,28 +2247,14 @@ fn inbound_device_link_requests(state: &iris_drive_core::AccountState) -> Vec<Ui
         .collect()
 }
 
-fn resolve_device_link_target(input: &str) -> Result<DeviceLinkTarget, String> {
-    if let Some(target) = decode_device_link_invite(input)? {
-        return Ok(target);
-    }
-    Err("paste an IrisProfile invite URL to link this AppKey".to_owned())
-}
-
-fn decode_device_link_invite(request: &str) -> Result<Option<DeviceLinkTarget>, String> {
-    let Some(target) = iris_drive_core::device_link_invite::parse_device_link_invite(request)
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(None);
-    };
-    let profile_id = target
-        .profile_id
-        .ok_or_else(|| "AppKey invite is missing IrisProfile id".to_owned())?;
-    Ok(Some(DeviceLinkTarget {
-        profile_id,
-        owner_hex: target.admin_device_hex.clone(),
-        admin_device_hex: target.admin_device_hex,
-        link_secret: target.link_secret,
-    }))
+fn resolve_device_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
+    iris_drive_core::resolve_app_key_link_target(input, None).map_err(|error| {
+        if error.to_string().contains("IrisProfile UUID") {
+            "paste an IrisProfile invite URL to link this AppKey".to_owned()
+        } else {
+            error.to_string()
+        }
+    })
 }
 
 fn decode_device_approval_request(request: &str) -> Result<DeviceApprovalRequest, String> {
@@ -2456,21 +2281,6 @@ fn device_approval_link_secret(request: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_owned()
-}
-
-fn device_approval_link_secret_value(request: &str) -> Option<String> {
-    parse_device_approval_request(request)
-        .ok()
-        .flatten()
-        .map(|request| request.link_secret)
-        .filter(|secret| !secret.trim().is_empty())
-}
-
-fn raw_query_value(query: &str, name: &str) -> Option<String> {
-    query.split('&').find_map(|part| {
-        let (key, value) = part.split_once('=')?;
-        (key == name && !value.is_empty()).then(|| value.to_owned())
-    })
 }
 
 fn unix_now_seconds() -> u64 {

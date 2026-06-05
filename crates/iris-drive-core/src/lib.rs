@@ -40,6 +40,7 @@ pub mod history;
 pub mod identity;
 pub mod indexer;
 pub mod iris_profile;
+pub mod link_input;
 pub mod merge;
 pub mod network_sync;
 pub mod nostr_events;
@@ -93,6 +94,10 @@ pub use iris_profile::{
     iris_profile_roster_parent_ids, iris_profile_tag_kind,
     is_iris_profile_roster_op_event_coordinate, parse_iris_profile_roster_op_event,
     project_iris_profile_roster,
+};
+pub use link_input::{
+    AppKeyLinkTarget, LinkInputClassification, classify_link_input, normalize_app_key_pubkey,
+    resolve_app_key_link_target,
 };
 pub use merge::{
     CONFLICTS_PREFIX, DeviceFileEntry, DeviceSnapshot, DeviceTombstone, META_DIR, MergedConflict,

@@ -115,9 +115,13 @@ pub(crate) fn cmd_link_with_admin_device(
         ));
     }
     let target = resolve_device_link_target_with_admin(invite_or_profile, admin_device)?;
-    let mut account =
-        Account::link_to_profile(config_dir, target.profile_id, target.owner_hex, label)
-            .context("linking device")?;
+    let mut account = Account::link_to_profile(
+        config_dir,
+        target.profile_id,
+        target.admin_app_key_hex.clone(),
+        label,
+    )
+    .context("linking device")?;
     let link_secret = if target.link_secret.trim().is_empty() {
         account.state.device_link_secret.clone()
     } else {
@@ -126,7 +130,7 @@ pub(crate) fn cmd_link_with_admin_device(
     account
         .state
         .queue_outbound_device_link_request(
-            target.admin_device_hex,
+            target.admin_app_key_hex,
             &link_secret,
             unix_now_seconds(),
         )

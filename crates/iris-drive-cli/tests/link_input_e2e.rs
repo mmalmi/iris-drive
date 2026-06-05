@@ -33,7 +33,7 @@ fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
 }
 
 #[test]
-fn link_input_classify_uses_app_core_completion() {
+fn link_input_classify_uses_core_completion() {
     let dir = tempdir().unwrap();
 
     let short = run_json(dir.path(), &["link-input", "classify", "npub1short"]);
@@ -49,7 +49,7 @@ fn link_input_classify_uses_app_core_completion() {
 }
 
 #[test]
-fn link_input_validate_uses_app_core_completion() {
+fn link_input_validate_uses_core_completion() {
     let dir = tempdir().unwrap();
 
     let short = run_json(dir.path(), &["link-input", "validate", "npub1short"]);

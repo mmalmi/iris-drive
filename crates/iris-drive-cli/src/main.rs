@@ -24,7 +24,6 @@ use iris_drive_core::{
     merge::{DeviceFileEntry, DeviceSnapshot, DeviceTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
-use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -226,13 +225,8 @@ fn cmd_version(json_output: bool) {
 
 fn cmd_link_input(command: LinkInputCmd) -> Result<()> {
     match command {
-        LinkInputCmd::Classify { input } => {
-            let classification = iris_drive_app_core::classify_link_input(input);
-            println!("{}", serde_json::to_string(&classification)?);
-            Ok(())
-        }
-        LinkInputCmd::Validate { input } => {
-            let classification = iris_drive_app_core::validate_link_input(input);
+        LinkInputCmd::Classify { input } | LinkInputCmd::Validate { input } => {
+            let classification = iris_drive_core::classify_link_input(&input);
             println!("{}", serde_json::to_string(&classification)?);
             Ok(())
         }
