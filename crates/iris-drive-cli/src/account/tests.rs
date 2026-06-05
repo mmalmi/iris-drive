@@ -1,6 +1,68 @@
 use super::*;
 use tempfile::tempdir;
 
+#[test]
+fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let phrase = iris_drive_core::recovery_phrase::load_recovery_phrase(
+        iris_drive_core::paths::recovery_phrase_path_in(owner_dir.path()),
+    )
+    .unwrap();
+    let owner_dck = owner.current_dck().unwrap();
+
+    let recovered_dir = tempdir().unwrap();
+    let recovered = Account::restore(recovered_dir.path(), &phrase, Some("browser".into()))
+        .expect("restore from recovery phrase");
+    let recovered_pubkey = recovered.state.device_pubkey.clone();
+    let mut awaiting_state = recovered.state.clone();
+    awaiting_state.owner_pubkey = owner.state.owner_pubkey.clone();
+    awaiting_state.profile_roster_ops = owner.state.profile_roster_ops.clone();
+    awaiting_state.app_keys = None;
+    awaiting_state.app_keys_event = None;
+    awaiting_state.has_owner_signing_authority = false;
+    awaiting_state.authorization_state =
+        iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
+    let mut config = AppConfig {
+        account: Some(awaiting_state),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(owner.state.profile_id.to_string()));
+    config.save(config_path_in(recovered_dir.path())).unwrap();
+
+    cmd_recover_app_key(recovered_dir.path(), None, Some("Recovered browser".into())).unwrap();
+
+    let saved = AppConfig::load_or_default(config_path_in(recovered_dir.path())).unwrap();
+    let state = saved.account.expect("recovered state saved");
+    assert_eq!(
+        state.authorization_state,
+        iris_drive_core::DeviceAuthorizationState::Authorized
+    );
+    assert!(state.can_manage_devices());
+    assert_eq!(
+        state.profile_roster_ops.len(),
+        owner.state.profile_roster_ops.len() + 2
+    );
+    assert_eq!(state.app_keys.as_ref().unwrap().dck_generation, 2);
+    assert!(state.app_keys.as_ref().unwrap().is_admin(&recovered_pubkey));
+    assert_eq!(
+        state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .device(&recovered_pubkey)
+            .and_then(|device| device.label.as_deref()),
+        Some("Recovered browser")
+    );
+
+    let recovered_account = Account::load(state.clone(), recovered_dir.path()).unwrap();
+    let recovered_dck = recovered_account.current_dck().unwrap();
+    assert_ne!(recovered_dck, owner_dck);
+    owner.state.profile_roster_ops = state.profile_roster_ops;
+    owner.state.sync_app_keys_from_profile();
+    assert_eq!(owner.current_dck().unwrap(), recovered_dck);
+}
+
 #[tokio::test]
 async fn device_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();

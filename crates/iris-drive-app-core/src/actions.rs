@@ -11,6 +11,10 @@ pub enum NativeAppAction {
         secret: String,
         device_label: String,
     },
+    AdmitAppKeyWithRecoveryPhrase {
+        recovery_phrase: String,
+        label: String,
+    },
     LinkDevice {
         owner_pubkey: String,
         device_label: String,

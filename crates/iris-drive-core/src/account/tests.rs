@@ -123,6 +123,65 @@ fn restore_from_recovery_phrase_preserves_profile_and_export_phrase() {
 }
 
 #[test]
+fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(owner_dir.path()),
+    )
+    .unwrap();
+    let recovery_key =
+        OwnerKey::from_recovery_phrase(&phrase, owner_dir.path().join("recovery")).unwrap();
+    let old_owner_dck = owner.current_dck().unwrap();
+
+    let recovered_dir = tempdir().unwrap();
+    let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
+    recovered_device.save().unwrap();
+    let recovered_pubkey = recovered_device.pubkey_hex();
+    let mut recovered = Account {
+        state: AccountState {
+            profile_id: owner.state.profile_id,
+            owner_pubkey: owner.state.owner_pubkey.clone(),
+            device_pubkey: recovered_pubkey.clone(),
+            profile_roster_ops: owner.state.profile_roster_ops.clone(),
+            device_link_secret: "recover-secret".into(),
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::AwaitingApproval,
+            device_label: Some("web app".into()),
+            app_keys: None,
+            app_keys_event: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        },
+        device: recovered_device,
+        owner_key: None,
+    };
+
+    let snap = recovered
+        .admit_current_app_key_with_recovery_phrase(&phrase, None)
+        .unwrap();
+
+    assert!(snap.is_admin(&recovered_pubkey));
+    assert_eq!(snap.signer_pubkey(), recovery_key.pubkey_hex());
+    assert!(recovered.state.is_authorized());
+    assert!(recovered.state.can_manage_devices());
+    assert!(recovered.state.app_keys_event.is_none());
+    let projection = recovered.state.profile_projection();
+    assert!(projection.can_write_roots(&recovered_pubkey));
+    assert!(projection.can_admin_profile(&recovered_pubkey));
+    assert!(!projection.can_write_roots(&recovery_key.pubkey_hex()));
+    assert!(projection.can_admin_profile(&recovery_key.pubkey_hex()));
+    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
+
+    let recovered_dck = recovered.current_dck().unwrap();
+    assert_ne!(recovered_dck, old_owner_dck);
+
+    owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
+    owner.state.sync_app_keys_from_profile();
+    assert_eq!(owner.current_dck().unwrap(), recovered_dck);
+}
+
+#[test]
 fn link_starts_awaiting_approval_no_owner_key() {
     let dir = tempdir().unwrap();
     // Fake owner npub (64 hex chars).

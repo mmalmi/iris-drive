@@ -52,6 +52,17 @@ pub enum AccountError {
     IrisProfile(#[from] IrisProfileError),
     #[error("recovery phrase: {0}")]
     RecoveryPhrase(#[from] RecoveryPhraseError),
+    #[error("recovery phrase belongs to profile {found}, expected {expected}")]
+    RecoveryProfileMismatch {
+        expected: IrisProfileId,
+        found: IrisProfileId,
+    },
+    #[error("recovery authority is not active in this IrisProfile")]
+    RecoveryAuthorityUnavailable,
+    #[error("recovery authority cannot rotate key epochs")]
+    RecoveryCannotRotateKeyEpochs,
+    #[error("current app key was tombstoned and cannot be re-added")]
+    CurrentAppKeyTombstoned,
     #[error("invalid owner pubkey: {0}")]
     InvalidOwnerPubkey(String),
     #[error("invalid device pubkey: {0}")]
@@ -749,6 +760,74 @@ impl Account {
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
+    /// Use the profile's recovery phrase authority to admit this install's
+    /// fresh `AppKey` into an already-known `IrisProfile` roster.
+    ///
+    /// The recovery phrase stays a recovery/admin facet only: it proves it can
+    /// decrypt the current epoch, signs the `AppKey` admission, then signs a
+    /// coherent new key epoch wrapped to every active recipient.
+    pub fn admit_current_app_key_with_recovery_phrase(
+        &mut self,
+        recovery_phrase: &str,
+        label: Option<String>,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
+        let found_profile_id = recovery_phrase_to_profile_id(&recovery_phrase)?;
+        if found_profile_id != self.state.profile_id {
+            return Err(AccountError::RecoveryProfileMismatch {
+                expected: self.state.profile_id,
+                found: found_profile_id,
+            });
+        }
+        let recovery_key =
+            OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
+        self.current_dck_from_recovery_key(&recovery_key)?;
+
+        let recovery_pubkey = recovery_key.pubkey_hex();
+        let projection = self.state.profile_projection();
+        let Some(recovery_facet) = projection.active_facets.get(&recovery_pubkey) else {
+            return Err(AccountError::RecoveryAuthorityUnavailable);
+        };
+        if !recovery_facet.capabilities.can_recover_app_keys {
+            return Err(AccountError::RecoveryAuthorityUnavailable);
+        }
+        if !recovery_facet.capabilities.can_change_key_epochs() {
+            return Err(AccountError::RecoveryCannotRotateKeyEpochs);
+        }
+        if projection
+            .tombstones
+            .contains_key(&self.state.device_pubkey)
+        {
+            return Err(AccountError::CurrentAppKeyTombstoned);
+        }
+        if projection.can_write_roots(&self.state.device_pubkey) {
+            return Err(AccountError::AlreadyAuthorized);
+        }
+
+        let now = next_profile_timestamp(&self.state);
+        let label = label.or_else(|| self.state.device_label.clone());
+        let add_op = signed_profile_roster_op(
+            recovery_key.keys(),
+            self.state.profile_id,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    self.state.device_pubkey.clone(),
+                    now,
+                    label,
+                    IrisProfileCapabilities::app_admin(),
+                ),
+            },
+            now,
+        )?;
+        self.state.profile_roster_ops.push(add_op);
+
+        let dck = generate_dck();
+        self.rotate_profile_dck_epoch_with_signer(recovery_key.keys(), &dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
+        self.record_current_app_keys_event()?;
+        Ok(self.state.app_keys.as_ref().expect("just applied"))
+    }
+
     pub fn appoint_admin(
         &mut self,
         device_pubkey_hex: &str,
@@ -828,6 +907,16 @@ impl Account {
         dck: &[u8; 32],
         created_at: i64,
     ) -> Result<(), AccountError> {
+        let signer = self.device.keys().clone();
+        self.rotate_profile_dck_epoch_with_signer(&signer, dck, created_at)
+    }
+
+    fn rotate_profile_dck_epoch_with_signer(
+        &mut self,
+        signer_keys: &Keys,
+        dck: &[u8; 32],
+        created_at: i64,
+    ) -> Result<(), AccountError> {
         let projection = self.state.profile_projection();
         let recipients = projection
             .active_facets
@@ -835,16 +924,20 @@ impl Account {
             .filter(|facet| facet.capabilities.can_receive_key_wraps)
             .map(|facet| facet.pubkey.as_str())
             .collect::<Vec<_>>();
-        let wrapped_dck = wrap_dck_for_pubkeys(self.device.keys().secret_key(), recipients, dck)?;
+        let wrapped_dck = wrap_dck_for_pubkeys(signer_keys.secret_key(), recipients, dck)?;
         let epoch = projection
             .key_epochs
             .keys()
             .next_back()
             .map_or(1, |epoch| epoch + 1);
-        self.append_profile_roster_op(
+        let signed = signed_profile_roster_op(
+            signer_keys,
+            self.state.profile_id,
             IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck },
             created_at,
-        )
+        )?;
+        self.state.profile_roster_ops.push(signed);
+        Ok(())
     }
 
     /// Decrypt this device's DCK wrap from the current snapshot. Errors
@@ -898,13 +991,20 @@ impl Account {
     ) -> Result<[u8; 32], AccountError> {
         let profile_id = recovery_phrase_to_profile_id(recovery_phrase)?;
         if profile_id != self.state.profile_id {
-            return Err(AccountError::InvalidOwnerPubkey(format!(
-                "recovery phrase belongs to profile {profile_id}, expected {}",
-                self.state.profile_id
-            )));
+            return Err(AccountError::RecoveryProfileMismatch {
+                expected: self.state.profile_id,
+                found: profile_id,
+            });
         }
         let recovery_key =
             OwnerKey::from_recovery_phrase(recovery_phrase, owner_key_path_in(Path::new("")))?;
+        self.current_dck_from_recovery_key(&recovery_key)
+    }
+
+    fn current_dck_from_recovery_key(
+        &self,
+        recovery_key: &OwnerKey,
+    ) -> Result<[u8; 32], AccountError> {
         let recovery_pubkey = recovery_key.pubkey_hex();
         let projection = self.state.profile_projection();
         let key_epoch = projection

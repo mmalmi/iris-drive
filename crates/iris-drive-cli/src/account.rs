@@ -44,6 +44,54 @@ pub(crate) fn cmd_restore(
     finish_account_init(config_dir, &account, None)
 }
 
+pub(crate) fn cmd_recover_app_key(
+    config_dir: &std::path::Path,
+    recovery_phrase: Option<&str>,
+    label: Option<String>,
+) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive restore` first"))?;
+    let loaded_from_disk = recovery_phrase.is_none_or(|phrase| phrase.trim().is_empty());
+    let phrase = if loaded_from_disk {
+        iris_drive_core::recovery_phrase::load_recovery_phrase(
+            iris_drive_core::paths::recovery_phrase_path_in(config_dir),
+        )
+        .context("loading saved recovery phrase")?
+    } else {
+        recovery_phrase.expect("checked above").trim().to_string()
+    };
+    let mut account = Account::load(state, config_dir).context("loading account")?;
+    account
+        .admit_current_app_key_with_recovery_phrase(&phrase, label)
+        .context("recovering app key")?;
+    let profile = iris_profile_summary_json(&account.state);
+    let dck_generation = account
+        .state
+        .app_keys
+        .as_ref()
+        .map_or(0, |snapshot| snapshot.dck_generation);
+    config.account = Some(account.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "profile": profile,
+            "profile_id": account.state.profile_id.to_string(),
+            "current_app_key_npub": iris_drive_core::device_summary::pubkey_npub(
+                &account.state.device_pubkey
+            ),
+            "authorization_state": authorization_state_label(&account.state),
+            "dck_generation": dck_generation,
+            "profile_roster_op_count": account.state.profile_roster_ops.len(),
+            "loaded_recovery_phrase_from_disk": loaded_from_disk,
+        })
+    );
+    Ok(())
+}
+
 pub(crate) fn cmd_link(
     config_dir: &std::path::Path,
     owner: &str,

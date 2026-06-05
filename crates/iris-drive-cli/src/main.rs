@@ -143,6 +143,10 @@ fn run_cli() -> ExitCode {
             profile_photo.as_deref(),
         ),
         Command::Restore { nsec, force, label } => cmd_restore(&config_dir, &nsec, force, label),
+        Command::RecoverAppKey {
+            recovery_phrase,
+            label,
+        } => cmd_recover_app_key(&config_dir, recovery_phrase.as_deref(), label),
         Command::Link {
             owner,
             force,

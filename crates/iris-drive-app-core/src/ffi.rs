@@ -256,6 +256,12 @@ impl NativeAppRuntime {
             } => {
                 self.restore_profile(&secret, &device_label);
             }
+            NativeAppAction::AdmitAppKeyWithRecoveryPhrase {
+                recovery_phrase,
+                label,
+            } => {
+                self.admit_app_key_with_recovery_phrase(&recovery_phrase, &label);
+            }
             NativeAppAction::LinkDevice {
                 owner_pubkey,
                 device_label,
@@ -356,6 +362,52 @@ impl NativeAppRuntime {
         };
         if let Err(error) = self.finish_account_init(&account) {
             self.state.error = error;
+        } else {
+            self.set_sync_running(true);
+        }
+    }
+
+    fn admit_app_key_with_recovery_phrase(&mut self, recovery_phrase: &str, label: &str) {
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let Some(state) = config.account.clone() else {
+            "profile is required to recover this app key".clone_into(&mut self.state.error);
+            return;
+        };
+        let phrase = if recovery_phrase.trim().is_empty() {
+            match iris_drive_core::recovery_phrase::load_recovery_phrase(recovery_phrase_path_in(
+                Path::new(&self.data_dir),
+            )) {
+                Ok(phrase) => phrase,
+                Err(error) => {
+                    self.state.error = format!("loading recovery phrase: {error}");
+                    return;
+                }
+            }
+        } else {
+            recovery_phrase.trim().to_string()
+        };
+        let mut account = match Account::load(state, Path::new(&self.data_dir)) {
+            Ok(account) => account,
+            Err(error) => {
+                self.state.error = format!("loading account: {error}");
+                return;
+            }
+        };
+        if let Err(error) =
+            account.admit_current_app_key_with_recovery_phrase(&phrase, label_option(label))
+        {
+            self.state.error = format!("recovering app key: {error}");
+            return;
+        }
+        config.account = Some(account.state);
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
         } else {
             self.set_sync_running(true);
         }

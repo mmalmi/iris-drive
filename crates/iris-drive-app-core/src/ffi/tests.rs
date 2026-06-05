@@ -166,6 +166,66 @@ fn recovery_phrase_export_restores_same_profile_with_fresh_app_key() {
 }
 
 #[test]
+fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let created = owner_app.dispatch(NativeAppAction::CreateProfile {
+        device_label: "Native".to_owned(),
+    });
+    let created_account = created.ui.account.expect("created account exists");
+    let owner_config =
+        AppConfig::load_or_default(config_path_in(owner_dir.path())).expect("owner config loads");
+    let owner_state = owner_config.account.expect("owner state exists");
+    let export = super::export_recovery_secret(owner_dir.path().display().to_string());
+    assert!(export.error.is_empty(), "{}", export.error);
+
+    let restored_dir = tempfile::tempdir().unwrap();
+    let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
+    let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
+        secret: export.recovery_phrase,
+        device_label: "Browser".to_owned(),
+    });
+    assert!(restored.error.is_empty(), "{}", restored.error);
+    let restored_account = restored.ui.account.expect("restored account exists");
+
+    let mut restored_config =
+        AppConfig::load_or_default(config_path_in(restored_dir.path())).expect("config loads");
+    let mut awaiting_state = restored_config.account.take().expect("state exists");
+    awaiting_state.owner_pubkey = owner_state.owner_pubkey.clone();
+    awaiting_state.profile_roster_ops = owner_state.profile_roster_ops.clone();
+    awaiting_state.app_keys = None;
+    awaiting_state.app_keys_event = None;
+    awaiting_state.has_owner_signing_authority = false;
+    awaiting_state.authorization_state =
+        iris_drive_core::DeviceAuthorizationState::AwaitingApproval;
+    restored_config.account = Some(awaiting_state);
+    restored_config
+        .save(config_path_in(restored_dir.path()))
+        .expect("save restored config");
+
+    let recovered = restored_app.dispatch(NativeAppAction::AdmitAppKeyWithRecoveryPhrase {
+        recovery_phrase: String::new(),
+        label: "Recovered browser".to_owned(),
+    });
+
+    assert!(recovered.error.is_empty(), "{}", recovered.error);
+    let recovered_account = recovered.ui.account.expect("recovered account exists");
+    assert_eq!(recovered_account.profile_id, created_account.profile_id);
+    assert_eq!(
+        recovered_account.current_app_key_pubkey,
+        restored_account.current_app_key_pubkey
+    );
+    assert_eq!(recovered_account.current_app_key_label, "Recovered browser");
+    assert!(recovered_account.can_write_roots);
+    assert!(recovered_account.can_admin_profile);
+    assert_eq!(recovered_account.current_key_epoch, Some(2));
+    assert_eq!(
+        recovered_account.profile_roster_op_count,
+        created_account.profile_roster_op_count + 2
+    );
+}
+
+#[test]
 fn raw_secret_key_restore_does_not_offer_recovery_phrase_export() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

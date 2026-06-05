@@ -69,6 +69,17 @@ pub(crate) enum Command {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Use a recovery phrase to admit this install's fresh `AppKey` into
+    /// the synced `IrisProfile` roster. If no phrase is provided, the
+    /// saved local recovery phrase is used.
+    #[command(name = "recover-app-key")]
+    RecoverAppKey {
+        /// Optional 12-word recovery phrase. Omit to use the saved phrase.
+        recovery_phrase: Option<String>,
+        /// Human-readable `AppKey` label.
+        #[arg(long)]
+        label: Option<String>,
+    },
     /// **Link** flow: turn this install into a secondary device under an
     /// existing owner. Generates a fresh device key; does NOT receive
     /// the owner key. The device waits in `awaiting_approval` until the

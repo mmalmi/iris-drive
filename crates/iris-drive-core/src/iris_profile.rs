@@ -738,16 +738,12 @@ fn apply_projected_op(
             true
         }
         IrisProfileRosterOp::RepairKeyWraps { epoch, wrapped_dck } => {
-            let key_epoch =
-                projection
-                    .key_epochs
-                    .entry(*epoch)
-                    .or_insert_with(|| IrisProfileKeyEpoch {
-                        epoch: *epoch,
-                        created_at: signed.content.created_at,
-                        signed_by_pubkey: signed.signer_pubkey.clone(),
-                        wrapped_dck: BTreeMap::new(),
-                    });
+            let Some(key_epoch) = projection.key_epochs.get_mut(epoch) else {
+                return false;
+            };
+            if key_epoch.signed_by_pubkey != signed.signer_pubkey {
+                return false;
+            }
             key_epoch.wrapped_dck.extend(wrapped_dck.clone());
             true
         }
@@ -1036,6 +1032,58 @@ mod tests {
             projection.key_wrap_status(&nip46_pubkey, 1),
             KeyWrapStatus::Available
         );
+    }
+
+    #[test]
+    fn repair_key_wraps_must_match_existing_epoch_signer() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let recovery = Keys::generate();
+        let recovery_pubkey = recovery.public_key().to_hex();
+        let ops = vec![
+            bootstrap_op(&admin, profile_id, 10),
+            signed_op(
+                &admin,
+                profile_id,
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
+                },
+                11,
+            ),
+            signed_op(
+                &admin,
+                profile_id,
+                IrisProfileRosterOp::RotateKeyEpoch {
+                    epoch: 1,
+                    wrapped_dck: BTreeMap::from([(
+                        admin.public_key().to_hex(),
+                        "wrap-admin".to_string(),
+                    )]),
+                },
+                12,
+            ),
+            signed_op(
+                &recovery,
+                profile_id,
+                IrisProfileRosterOp::RepairKeyWraps {
+                    epoch: 1,
+                    wrapped_dck: BTreeMap::from([(
+                        recovery_pubkey.clone(),
+                        "wrap-recovery".to_string(),
+                    )]),
+                },
+                13,
+            ),
+        ];
+
+        let projection = project(profile_id, ops);
+
+        assert_eq!(
+            projection.key_wrap_status(&recovery_pubkey, 1),
+            KeyWrapStatus::RepairNeeded
+        );
+        assert_eq!(projection.accepted_op_ids.len(), 3);
+        assert_eq!(projection.rejected_op_ids.len(), 1);
     }
 
     #[test]
