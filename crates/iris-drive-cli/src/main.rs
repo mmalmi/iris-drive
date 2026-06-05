@@ -107,16 +107,10 @@ fn main() -> ExitCode {
 
 fn run_cli() -> ExitCode {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    init_tracing();
 
     let cli = Cli::parse();
-    let Some(config_dir) = cli.config_dir.clone().or_else(default_config_dir) else {
+    let Some(config_dir) = resolve_config_dir(&cli) else {
         eprintln!(
             "error: could not determine a config dir; set --config-dir or IRIS_DRIVE_CONFIG_DIR"
         );
@@ -211,6 +205,20 @@ fn run_cli() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+}
+
+fn resolve_config_dir(cli: &Cli) -> Option<PathBuf> {
+    cli.config_dir.clone().or_else(default_config_dir)
 }
 
 fn cmd_version(json_output: bool) {

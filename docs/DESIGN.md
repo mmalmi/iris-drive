@@ -123,8 +123,10 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
   Roster ops are not lockstep multisig documents: an op is signed by the key
   authorized to make that change. Member keys may also sign join/acceptance
   breadcrumbs for their own facet so they can later rediscover candidate
-  IrisProfile UUIDs, but those breadcrumbs are only trusted after projecting
-  the authoritative roster log and confirming the facet is active.
+  IrisProfile UUIDs. Roster ops tag mentioned facet pubkeys with `p` tags so
+  a key can also search for roster evidence that names it. Both paths are only
+  discovery hints until the client projects the authoritative roster log and
+  confirms the facet is active and not tombstoned.
 - **Drive model**: primary My Drive is scoped by `IrisProfileId` (`root_scope_id`
   in config) with per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets
   can admit fresh AppKeys and optionally decrypt key epochs but do not sign drive roots.
@@ -224,7 +226,9 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
    not derived from key material.
 2. **Authority model**: signed append-only roster op logs with deterministic
    projection, tombstones, and key-wrap status/repair state derived in Rust
-   core. Do not add a general CRDT library unless it clearly simplifies this model.
+   core. Facet acceptance events are self-signed breadcrumbs, not roster
+   authority. Do not add a general CRDT library unless it clearly simplifies
+   this model.
 3. **Drive granularity**: one user-facing My Drive, with internal share roots
    for shared folders. Recipients see Shared with me and optional shortcuts,
    not a pile of separate sidebar drives.

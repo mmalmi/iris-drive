@@ -82,13 +82,17 @@ pub use indexer::{
     path_has_ignored_component, read_conflict_records, should_ignore_name,
 };
 pub use iris_profile::{
-    IRIS_PROFILE_ROSTER_SCHEMA, IrisProfileCapabilities, IrisProfileError, IrisProfileFacet,
-    IrisProfileId, IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterLog,
-    IrisProfileRosterOp, IrisProfileRosterOpContent, IrisProfileRosterProjection,
-    IrisProfileTombstone, KIND_IRIS_PROFILE_ROSTER_OP, KeyWrapStatus, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, iris_profile_roster_op_d_tag,
-    iris_profile_roster_parent_ids, iris_profile_tag_kind,
-    is_iris_profile_roster_op_event_coordinate, parse_iris_profile_roster_op_event,
+    IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA, IRIS_PROFILE_ROSTER_SCHEMA, IrisProfileCapabilities,
+    IrisProfileError, IrisProfileFacet, IrisProfileFacetAcceptanceContent, IrisProfileId,
+    IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterLog, IrisProfileRosterOp,
+    IrisProfileRosterOpContent, IrisProfileRosterProjection, IrisProfileTombstone,
+    KIND_IRIS_PROFILE_FACET_ACCEPTANCE, KIND_IRIS_PROFILE_ROSTER_OP, KeyWrapStatus,
+    SignedIrisProfileFacetAcceptance, SignedIrisProfileRosterOp,
+    build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
+    iris_profile_facet_acceptance_d_tag, iris_profile_ids_from_facet_acceptances,
+    iris_profile_roster_op_d_tag, iris_profile_roster_parent_ids, iris_profile_tag_kind,
+    is_iris_profile_facet_acceptance_event_coordinate, is_iris_profile_roster_op_event_coordinate,
+    parse_iris_profile_facet_acceptance_event, parse_iris_profile_roster_op_event,
     project_iris_profile_roster,
 };
 pub use link_input::{
