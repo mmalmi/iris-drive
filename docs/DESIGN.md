@@ -120,7 +120,12 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
   secrets. Bare recovery phrase / `nsec` restore can create a fresh local
   IrisProfile with that secret as recovery authority; recovering an existing
   UUID requires roster ops, acceptance breadcrumbs, invites, or export data that
-  carry the UUID and verify against the recovery key.
+  carry the UUID and verify against the recovery key. If relays return multiple
+  verified UUID candidates for the same recovery/NIP-46 pubkey, core returns all
+  candidates with roster metadata; UI may auto-pick only an unambiguous single
+  candidate. Otherwise the user chooses, or keeps the fresh fallback profile.
+  Merging distinct UUID profiles is a later explicit import/migration flow, not
+  automatic identity-log union.
   Roster ops are not lockstep multisig documents: an op is signed by the key
   authorized to make that change. Member keys may also sign join/acceptance
   breadcrumbs for their own facet so they can later rediscover candidate

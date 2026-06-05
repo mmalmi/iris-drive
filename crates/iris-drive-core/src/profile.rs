@@ -587,6 +587,106 @@ impl Profile {
         Ok(profile)
     }
 
+    /// Reconcile a fresh fallback restore with later-discovered roster
+    /// evidence. The current install keeps its fresh `AppKey`; the recovery
+    /// secret signs admission of that `AppKey` into the discovered profile.
+    pub fn reconcile_with_profile_roster_ops(
+        &mut self,
+        recovery_secret: &str,
+        profile_id: IrisProfileId,
+        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        label: Option<String>,
+    ) -> Result<AppKeysSnapshot, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
+        let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
+            OwnerKey::from_recovery_phrase(phrase, owner_key_path_in(Path::new("")))?
+        } else {
+            OwnerKey::from_secret(recovery_secret, owner_key_path_in(Path::new("")))?
+        };
+        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let expected_purpose = recovery_authority_purpose(
+            &projection,
+            &recovery_key.pubkey_hex(),
+            recovery_phrase
+                .as_ref()
+                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+        )?;
+        self.reconcile_with_profile_roster_ops_and_authority_keys(
+            recovery_key.keys(),
+            expected_purpose,
+            profile_id,
+            profile_roster_ops,
+            label,
+        )
+    }
+
+    /// Reconcile a fresh fallback restore with later-discovered NIP-46 roster
+    /// evidence. This is the local-keys test surface for the same authority
+    /// path a remote NIP-46 signer will drive.
+    pub fn reconcile_with_profile_roster_ops_using_nip46_keys(
+        &mut self,
+        nip46_keys: &Keys,
+        profile_id: IrisProfileId,
+        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        label: Option<String>,
+    ) -> Result<AppKeysSnapshot, ProfileError> {
+        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let expected_purpose = recovery_authority_purpose(
+            &projection,
+            &nip46_keys.public_key().to_hex(),
+            Some(IrisProfileKeyPurpose::Nip46Signer),
+        )?;
+        self.reconcile_with_profile_roster_ops_and_authority_keys(
+            nip46_keys,
+            expected_purpose,
+            profile_id,
+            profile_roster_ops,
+            label,
+        )
+    }
+
+    fn reconcile_with_profile_roster_ops_and_authority_keys(
+        &mut self,
+        authority_keys: &Keys,
+        expected_purpose: IrisProfileKeyPurpose,
+        profile_id: IrisProfileId,
+        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        label: Option<String>,
+    ) -> Result<AppKeysSnapshot, ProfileError> {
+        let original_state = self.state.clone();
+        self.state.profile_id = profile_id;
+        self.state.profile_roster_ops = profile_roster_ops;
+        self.state.app_keys = None;
+        self.state.authorization_state = DeviceAuthorizationState::AwaitingApproval;
+        self.state.outbound_device_link_request = None;
+        self.state.inbound_device_link_requests.clear();
+        self.state.sync_app_keys_from_profile();
+
+        if self
+            .state
+            .profile_projection()
+            .can_write_roots(&self.state.device_pubkey)
+        {
+            return self
+                .state
+                .app_keys
+                .clone()
+                .ok_or(ProfileError::NoCurrentSnapshot);
+        }
+
+        match self.admit_current_app_key_with_authority_keys(
+            authority_keys,
+            expected_purpose,
+            label,
+        ) {
+            Ok(snapshot) => Ok(snapshot.clone()),
+            Err(error) => {
+                self.state = original_state;
+                Err(error)
+            }
+        }
+    }
+
     /// **Link** flow — generate a fresh `AppKey` for a known `IrisProfile`.
     /// The admin `AppKey` is used only as the request target; the new local
     /// `AppKey` starts in `AwaitingApproval` until a roster admin accepts it.

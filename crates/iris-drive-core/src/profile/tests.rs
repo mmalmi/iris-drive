@@ -170,6 +170,109 @@ fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_deriva
 }
 
 #[test]
+fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(owner_dir.path()),
+    )
+    .unwrap();
+    let fallback_dir = tempdir().unwrap();
+    let mut fallback = Profile::restore(fallback_dir.path(), &phrase, Some("fallback".into()))
+        .expect("fallback restore");
+    let fallback_app_key = fallback.state.device_pubkey.clone();
+    assert_ne!(fallback.state.profile_id, owner.state.profile_id);
+
+    let snapshot = fallback
+        .reconcile_with_profile_roster_ops(
+            &phrase,
+            owner.state.profile_id,
+            owner.state.profile_roster_ops.clone(),
+            Some("reconciled".into()),
+        )
+        .unwrap();
+
+    assert_eq!(fallback.state.profile_id, owner.state.profile_id);
+    assert_eq!(fallback.state.device_pubkey, fallback_app_key);
+    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(fallback.state.can_write_roots());
+    assert!(fallback.state.can_manage_devices());
+    assert_eq!(fallback.state.device_label.as_deref(), Some("fallback"));
+    let reconciled_actor = snapshot.app_actor(&fallback_app_key).unwrap();
+    assert_eq!(reconciled_actor.label.as_deref(), Some("reconciled"));
+}
+
+#[test]
+fn fallback_nsec_restore_can_reconcile_with_recovery_roster_evidence() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
+    let phrase = crate::recovery_phrase::load_recovery_phrase(
+        crate::paths::recovery_phrase_path_in(owner_dir.path()),
+    )
+    .unwrap();
+    let recovery_nsec = crate::recovery_phrase::recovery_phrase_to_nsec(&phrase).unwrap();
+    let fallback_dir = tempdir().unwrap();
+    let mut fallback = Profile::restore(fallback_dir.path(), &recovery_nsec, None).unwrap();
+    let fallback_app_key = fallback.state.device_pubkey.clone();
+
+    let snapshot = fallback
+        .reconcile_with_profile_roster_ops(
+            &recovery_nsec,
+            owner.state.profile_id,
+            owner.state.profile_roster_ops.clone(),
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(fallback.state.profile_id, owner.state.profile_id);
+    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(!fallback_dir.path().join("recovery_phrase").exists());
+}
+
+#[test]
+fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
+    let nip46 = Keys::generate();
+    owner
+        .add_nip46_recovery(&nip46.public_key().to_hex(), Some("bunker".into()), true)
+        .unwrap();
+    let fallback_dir = tempdir().unwrap();
+    let mut fallback = Profile::restore(
+        fallback_dir.path(),
+        &nip46.secret_key().to_secret_hex(),
+        None,
+    )
+    .unwrap();
+    let fallback_app_key = fallback.state.device_pubkey.clone();
+
+    let snapshot = fallback
+        .reconcile_with_profile_roster_ops_using_nip46_keys(
+            &nip46,
+            owner.state.profile_id,
+            owner.state.profile_roster_ops.clone(),
+            Some("nip46 restored".into()),
+        )
+        .unwrap();
+
+    assert_eq!(fallback.state.profile_id, owner.state.profile_id);
+    assert_eq!(fallback.state.device_pubkey, fallback_app_key);
+    assert!(snapshot.is_admin(&fallback_app_key));
+    assert!(fallback.state.can_write_roots());
+    assert_ne!(
+        fallback.current_dck().unwrap(),
+        owner.current_dck().unwrap()
+    );
+
+    owner.state.profile_roster_ops = fallback.state.profile_roster_ops.clone();
+    owner.state.sync_app_keys_from_profile();
+    assert_eq!(
+        fallback.current_dck().unwrap(),
+        owner.current_dck().unwrap()
+    );
+}
+
+#[test]
 fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let owner_dir = tempdir().unwrap();
     let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
