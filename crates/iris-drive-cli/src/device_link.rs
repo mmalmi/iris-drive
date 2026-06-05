@@ -1,11 +1,11 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> Result<()> {
+pub(crate) fn cmd_app_keys(config_dir: &std::path::Path, command: AppKeysCmd) -> Result<()> {
     match command {
-        DevicesCmd::Invite => cmd_devices_invite(config_dir),
-        DevicesCmd::ResetInvite => cmd_devices_reset_invite(config_dir),
-        DevicesCmd::Request {
+        AppKeysCmd::Invite => cmd_app_keys_invite(config_dir),
+        AppKeysCmd::ResetInvite => cmd_app_keys_reset_invite(config_dir),
+        AppKeysCmd::Request {
             owner_or_invite,
             admin_device,
             label,
@@ -16,17 +16,17 @@ pub(crate) fn cmd_devices(config_dir: &std::path::Path, command: DevicesCmd) -> 
             false,
             label,
         ),
-        DevicesCmd::Requests => cmd_devices_requests(config_dir),
-        DevicesCmd::Approve { request, label } => cmd_approve(config_dir, &request, label),
-        DevicesCmd::Reject { request } => cmd_reject(config_dir, &request),
-        DevicesCmd::List => cmd_roster(config_dir),
-        DevicesCmd::Revoke { device } => cmd_revoke(config_dir, &device),
-        DevicesCmd::AppointAdmin { device } => cmd_appoint_admin(config_dir, &device),
-        DevicesCmd::DemoteAdmin { device } => cmd_demote_admin(config_dir, &device),
+        AppKeysCmd::Requests => cmd_app_keys_requests(config_dir),
+        AppKeysCmd::Approve { request, label } => cmd_approve(config_dir, &request, label),
+        AppKeysCmd::Reject { request } => cmd_reject(config_dir, &request),
+        AppKeysCmd::List => cmd_roster(config_dir),
+        AppKeysCmd::Revoke { app_key } => cmd_revoke(config_dir, &app_key),
+        AppKeysCmd::AppointAdmin { app_key } => cmd_appoint_admin(config_dir, &app_key),
+        AppKeysCmd::DemoteAdmin { app_key } => cmd_demote_admin(config_dir, &app_key),
     }
 }
 
-pub(crate) fn cmd_devices_invite(config_dir: &std::path::Path) -> Result<()> {
+pub(crate) fn cmd_app_keys_invite(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account
@@ -35,14 +35,14 @@ pub(crate) fn cmd_devices_invite(config_dir: &std::path::Path) -> Result<()> {
     let invite = device_link_invite_json(state);
     if invite.is_null() {
         return Err(anyhow::anyhow!(
-            "device link invites require an admin device"
+            "AppKey link invites require an admin AppKey"
         ));
     }
     println!("{invite}");
     Ok(())
 }
 
-pub(crate) fn cmd_devices_reset_invite(config_dir: &std::path::Path) -> Result<()> {
+pub(crate) fn cmd_app_keys_reset_invite(config_dir: &std::path::Path) -> Result<()> {
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path)?;
     let (invite, inbound_requests) = {
@@ -52,7 +52,7 @@ pub(crate) fn cmd_devices_reset_invite(config_dir: &std::path::Path) -> Result<(
             .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
         if !state.can_manage_devices() {
             return Err(anyhow::anyhow!(
-                "device link invites require an admin device"
+                "AppKey link invites require an admin AppKey"
             ));
         }
         state.reset_device_link_secret();
@@ -73,7 +73,7 @@ pub(crate) fn cmd_devices_reset_invite(config_dir: &std::path::Path) -> Result<(
     Ok(())
 }
 
-pub(crate) fn cmd_devices_requests(config_dir: &std::path::Path) -> Result<()> {
+pub(crate) fn cmd_app_keys_requests(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account

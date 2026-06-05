@@ -38,7 +38,7 @@ pub(crate) fn resolve_device_approval_input(
     if let Some(request) = decode_device_approval_request(input)? {
         if request.owner_hex != expected_owner_hex {
             return Err(anyhow::anyhow!(
-                "device request belongs to a different owner"
+                "AppKey-link request belongs to a different owner"
             ));
         }
         let label = explicit_label.or(request.label);
@@ -46,7 +46,7 @@ pub(crate) fn resolve_device_approval_input(
     }
 
     Ok((
-        normalize_pubkey(input).context("parsing device pubkey")?,
+        normalize_pubkey(input).context("parsing AppKey pubkey")?,
         explicit_label,
     ))
 }
@@ -58,7 +58,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
     if let Some(invite) = decode_device_link_invite(input)? {
         if admin_device.is_some() {
             return Err(anyhow::anyhow!(
-                "--admin-device is only valid with a manual owner pubkey, not an invite URL"
+                "--admin-app-key is only valid with a manual owner pubkey, not an invite URL"
             ));
         }
         return Ok(DeviceLinkTarget {
@@ -69,7 +69,7 @@ pub(crate) fn resolve_device_link_target_with_admin(
     }
 
     let admin_device_hex = admin_device
-        .map(|admin| normalize_pubkey(admin).context("parsing admin device pubkey"))
+        .map(|admin| normalize_pubkey(admin).context("parsing admin AppKey pubkey"))
         .transpose()?;
     Ok(DeviceLinkTarget {
         owner_hex: normalize_pubkey(input).context("parsing owner pubkey")?,
@@ -101,9 +101,9 @@ pub(crate) fn device_link_request_json(state: &AccountState) -> Value {
     json!({
         "url": url,
         "owner_npub": account_npub(&state.owner_pubkey),
-        "device_npub": account_npub(&state.device_pubkey),
+        "app_key_npub": account_npub(&state.device_pubkey),
         "label": state.device_label.as_deref(),
-        "admin_device_npub": state
+        "admin_app_key_npub": state
             .outbound_device_link_request
             .as_ref()
             .map(|request| account_npub(&request.admin_device_pubkey)),
@@ -131,7 +131,7 @@ pub(crate) fn device_link_invite_json(state: &AccountState) -> Value {
         "url": url,
         "web_url": device_link_web_url(&url),
         "owner_npub": account_npub(&state.owner_pubkey),
-        "admin_device_npub": account_npub(&state.device_pubkey),
+        "admin_app_key_npub": account_npub(&state.device_pubkey),
     })
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn inbound_device_link_requests_json(state: &AccountState) -> Vec<Val
                     request.label.as_deref(),
                 ),
                 "owner_npub": account_npub(&state.owner_pubkey),
-                "device_npub": account_npub(&request.device_pubkey),
+                "app_key_npub": account_npub(&request.device_pubkey),
                 "label": request.label.as_deref(),
                 "requested_at": request.requested_at,
             })
@@ -214,12 +214,12 @@ pub(crate) fn decode_device_approval_request(input: &str) -> Result<Option<Devic
         }
     }
 
-    let owner = owner.ok_or_else(|| anyhow::anyhow!("device request is missing owner"))?;
-    let device = device.ok_or_else(|| anyhow::anyhow!("device request is missing device"))?;
+    let owner = owner.ok_or_else(|| anyhow::anyhow!("AppKey-link request is missing owner"))?;
+    let device = device.ok_or_else(|| anyhow::anyhow!("AppKey-link request is missing AppKey"))?;
 
     Ok(Some(DeviceApprovalRequest {
         owner_hex: normalize_pubkey(&owner).context("parsing request owner")?,
-        device_hex: normalize_pubkey(&device).context("parsing request device")?,
+        device_hex: normalize_pubkey(&device).context("parsing request AppKey")?,
         link_secret: link_secret.unwrap_or_default().trim().to_string(),
         label,
     }))

@@ -29,7 +29,7 @@ equivalent to desktop.
 | Tray/menu-bar control | Yes | Yes | Yes | N/A | N/A |
 | Close to tray/menu-bar | Yes | Yes | Yes | N/A | N/A |
 | Native OS file-provider surface | FUSE mount | FileProvider domain | Cloud Files read hydration | FileProvider extension/domain | DocumentsProvider read/write surface |
-| Multidevice e2e label | `ubuntu` | `macos` | `windows` | `ios` provider-command peer + simulator smoke | `android` provider-command peer + adb smoke |
+| Multi-app e2e label | `ubuntu` | `macos` | `windows` | `ios` provider-command peer + simulator smoke | `android` provider-command peer + adb smoke |
 
 ## Desktop test target
 
@@ -51,9 +51,9 @@ The native smoke writes per-hop timing JSONL to `target/e2e-3vms-*-timings.jsonl
 The minimum parity smoke for native desktop shells is:
 
 1. Create an owner profile on one VM.
-2. Link the other VM as a secondary device from the GUI and copy its Device ID.
-3. Open Add Device in the owner GUI, paste the Device ID, and approve it.
-4. Confirm both Devices tabs show the authorized peer and its FIPS online/sync state.
+2. Link the other VM as a secondary app install from the GUI and copy its AppKey ID.
+3. Open Add AppKey in the owner GUI, paste the AppKey ID, and approve it.
+4. Confirm both AppKeys tabs show the authorized peer and its FIPS online/sync state.
 5. Create, rename, edit, and delete files inside the mounted drive.
 6. Confirm authorized peers receive the new roots without using a normal folder scan.
 7. Confirm native directory viewers/watchers wake after remote creates and deletes without reopening the folder.
@@ -90,4 +90,4 @@ just e2e-5devices
 That runs the iOS simulator and GUI linking smokes, runs the Android GUI
 linking and provider smokes on the configured Android host, runs Linux GTK and
 Windows WPF GUI smokes on the desktop hosts, then includes both mobile host
-labels as daemon peers in the shared multidevice sync harness.
+labels as daemon peers in the shared multi-app sync harness.

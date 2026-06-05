@@ -67,7 +67,7 @@ fn help_includes_desktop_operator_commands() {
         .stdout(contains("version"))
         .stdout(contains("install-cli"))
         .stdout(contains("uninstall-cli"))
-        .stdout(contains("devices"))
+        .stdout(contains("app-keys"))
         .stdout(contains("stats"))
         .stdout(contains("daemon"));
 }

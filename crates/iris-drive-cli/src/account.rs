@@ -206,8 +206,8 @@ pub(crate) fn cmd_approve(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let (device_hex, label) = resolve_device_approval_input(device, &state.owner_pubkey, label)
-        .context("parsing device approval request")?;
-    let approved_device_npub = account_npub(&device_hex);
+        .context("parsing AppKey approval request")?;
+    let approved_app_key_npub = account_npub(&device_hex);
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
         .approve_device(&device_hex, label)
@@ -218,7 +218,7 @@ pub(crate) fn cmd_approve(
     println!(
         "{}",
         json!({
-            "approved_device_npub": approved_device_npub,
+            "approved_app_key_npub": approved_app_key_npub,
             "roster_size": device_count,
         })
     );
@@ -233,11 +233,11 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if !state.can_manage_devices() {
         return Err(anyhow::anyhow!(
-            "this device is not an admin - only admin devices can reject device requests"
+            "this AppKey is not an admin - only admin AppKeys can reject AppKey-link requests"
         ));
     }
     let (device_hex, _) = resolve_device_approval_input(device, &state.owner_pubkey, None)
-        .context("parsing device rejection request")?;
+        .context("parsing AppKey rejection request")?;
     let rejected = state
         .reject_inbound_device_link_request(&device_hex)
         .context("rejecting device request")?;
@@ -246,7 +246,7 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
         "{}",
         json!({
             "rejected": rejected,
-            "rejected_device_npub": account_npub(&device_hex),
+            "rejected_app_key_npub": account_npub(&device_hex),
             "inbound_device_link_requests": inbound_device_link_requests_json(
                 config.account.as_ref().expect("account still present")
             ),
@@ -256,19 +256,19 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
 }
 
 pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<()> {
-    let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
+    let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if state.device_pubkey == device_hex {
-        return Err(anyhow::anyhow!("cannot revoke this device from itself"));
+        return Err(anyhow::anyhow!("cannot revoke this AppKey from itself"));
     }
     let mut account = Account::load(state, config_dir).context("loading account")?;
     let snap = account
         .revoke_device(&device_hex)
-        .context("revoking device")?;
+        .context("revoking AppKey")?;
     let device_count = snap.app_actors.len();
     let dck_generation = snap.dck_generation;
     config.account = Some(account.state.clone());
@@ -276,7 +276,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
     println!(
         "{}",
         json!({
-            "revoked_device_npub": account_npub(&device_hex),
+            "revoked_app_key_npub": account_npub(&device_hex),
             "roster_size": device_count,
             "dck_generation": dck_generation,
         })
@@ -297,7 +297,7 @@ fn set_device_admin_role(
     device: &str,
     make_admin: bool,
 ) -> Result<()> {
-    let device_hex = normalize_pubkey(device).context("parsing device pubkey")?;
+    let device_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .account
@@ -307,11 +307,11 @@ fn set_device_admin_role(
     let snap = if make_admin {
         account
             .appoint_admin(&device_hex)
-            .context("promoting device to admin")?
+            .context("promoting AppKey to admin")?
     } else {
         account
             .demote_admin(&device_hex)
-            .context("demoting device admin")?
+            .context("demoting AppKey admin")?
     };
     let role = snap
         .app_actor(&device_hex)
@@ -322,7 +322,7 @@ fn set_device_admin_role(
     println!(
         "{}",
         json!({
-            "device_npub": account_npub(&device_hex),
+            "app_key_npub": account_npub(&device_hex),
             "role": app_actor_role_label(role),
             "dck_generation": dck_generation,
         })
@@ -421,7 +421,7 @@ pub(crate) fn load_account_state(config_dir: &std::path::Path) -> Result<Account
 }
 
 pub(crate) fn already_initialized(config_dir: &std::path::Path) -> bool {
-    // An install is "initialized" when both a device key and a non-empty
+    // An install is "initialized" when both an AppKey and a non-empty
     // config (with account) exist. Owner key may or may not be present
     // depending on flow (link installs don't have one).
     key_path_in(config_dir).exists()

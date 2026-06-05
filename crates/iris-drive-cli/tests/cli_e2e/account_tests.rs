@@ -178,7 +178,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         init_v["device_link_invite"]["owner_npub"]
     );
     assert_eq!(
-        v["device_link_request"]["device_npub"],
+        v["device_link_request"]["app_key_npub"],
         v["current_app_key_npub"]
     );
     assert!(
@@ -203,7 +203,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     let peers = status["peers"].as_array().unwrap();
     assert!(
         peers.is_empty(),
-        "pending devices should not appear in roster"
+        "pending AppKeys should not appear in roster"
     );
     assert_eq!(status["network"]["authorized_device_count"], 0);
     assert!(dir.path().join("key").exists());
@@ -243,14 +243,14 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
     let invite_url = owner["device_link_invite"]["url"].as_str().unwrap();
     assert!(invite_url.starts_with("iris-drive://invite/"));
     let owner_npub = device_link_invite_owner_npub(&owner);
-    let admin_device_npub = current_app_key_npub(&owner);
+    let admin_app_key_npub = current_app_key_npub(&owner);
 
     let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
 
     assert_eq!(linked["device_link_request"]["owner_npub"], owner_npub);
     assert_eq!(
-        linked["device_link_request"]["admin_device_npub"],
-        admin_device_npub
+        linked["device_link_request"]["admin_app_key_npub"],
+        admin_app_key_npub
     );
     assert!(
         linked["device_link_request"]["requested_at"]
@@ -283,7 +283,7 @@ fn owner_invite_link_queues_fips_request_to_admin_device() {
 }
 
 #[test]
-fn link_then_approve_authorizes_the_linked_device() {
+fn link_then_approve_authorizes_the_linked_app_key() {
     // Set up owner-capable install + a separate linked install.
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
@@ -312,11 +312,11 @@ fn link_then_approve_authorizes_the_linked_device() {
         .unwrap(),
     )
     .unwrap();
-    let linked_device_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
 
     // Owner approves the linked device.
     let approve = idrive(owner_dir.path())
-        .args(["approve", &linked_device_npub])
+        .args(["approve", &linked_app_key_npub])
         .output()
         .unwrap();
     assert!(approve.status.success(), "{approve:?}");
@@ -343,7 +343,7 @@ fn link_then_approve_authorizes_the_linked_device() {
 }
 
 #[test]
-fn devices_can_appoint_and_demote_admin() {
+fn app_keys_can_appoint_and_demote_admin() {
     let owner_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let owner_invite = device_link_invite_url(&owner);
@@ -353,32 +353,33 @@ fn devices_can_appoint_and_demote_admin() {
         linked_dir.path(),
         &["link", owner_invite, "--label", "laptop"],
     );
-    let linked_device = current_app_key_npub(&linked);
-    run_json(owner_dir.path(), &["approve", linked_device]);
+    let linked_app_key = current_app_key_npub(&linked);
+    run_json(owner_dir.path(), &["approve", linked_app_key]);
 
     let promoted = run_json(
         owner_dir.path(),
-        &["devices", "appoint-admin", linked_device],
+        &["app-keys", "appoint-admin", linked_app_key],
     );
+    assert_eq!(promoted["app_key_npub"], linked_app_key);
     assert_eq!(promoted["role"], "admin");
     let status = run_json(owner_dir.path(), &["status"]);
     assert!(status["peers"].as_array().unwrap().iter().any(|device| {
-        device["device_npub"].as_str() == Some(linked_device)
+        device["device_npub"].as_str() == Some(linked_app_key)
             && device["role"].as_str() == Some("admin")
     }));
-    let roster = run_json(owner_dir.path(), &["devices", "list"]);
+    let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
     assert!(
         roster["app_keys"]["app_actors"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|device| device["npub"].as_str() == Some(linked_device)
+            .any(|device| device["npub"].as_str() == Some(linked_app_key)
                 && device["role"].as_str() == Some("admin"))
     );
 
     let demoted = run_json(
         owner_dir.path(),
-        &["devices", "demote-admin", linked_device],
+        &["app-keys", "demote-admin", linked_app_key],
     );
     assert_eq!(demoted["role"], "member");
 }
@@ -429,7 +430,7 @@ fn owner_rejects_device_request_link() {
         &["link", owner_invite, "--label", "rejected-phone"],
     );
     let request_url = linked["device_link_request"]["url"].as_str().unwrap();
-    let linked_device = current_app_key_npub(&linked);
+    let linked_app_key = current_app_key_npub(&linked);
 
     {
         let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
@@ -456,7 +457,7 @@ fn owner_rejects_device_request_link() {
         config.save(&config_path).unwrap();
     }
 
-    let rejected = run_json(owner_dir.path(), &["devices", "reject", request_url]);
+    let rejected = run_json(owner_dir.path(), &["app-keys", "reject", request_url]);
     assert_eq!(rejected["rejected"], true);
     assert!(
         rejected["inbound_device_link_requests"]
@@ -465,38 +466,38 @@ fn owner_rejects_device_request_link() {
             .is_empty()
     );
 
-    let roster = run_json(owner_dir.path(), &["devices", "list"]);
+    let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
     assert!(
         roster["app_keys"]["app_actors"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|device| device["npub"].as_str() != Some(linked_device))
+            .all(|device| device["npub"].as_str() != Some(linked_app_key))
     );
 }
 
 #[test]
-fn devices_group_covers_invite_request_approve_and_list_flow() {
+fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let owner_npub = device_link_invite_owner_npub(&owner);
-    let admin_device_npub = current_app_key_npub(&owner);
-    let invite = run_json(owner_dir.path(), &["devices", "invite"]);
+    let admin_app_key_npub = current_app_key_npub(&owner);
+    let invite = run_json(owner_dir.path(), &["app-keys", "invite"]);
     let invite_url = invite["url"].as_str().unwrap();
     assert!(invite_url.starts_with("iris-drive://invite/"));
     assert!(!invite_url.contains("local-owner"));
     assert!(!invite_url.contains("device-"));
     assert_eq!(invite["owner_npub"].as_str(), Some(owner_npub));
     assert_eq!(
-        invite["admin_device_npub"].as_str(),
-        Some(admin_device_npub)
+        invite["admin_app_key_npub"].as_str(),
+        Some(admin_app_key_npub)
     );
 
     let linked = run_json(
         linked_dir.path(),
-        &["devices", "request", invite_url, "--label", "laptop"],
+        &["app-keys", "request", invite_url, "--label", "laptop"],
     );
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["device_link_request"]["url"].as_str().unwrap();
@@ -507,22 +508,26 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
     assert!(!request_url.contains("local-owner"));
     assert!(!request_url.contains("device=device-"));
     assert_eq!(
-        linked["device_link_request"]["admin_device_npub"].as_str(),
-        Some(admin_device_npub)
+        linked["device_link_request"]["admin_app_key_npub"].as_str(),
+        Some(admin_app_key_npub)
     );
     assert_eq!(
         linked["device_link_request"]["sent_over_fips"],
         serde_json::Value::Bool(true)
     );
 
-    let requests = run_json(linked_dir.path(), &["devices", "requests"]);
+    let requests = run_json(linked_dir.path(), &["app-keys", "requests"]);
     assert!(requests["outbound"].is_object());
     assert!(requests["inbound"].as_array().unwrap().is_empty());
 
-    let approved = run_json(owner_dir.path(), &["devices", "approve", request_url]);
+    let approved = run_json(owner_dir.path(), &["app-keys", "approve", request_url]);
+    assert_eq!(
+        approved["approved_app_key_npub"],
+        linked["current_app_key_npub"]
+    );
     assert_eq!(approved["roster_size"], 2);
 
-    let devices = run_json(owner_dir.path(), &["devices", "list"]);
+    let devices = run_json(owner_dir.path(), &["app-keys", "list"]);
     assert_eq!(
         devices["app_keys"]["app_actors"].as_array().unwrap().len(),
         2
@@ -530,7 +535,7 @@ fn devices_group_covers_invite_request_approve_and_list_flow() {
 }
 
 #[test]
-fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
+fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
@@ -538,10 +543,10 @@ fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let old_invite = owner["device_link_invite"]["url"].as_str().unwrap();
     let linked = run_json(
         linked_dir.path(),
-        &["devices", "request", old_invite, "--label", "phone"],
+        &["app-keys", "request", old_invite, "--label", "phone"],
     );
     let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    let linked_device = linked_config
+    let linked_app_key = linked_config
         .account
         .as_ref()
         .unwrap()
@@ -556,7 +561,7 @@ fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
     state
         .record_inbound_device_link_request(
             &owner_hex,
-            &linked_device,
+            &linked_app_key,
             Some("phone".to_string()),
             &old_secret,
             linked["device_link_request"]["requested_at"]
@@ -565,10 +570,10 @@ fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
         )
         .unwrap();
     config.save(&config_path).unwrap();
-    let requests = run_json(owner_dir.path(), &["devices", "requests"]);
+    let requests = run_json(owner_dir.path(), &["app-keys", "requests"]);
     assert_eq!(requests["inbound"].as_array().unwrap().len(), 1);
 
-    let reset = run_json(owner_dir.path(), &["devices", "reset-invite"]);
+    let reset = run_json(owner_dir.path(), &["app-keys", "reset-invite"]);
     let new_invite = reset["device_link_invite"]["url"].as_str().unwrap();
     assert_ne!(new_invite, old_invite);
     assert!(
@@ -585,7 +590,7 @@ fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
         !state
             .record_inbound_device_link_request(
                 &owner_hex,
-                &linked_device,
+                &linked_app_key,
                 Some("phone".to_string()),
                 &old_secret,
                 999,
@@ -593,27 +598,27 @@ fn devices_reset_invite_rotates_secret_and_clears_inbound_requests() {
             .unwrap()
     );
 
-    let invite = run_json(owner_dir.path(), &["devices", "invite"]);
+    let invite = run_json(owner_dir.path(), &["app-keys", "invite"]);
     assert_eq!(invite["url"].as_str(), Some(new_invite));
 }
 
 #[test]
-fn devices_request_manual_owner_and_admin_device_queues_fips_request() {
+fn app_keys_request_manual_owner_and_admin_app_key_queues_fips_request() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let owner_npub = device_link_invite_owner_npub(&owner);
-    let admin_device_npub = current_app_key_npub(&owner);
+    let admin_app_key_npub = current_app_key_npub(&owner);
 
     let linked = run_json(
         linked_dir.path(),
         &[
-            "devices",
+            "app-keys",
             "request",
             owner_npub,
-            "--admin-device",
-            admin_device_npub,
+            "--admin-app-key",
+            admin_app_key_npub,
             "--label",
             "manual laptop",
         ],
@@ -621,8 +626,8 @@ fn devices_request_manual_owner_and_admin_device_queues_fips_request() {
 
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     assert_eq!(
-        linked["device_link_request"]["admin_device_npub"].as_str(),
-        Some(admin_device_npub)
+        linked["device_link_request"]["admin_app_key_npub"].as_str(),
+        Some(admin_app_key_npub)
     );
     assert_eq!(
         linked["device_link_request"]["sent_over_fips"],
@@ -631,7 +636,7 @@ fn devices_request_manual_owner_and_admin_device_queues_fips_request() {
 }
 
 #[test]
-fn owner_can_revoke_a_linked_device() {
+fn owner_can_revoke_a_linked_app_key() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner = serde_json::from_str::<serde_json::Value>(
@@ -659,20 +664,21 @@ fn owner_can_revoke_a_linked_device() {
         .unwrap(),
     )
     .unwrap();
-    let linked_device_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
 
     idrive(owner_dir.path())
-        .args(["approve", &linked_device_npub])
+        .args(["approve", &linked_app_key_npub])
         .assert()
         .success();
-    let revoked = run_json(owner_dir.path(), &["revoke", &linked_device_npub]);
+    let revoked = run_json(owner_dir.path(), &["revoke", &linked_app_key_npub]);
+    assert_eq!(revoked["revoked_app_key_npub"], linked_app_key_npub);
     assert_eq!(revoked["roster_size"], 1);
     assert!(revoked["dck_generation"].as_u64().unwrap() > 1);
 
     let roster = run_json(owner_dir.path(), &["roster"]);
     let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
     assert_eq!(app_actors.len(), 1);
-    assert_ne!(app_actors[0]["npub"], linked_device_npub);
+    assert_ne!(app_actors[0]["npub"], linked_app_key_npub);
 }
 
 #[test]
@@ -752,7 +758,7 @@ fn rotate_dck_advances_generation() {
 }
 
 #[test]
-fn rotate_dck_on_linked_device_errors() {
+fn rotate_dck_on_linked_app_key_errors() {
     let owner_dir = tempdir().unwrap();
     idrive(owner_dir.path()).arg("init").assert().success();
     let owner = serde_json::from_str::<serde_json::Value>(
@@ -820,10 +826,10 @@ fn approve_advances_dck_generation() {
         .unwrap(),
     )
     .unwrap();
-    let linked_device_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
 
     idrive(owner_dir.path())
-        .args(["approve", &linked_device_npub])
+        .args(["approve", &linked_app_key_npub])
         .assert()
         .success();
 

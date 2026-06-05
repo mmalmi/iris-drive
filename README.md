@@ -65,13 +65,13 @@ just run-cli list
 just run-cli update --check
 ```
 
-Common device and backup flows:
+Common AppKey and backup flows:
 
 ```bash
-just run-cli devices invite
-just run-cli devices request <owner-npub-or-invite-url> --label "Laptop"
-just run-cli devices approve <device-request-url-or-npub>
-just run-cli devices list
+just run-cli app-keys invite
+just run-cli app-keys request <owner-npub-or-invite-url> --label "Laptop"
+just run-cli app-keys approve <app-key-request-url-or-npub>
+just run-cli app-keys list
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
@@ -120,13 +120,13 @@ See the platform READMEs for focused instructions:
 ## What Works Today
 
 - Creates, restores, links, approves, revokes, and lists Nostr-backed Iris Drive
-  devices through the CLI and desktop control panels.
+  app installs through the CLI and desktop control panels.
 - Maintains open Nostr subscriptions for IrisProfile roster ops and mutable
   drive-root events while the iris-drive daemon is running.
 - Imports local source trees into the persistent htree block store and exposes a
   merged virtual primary drive view through native provider bridges.
 - Replicates blocks directly over hashtree-over-[FIPS] between authorized
-  devices when peers are reachable; Blossom remains a configured remote/cache
+  app installs when peers are reachable; Blossom remains a configured remote/cache
   path.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
@@ -140,7 +140,7 @@ See the platform READMEs for focused instructions:
 | Linux x64 | GTK/libadwaita app, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
 | Windows x64 | WPF app, tray control, Cloud Files placeholder/hydration path, self-contained publish script |
 | Android arm64 | Compose shell plus SAF DocumentsProvider with create/read/write/rename/delete/list support and adb smoke |
-| iOS | SwiftUI shell plus File Provider extension, simulator smoke, multidevice harness peer |
+| iOS | SwiftUI shell plus File Provider extension, simulator smoke, multi-app harness peer |
 | CLI | `idrive` create/restore/link, daemon, provider bridge, FIPS sync, Blossom/cache, backups, updater |
 
 See [Platform GUI parity](docs/PARITY.md) for the detailed cross-platform
@@ -228,7 +228,7 @@ IRIS_DRIVE_RELEASE_GATE_FULL=1 just release-gate --full
 ```
 
 The full gate runs the five-platform lab (`just e2e-5devices`) and requires
-the Linux, Windows, macOS, iOS, and Android hosts/devices configured in the
+the Linux, Windows, macOS, iOS, and Android hosts/app installs configured in the
 local environment.
 
 3. Build platform artifacts into `dist/`:

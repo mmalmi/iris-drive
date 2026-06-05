@@ -46,7 +46,7 @@ pub(crate) enum Command {
         /// Don't error if config already exists; print the existing state.
         #[arg(long)]
         force: bool,
-        /// Human-readable device label (e.g. "Mac mini").
+        /// Human-readable app install label (e.g. "Mac mini").
         #[arg(long)]
         label: Option<String>,
         /// Optional username/display name for the owner profile.
@@ -65,7 +65,7 @@ pub(crate) enum Command {
         /// Replace an existing local setup.
         #[arg(long)]
         force: bool,
-        /// Human-readable device label.
+        /// Human-readable app install label.
         #[arg(long)]
         label: Option<String>,
     },
@@ -89,7 +89,7 @@ pub(crate) enum Command {
         /// Replace an existing local setup.
         #[arg(long)]
         force: bool,
-        /// Human-readable device label.
+        /// Human-readable app install label.
         #[arg(long)]
         label: Option<String>,
     },
@@ -98,18 +98,18 @@ pub(crate) enum Command {
     /// Approve a pending install by adding its `AppKey` to the `IrisProfile`
     /// roster. Only usable by profile admins.
     Approve {
-        /// Device pubkey to authorize (npub1... or 64-char hex).
-        device: String,
-        /// Optional device label to record alongside.
+        /// `AppKey` pubkey to authorize (npub1... or 64-char hex).
+        app_key: String,
+        /// Optional app install label to record alongside.
         #[arg(long)]
         label: Option<String>,
     },
     /// Revoke an authorized `AppKey` and rotate the drive content key.
     Revoke {
-        /// Device pubkey to revoke (npub1... or 64-char hex).
-        device: String,
+        /// `AppKey` pubkey to revoke (npub1... or 64-char hex).
+        app_key: String,
     },
-    /// Print the current IrisProfile/AppKeys roster projection as JSON.
+    /// Print the current `IrisProfile`/`AppKeys` roster projection as JSON.
     Roster,
     /// Rotate the drive content key (DCK) without changing the roster.
     /// Useful for periodic key freshness. Admin-only.
@@ -123,15 +123,15 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: Option<SharesCmd>,
     },
-    /// Classify device-link, invite, and owner-key input using app-core parsing.
+    /// Classify `AppKey`-link, invite, and owner-key input using app-core parsing.
     #[command(name = "link-input")]
     LinkInput {
         #[command(subcommand)]
         command: LinkInputCmd,
     },
-    /// Manage linked devices and device-link requests.
-    #[command(subcommand)]
-    Devices(DevicesCmd),
+    /// Manage linked `AppKeys` and `AppKey`-link requests.
+    #[command(name = "app-keys", alias = "apps", alias = "installs", subcommand)]
+    AppKeys(AppKeysCmd),
     /// View or toggle the local `nhash.iris.localhost` resolver service.
     NhashResolver {
         #[command(subcommand)]
@@ -142,7 +142,7 @@ pub(crate) enum Command {
     Conflicts(ConflictsCmd),
     /// List configured drives.
     Drives,
-    /// Show the local identity (owner + device pubkeys + auth state).
+    /// Show the local `IrisProfile` and current `AppKey`.
     Whoami,
     /// Index a local directory into an in-memory hashtree and print the
     /// root CID + summary. Useful for hands-on sanity checks against the
@@ -158,11 +158,11 @@ pub(crate) enum Command {
         /// Source directory to import once.
         dir: PathBuf,
     },
-    /// List the merged view of the primary drive — files across every
-    /// authorized device's tree with LWW resolution applied. On a
-    /// single-device install this is just that device's tree.
+    /// List the merged view of My Drive — files across every authorized
+    /// `AppKey`'s tree with LWW resolution applied. On a single-`AppKey` install
+    /// this is just that `AppKey`'s tree.
     List {
-        /// Walk back N revisions on this device's tree before merging
+        /// Walk back N revisions on this `AppKey`'s tree before merging
         /// (0 = current = default, 1 = previous, ...). History comes
         /// from the `.hashtree/prev` chain stored in each directory's `TreeNode`.
         #[arg(long, default_value_t = 0)]
@@ -171,7 +171,7 @@ pub(crate) enum Command {
     /// Hidden native-provider bridge used by FileProvider/FUSE adapters.
     #[command(hide = true, subcommand)]
     Provider(ProviderCmd),
-    /// Walk this device's `.hashtree/prev` revision chain and print each root
+    /// Walk this `AppKey`'s `.hashtree/prev` revision chain and print each root
     /// CID + top-level entry count, newest-first. Blocks GC'd from
     /// the local store terminate the walk silently.
     History {
@@ -194,7 +194,7 @@ pub(crate) enum Command {
     /// List, add, remove, or sync encrypted backup targets.
     #[command(subcommand)]
     Backups(BackupsCmd),
-    /// Publish signed IrisProfile/share roster ops and this install's drive
+    /// Publish signed `IrisProfile`/share roster ops and this install's drive
     /// roots to all configured relays.
     Publish {
         /// Override config relays with these URLs.
@@ -204,7 +204,7 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 10)]
         timeout: u64,
     },
-    /// Pull signed IrisProfile/share roster ops and drive-root events from
+    /// Pull signed `IrisProfile`/share roster ops and drive-root events from
     /// relays, then apply them locally.
     Sync {
         /// Override config relays with these URLs.
@@ -291,57 +291,57 @@ pub(crate) struct UpdateArgs {
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum DevicesCmd {
-    /// Print an invite URL for this owner-capable device.
+pub(crate) enum AppKeysCmd {
+    /// Print an invite URL for this admin `AppKey`.
     Invite,
-    /// Reset this admin device's invite URL by rotating its invite secret.
+    /// Reset this admin `AppKey`'s invite URL by rotating its invite secret.
     #[command(name = "reset-invite")]
     ResetInvite,
-    /// Request linking this device using an owner/admin invite URL or owner pubkey.
+    /// Request linking this `AppKey` using an admin invite URL or owner pubkey.
     #[command(alias = "ask", alias = "connect", alias = "link")]
     Request {
-        /// Invite URL from an owner-capable device, or an owner npub/hex.
+        /// Invite URL from an admin `AppKey`, or an owner npub/hex.
         owner_or_invite: String,
-        /// Admin device pubkey for manual pairing when no invite URL is available.
-        #[arg(long, alias = "admin")]
+        /// Admin `AppKey` pubkey for manual pairing when no invite URL is available.
+        #[arg(long = "admin-app-key", alias = "admin-device", alias = "admin")]
         admin_device: Option<String>,
-        /// Human-readable device label.
+        /// Human-readable app install label.
         #[arg(long)]
         label: Option<String>,
     },
-    /// Print inbound and outbound pending device-link requests.
+    /// Print inbound and outbound pending `AppKey`-link requests.
     Requests,
-    /// Approve a pending device link request.
+    /// Approve a pending `AppKey`-link request.
     Approve {
-        /// Device pubkey or device-link approval URL.
+        /// `AppKey` pubkey or `AppKey`-link approval URL.
         request: String,
-        /// Optional device label to record alongside.
+        /// Optional app install label to record alongside.
         #[arg(long)]
         label: Option<String>,
     },
-    /// Reject a pending device link request without authorizing it.
+    /// Reject a pending `AppKey`-link request without authorizing it.
     Reject {
-        /// Device pubkey or device-link approval URL.
+        /// `AppKey` pubkey or `AppKey`-link approval URL.
         request: String,
     },
-    /// Print the current authorized-device roster.
+    /// Print the current authorized `AppKey` roster.
     List,
-    /// Revoke an authorized device and rotate the drive content key.
+    /// Revoke an authorized `AppKey` and rotate the drive content key.
     Revoke {
-        /// Device pubkey to revoke (npub1... or 64-char hex).
-        device: String,
+        /// `AppKey` pubkey to revoke (npub1... or 64-char hex).
+        app_key: String,
     },
-    /// Promote an authorized device to admin.
+    /// Promote an authorized `AppKey` to admin.
     #[command(name = "appoint-admin", alias = "promote-admin")]
     AppointAdmin {
-        /// Device pubkey to promote (npub1... or 64-char hex).
-        device: String,
+        /// `AppKey` pubkey to promote (npub1... or 64-char hex).
+        app_key: String,
     },
-    /// Demote an admin device to a normal member.
+    /// Demote an admin `AppKey` to a normal member.
     #[command(name = "demote-admin")]
     DemoteAdmin {
-        /// Device pubkey to demote (npub1... or 64-char hex).
-        device: String,
+        /// `AppKey` pubkey to demote (npub1... or 64-char hex).
+        app_key: String,
     },
 }
 
@@ -349,12 +349,12 @@ pub(crate) enum DevicesCmd {
 pub(crate) enum LinkInputCmd {
     /// Print the app-core link input classification as JSON.
     Classify {
-        /// Device-link, invite, owner npub, or owner hex input to classify.
+        /// `AppKey`-link, invite, owner npub, or owner hex input to classify.
         input: String,
     },
     /// Print the app-core link input validation as JSON.
     Validate {
-        /// Device-link, invite, owner npub, or owner hex input to validate.
+        /// `AppKey`-link, invite, owner npub, or owner hex input to validate.
         input: String,
     },
 }
