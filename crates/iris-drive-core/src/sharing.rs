@@ -9,8 +9,8 @@ use crate::config::DeviceRootRef;
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, parse_iris_profile_roster_op_event,
-    project_iris_profile_roster,
+    build_iris_profile_roster_op_event, iris_profile_roster_parent_ids,
+    parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
@@ -414,9 +414,10 @@ pub fn create_shared_folder(
     let mut op_time = created_at;
     for recipient in normalized_recipients.into_values() {
         op_time += 1;
-        ops.push(sign_share_roster_op(
+        ops.push(sign_share_roster_op_with_parents(
             owner_keys,
             share_id,
+            iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     recipient.app_pubkey,
@@ -438,9 +439,10 @@ pub fn create_shared_folder(
         .map(|facet| facet.pubkey.as_str())
         .collect::<BTreeSet<_>>();
     let wrapped_dck = wrap_share_key(owner_keys, recipients, &share_key)?;
-    ops.push(sign_share_roster_op(
+    ops.push(sign_share_roster_op_with_parents(
         owner_keys,
         share_id,
+        iris_profile_roster_parent_ids(&ops),
         IrisProfileRosterOp::RotateKeyEpoch {
             epoch: 1,
             wrapped_dck,
@@ -466,14 +468,18 @@ fn sign_share_roster_op(
     op: IrisProfileRosterOp,
     created_at: i64,
 ) -> Result<SignedIrisProfileRosterOp, SharingError> {
-    let event = build_iris_profile_roster_op_event(
-        signer_keys,
-        share_id,
-        Vec::new(),
-        None,
-        op,
-        created_at,
-    )?;
+    sign_share_roster_op_with_parents(signer_keys, share_id, Vec::new(), op, created_at)
+}
+
+fn sign_share_roster_op_with_parents(
+    signer_keys: &Keys,
+    share_id: IrisProfileId,
+    parents: Vec<String>,
+    op: IrisProfileRosterOp,
+    created_at: i64,
+) -> Result<SignedIrisProfileRosterOp, SharingError> {
+    let event =
+        build_iris_profile_roster_op_event(signer_keys, share_id, parents, None, op, created_at)?;
     parse_iris_profile_roster_op_event(&event).map_err(SharingError::from)
 }
 
@@ -655,6 +661,52 @@ mod tests {
         let share_id = IrisProfileId::new_v4();
         let mut wrapped_dck = BTreeMap::new();
         wrapped_dck.insert(owner_pubkey.clone(), "owner-wrap".to_string());
+        let mut roster_ops = vec![
+            sign_share_roster_op(
+                &owner_keys,
+                share_id,
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        owner_pubkey.clone(),
+                        10,
+                        Some("Desktop".to_string()),
+                        ShareRole::Admin.capabilities(),
+                    ),
+                },
+                10,
+            )
+            .unwrap(),
+        ];
+        roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                share_id,
+                iris_profile_roster_parent_ids(&roster_ops),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        recipient_pubkey.clone(),
+                        11,
+                        Some("Phone".to_string()),
+                        ShareRole::Editor.capabilities(),
+                    ),
+                },
+                11,
+            )
+            .unwrap(),
+        );
+        roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                share_id,
+                iris_profile_roster_parent_ids(&roster_ops),
+                IrisProfileRosterOp::RotateKeyEpoch {
+                    epoch: 1,
+                    wrapped_dck,
+                },
+                12,
+            )
+            .unwrap(),
+        );
         let folder = SharedFolder {
             share_id,
             owner_profile_id: IrisProfileId::new_v4(),
@@ -666,46 +718,7 @@ mod tests {
                 (recipient_pubkey.clone(), IrisProfileId::new_v4()),
             ]),
             device_roots: BTreeMap::new(),
-            roster_ops: vec![
-                sign_share_roster_op(
-                    &owner_keys,
-                    share_id,
-                    IrisProfileRosterOp::AddFacet {
-                        facet: IrisProfileFacet::app_key(
-                            owner_pubkey.clone(),
-                            10,
-                            Some("Desktop".to_string()),
-                            ShareRole::Admin.capabilities(),
-                        ),
-                    },
-                    10,
-                )
-                .unwrap(),
-                sign_share_roster_op(
-                    &owner_keys,
-                    share_id,
-                    IrisProfileRosterOp::AddFacet {
-                        facet: IrisProfileFacet::app_key(
-                            recipient_pubkey.clone(),
-                            11,
-                            Some("Phone".to_string()),
-                            ShareRole::Editor.capabilities(),
-                        ),
-                    },
-                    11,
-                )
-                .unwrap(),
-                sign_share_roster_op(
-                    &owner_keys,
-                    share_id,
-                    IrisProfileRosterOp::RotateKeyEpoch {
-                        epoch: 1,
-                        wrapped_dck,
-                    },
-                    12,
-                )
-                .unwrap(),
-            ],
+            roster_ops,
         };
 
         let owner_view = shared_folder_view(&folder, &[], &owner_pubkey);

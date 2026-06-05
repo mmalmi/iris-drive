@@ -576,7 +576,7 @@ mod tests {
         let incomplete_epoch_event = crate::build_iris_profile_roster_op_event(
             account.device.keys(),
             account.state.profile_id,
-            Vec::new(),
+            crate::iris_profile_roster_parent_ids(&account.state.profile_roster_ops),
             None,
             crate::IrisProfileRosterOp::RotateKeyEpoch {
                 epoch: 3,

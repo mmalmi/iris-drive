@@ -89,7 +89,8 @@ pub use iris_profile::{
     IrisProfileId, IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterLog,
     IrisProfileRosterOp, IrisProfileRosterOpContent, IrisProfileRosterProjection,
     IrisProfileTombstone, KIND_IRIS_PROFILE_ROSTER_OP, KeyWrapStatus, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, iris_profile_roster_op_d_tag, iris_profile_tag_kind,
+    build_iris_profile_roster_op_event, iris_profile_roster_op_d_tag,
+    iris_profile_roster_parent_ids, iris_profile_tag_kind,
     is_iris_profile_roster_op_event_coordinate, parse_iris_profile_roster_op_event,
     project_iris_profile_roster,
 };

@@ -409,6 +409,14 @@ pub fn build_iris_profile_roster_op_event(
 }
 
 #[must_use]
+pub fn iris_profile_roster_parent_ids(ops: &[SignedIrisProfileRosterOp]) -> Vec<String> {
+    let Some(first) = ops.first() else {
+        return Vec::new();
+    };
+    project_iris_profile_roster(first.content.profile_id, ops.to_vec()).accepted_op_ids
+}
+
+#[must_use]
 pub fn iris_profile_roster_op_d_tag(profile_id: IrisProfileId, client_nonce: &str) -> String {
     format!("iris-profile/{profile_id}/roster-op/{client_nonce}")
 }
@@ -665,9 +673,11 @@ where
             .then_with(|| left.op_id.cmp(&right.op_id))
     });
 
+    let mut accepted_ops_by_id = BTreeMap::new();
     for op in ops {
-        if apply_projected_op(&mut projection, &op) {
-            projection.accepted_op_ids.push(op.op_id);
+        if apply_projected_op(&mut projection, &op, &accepted_ops_by_id) {
+            projection.accepted_op_ids.push(op.op_id.clone());
+            accepted_ops_by_id.insert(op.op_id.clone(), op);
         } else {
             projection.rejected_op_ids.push(op.op_id);
         }
@@ -678,8 +688,9 @@ where
 fn apply_projected_op(
     projection: &mut IrisProfileRosterProjection,
     signed: &SignedIrisProfileRosterOp,
+    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
 ) -> bool {
-    if !signer_can_apply(projection, signed) {
+    if !signer_can_apply_with_roster_parents(projection, signed, accepted_ops_by_id) {
         return false;
     }
     match &signed.content.op {
@@ -747,6 +758,56 @@ fn apply_projected_op(
             key_epoch.wrapped_dck.extend(wrapped_dck.clone());
             true
         }
+    }
+}
+
+fn signer_can_apply_with_roster_parents(
+    projection: &IrisProfileRosterProjection,
+    signed: &SignedIrisProfileRosterOp,
+    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
+) -> bool {
+    if projection.active_facets.is_empty() {
+        return is_valid_bootstrap_op(signed);
+    }
+    if signed.content.parents.is_empty() {
+        return false;
+    }
+    let Some(parent_projection) = project_roster_parent_closure(
+        projection.profile_id,
+        &signed.content.parents,
+        accepted_ops_by_id,
+    ) else {
+        return false;
+    };
+    signer_can_apply(&parent_projection, signed)
+}
+
+fn project_roster_parent_closure(
+    profile_id: IrisProfileId,
+    parents: &[String],
+    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
+) -> Option<IrisProfileRosterProjection> {
+    let mut pending = parents.to_vec();
+    let mut seen = BTreeSet::new();
+    while let Some(parent_id) = pending.pop() {
+        if !seen.insert(parent_id.clone()) {
+            continue;
+        }
+        let parent = accepted_ops_by_id.get(&parent_id)?;
+        pending.extend(parent.content.parents.iter().cloned());
+    }
+    let parent_ops = seen
+        .into_iter()
+        .map(|op_id| accepted_ops_by_id.get(&op_id).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    let parent_projection = project_iris_profile_roster(profile_id, parent_ops);
+    if parents
+        .iter()
+        .all(|parent| parent_projection.accepted_op_ids.contains(parent))
+    {
+        Some(parent_projection)
+    } else {
+        None
     }
 }
 
@@ -828,15 +889,19 @@ mod tests {
         op: IrisProfileRosterOp,
         created_at: i64,
     ) -> SignedIrisProfileRosterOp {
-        let event = build_iris_profile_roster_op_event(
-            signer,
-            profile_id,
-            Vec::new(),
-            None,
-            op,
-            created_at,
-        )
-        .unwrap();
+        signed_op_with_parents(signer, profile_id, Vec::new(), op, created_at)
+    }
+
+    fn signed_op_with_parents(
+        signer: &Keys,
+        profile_id: IrisProfileId,
+        parents: Vec<String>,
+        op: IrisProfileRosterOp,
+        created_at: i64,
+    ) -> SignedIrisProfileRosterOp {
+        let event =
+            build_iris_profile_roster_op_event(signer, profile_id, parents, None, op, created_at)
+                .unwrap();
         parse_iris_profile_roster_op_event(&event).unwrap()
     }
 
@@ -909,35 +974,37 @@ mod tests {
         let stranger = Keys::generate();
         let member_pubkey = member.public_key().to_hex();
         let stranger_pubkey = stranger.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        member_pubkey.clone(),
-                        11,
-                        Some("web app".to_string()),
-                        IrisProfileCapabilities::app_writer(),
-                    ),
-                },
-                11,
-            ),
-            signed_op(
-                &member,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        stranger_pubkey.clone(),
-                        12,
-                        None,
-                        IrisProfileCapabilities::app_writer(),
-                    ),
-                },
-                12,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let member_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    member_pubkey.clone(),
+                    11,
+                    Some("web app".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            11,
+        );
+        ops.push(member_op);
+        let stranger_op = signed_op_with_parents(
+            &member,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    stranger_pubkey.clone(),
+                    12,
+                    None,
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            12,
+        );
+        ops.push(stranger_op);
 
         let projection = project(profile_id, ops);
 
@@ -956,30 +1023,32 @@ mod tests {
         let recovered_app = Keys::generate();
         let recovery_pubkey = recovery.public_key().to_hex();
         let recovered_pubkey = recovered_app.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
-                },
-                11,
-            ),
-            signed_op(
-                &recovery,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        recovered_pubkey.clone(),
-                        12,
-                        Some("restored laptop".to_string()),
-                        IrisProfileCapabilities::app_admin(),
-                    ),
-                },
-                12,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let recovery_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
+            },
+            11,
+        );
+        ops.push(recovery_op);
+        let recovered_op = signed_op_with_parents(
+            &recovery,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    recovered_pubkey.clone(),
+                    12,
+                    Some("restored laptop".to_string()),
+                    IrisProfileCapabilities::app_admin(),
+                ),
+            },
+            12,
+        );
+        ops.push(recovered_op);
 
         let projection = project(profile_id, ops);
 
@@ -995,34 +1064,36 @@ mod tests {
         let admin = Keys::generate();
         let nip46 = Keys::generate();
         let nip46_pubkey = nip46.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::nip46(
-                        nip46_pubkey.clone(),
-                        11,
-                        Some("bunker".to_string()),
-                        true,
-                    ),
-                },
-                11,
-            ),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::RotateKeyEpoch {
-                    epoch: 1,
-                    wrapped_dck: BTreeMap::from([
-                        (admin.public_key().to_hex(), "wrap-admin".to_string()),
-                        (nip46_pubkey.clone(), "wrap-nip46".to_string()),
-                    ]),
-                },
-                12,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let nip46_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::nip46(
+                    nip46_pubkey.clone(),
+                    11,
+                    Some("bunker".to_string()),
+                    true,
+                ),
+            },
+            11,
+        );
+        ops.push(nip46_op);
+        let epoch_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 1,
+                wrapped_dck: BTreeMap::from([
+                    (admin.public_key().to_hex(), "wrap-admin".to_string()),
+                    (nip46_pubkey.clone(), "wrap-nip46".to_string()),
+                ]),
+            },
+            12,
+        );
+        ops.push(epoch_op);
 
         let projection = project(profile_id, ops);
 
@@ -1042,47 +1113,51 @@ mod tests {
         let recovered_app = Keys::generate();
         let nip46_pubkey = nip46.public_key().to_hex();
         let recovered_pubkey = recovered_app.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::nip46(
-                        nip46_pubkey.clone(),
-                        11,
-                        Some("signer only".to_string()),
-                        false,
-                    ),
-                },
-                11,
-            ),
-            signed_op(
-                &nip46,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        recovered_pubkey.clone(),
-                        12,
-                        Some("restored app".to_string()),
-                        IrisProfileCapabilities::app_admin(),
-                    ),
-                },
-                12,
-            ),
-            signed_op(
-                &nip46,
-                profile_id,
-                IrisProfileRosterOp::RotateKeyEpoch {
-                    epoch: 1,
-                    wrapped_dck: BTreeMap::from([(
-                        recovered_pubkey.clone(),
-                        "wrap-recovered".to_string(),
-                    )]),
-                },
-                13,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let nip46_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::nip46(
+                    nip46_pubkey.clone(),
+                    11,
+                    Some("signer only".to_string()),
+                    false,
+                ),
+            },
+            11,
+        );
+        ops.push(nip46_op);
+        let recovered_op = signed_op_with_parents(
+            &nip46,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    recovered_pubkey.clone(),
+                    12,
+                    Some("restored app".to_string()),
+                    IrisProfileCapabilities::app_admin(),
+                ),
+            },
+            12,
+        );
+        ops.push(recovered_op);
+        let epoch_op = signed_op_with_parents(
+            &nip46,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 1,
+                wrapped_dck: BTreeMap::from([(
+                    recovered_pubkey.clone(),
+                    "wrap-recovered".to_string(),
+                )]),
+            },
+            13,
+        );
+        ops.push(epoch_op);
 
         let projection = project(profile_id, ops);
 
@@ -1101,41 +1176,45 @@ mod tests {
         let admin = Keys::generate();
         let recovery = Keys::generate();
         let recovery_pubkey = recovery.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
-                },
-                11,
-            ),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::RotateKeyEpoch {
-                    epoch: 1,
-                    wrapped_dck: BTreeMap::from([(
-                        admin.public_key().to_hex(),
-                        "wrap-admin".to_string(),
-                    )]),
-                },
-                12,
-            ),
-            signed_op(
-                &recovery,
-                profile_id,
-                IrisProfileRosterOp::RepairKeyWraps {
-                    epoch: 1,
-                    wrapped_dck: BTreeMap::from([(
-                        recovery_pubkey.clone(),
-                        "wrap-recovery".to_string(),
-                    )]),
-                },
-                13,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let recovery_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), 11),
+            },
+            11,
+        );
+        ops.push(recovery_op);
+        let epoch_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 1,
+                wrapped_dck: BTreeMap::from([(
+                    admin.public_key().to_hex(),
+                    "wrap-admin".to_string(),
+                )]),
+            },
+            12,
+        );
+        ops.push(epoch_op);
+        let repair_op = signed_op_with_parents(
+            &recovery,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::RepairKeyWraps {
+                epoch: 1,
+                wrapped_dck: BTreeMap::from([(
+                    recovery_pubkey.clone(),
+                    "wrap-recovery".to_string(),
+                )]),
+            },
+            13,
+        );
+        ops.push(repair_op);
 
         let projection = project(profile_id, ops);
 
@@ -1155,34 +1234,36 @@ mod tests {
         let attempted_app = Keys::generate();
         let social_pubkey = social.public_key().to_hex();
         let attempted_pubkey = attempted_app.public_key().to_hex();
-        let ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::social_profile(
-                        social_pubkey.clone(),
-                        11,
-                        Some("nostr profile".to_string()),
-                    ),
-                },
-                11,
-            ),
-            signed_op(
-                &social,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        attempted_pubkey.clone(),
-                        12,
-                        None,
-                        IrisProfileCapabilities::app_writer(),
-                    ),
-                },
-                12,
-            ),
-        ];
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let social_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::social_profile(
+                    social_pubkey.clone(),
+                    11,
+                    Some("nostr profile".to_string()),
+                ),
+            },
+            11,
+        );
+        ops.push(social_op);
+        let attempted_op = signed_op_with_parents(
+            &social,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    attempted_pubkey.clone(),
+                    12,
+                    None,
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            12,
+        );
+        ops.push(attempted_op);
 
         let projection = project(profile_id, ops);
 
@@ -1193,15 +1274,98 @@ mod tests {
     }
 
     #[test]
+    fn roster_ops_are_authorized_by_declared_parent_closure() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let writer = Keys::generate();
+        let stale_invitee = Keys::generate();
+        let valid_invitee = Keys::generate();
+        let writer_pubkey = writer.public_key().to_hex();
+        let stale_invitee_pubkey = stale_invitee.public_key().to_hex();
+        let valid_invitee_pubkey = valid_invitee.public_key().to_hex();
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let writer_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    writer_pubkey.clone(),
+                    11,
+                    Some("writer".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            11,
+        );
+        ops.push(writer_op);
+        let stale_writer_view = iris_profile_roster_parent_ids(&ops);
+        let promote_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&ops),
+            IrisProfileRosterOp::SetCapabilities {
+                pubkey: writer_pubkey.clone(),
+                capabilities: IrisProfileCapabilities::app_admin(),
+            },
+            12,
+        );
+        ops.push(promote_op);
+        let stale_op = signed_op_with_parents(
+            &writer,
+            profile_id,
+            stale_writer_view,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    stale_invitee_pubkey.clone(),
+                    13,
+                    Some("stale invite".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            13,
+        );
+        let stale_op_id = stale_op.op_id.clone();
+        ops.push(stale_op);
+        let parent_ids_after_stale_branch = iris_profile_roster_parent_ids(&ops);
+        assert!(!parent_ids_after_stale_branch.contains(&stale_op_id));
+        let valid_op = signed_op_with_parents(
+            &writer,
+            profile_id,
+            parent_ids_after_stale_branch,
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    valid_invitee_pubkey.clone(),
+                    14,
+                    Some("valid invite".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            14,
+        );
+        ops.push(valid_op);
+
+        let projection = project(profile_id, ops);
+
+        assert!(projection.can_admin_profile(&writer_pubkey));
+        assert!(!projection.active_facets.contains_key(&stale_invitee_pubkey));
+        assert!(projection.can_write_roots(&valid_invitee_pubkey));
+        assert_eq!(projection.accepted_op_ids.len(), 4);
+        assert_eq!(projection.rejected_op_ids.len(), 1);
+    }
+
+    #[test]
     fn divergent_roster_logs_merge_by_union_and_project_deterministically() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
         let phone = Keys::generate();
         let recovery = Keys::generate();
         let bootstrap = bootstrap_op(&admin, profile_id, 10);
-        let phone_op = signed_op(
+        let base_ops = vec![bootstrap.clone()];
+        let phone_op = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&base_ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     phone.public_key().to_hex(),
@@ -1212,9 +1376,10 @@ mod tests {
             },
             11,
         );
-        let recovery_op = signed_op(
+        let recovery_op = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&base_ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::recovery_phrase(recovery.public_key().to_hex(), 11),
             },
@@ -1241,9 +1406,12 @@ mod tests {
         let admin = Keys::generate();
         let phone = Keys::generate();
         let phone_pubkey = phone.public_key().to_hex();
-        let add_phone = signed_op(
+        let bootstrap = bootstrap_op(&admin, profile_id, 10);
+        let mut ops = vec![bootstrap];
+        let add_phone = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     phone_pubkey.clone(),
@@ -1254,18 +1422,22 @@ mod tests {
             },
             11,
         );
-        let remove_phone = signed_op(
+        ops.push(add_phone);
+        let remove_phone = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::TombstoneFacet {
                 pubkey: phone_pubkey.clone(),
                 reason: Some("lost".to_string()),
             },
             12,
         );
-        let stale_resurrection = signed_op(
+        ops.push(remove_phone);
+        let stale_resurrection = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     phone_pubkey.clone(),
@@ -1276,16 +1448,9 @@ mod tests {
             },
             13,
         );
+        ops.push(stale_resurrection);
 
-        let projection = project(
-            profile_id,
-            vec![
-                bootstrap_op(&admin, profile_id, 10),
-                add_phone,
-                remove_phone,
-                stale_resurrection,
-            ],
-        );
+        let projection = project(profile_id, ops);
 
         assert!(projection.tombstones.contains_key(&phone_pubkey));
         assert!(!projection.active_facets.contains_key(&phone_pubkey));
@@ -1302,31 +1467,33 @@ mod tests {
         let phone = Keys::generate();
         let admin_pubkey = admin.public_key().to_hex();
         let phone_pubkey = phone.public_key().to_hex();
-        let base_ops = vec![
-            bootstrap_op(&admin, profile_id, 10),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::AddFacet {
-                    facet: IrisProfileFacet::app_key(
-                        phone_pubkey.clone(),
-                        11,
-                        Some("phone".to_string()),
-                        IrisProfileCapabilities::app_writer(),
-                    ),
-                },
-                11,
-            ),
-            signed_op(
-                &admin,
-                profile_id,
-                IrisProfileRosterOp::RotateKeyEpoch {
-                    epoch: 1,
-                    wrapped_dck: BTreeMap::from([(admin_pubkey, "wrap-admin".to_string())]),
-                },
-                12,
-            ),
-        ];
+        let mut base_ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let phone_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&base_ops),
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::app_key(
+                    phone_pubkey.clone(),
+                    11,
+                    Some("phone".to_string()),
+                    IrisProfileCapabilities::app_writer(),
+                ),
+            },
+            11,
+        );
+        base_ops.push(phone_op);
+        let epoch_op = signed_op_with_parents(
+            &admin,
+            profile_id,
+            iris_profile_roster_parent_ids(&base_ops),
+            IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 1,
+                wrapped_dck: BTreeMap::from([(admin_pubkey, "wrap-admin".to_string())]),
+            },
+            12,
+        );
+        base_ops.push(epoch_op);
         let needs_repair = project(profile_id, base_ops.clone());
 
         assert_eq!(
@@ -1339,15 +1506,17 @@ mod tests {
         );
 
         let mut repaired_ops = base_ops;
-        repaired_ops.push(signed_op(
+        let repair_op = signed_op_with_parents(
             &admin,
             profile_id,
+            iris_profile_roster_parent_ids(&repaired_ops),
             IrisProfileRosterOp::RepairKeyWraps {
                 epoch: 1,
                 wrapped_dck: BTreeMap::from([(phone_pubkey.clone(), "wrap-phone".to_string())]),
             },
             13,
-        ));
+        );
+        repaired_ops.push(repair_op);
         let repaired = project(profile_id, repaired_ops);
 
         assert_eq!(

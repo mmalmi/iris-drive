@@ -819,9 +819,10 @@ fn external_revocation_marks_state_revoked() {
     let dir = tempdir().unwrap();
     let mut acct = Account::create(dir.path(), None).unwrap();
     assert!(acct.state.is_authorized());
-    let tombstone = signed_profile_roster_op(
+    let tombstone = signed_profile_roster_op_with_parents(
         acct.device.keys(),
         acct.state.profile_id,
+        iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
         IrisProfileRosterOp::TombstoneFacet {
             pubkey: acct.state.device_pubkey.clone(),
             reason: Some("external revocation".to_owned()),

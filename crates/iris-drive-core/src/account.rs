@@ -30,7 +30,7 @@ use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
-    SignedIrisProfileRosterOp, build_iris_profile_roster_op_event,
+    SignedIrisProfileRosterOp, build_iris_profile_roster_op_event, iris_profile_roster_parent_ids,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 use crate::paths::{
@@ -807,10 +807,12 @@ impl Account {
         }
 
         let now = next_profile_timestamp(&self.state);
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
         let label = label.or_else(|| self.state.device_label.clone());
-        let add_op = signed_profile_roster_op(
+        let add_op = signed_profile_roster_op_with_parents(
             authority_keys,
             self.state.profile_id,
+            parents,
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
                     self.state.device_pubkey.clone(),
@@ -898,8 +900,14 @@ impl Account {
         op: IrisProfileRosterOp,
         created_at: i64,
     ) -> Result<(), AccountError> {
-        let signed =
-            signed_profile_roster_op(self.device.keys(), self.state.profile_id, op, created_at)?;
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents(
+            self.device.keys(),
+            self.state.profile_id,
+            parents,
+            op,
+            created_at,
+        )?;
         self.state.profile_roster_ops.push(signed);
         Ok(())
     }
@@ -932,9 +940,11 @@ impl Account {
             .keys()
             .next_back()
             .map_or(1, |epoch| epoch + 1);
-        let signed = signed_profile_roster_op(
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents(
             signer_keys,
             self.state.profile_id,
+            parents,
             IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck },
             created_at,
         )?;
@@ -1101,9 +1111,10 @@ fn initial_profile_roster_ops(
     let mut ops = vec![app_op];
     let mut recipients = vec![app_pubkey.as_str()];
     let epoch_created_at = if let Some(recovery_pubkey) = recovery_pubkey {
-        let recovery_op = signed_profile_roster_op(
+        let recovery_op = signed_profile_roster_op_with_parents(
             signer_keys,
             profile_id,
+            iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::recovery_phrase(
                     recovery_pubkey.to_string(),
@@ -1119,9 +1130,10 @@ fn initial_profile_roster_ops(
         created_at + 1
     };
     let wrapped_dck = wrap_dck_for_pubkeys(signer_keys.secret_key(), recipients, dck)?;
-    let epoch_op = signed_profile_roster_op(
+    let epoch_op = signed_profile_roster_op_with_parents(
         signer_keys,
         profile_id,
+        iris_profile_roster_parent_ids(&ops),
         IrisProfileRosterOp::RotateKeyEpoch {
             epoch: 1,
             wrapped_dck,
@@ -1138,14 +1150,18 @@ fn signed_profile_roster_op(
     op: IrisProfileRosterOp,
     created_at: i64,
 ) -> Result<SignedIrisProfileRosterOp, AccountError> {
-    let event = build_iris_profile_roster_op_event(
-        signer_keys,
-        profile_id,
-        Vec::new(),
-        None,
-        op,
-        created_at,
-    )?;
+    signed_profile_roster_op_with_parents(signer_keys, profile_id, Vec::new(), op, created_at)
+}
+
+fn signed_profile_roster_op_with_parents(
+    signer_keys: &Keys,
+    profile_id: IrisProfileId,
+    parents: Vec<String>,
+    op: IrisProfileRosterOp,
+    created_at: i64,
+) -> Result<SignedIrisProfileRosterOp, AccountError> {
+    let event =
+        build_iris_profile_roster_op_event(signer_keys, profile_id, parents, None, op, created_at)?;
     parse_iris_profile_roster_op_event(&event).map_err(AccountError::from)
 }
 

@@ -323,7 +323,7 @@ fn apply_share_roster_op_event_merges_known_shared_folder() {
     let op_event = build_iris_profile_roster_op_event(
         owner.device.keys(),
         folder.share_id,
-        Vec::new(),
+        crate::iris_profile_roster_parent_ids(&folder.roster_ops),
         None,
         IrisProfileRosterOp::AddFacet {
             facet: IrisProfileFacet::app_key(
@@ -408,7 +408,7 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
     let add_event = build_iris_profile_roster_op_event(
         acct.device.keys(),
         profile_id,
-        Vec::new(),
+        crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
         None,
         IrisProfileRosterOp::AddFacet {
             facet: IrisProfileFacet::app_key(
@@ -421,10 +421,13 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
         latest + 1,
     )
     .unwrap();
+    let add_op = crate::parse_iris_profile_roster_op_event(&add_event).unwrap();
+    let mut set_parents = crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops);
+    set_parents.push(add_op.op_id.clone());
     let set_event = build_iris_profile_roster_op_event(
         acct.device.keys(),
         profile_id,
-        Vec::new(),
+        set_parents,
         None,
         IrisProfileRosterOp::SetCapabilities {
             pubkey: new_app.clone(),
