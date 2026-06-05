@@ -326,6 +326,9 @@ pub(crate) enum AppKeysCmd {
     },
     /// Print the current authorized `AppKey` roster.
     List,
+    /// Repair missing key wraps for the current key epoch.
+    #[command(name = "repair-wraps")]
+    RepairWraps,
     /// Revoke an authorized `AppKey` and rotate the drive content key.
     Revoke {
         /// `AppKey` pubkey to revoke (npub1... or 64-char hex).

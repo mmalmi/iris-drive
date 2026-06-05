@@ -392,6 +392,43 @@ pub(crate) fn cmd_rotate_dck(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .account
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let mut account = Account::load(state, config_dir).context("loading account")?;
+    let repair = account
+        .repair_current_key_epoch_wraps()
+        .context("repairing current key epoch wraps")?;
+    let remaining_missing_key_wraps = account
+        .state
+        .profile_projection()
+        .active_key_recipients_missing_wraps(repair.epoch)
+        .iter()
+        .map(|pubkey| account_npub(pubkey))
+        .collect::<Vec<_>>();
+    let repaired_key_wraps = repair
+        .repaired_pubkeys
+        .iter()
+        .map(|pubkey| account_npub(pubkey))
+        .collect::<Vec<_>>();
+    config.account = Some(account.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "epoch": repair.epoch,
+            "dck_generation": repair.snapshot.dck_generation,
+            "repaired_key_wrap_count": repair.repaired_pubkeys.len(),
+            "repaired_key_wraps": repaired_key_wraps,
+            "remaining_missing_key_wraps": remaining_missing_key_wraps,
+        })
+    );
+    Ok(())
+}
+
 pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config

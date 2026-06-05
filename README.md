@@ -72,6 +72,7 @@ just run-cli app-keys invite
 just run-cli app-keys request <owner-npub-or-invite-url> --label "Laptop"
 just run-cli app-keys approve <app-key-request-url-or-npub>
 just run-cli app-keys list
+just run-cli app-keys repair-wraps
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
@@ -175,7 +176,7 @@ isolated development and tests. Important files live under that directory:
 
 - `config.toml`: app config, relays, drives, roster, backup targets
 - `key`: this app install's AppKey signing key
-- `owner_key`: recovery-derived key material for local recovery/decrypt support
+- `recovery_phrase`: 12-word IrisProfile recovery authority, when available
 - `blocks/`: Iris Drive htree block store
 - `Hashtree/`: embedded hashtree daemon runtime state
 

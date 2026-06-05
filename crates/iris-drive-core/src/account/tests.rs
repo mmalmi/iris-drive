@@ -314,6 +314,73 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
 }
 
 #[test]
+fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let nip46 = Keys::generate();
+    owner
+        .add_nip46_recovery(
+            &nip46.public_key().to_hex(),
+            Some("signer only".into()),
+            false,
+        )
+        .unwrap();
+    let owner_dck = owner.current_dck().unwrap();
+
+    let recovered_dir = tempdir().unwrap();
+    let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
+    recovered_device.save().unwrap();
+    let recovered_pubkey = recovered_device.pubkey_hex();
+    let mut recovered = Account {
+        state: AccountState {
+            profile_id: owner.state.profile_id,
+            owner_pubkey: owner.state.owner_pubkey.clone(),
+            device_pubkey: recovered_pubkey.clone(),
+            profile_roster_ops: owner.state.profile_roster_ops.clone(),
+            device_link_secret: "recover-secret".into(),
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::AwaitingApproval,
+            device_label: Some("web app".into()),
+            app_keys: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        },
+        device: recovered_device,
+        owner_key: None,
+    };
+    recovered
+        .admit_current_app_key_with_nip46_keys(&nip46, None)
+        .unwrap();
+
+    owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
+    owner.state.sync_app_keys_from_profile();
+    assert_eq!(
+        owner
+            .state
+            .profile_projection()
+            .active_key_recipients_missing_wraps(1),
+        vec![recovered_pubkey.clone()]
+    );
+
+    let repair = owner.repair_current_key_epoch_wraps().unwrap();
+
+    assert_eq!(repair.epoch, 1);
+    assert_eq!(repair.repaired_pubkeys, vec![recovered_pubkey.clone()]);
+    assert_eq!(owner.current_dck().unwrap(), owner_dck);
+    assert!(
+        owner
+            .state
+            .profile_projection()
+            .active_key_recipients_missing_wraps(1)
+            .is_empty()
+    );
+
+    recovered.state.profile_roster_ops = owner.state.profile_roster_ops.clone();
+    recovered.state.sync_app_keys_from_profile();
+    assert_eq!(recovered.current_dck().unwrap(), owner_dck);
+}
+
+#[test]
 fn link_starts_awaiting_approval_no_owner_key() {
     let dir = tempdir().unwrap();
     // Fake owner npub (64 hex chars).

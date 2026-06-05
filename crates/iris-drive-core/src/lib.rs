@@ -56,8 +56,8 @@ pub mod sync;
 pub mod sync_cache;
 
 pub use account::{
-    Account, AccountError, AccountState, DeviceAuthorizationState, LogoutReport,
-    logout_local_account,
+    Account, AccountError, AccountState, DeviceAuthorizationState, KeyWrapRepairOutcome,
+    LogoutReport, logout_local_account,
 };
 pub use app_keys::{
     AppActorEntry, AppActorRole, AppKeysSnapshot, ApplyDecision, apply_snapshot, select_latest,

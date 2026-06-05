@@ -535,6 +535,28 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 }
 
 #[test]
+fn app_keys_repair_wraps_reports_noop_when_epoch_is_complete() {
+    let owner_dir = tempdir().unwrap();
+    run_json(owner_dir.path(), &["init", "--label", "admin"]);
+
+    let repaired = run_json(owner_dir.path(), &["app-keys", "repair-wraps"]);
+
+    assert_eq!(repaired["repaired_key_wrap_count"], 0);
+    assert!(
+        repaired["repaired_key_wraps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        repaired["remaining_missing_key_wraps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();

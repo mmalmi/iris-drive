@@ -76,6 +76,8 @@ pub enum AccountError {
     NoCurrentSnapshot,
     #[error("no DCK wrap for this device (revoked or never authorized)")]
     NoWrapForThisDevice,
+    #[error("current AppKey cannot repair key epoch signed by {signed_by_pubkey}")]
+    CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey: String },
     #[error("failed to wrap DCK: {0}")]
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
@@ -149,6 +151,13 @@ pub struct AccountState {
     pub outbound_device_link_request: Option<PendingDeviceLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_device_link_requests: Vec<InboundDeviceLinkRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyWrapRepairOutcome {
+    pub epoch: u64,
+    pub repaired_pubkeys: Vec<String>,
+    pub snapshot: AppKeysSnapshot,
 }
 
 impl AccountState {
@@ -950,6 +959,72 @@ impl Account {
         )?;
         self.state.profile_roster_ops.push(signed);
         Ok(())
+    }
+
+    /// Add missing DCK wraps for the current key epoch without rotating the
+    /// DCK. Only the `AppKey` that signed the epoch may repair it, keeping the
+    /// epoch's encryption authority unambiguous after divergent roster merges.
+    pub fn repair_current_key_epoch_wraps(&mut self) -> Result<KeyWrapRepairOutcome, AccountError> {
+        let projection = self.state.profile_projection();
+        let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
+            return Err(AccountError::NoCurrentSnapshot);
+        };
+        if key_epoch.signed_by_pubkey != self.state.device_pubkey {
+            return Err(AccountError::CurrentAppKeyCannotRepairKeyEpoch {
+                signed_by_pubkey: key_epoch.signed_by_pubkey.clone(),
+            });
+        }
+        let Some(current_facet) = projection.active_facets.get(&self.state.device_pubkey) else {
+            return Err(AccountError::NoOwnerAuthority);
+        };
+        if !current_facet.capabilities.can_change_key_epochs() {
+            return Err(AccountError::NoOwnerAuthority);
+        }
+
+        let missing_pubkeys = projection.active_key_recipients_missing_wraps(*epoch);
+        if missing_pubkeys.is_empty() {
+            self.state.sync_app_keys_from_profile();
+            return Ok(KeyWrapRepairOutcome {
+                epoch: *epoch,
+                repaired_pubkeys: Vec::new(),
+                snapshot: self
+                    .state
+                    .app_keys
+                    .as_ref()
+                    .ok_or(AccountError::NoCurrentSnapshot)?
+                    .clone(),
+            });
+        }
+
+        let dck = self.current_dck()?;
+        let wrapped_dck = wrap_dck_for_pubkeys(
+            self.device.keys().secret_key(),
+            missing_pubkeys.iter().map(String::as_str),
+            &dck,
+        )?;
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents(
+            self.device.keys(),
+            self.state.profile_id,
+            parents,
+            IrisProfileRosterOp::RepairKeyWraps {
+                epoch: *epoch,
+                wrapped_dck,
+            },
+            next_profile_timestamp(&self.state),
+        )?;
+        self.state.profile_roster_ops.push(signed);
+        self.state.sync_app_keys_from_profile();
+        Ok(KeyWrapRepairOutcome {
+            epoch: *epoch,
+            repaired_pubkeys: missing_pubkeys,
+            snapshot: self
+                .state
+                .app_keys
+                .as_ref()
+                .ok_or(AccountError::NoCurrentSnapshot)?
+                .clone(),
+        })
     }
 
     /// Decrypt this device's DCK wrap from the current snapshot. Errors
