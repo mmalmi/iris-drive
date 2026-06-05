@@ -31,9 +31,9 @@ use crate::config::{AppConfig, ConfigError};
 use crate::identity::{DeviceIdentity, IdentityError, OwnerKey};
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
-    IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, parse_iris_profile_roster_op_event,
-    project_iris_profile_roster,
+    IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
+    SignedIrisProfileRosterOp, build_iris_profile_roster_op_event,
+    parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 use crate::nostr_events::build_app_keys_event;
 use crate::paths::{
@@ -760,6 +760,49 @@ impl Account {
         Ok(self.state.app_keys.as_ref().expect("just applied"))
     }
 
+    /// Add a NIP-46 signer as an `IrisProfile` recovery authority. When
+    /// `can_decrypt_key_epochs` is true, the current admin rotates the key
+    /// epoch so the signer receives a DCK wrap immediately.
+    pub fn add_nip46_recovery(
+        &mut self,
+        nip46_pubkey_hex: &str,
+        label: Option<String>,
+        can_decrypt_key_epochs: bool,
+    ) -> Result<(), AccountError> {
+        if !self.state.can_manage_devices() {
+            return Err(AccountError::NoOwnerAuthority);
+        }
+        PublicKey::from_hex(nip46_pubkey_hex)
+            .map_err(|e| AccountError::InvalidDevicePubkey(e.to_string()))?;
+        let projection = self.state.profile_projection();
+        if projection.active_facets.contains_key(nip46_pubkey_hex) {
+            return Err(AccountError::AlreadyAuthorized);
+        }
+        if projection.tombstones.contains_key(nip46_pubkey_hex) {
+            return Err(AccountError::CurrentAppKeyTombstoned);
+        }
+
+        let now = next_profile_timestamp(&self.state);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::nip46(
+                    nip46_pubkey_hex.to_string(),
+                    now,
+                    label,
+                    can_decrypt_key_epochs,
+                ),
+            },
+            now,
+        )?;
+        if can_decrypt_key_epochs {
+            let dck = generate_dck();
+            self.rotate_profile_dck_epoch(&dck, now + 1)?;
+        }
+        self.state.sync_app_keys_from_profile();
+        self.record_current_app_keys_event()?;
+        Ok(())
+    }
+
     /// Use the profile's recovery phrase authority to admit this install's
     /// fresh `AppKey` into an already-known `IrisProfile` roster.
     ///
@@ -781,18 +824,43 @@ impl Account {
         }
         let recovery_key =
             OwnerKey::from_recovery_phrase(&recovery_phrase, owner_key_path_in(Path::new("")))?;
-        self.current_dck_from_recovery_key(&recovery_key)?;
+        self.admit_current_app_key_with_authority_keys(
+            recovery_key.keys(),
+            IrisProfileKeyPurpose::RecoveryPhrase,
+            label,
+        )
+    }
 
-        let recovery_pubkey = recovery_key.pubkey_hex();
+    /// Use a configured NIP-46 signer authority to admit this install's fresh
+    /// `AppKey`. If that signer is not configured to decrypt key epochs, the
+    /// `AppKey` is authorized but its current DCK wrap remains repair-needed.
+    pub fn admit_current_app_key_with_nip46_keys(
+        &mut self,
+        nip46_keys: &Keys,
+        label: Option<String>,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        self.admit_current_app_key_with_authority_keys(
+            nip46_keys,
+            IrisProfileKeyPurpose::Nip46Signer,
+            label,
+        )
+    }
+
+    fn admit_current_app_key_with_authority_keys(
+        &mut self,
+        authority_keys: &Keys,
+        expected_purpose: IrisProfileKeyPurpose,
+        label: Option<String>,
+    ) -> Result<&AppKeysSnapshot, AccountError> {
+        let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
-        let Some(recovery_facet) = projection.active_facets.get(&recovery_pubkey) else {
+        let Some(authority_facet) = projection.active_facets.get(&authority_pubkey) else {
             return Err(AccountError::RecoveryAuthorityUnavailable);
         };
-        if !recovery_facet.capabilities.can_recover_app_keys {
+        if !authority_facet.has_purpose(expected_purpose)
+            || !authority_facet.capabilities.can_recover_app_keys
+        {
             return Err(AccountError::RecoveryAuthorityUnavailable);
-        }
-        if !recovery_facet.capabilities.can_change_key_epochs() {
-            return Err(AccountError::RecoveryCannotRotateKeyEpochs);
         }
         if projection
             .tombstones
@@ -803,11 +871,18 @@ impl Account {
         if projection.can_write_roots(&self.state.device_pubkey) {
             return Err(AccountError::AlreadyAuthorized);
         }
+        let should_rotate_epoch = authority_facet.capabilities.can_decrypt_key_epochs;
+        if should_rotate_epoch {
+            self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
+            if !authority_facet.capabilities.can_change_key_epochs() {
+                return Err(AccountError::RecoveryCannotRotateKeyEpochs);
+            }
+        }
 
         let now = next_profile_timestamp(&self.state);
         let label = label.or_else(|| self.state.device_label.clone());
         let add_op = signed_profile_roster_op(
-            recovery_key.keys(),
+            authority_keys,
             self.state.profile_id,
             IrisProfileRosterOp::AddFacet {
                 facet: IrisProfileFacet::app_key(
@@ -821,8 +896,10 @@ impl Account {
         )?;
         self.state.profile_roster_ops.push(add_op);
 
-        let dck = generate_dck();
-        self.rotate_profile_dck_epoch_with_signer(recovery_key.keys(), &dck, now + 1)?;
+        if should_rotate_epoch {
+            let dck = generate_dck();
+            self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
+        }
         self.state.sync_app_keys_from_profile();
         self.record_current_app_keys_event()?;
         Ok(self.state.app_keys.as_ref().expect("just applied"))
@@ -998,15 +1075,29 @@ impl Account {
         }
         let recovery_key =
             OwnerKey::from_recovery_phrase(recovery_phrase, owner_key_path_in(Path::new("")))?;
-        self.current_dck_from_recovery_key(&recovery_key)
+        self.current_dck_from_authority_keys(
+            recovery_key.keys(),
+            IrisProfileKeyPurpose::RecoveryPhrase,
+        )
     }
 
-    fn current_dck_from_recovery_key(
+    pub fn current_dck_from_nip46_keys(&self, nip46_keys: &Keys) -> Result<[u8; 32], AccountError> {
+        self.current_dck_from_authority_keys(nip46_keys, IrisProfileKeyPurpose::Nip46Signer)
+    }
+
+    fn current_dck_from_authority_keys(
         &self,
-        recovery_key: &OwnerKey,
+        authority_keys: &Keys,
+        expected_purpose: IrisProfileKeyPurpose,
     ) -> Result<[u8; 32], AccountError> {
-        let recovery_pubkey = recovery_key.pubkey_hex();
+        let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
+        let Some(facet) = projection.active_facets.get(&authority_pubkey) else {
+            return Err(AccountError::RecoveryAuthorityUnavailable);
+        };
+        if !facet.has_purpose(expected_purpose) || !facet.capabilities.can_decrypt_key_epochs {
+            return Err(AccountError::RecoveryAuthorityUnavailable);
+        }
         let key_epoch = projection
             .key_epochs
             .values()
@@ -1014,11 +1105,11 @@ impl Account {
             .ok_or(AccountError::NoCurrentSnapshot)?;
         let wrap = key_epoch
             .wrapped_dck
-            .get(&recovery_pubkey)
+            .get(&authority_pubkey)
             .ok_or(AccountError::NoWrapForThisDevice)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
             .map_err(|e| AccountError::InvalidOwnerPubkey(e.to_string()))?;
-        let bytes = nip44::decrypt_to_bytes(recovery_key.keys().secret_key(), &signer_pk, wrap)
+        let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
             .map_err(|e| AccountError::Unwrap(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .as_slice()

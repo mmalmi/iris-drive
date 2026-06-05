@@ -1,4 +1,5 @@
 use super::*;
+use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
 use tempfile::tempdir;
 
 #[test]
@@ -179,6 +180,139 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
     owner.state.sync_app_keys_from_profile();
     assert_eq!(owner.current_dck().unwrap(), recovered_dck);
+}
+
+#[test]
+fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
+    let dir = tempdir().unwrap();
+    let mut acct = Account::create(dir.path(), Some("native".into())).unwrap();
+    let nip46 = Keys::generate();
+    let nip46_pubkey = nip46.public_key().to_hex();
+
+    acct.add_nip46_recovery(&nip46_pubkey, Some("bunker".into()), true)
+        .unwrap();
+
+    let projection = acct.state.profile_projection();
+    let facet = projection.active_facets.get(&nip46_pubkey).unwrap();
+    assert!(facet.has_purpose(IrisProfileKeyPurpose::Nip46Signer));
+    assert!(!projection.can_write_roots(&nip46_pubkey));
+    assert!(projection.can_admin_profile(&nip46_pubkey));
+    let latest_epoch = projection.key_epochs.keys().next_back().copied().unwrap();
+    assert_eq!(
+        projection.key_wrap_status(&nip46_pubkey, latest_epoch),
+        KeyWrapStatus::Available
+    );
+    assert_eq!(
+        acct.current_dck_from_nip46_keys(&nip46).unwrap(),
+        acct.current_dck().unwrap()
+    );
+}
+
+#[test]
+fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let nip46 = Keys::generate();
+    let nip46_pubkey = nip46.public_key().to_hex();
+    owner
+        .add_nip46_recovery(&nip46_pubkey, Some("bunker".into()), true)
+        .unwrap();
+    let old_owner_dck = owner.current_dck().unwrap();
+
+    let recovered_dir = tempdir().unwrap();
+    let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
+    recovered_device.save().unwrap();
+    let recovered_pubkey = recovered_device.pubkey_hex();
+    let mut recovered = Account {
+        state: AccountState {
+            profile_id: owner.state.profile_id,
+            owner_pubkey: owner.state.owner_pubkey.clone(),
+            device_pubkey: recovered_pubkey.clone(),
+            profile_roster_ops: owner.state.profile_roster_ops.clone(),
+            device_link_secret: "recover-secret".into(),
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::AwaitingApproval,
+            device_label: Some("web app".into()),
+            app_keys: None,
+            app_keys_event: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        },
+        device: recovered_device,
+        owner_key: None,
+    };
+
+    let snap = recovered
+        .admit_current_app_key_with_nip46_keys(&nip46, None)
+        .unwrap();
+
+    assert!(snap.is_admin(&recovered_pubkey));
+    assert_eq!(snap.signer_pubkey(), nip46_pubkey);
+    assert!(recovered.state.is_authorized());
+    assert!(recovered.state.can_manage_devices());
+    let projection = recovered.state.profile_projection();
+    assert!(projection.can_write_roots(&recovered_pubkey));
+    assert!(projection.can_admin_profile(&recovered_pubkey));
+    assert!(!projection.can_write_roots(&nip46_pubkey));
+    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(3));
+
+    let recovered_dck = recovered.current_dck().unwrap();
+    assert_ne!(recovered_dck, old_owner_dck);
+    owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
+    owner.state.sync_app_keys_from_profile();
+    assert_eq!(owner.current_dck().unwrap(), recovered_dck);
+}
+
+#[test]
+fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Account::create(owner_dir.path(), Some("native".into())).unwrap();
+    let nip46 = Keys::generate();
+    let nip46_pubkey = nip46.public_key().to_hex();
+    owner
+        .add_nip46_recovery(&nip46_pubkey, Some("signer only".into()), false)
+        .unwrap();
+
+    let recovered_dir = tempdir().unwrap();
+    let recovered_device = DeviceIdentity::generate(recovered_dir.path().join("key"));
+    recovered_device.save().unwrap();
+    let recovered_pubkey = recovered_device.pubkey_hex();
+    let mut recovered = Account {
+        state: AccountState {
+            profile_id: owner.state.profile_id,
+            owner_pubkey: owner.state.owner_pubkey.clone(),
+            device_pubkey: recovered_pubkey.clone(),
+            profile_roster_ops: owner.state.profile_roster_ops.clone(),
+            device_link_secret: "recover-secret".into(),
+            has_owner_signing_authority: false,
+            authorization_state: DeviceAuthorizationState::AwaitingApproval,
+            device_label: Some("web app".into()),
+            app_keys: None,
+            app_keys_event: None,
+            outbound_device_link_request: None,
+            inbound_device_link_requests: Vec::new(),
+        },
+        device: recovered_device,
+        owner_key: None,
+    };
+
+    let snap = recovered
+        .admit_current_app_key_with_nip46_keys(&nip46, None)
+        .unwrap();
+
+    assert!(snap.contains(&recovered_pubkey));
+    assert_eq!(snap.signer_pubkey(), owner.state.device_pubkey);
+    let projection = recovered.state.profile_projection();
+    assert!(projection.can_write_roots(&recovered_pubkey));
+    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(1));
+    assert_eq!(
+        projection.key_wrap_status(&recovered_pubkey, 1),
+        KeyWrapStatus::RepairNeeded
+    );
+    assert!(matches!(
+        recovered.current_dck(),
+        Err(AccountError::NoWrapForThisDevice)
+    ));
 }
 
 #[test]

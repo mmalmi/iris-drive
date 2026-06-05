@@ -186,7 +186,7 @@ impl IrisProfileCapabilities {
 
     #[must_use]
     pub fn can_change_key_epochs(&self) -> bool {
-        self.can_admin_profile || (self.can_recover_app_keys && self.can_decrypt_key_epochs)
+        self.can_decrypt_key_epochs && (self.can_admin_profile || self.can_recover_app_keys)
     }
 }
 
@@ -1032,6 +1032,67 @@ mod tests {
             projection.key_wrap_status(&nip46_pubkey, 1),
             KeyWrapStatus::Available
         );
+    }
+
+    #[test]
+    fn signer_only_nip46_can_admit_app_key_but_not_rotate_epochs() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let nip46 = Keys::generate();
+        let recovered_app = Keys::generate();
+        let nip46_pubkey = nip46.public_key().to_hex();
+        let recovered_pubkey = recovered_app.public_key().to_hex();
+        let ops = vec![
+            bootstrap_op(&admin, profile_id, 10),
+            signed_op(
+                &admin,
+                profile_id,
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::nip46(
+                        nip46_pubkey.clone(),
+                        11,
+                        Some("signer only".to_string()),
+                        false,
+                    ),
+                },
+                11,
+            ),
+            signed_op(
+                &nip46,
+                profile_id,
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        recovered_pubkey.clone(),
+                        12,
+                        Some("restored app".to_string()),
+                        IrisProfileCapabilities::app_admin(),
+                    ),
+                },
+                12,
+            ),
+            signed_op(
+                &nip46,
+                profile_id,
+                IrisProfileRosterOp::RotateKeyEpoch {
+                    epoch: 1,
+                    wrapped_dck: BTreeMap::from([(
+                        recovered_pubkey.clone(),
+                        "wrap-recovered".to_string(),
+                    )]),
+                },
+                13,
+            ),
+        ];
+
+        let projection = project(profile_id, ops);
+
+        assert!(projection.can_write_roots(&recovered_pubkey));
+        assert_eq!(
+            projection.key_wrap_status(&recovered_pubkey, 1),
+            KeyWrapStatus::NoSuchEpoch
+        );
+        assert_eq!(projection.accepted_op_ids.len(), 3);
+        assert_eq!(projection.rejected_op_ids.len(), 1);
     }
 
     #[test]
