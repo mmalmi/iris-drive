@@ -1,6 +1,5 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-use nostr_sdk::nips::nip19::FromBech32;
 
 pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Result<()> {
     match command.unwrap_or(SharesCmd::List) {
@@ -52,46 +51,27 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
 }
 
 fn cmd_shares_create(config_dir: &Path, source_path: &str, name: Option<&str>) -> Result<()> {
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let account = Profile::load(state, config_dir).context("loading profile")?;
-    let display_name = name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map_or_else(
-            || default_display_name_for_share_path(source_path),
-            str::to_owned,
-        );
-    let folder = iris_drive_core::create_shared_folder(
-        account.app_key.keys(),
-        account.state.profile_id,
-        source_path,
-        &display_name,
-        account.state.app_key_label.clone(),
-        Vec::new(),
-        share_timestamp(),
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::CreateShare {
+            source_path: source_path.to_owned(),
+            display_name: name.map(str::to_owned),
+        },
     )
     .context("creating shared folder")?;
-    let share_id = folder.share_id;
-    config.upsert_shared_folder(folder);
-    let views = iris_drive_core::shared_folder_views(
-        &config.shared_folders,
-        &config.share_shortcuts,
-        &account.state.app_key_pubkey,
-    );
-    let created = views
+    let share_id = result
+        .share_id
+        .ok_or_else(|| anyhow::anyhow!("created share action did not return a share id"))?;
+    let created = result
+        .shares
         .iter()
         .find(|view| view.share_id == share_id)
         .ok_or_else(|| anyhow::anyhow!("created share was not projected"))?;
-    config.save(config_path_in(config_dir))?;
     println!(
         "{}",
         json!({
             "share": share_view_json(created),
-            "shares": share_views_json(&views),
+            "shares": share_views_json(&result.shares),
         })
     );
     Ok(())
@@ -156,18 +136,7 @@ fn cmd_shares_invite(
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
     let role = parse_share_role(role)?;
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let account = Profile::load(state, config_dir).context("loading profile")?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
-    let outcome = if let Some(path) = recipient_evidence_path {
+    let action = if let Some(path) = recipient_evidence_path {
         if profile_id.is_some()
             || app_key.is_some()
             || representative_npub_hint.is_some()
@@ -177,54 +146,43 @@ fn cmd_shares_invite(
                 "--recipient-evidence cannot be combined with --profile, --app-key, --npub, or --label"
             ));
         }
-        let evidence = load_share_recipient_evidence(path)?;
-        let resolved =
-            iris_drive_core::resolve_share_recipient_from_evidence(&evidence, display_name)
-                .context("resolving share recipient evidence")?;
-        iris_drive_core::invite_shared_folder_resolved_recipient(
-            folder,
-            account.app_key.keys(),
-            &resolved,
+        iris_drive_core::ShareAction::InviteShareMemberFromEvidence {
+            share_id,
+            evidence_json: load_share_recipient_evidence_json(path)?,
             role,
-            share_timestamp(),
-        )
+            display_name,
+        }
     } else {
         let profile_id = profile_id
             .ok_or_else(|| anyhow::anyhow!("--profile is required without --recipient-evidence"))?
             .parse::<iris_drive_core::IrisProfileId>()
             .context("parsing recipient IrisProfile id")?;
-        let app_pubkey = normalize_pubkey_hex(app_key.ok_or_else(|| {
-            anyhow::anyhow!("--app-key is required without --recipient-evidence")
-        })?)
-        .context("parsing recipient AppKey")?;
-        iris_drive_core::invite_shared_folder_member(
-            folder,
-            account.app_key.keys(),
-            iris_drive_core::ShareRecipient {
-                profile_id,
-                app_pubkey,
-                role,
-                label,
-                representative_npub_hint,
-                display_name,
-            },
-            share_timestamp(),
-        )
-    }
-    .context("inviting share member")?;
-    let view = iris_drive_core::shared_folder_view(
-        folder,
-        &config.share_shortcuts,
-        &account.state.app_key_pubkey,
-    );
-    config.save(config_path_in(config_dir))?;
+        let app_key = app_key
+            .ok_or_else(|| anyhow::anyhow!("--app-key is required without --recipient-evidence"))?;
+        iris_drive_core::ShareAction::InviteShareMember {
+            share_id,
+            profile_id,
+            app_key: app_key.to_owned(),
+            role,
+            representative_npub_hint,
+            display_name,
+            label,
+        }
+    };
+    let result = dispatch_cli_share_action(config_dir, action).context("inviting share member")?;
+    let share_id = result.share_id.unwrap_or(share_id);
+    let view = result
+        .shares
+        .iter()
+        .find(|view| view.share_id == share_id)
+        .ok_or_else(|| anyhow::anyhow!("invited share was not projected"))?;
     println!(
         "{}",
         json!({
-            "share_id": outcome.share_id.to_string(),
-            "profile_id": outcome.profile_id.to_string(),
-            "epoch": outcome.epoch,
-            "invite": outcome.invite_url,
+            "share_id": share_id.to_string(),
+            "profile_id": result.profile_id.map(|profile_id| profile_id.to_string()).unwrap_or_default(),
+            "epoch": result.epoch,
+            "invite": result.last_share_invite.unwrap_or_default(),
             "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
         })
     );
@@ -232,25 +190,25 @@ fn cmd_shares_invite(
 }
 
 fn cmd_shares_accept(config_dir: &Path, invite: &str) -> Result<()> {
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let folder = iris_drive_core::shared_folder_from_invite_for_profile(invite, state.profile_id)
-        .context("accepting share invite")?;
-    let share_id = folder.share_id;
-    config.upsert_shared_folder(folder.clone());
-    let view = iris_drive_core::shared_folder_view(
-        &folder,
-        &config.share_shortcuts,
-        &state.app_key_pubkey,
-    );
-    config.save(config_path_in(config_dir))?;
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::AcceptShareInvite {
+            invite: invite.to_owned(),
+        },
+    )
+    .context("accepting share invite")?;
+    let share_id = result
+        .share_id
+        .ok_or_else(|| anyhow::anyhow!("accepted share action did not return a share id"))?;
+    let view = result
+        .shares
+        .iter()
+        .find(|view| view.share_id == share_id)
+        .ok_or_else(|| anyhow::anyhow!("accepted share was not projected"))?;
     println!(
         "{}",
         json!({
-            "share": share_view_json(&view),
+            "share": share_view_json(view),
             "share_id": share_id.to_string(),
         })
     );
@@ -269,38 +227,27 @@ fn cmd_shares_revoke(
     let profile_id = profile_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing member IrisProfile id")?;
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let account = Profile::load(state, config_dir).context("loading profile")?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
-    let outcome = iris_drive_core::revoke_shared_folder_member(
-        folder,
-        account.app_key.keys(),
-        profile_id,
-        reason,
-        share_timestamp(),
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::RevokeShareMember {
+            share_id,
+            profile_id,
+            reason: reason.map(str::to_owned),
+        },
     )
     .context("revoking share member")?;
-    let view = iris_drive_core::shared_folder_view(
-        folder,
-        &config.share_shortcuts,
-        &account.state.app_key_pubkey,
-    );
-    config.save(config_path_in(config_dir))?;
+    let view = result
+        .shares
+        .iter()
+        .find(|view| view.share_id == share_id)
+        .ok_or_else(|| anyhow::anyhow!("revoked share was not projected"))?;
     println!(
         "{}",
         json!({
-            "share_id": outcome.share_id.to_string(),
-            "profile_id": outcome.profile_id.to_string(),
-            "epoch": outcome.epoch,
-            "revoked_app_keys": outcome.revoked_app_pubkeys
+            "share_id": result.share_id.unwrap_or(share_id).to_string(),
+            "profile_id": result.profile_id.unwrap_or(profile_id).to_string(),
+            "epoch": result.epoch,
+            "revoked_app_keys": result.revoked_app_pubkeys
                 .iter()
                 .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
                 .collect::<Vec<_>>(),
@@ -320,41 +267,27 @@ fn cmd_shares_shortcut(
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let current_app_pubkey = config
-        .profile
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::AddShareShortcut {
+            share_id,
+            path: path.map(str::to_owned),
+            parent: parent.map(str::to_owned),
+            target_path: Some(target_path.to_owned()),
+        },
+    )
+    .context("creating share shortcut")?;
+    let shortcut = result
+        .shortcut
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
-        .app_key_pubkey
-        .clone();
-    let folder = config
-        .shared_folder(share_id)
-        .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?
-        .clone();
-    let shortcut_path = match path {
-        Some(path) if !path.trim().is_empty() => path.trim().to_owned(),
-        _ => iris_drive_core::default_share_shortcut_path(
-            &config.share_shortcuts,
-            &folder.display_name,
-            parent.unwrap_or_default(),
-        )?,
-    };
-    let shortcut = iris_drive_core::ShareShortcut::new(share_id, &shortcut_path, target_path)
-        .context("creating share shortcut")?;
-    config.upsert_share_shortcut(shortcut.clone());
-    let views = iris_drive_core::shared_folder_views(
-        &config.shared_folders,
-        &config.share_shortcuts,
-        &current_app_pubkey,
-    );
-    config.save(config_path_in(config_dir))?;
+        .ok_or_else(|| anyhow::anyhow!("share shortcut action did not return a shortcut"))?;
     println!(
         "{}",
         json!({
             "share_id": share_id.to_string(),
-            "shortcut_path": shortcut.path,
-            "target_path": shortcut.target_path,
-            "shares": share_views_json(&views),
+            "shortcut_path": shortcut.path.clone(),
+            "target_path": shortcut.target_path.clone(),
+            "shares": share_views_json(&result.shares),
         })
     );
     Ok(())
@@ -364,40 +297,27 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let account = Profile::load(state, config_dir).context("loading profile")?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
-    let repair = iris_drive_core::repair_shared_folder_key_epoch_wraps(
-        folder,
-        account.app_key.keys(),
-        share_timestamp(),
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::RepairShareWraps { share_id },
     )
     .context("repairing share key epoch wraps")?;
-    let remaining_missing_key_wraps =
-        iris_drive_core::shared_folder_missing_key_wrap_pubkeys(folder, repair.epoch)
-            .iter()
-            .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
-            .collect::<Vec<_>>();
-    let repaired_key_wraps = repair
-        .repaired_pubkeys
+    let remaining_missing_key_wraps = result
+        .remaining_missing_key_wrap_pubkeys
         .iter()
         .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
         .collect::<Vec<_>>();
-    config.save(config_path_in(config_dir))?;
+    let repaired_key_wraps = result
+        .repaired_key_wrap_pubkeys
+        .iter()
+        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
+        .collect::<Vec<_>>();
     println!(
         "{}",
         json!({
-            "share_id": repair.share_id.to_string(),
-            "epoch": repair.epoch,
-            "repaired_key_wrap_count": repair.repaired_pubkeys.len(),
+            "share_id": result.share_id.unwrap_or(share_id).to_string(),
+            "epoch": result.epoch,
+            "repaired_key_wrap_count": result.repaired_key_wrap_count.unwrap_or_default(),
             "repaired_key_wraps": repaired_key_wraps,
             "remaining_missing_key_wraps": remaining_missing_key_wraps,
         })
@@ -453,15 +373,6 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
     })
 }
 
-fn default_display_name_for_share_path(source_path: &str) -> String {
-    source_path
-        .trim_matches('/')
-        .rsplit('/')
-        .find(|segment| !segment.trim().is_empty())
-        .unwrap_or("Shared folder")
-        .to_owned()
-}
-
 fn parse_share_role(value: &str) -> Result<iris_drive_core::ShareRole> {
     iris_drive_core::ShareRole::parse_user_input(value).ok_or_else(|| {
         anyhow::anyhow!(
@@ -471,28 +382,16 @@ fn parse_share_role(value: &str) -> Result<iris_drive_core::ShareRole> {
     })
 }
 
-fn load_share_recipient_evidence(
-    path: &Path,
-) -> Result<iris_drive_core::ShareRecipientProfileEvidence> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("reading recipient evidence {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("parsing recipient evidence {}", path.display()))
+fn load_share_recipient_evidence_json(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path)
+        .with_context(|| format!("reading recipient evidence {}", path.display()))
 }
 
-fn normalize_pubkey_hex(input: &str) -> Result<String> {
-    let trimmed = input.trim();
-    if trimmed.starts_with("npub1") {
-        return Ok(PublicKey::from_bech32(trimmed)
-            .context("parsing npub")?
-            .to_hex());
-    }
-    if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Ok(trimmed.to_ascii_lowercase());
-    }
-    Err(anyhow::anyhow!(
-        "expected npub1... or 64-char hex pubkey, got {trimmed}"
-    ))
+fn dispatch_cli_share_action(
+    config_dir: &Path,
+    action: iris_drive_core::ShareAction,
+) -> Result<iris_drive_core::ShareActionResult> {
+    iris_drive_core::dispatch_share_action(config_dir, action, share_timestamp())
 }
 
 fn share_timestamp() -> i64 {

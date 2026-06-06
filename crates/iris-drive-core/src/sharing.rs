@@ -2890,6 +2890,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn share_root_write_authorization_explains_profile_member_and_facet_state() {
         let owner_keys = Keys::generate();
         let owner_pubkey = owner_keys.public_key().to_hex();
@@ -3467,10 +3468,10 @@ mod tests {
 
         let recipient_pubkey = recipient_keys.public_key().to_hex();
         for op in &mut folder.roster_ops {
-            if let IrisProfileRosterOp::AddFacet { facet } = &mut op.content.op {
-                if facet.pubkey == recipient_pubkey {
-                    facet.profile_id = None;
-                }
+            if let IrisProfileRosterOp::AddFacet { facet } = &mut op.content.op
+                && facet.pubkey == recipient_pubkey
+            {
+                facet.profile_id = None;
             }
         }
         folder
@@ -4090,6 +4091,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn shared_folder_key_wrap_repair_requires_active_share_admin_member() {
         let owner_keys = Keys::generate();
         let owner_pubkey = owner_keys.public_key().to_hex();
@@ -4206,6 +4208,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn revoking_share_member_tombstones_profile_app_keys_and_rotates_epoch() {
         let owner_keys = Keys::generate();
         let owner_profile_id = IrisProfileId::new_v4();

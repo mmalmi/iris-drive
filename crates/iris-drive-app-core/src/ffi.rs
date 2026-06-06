@@ -43,7 +43,7 @@ use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
 use nostr_sdk::PublicKey;
-use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
+use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(not(test))]
@@ -355,11 +355,30 @@ impl NativeAppRuntime {
     }
 
     fn dispatch_share_action(&mut self, action: NativeAppAction) {
-        match action {
+        match self.try_dispatch_share_action(action) {
+            Ok(result) => {
+                if let Some(invite) = result.last_share_invite {
+                    self.state.ui.last_share_invite = invite;
+                }
+            }
+            Err(error) => {
+                self.state.error = format!("running share action: {error:#}");
+            }
+        }
+    }
+
+    fn try_dispatch_share_action(
+        &self,
+        action: NativeAppAction,
+    ) -> anyhow::Result<iris_drive_core::ShareActionResult> {
+        let action = match action {
             NativeAppAction::CreateShare {
                 source_path,
                 display_name,
-            } => self.create_share(&source_path, &display_name),
+            } => iris_drive_core::ShareAction::CreateShare {
+                source_path,
+                display_name: optional_trimmed(&display_name),
+            },
             NativeAppAction::InviteShareMember {
                 share_id,
                 profile_id,
@@ -368,41 +387,61 @@ impl NativeAppRuntime {
                 representative_npub_hint,
                 display_name,
                 label,
-            } => self.invite_share_member(
-                &share_id,
-                &profile_id,
-                &app_key,
-                &role,
-                &representative_npub_hint,
-                &display_name,
-                &label,
-            ),
+            } => iris_drive_core::ShareAction::InviteShareMember {
+                share_id: share_id.parse()?,
+                profile_id: profile_id.parse()?,
+                app_key,
+                role: parse_share_role(&role)?,
+                representative_npub_hint: optional_trimmed(&representative_npub_hint),
+                display_name: optional_trimmed(&display_name),
+                label: optional_trimmed(&label),
+            },
             NativeAppAction::InviteShareMemberFromEvidence {
                 share_id,
                 evidence_json,
                 role,
                 display_name,
-            } => self.invite_share_member_from_evidence(
-                &share_id,
-                &evidence_json,
-                &role,
-                &display_name,
-            ),
-            NativeAppAction::AcceptShareInvite { invite } => self.accept_share_invite(&invite),
+            } => iris_drive_core::ShareAction::InviteShareMemberFromEvidence {
+                share_id: share_id.parse()?,
+                evidence_json,
+                role: parse_share_role(&role)?,
+                display_name: optional_trimmed(&display_name),
+            },
+            NativeAppAction::AcceptShareInvite { invite } => {
+                iris_drive_core::ShareAction::AcceptShareInvite { invite }
+            }
             NativeAppAction::RevokeShareMember {
                 share_id,
                 profile_id,
                 reason,
-            } => self.revoke_share_member(&share_id, &profile_id, &reason),
+            } => iris_drive_core::ShareAction::RevokeShareMember {
+                share_id: share_id.parse()?,
+                profile_id: profile_id.parse()?,
+                reason: optional_trimmed(&reason),
+            },
             NativeAppAction::AddShareShortcut {
                 share_id,
                 path,
                 parent,
                 target_path,
-            } => self.add_share_shortcut(&share_id, &path, &parent, &target_path),
-            NativeAppAction::RepairShareWraps { share_id } => self.repair_share_wraps(&share_id),
+            } => iris_drive_core::ShareAction::AddShareShortcut {
+                share_id: share_id.parse()?,
+                path: optional_trimmed(&path),
+                parent: optional_trimmed(&parent),
+                target_path: optional_trimmed(&target_path),
+            },
+            NativeAppAction::RepairShareWraps { share_id } => {
+                iris_drive_core::ShareAction::RepairShareWraps {
+                    share_id: share_id.parse()?,
+                }
+            }
             _ => unreachable!("non-share action dispatched to share action handler"),
-        }
+        };
+        iris_drive_core::dispatch_share_action(
+            Path::new(&self.data_dir),
+            action,
+            share_now_seconds(),
+        )
     }
 
     fn create_profile(&mut self, app_key_label: &str) {
@@ -1192,276 +1231,6 @@ impl NativeAppRuntime {
         if before == self.state.ui.roots.len() {
             self.state.error = format!("sync root not found: {name}");
         }
-    }
-
-    fn create_share(&mut self, source_path: &str, display_name: &str) {
-        if let Err(error) = self.try_create_share(source_path, display_name) {
-            self.state.error = format!("creating share: {error:#}");
-        }
-    }
-
-    fn try_create_share(&self, source_path: &str, display_name: &str) -> anyhow::Result<()> {
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before creating shares")?;
-        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
-        let display_name = if display_name.trim().is_empty() {
-            default_share_display_name(source_path)
-        } else {
-            display_name.trim().to_owned()
-        };
-        let folder = iris_drive_core::create_shared_folder(
-            account.app_key.keys(),
-            account.state.profile_id,
-            source_path,
-            &display_name,
-            account.state.app_key_label,
-            Vec::new(),
-            share_now_seconds(),
-        )?;
-        config.upsert_shared_folder(folder);
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn invite_share_member(
-        &mut self,
-        share_id: &str,
-        profile_id: &str,
-        app_key: &str,
-        role: &str,
-        representative_npub_hint: &str,
-        display_name: &str,
-        label: &str,
-    ) {
-        if let Err(error) = self.try_invite_share_member(
-            share_id,
-            profile_id,
-            app_key,
-            role,
-            representative_npub_hint,
-            display_name,
-            label,
-        ) {
-            self.state.error = format!("inviting share member: {error:#}");
-        }
-    }
-
-    fn invite_share_member_from_evidence(
-        &mut self,
-        share_id: &str,
-        evidence_json: &str,
-        role: &str,
-        display_name: &str,
-    ) {
-        if let Err(error) =
-            self.try_invite_share_member_from_evidence(share_id, evidence_json, role, display_name)
-        {
-            self.state.error = format!("inviting share member: {error:#}");
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn try_invite_share_member(
-        &mut self,
-        share_id: &str,
-        profile_id: &str,
-        app_key: &str,
-        role: &str,
-        representative_npub_hint: &str,
-        display_name: &str,
-        label: &str,
-    ) -> anyhow::Result<()> {
-        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let profile_id = profile_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let role = parse_share_role(role)?;
-        let app_pubkey = normalize_pubkey_hex(app_key)?;
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before inviting share members")?;
-        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
-        let folder = config
-            .shared_folders
-            .iter_mut()
-            .find(|folder| folder.share_id == share_id)
-            .with_context(|| format!("share not found: {share_id}"))?;
-        let outcome = iris_drive_core::invite_shared_folder_member(
-            folder,
-            account.app_key.keys(),
-            iris_drive_core::ShareRecipient {
-                profile_id,
-                app_pubkey,
-                role,
-                label: optional_trimmed(label),
-                representative_npub_hint: optional_trimmed(representative_npub_hint),
-                display_name: optional_trimmed(display_name),
-            },
-            share_now_seconds(),
-        )?;
-        self.state.ui.last_share_invite = outcome.invite_url;
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    fn try_invite_share_member_from_evidence(
-        &mut self,
-        share_id: &str,
-        evidence_json: &str,
-        role: &str,
-        display_name: &str,
-    ) -> anyhow::Result<()> {
-        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let role = parse_share_role(role)?;
-        let evidence: iris_drive_core::ShareRecipientProfileEvidence =
-            serde_json::from_str(evidence_json).context("parsing recipient evidence")?;
-        let resolved = iris_drive_core::resolve_share_recipient_from_evidence(
-            &evidence,
-            optional_trimmed(display_name),
-        )
-        .context("resolving share recipient evidence")?;
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before inviting share members")?;
-        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
-        let folder = config
-            .shared_folders
-            .iter_mut()
-            .find(|folder| folder.share_id == share_id)
-            .with_context(|| format!("share not found: {share_id}"))?;
-        let outcome = iris_drive_core::invite_shared_folder_resolved_recipient(
-            folder,
-            account.app_key.keys(),
-            &resolved,
-            role,
-            share_now_seconds(),
-        )?;
-        self.state.ui.last_share_invite = outcome.invite_url;
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    fn accept_share_invite(&mut self, invite: &str) {
-        if let Err(error) = self.try_accept_share_invite(invite) {
-            self.state.error = format!("accepting share invite: {error:#}");
-        }
-    }
-
-    fn try_accept_share_invite(&self, invite: &str) -> anyhow::Result<()> {
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before accepting share invites")?;
-        let folder =
-            iris_drive_core::shared_folder_from_invite_for_profile(invite, state.profile_id)?;
-        config.upsert_shared_folder(folder);
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    fn revoke_share_member(&mut self, share_id: &str, profile_id: &str, reason: &str) {
-        if let Err(error) = self.try_revoke_share_member(share_id, profile_id, reason) {
-            self.state.error = format!("revoking share member: {error:#}");
-        }
-    }
-
-    fn try_revoke_share_member(
-        &self,
-        share_id: &str,
-        profile_id: &str,
-        reason: &str,
-    ) -> anyhow::Result<()> {
-        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let profile_id = profile_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before revoking share members")?;
-        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
-        let folder = config
-            .shared_folders
-            .iter_mut()
-            .find(|folder| folder.share_id == share_id)
-            .with_context(|| format!("share not found: {share_id}"))?;
-        iris_drive_core::revoke_shared_folder_member(
-            folder,
-            account.app_key.keys(),
-            profile_id,
-            optional_trimmed(reason).as_deref(),
-            share_now_seconds(),
-        )?;
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    fn add_share_shortcut(&mut self, share_id: &str, path: &str, parent: &str, target_path: &str) {
-        if let Err(error) = self.try_add_share_shortcut(share_id, path, parent, target_path) {
-            self.state.error = format!("adding share shortcut: {error:#}");
-        }
-    }
-
-    fn try_add_share_shortcut(
-        &self,
-        share_id: &str,
-        path: &str,
-        parent: &str,
-        target_path: &str,
-    ) -> anyhow::Result<()> {
-        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let folder = config
-            .shared_folder(share_id)
-            .with_context(|| format!("share not found: {share_id}"))?
-            .clone();
-        let shortcut_path = if path.trim().is_empty() {
-            iris_drive_core::default_share_shortcut_path(
-                &config.share_shortcuts,
-                &folder.display_name,
-                parent,
-            )?
-        } else {
-            path.trim().to_owned()
-        };
-        let shortcut = iris_drive_core::ShareShortcut::new(share_id, &shortcut_path, target_path)?;
-        config.upsert_share_shortcut(shortcut);
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
-    }
-
-    fn repair_share_wraps(&mut self, share_id: &str) {
-        if let Err(error) = self.try_repair_share_wraps(share_id) {
-            self.state.error = format!("repairing share wraps: {error:#}");
-        }
-    }
-
-    fn try_repair_share_wraps(&self, share_id: &str) -> anyhow::Result<()> {
-        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
-        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
-        let state = config
-            .profile
-            .clone()
-            .context("profile is required before repairing share wraps")?;
-        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
-        let folder = config
-            .shared_folders
-            .iter_mut()
-            .find(|folder| folder.share_id == share_id)
-            .with_context(|| format!("share not found: {share_id}"))?;
-        iris_drive_core::repair_shared_folder_key_epoch_wraps(
-            folder,
-            account.app_key.keys(),
-            share_now_seconds(),
-        )?;
-        config.save(config_path_in(Path::new(&self.data_dir)))?;
-        Ok(())
     }
 
     fn import_file(&mut self, display_name: &str, source_path: &str) {
@@ -2638,15 +2407,6 @@ fn app_key_approval_link_secret(request: &str) -> String {
         .to_owned()
 }
 
-fn default_share_display_name(source_path: &str) -> String {
-    source_path
-        .trim_matches('/')
-        .rsplit('/')
-        .find(|segment| !segment.trim().is_empty())
-        .unwrap_or("Shared folder")
-        .to_owned()
-}
-
 fn optional_trimmed(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
@@ -2659,17 +2419,6 @@ fn parse_share_role(value: &str) -> anyhow::Result<iris_drive_core::ShareRole> {
             value.trim()
         )
     })
-}
-
-fn normalize_pubkey_hex(input: &str) -> anyhow::Result<String> {
-    let trimmed = input.trim();
-    if trimmed.starts_with("npub1") {
-        return Ok(PublicKey::from_bech32(trimmed)?.to_hex());
-    }
-    if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Ok(trimmed.to_ascii_lowercase());
-    }
-    anyhow::bail!("expected npub1... or 64-char hex pubkey, got {trimmed}");
 }
 
 fn share_now_seconds() -> i64 {
