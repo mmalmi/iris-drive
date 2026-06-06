@@ -38,6 +38,7 @@ struct IrisDriveShare: Identifiable, Equatable {
     var id: String { shareId }
     var shareId: String
     var displayName: String
+    var sourcePath: String
     var sharedWithMePath: String
     var role: String
     var roleLabel: String

@@ -440,6 +440,7 @@ struct NativeSyncRoot: Codable {
 struct NativeShare: Codable {
     var shareId: String
     var displayName: String
+    var sourcePath: String
     var sharedWithMePath: String
     var role: String
     var roleLabel: String
@@ -462,6 +463,7 @@ struct NativeShare: Codable {
     enum CodingKeys: String, CodingKey {
         case shareId = "share_id"
         case displayName = "display_name"
+        case sourcePath = "source_path"
         case sharedWithMePath = "shared_with_me_path"
         case role
         case roleLabel = "role_label"

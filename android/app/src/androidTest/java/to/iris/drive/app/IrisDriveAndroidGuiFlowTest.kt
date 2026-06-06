@@ -179,6 +179,7 @@ class IrisDriveAndroidGuiFlowTest {
         val share = ShareState(
             shareId = "123e4567-e89b-42d3-a456-426614174000",
             displayName = "Alpha",
+            sourcePath = "My Drive/Alpha",
             sharedWithMePath = "Shared with me/Alpha",
             role = "admin",
             roleLabel = "Admin",
@@ -213,6 +214,7 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithText("My Drive/Alpha", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
         compose.onNodeWithText("Recipient identity evidence").assertIsDisplayed()
         compose.onNodeWithText("Member profile UUID").assertIsDisplayed()
@@ -270,6 +272,7 @@ class IrisDriveAndroidGuiFlowTest {
         val share = ShareState(
             shareId = "123e4567-e89b-42d3-a456-426614174000",
             displayName = "Projects",
+            sourcePath = "My Drive/Projects",
             sharedWithMePath = "Shared with me/Projects",
             role = "admin",
             roleLabel = "Admin",

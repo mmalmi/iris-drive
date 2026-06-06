@@ -1070,6 +1070,7 @@ final class IrisDriveMobileModel: ObservableObject {
             IrisDriveShare(
                 shareId: share.shareId,
                 displayName: share.displayName,
+                sourcePath: share.sourcePath,
                 sharedWithMePath: share.sharedWithMePath,
                 role: share.role,
                 roleLabel: share.roleLabel,

@@ -125,6 +125,7 @@ internal data class BackupState(
 internal data class ShareState(
     val shareId: String,
     val displayName: String,
+    val sourcePath: String,
     val sharedWithMePath: String,
     val role: String,
     val roleLabel: String,
@@ -578,6 +579,7 @@ private fun JSONArray?.toShares(): List<ShareState> {
                 ShareState(
                     shareId = item.optString("share_id"),
                     displayName = item.optString("display_name"),
+                    sourcePath = item.optString("source_path"),
                     sharedWithMePath = item.optString("shared_with_me_path"),
                     role = item.optString("role"),
                     roleLabel = item.optString("role_label"),

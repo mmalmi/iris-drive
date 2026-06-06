@@ -1556,6 +1556,9 @@ private func shareSummary(_ share: IrisDriveShareStatus) -> String {
     [
         share.roleLabel.isEmpty ? share.role : share.roleLabel,
         share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel,
+        share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil
+            : shortValue(share.sourcePath),
         "\(share.participantCount) people",
         share.shortcutPaths.first.map { "shortcut \(shortValue($0))" },
     ].compactMap { $0 }.joined(separator: " | ")

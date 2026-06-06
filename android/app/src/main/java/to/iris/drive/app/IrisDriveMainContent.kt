@@ -833,6 +833,7 @@ private fun ShareItem(
             listOfNotNull(
                 share.roleLabel.ifBlank { share.role },
                 share.keyStatusLabel.ifBlank { share.keyStatus },
+                share.sourcePath.takeIf { it.isNotBlank() }?.let(::shortText),
                 "${share.participantCount} people",
                 share.shortcutPaths.firstOrNull()?.let { "shortcut ${shortText(it)}" },
             ).joinToString(" - "),

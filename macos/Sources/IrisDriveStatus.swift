@@ -225,6 +225,7 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
     let id: String
     let shareId: String
     let displayName: String
+    let sourcePath: String
     let sharedWithMePath: String
     let role: String
     let roleLabel: String
@@ -248,6 +249,7 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
         shareId = json["share_id"] as? String ?? UUID().uuidString
         id = shareId
         displayName = json["display_name"] as? String ?? ""
+        sourcePath = json["source_path"] as? String ?? ""
         sharedWithMePath = json["shared_with_me_path"] as? String ?? ""
         role = json["role"] as? String ?? ""
         roleLabel = json["role_label"] as? String ?? ""

@@ -101,6 +101,48 @@ class AppStateTest {
     }
 
     @Test
+    fun shareSourcePathIsParsedFromNativeState() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "shares": [{
+                  "share_id": "123e4567-e89b-42d3-a456-426614174000",
+                  "display_name": "Projects",
+                  "source_path": "My Drive/Projects",
+                  "shared_with_me_path": "Shared with me/Projects",
+                  "role": "admin",
+                  "role_label": "Admin",
+                  "key_status": "available",
+                  "key_status_label": "Available",
+                  "write_authorization": "authorized",
+                  "write_authorization_label": "Authorized",
+                  "can_write": true,
+                  "can_admin": true,
+                  "current_key_epoch": 1,
+                  "has_current_key_wrap": true,
+                  "key_unavailable": false,
+                  "repair_needed": false,
+                  "missing_key_wraps": [],
+                  "participant_count": 1,
+                  "app_key_count": 1,
+                  "members": [],
+                  "shortcut_paths": ["My Drive/Projects shortcut"]
+                }]
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+
+        val share = state.shares.single()
+        assertEquals("Projects", share.displayName)
+        assertEquals("My Drive/Projects", share.sourcePath)
+        assertEquals("Shared with me/Projects", share.sharedWithMePath)
+        assertEquals(listOf("My Drive/Projects shortcut"), share.shortcutPaths)
+    }
+
+    @Test
     fun relayStatusesAreParsedFromNativeState() {
         val state = AppState.fromJson(
             """

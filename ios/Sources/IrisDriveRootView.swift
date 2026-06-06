@@ -952,6 +952,9 @@ private struct ShareRow: View {
         DisclosureGroup {
             LabeledContent("Role", value: share.roleLabel.isEmpty ? share.role : share.roleLabel)
             LabeledContent("Key", value: share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel)
+            if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                LabeledContent("Source", value: shortText(share.sourcePath))
+            }
             if let epoch = share.currentKeyEpoch {
                 LabeledContent("Epoch", value: "\(epoch)")
             }
