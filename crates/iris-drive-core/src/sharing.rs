@@ -1752,6 +1752,9 @@ pub fn repair_shared_folder_key_epoch_wraps(
             signed_by_pubkey: epoch_signer_pubkey,
         });
     }
+    if !shared_folder_app_key_can_admin_with_projection(folder, &projection, &signer_pubkey) {
+        return Err(SharingError::CurrentAppKeyCannotAdminShare);
+    }
     let Some(signer_facet) = projection.active_facets.get(&signer_pubkey) else {
         return Err(SharingError::CurrentAppKeyCannotRepairKeyEpochs);
     };
@@ -2995,6 +2998,118 @@ mod tests {
             folder.projection().active_key_recipients_missing_wraps(1),
             vec![other_admin_pubkey]
         );
+    }
+
+    #[test]
+    fn shared_folder_key_wrap_repair_requires_active_share_admin_member() {
+        let owner_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+        let signer_keys = Keys::generate();
+        let signer_pubkey = signer_keys.public_key().to_hex();
+        let signer_profile_id = IrisProfileId::new_v4();
+        let recipient_keys = Keys::generate();
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        signer_pubkey.clone(),
+                        12,
+                        Some("Signer".to_string()),
+                        ShareRole::Admin.capabilities(),
+                    )
+                    .with_profile_id(signer_profile_id),
+                },
+                12,
+            )
+            .unwrap(),
+        );
+        folder.members.insert(
+            signer_profile_id.to_string(),
+            ShareMember::active(
+                signer_profile_id,
+                ShareRole::Editor,
+                None,
+                Some("Signer".to_string()),
+            ),
+        );
+        folder
+            .participant_profiles
+            .insert(signer_pubkey.clone(), signer_profile_id);
+
+        let share_key = current_shared_folder_key(&folder, &owner_keys).unwrap();
+        let wrapped_dck = wrap_share_key(
+            &signer_keys,
+            [owner_pubkey.as_str(), signer_pubkey.as_str()],
+            &share_key,
+        )
+        .unwrap();
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &signer_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::RotateKeyEpoch {
+                    epoch: 2,
+                    wrapped_dck,
+                },
+                13,
+            )
+            .unwrap(),
+        );
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        recipient_pubkey.clone(),
+                        14,
+                        Some("Recipient".to_string()),
+                        ShareRole::Reader.capabilities(),
+                    )
+                    .with_profile_id(recipient_profile_id),
+                },
+                14,
+            )
+            .unwrap(),
+        );
+        folder.members.insert(
+            recipient_profile_id.to_string(),
+            ShareMember::active(
+                recipient_profile_id,
+                ShareRole::Reader,
+                None,
+                Some("Recipient".to_string()),
+            ),
+        );
+        folder
+            .participant_profiles
+            .insert(recipient_pubkey.clone(), recipient_profile_id);
+
+        assert_eq!(
+            active_share_key_recipients_missing_wraps(&folder, &folder.projection(), 2),
+            vec![recipient_pubkey]
+        );
+        assert!(matches!(
+            repair_shared_folder_key_epoch_wraps(&mut folder, &signer_keys, 15),
+            Err(SharingError::CurrentAppKeyCannotAdminShare)
+        ));
     }
 
     #[test]
