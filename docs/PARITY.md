@@ -88,8 +88,8 @@ granting access.
 
 CLI, UniFFI app-core, and the local gateway all route share mutations through
 `iris_drive_core::dispatch_share_action`. Surface-specific code may parse UI
-strings and render JSON/records, but create/invite/accept/revoke/shortcut/repair
-state transitions stay in Rust core.
+strings and render JSON/records, but create, invite, accept, role, revoke,
+shortcut, and repair state transitions stay in Rust core.
 
 App-core and CLI status surfaces should expose profile roster actors as
 `app_actors`, `authorized_app_key_count`, `online_app_key_count`,

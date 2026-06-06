@@ -34,6 +34,11 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
             profile_id,
             reason,
         } => cmd_shares_revoke(config_dir, &share_id, &profile_id, reason.as_deref()),
+        SharesCmd::Role {
+            share_id,
+            profile_id,
+            role,
+        } => cmd_shares_role(config_dir, &share_id, &profile_id, &role),
         SharesCmd::Shortcut {
             share_id,
             path,
@@ -257,6 +262,40 @@ fn cmd_shares_revoke(
     Ok(())
 }
 
+fn cmd_shares_role(config_dir: &Path, share_id: &str, profile_id: &str, role: &str) -> Result<()> {
+    let share_id = share_id
+        .parse::<iris_drive_core::IrisProfileId>()
+        .context("parsing share id")?;
+    let profile_id = profile_id
+        .parse::<iris_drive_core::IrisProfileId>()
+        .context("parsing member IrisProfile id")?;
+    let role = parse_share_role(role)?;
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::SetShareMemberRole {
+            share_id,
+            profile_id,
+            role,
+        },
+    )
+    .context("updating share member role")?;
+    let view = result
+        .shares
+        .iter()
+        .find(|view| view.share_id == share_id)
+        .ok_or_else(|| anyhow::anyhow!("updated share was not projected"))?;
+    println!(
+        "{}",
+        json!({
+            "share_id": result.share_id.unwrap_or(share_id).to_string(),
+            "profile_id": result.profile_id.unwrap_or(profile_id).to_string(),
+            "role": result.role.unwrap_or(role).as_str(),
+            "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
+        })
+    );
+    Ok(())
+}
+
 fn cmd_shares_shortcut(
     config_dir: &Path,
     share_id: &str,
@@ -371,6 +410,7 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
         "status_label": member.status.label(),
         "app_key_count": member.app_key_count,
         "can_revoke": member.can_revoke,
+        "can_change_role": member.can_change_role,
     })
 }
 
@@ -663,6 +703,63 @@ mod tests {
                 .unwrap()
                 .wrapped_dck
                 .contains_key(&recipient_keys.public_key().to_hex())
+        );
+    }
+
+    #[test]
+    fn shares_role_command_updates_profile_member_role() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let recipient_keys = nostr_sdk::Keys::generate();
+        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let folder = iris_drive_core::create_shared_folder(
+            account.app_key.keys(),
+            account.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Mac".into()),
+            vec![iris_drive_core::ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: iris_drive_core::ShareRole::Reader,
+                label: Some("Phone".into()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".into()),
+            }],
+            10,
+        )
+        .unwrap();
+        let mut config = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.upsert_shared_folder(folder.clone());
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        cmd_shares_role(
+            config_dir.path(),
+            &folder.share_id.to_string(),
+            &recipient_profile_id.to_string(),
+            "editor",
+        )
+        .unwrap();
+
+        let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+        let updated = saved.shared_folder(folder.share_id).unwrap();
+        assert_eq!(
+            updated
+                .members
+                .get(&recipient_profile_id.to_string())
+                .unwrap()
+                .role,
+            iris_drive_core::ShareRole::Editor
+        );
+        assert_eq!(
+            iris_drive_core::shared_folder_app_key_write_authorization(
+                updated,
+                &recipient_keys.public_key().to_hex()
+            ),
+            iris_drive_core::ShareRootWriteAuthorization::Authorized
         );
     }
 

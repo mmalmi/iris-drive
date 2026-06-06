@@ -79,6 +79,7 @@ just run-cli shares invite <share-id> --profile <iris-profile-id> --app-key <rec
 just run-cli shares accept <share-invite-url>
 just run-cli shares list
 just run-cli shares members <share-id>
+just run-cli shares role <share-id> <iris-profile-id> editor
 just run-cli shares revoke <share-id> <iris-profile-id>
 just run-cli shares shortcut <share-id> --parent "Projects"
 just run-cli shares repair-wraps <share-id>
@@ -87,10 +88,10 @@ just run-cli backups sync
 ```
 
 Native apps expose the same share operations from the **Shares** tab: create a
-shared folder, invite an IrisProfile member, accept an invite, revoke a member,
-add a shortcut, and repair missing key wraps. The UI shows people/profile
-members first; invite dialogs prefer signed recipient-evidence JSON and keep
-direct AppKey entry as an admin fallback.
+shared folder, invite an IrisProfile member, accept an invite, change member
+roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
+shows people/profile members first; invite dialogs prefer signed
+recipient-evidence JSON and keep direct AppKey entry as an admin fallback.
 
 OS share/open integrations do not grant access by themselves. They open the app
 share dialog for a selected Iris Drive folder using

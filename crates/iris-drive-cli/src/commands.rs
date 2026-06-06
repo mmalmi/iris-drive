@@ -303,6 +303,15 @@ pub(crate) enum SharesCmd {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Change one `IrisProfile` member's share role.
+    Role {
+        /// Share UUID.
+        share_id: String,
+        /// `IrisProfile` UUID to update.
+        profile_id: String,
+        /// New role: reader, editor, or admin.
+        role: String,
+    },
     /// Add a shortcut for a share into My Drive.
     Shortcut {
         /// Share UUID.

@@ -1,5 +1,6 @@
 use super::{FfiApp, SentAppKeyLinkRequest, app_key_link_request_send_due, normalize_pubkey};
 use crate::NativeAppAction;
+use crate::state::{UiShare, UiShareMember};
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
 use std::path::Path;
@@ -31,6 +32,14 @@ fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> Strin
         ],
     };
     serde_json::to_string(&evidence).unwrap()
+}
+
+fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMember {
+    share
+        .members
+        .iter()
+        .find(|member| member.profile_id == profile_id)
+        .unwrap()
 }
 
 #[test]
@@ -254,18 +263,12 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     });
     assert!(invited.error.is_empty(), "{}", invited.error);
     let invited_owner_share = invited.ui.shares.first().unwrap();
-    assert!(
-        invited_owner_share
-            .members
-            .iter()
-            .any(|member| member.profile_id == recipient_profile.profile_id && member.can_revoke)
-    );
-    assert!(
-        invited_owner_share
-            .members
-            .iter()
-            .any(|member| member.profile_id == owner_profile.profile_id && !member.can_revoke)
-    );
+    let recipient_member = ui_share_member(invited_owner_share, &recipient_profile.profile_id);
+    assert!(recipient_member.can_revoke);
+    assert!(recipient_member.can_change_role);
+    let owner_member = ui_share_member(invited_owner_share, &owner_profile.profile_id);
+    assert!(!owner_member.can_revoke);
+    assert!(!owner_member.can_change_role);
     assert!(
         invited
             .ui
@@ -282,6 +285,21 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     assert_eq!(accepted.ui.shares[0].role, "reader");
     assert_eq!(accepted.ui.shares[0].members.len(), 2);
 
+    let promoted = owner_app.dispatch(NativeAppAction::SetShareMemberRole {
+        share_id: share_id.clone(),
+        profile_id: recipient_profile.profile_id.clone(),
+        role: "editor".to_owned(),
+    });
+    assert!(promoted.error.is_empty(), "{}", promoted.error);
+    assert_eq!(
+        ui_share_member(
+            promoted.ui.shares.first().unwrap(),
+            &recipient_profile.profile_id
+        )
+        .role,
+        "editor"
+    );
+
     let shortcut = recipient_app.dispatch(NativeAppAction::AddShareShortcut {
         share_id: share_id.clone(),
         path: String::new(),
@@ -293,18 +311,13 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
 
     let revoked = owner_app.dispatch(NativeAppAction::RevokeShareMember {
         share_id,
-        profile_id: recipient_profile.profile_id,
+        profile_id: recipient_profile.profile_id.clone(),
         reason: "removed".to_owned(),
     });
     assert!(revoked.error.is_empty(), "{}", revoked.error);
     let owner_share = revoked.ui.shares.first().unwrap();
     assert_eq!(
-        owner_share
-            .members
-            .iter()
-            .find(|member| member.profile_id != owner_profile.profile_id)
-            .unwrap()
-            .status,
+        ui_share_member(owner_share, &recipient_profile.profile_id).status,
         "revoked"
     );
 }

@@ -55,6 +55,8 @@ pub enum SharingError {
     ShareInviteNotForLocalProfile { local_profile_id: IrisProfileId },
     #[error("current AppKey cannot revoke its own share member")]
     CannotRevokeCurrentShareMember,
+    #[error("current AppKey cannot change its own share member role")]
+    CannotChangeCurrentShareMemberRole,
     #[error("share invite: {0}")]
     Invite(String),
     #[error("share member roster: {0}")]
@@ -839,6 +841,8 @@ pub struct SharedFolderMemberView {
     pub app_key_count: usize,
     #[serde(default)]
     pub can_revoke: bool,
+    #[serde(default)]
+    pub can_change_role: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -854,6 +858,13 @@ pub struct ShareMemberRevokeOutcome {
     pub profile_id: IrisProfileId,
     pub epoch: u64,
     pub revoked_app_pubkeys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareMemberRoleOutcome {
+    pub share_id: IrisProfileId,
+    pub profile_id: IrisProfileId,
+    pub role: ShareRole,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1646,6 +1657,18 @@ fn active_share_app_key_pubkeys(
         .collect()
 }
 
+fn active_share_app_key_pubkeys_for_profile(
+    projection: &IrisProfileRosterProjection,
+    profile_id: IrisProfileId,
+) -> Vec<String> {
+    projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.is_app_key() && facet.profile_id == Some(profile_id))
+        .map(|facet| facet.pubkey.clone())
+        .collect()
+}
+
 fn tombstoned_share_app_key_pubkeys(projection: &IrisProfileRosterProjection) -> Vec<String> {
     projection
         .tombstones
@@ -1752,6 +1775,9 @@ fn shared_folder_member_views(
                 .copied()
                 .unwrap_or_default(),
             can_revoke: current_app_key_can_admin
+                && member.status != ShareMemberStatus::Revoked
+                && current_profile_id != Some(member.profile_id),
+            can_change_role: current_app_key_can_admin
                 && member.status != ShareMemberStatus::Revoked
                 && current_profile_id != Some(member.profile_id),
         })
@@ -2479,6 +2505,77 @@ pub fn repair_shared_folder_key_epoch_wraps(
         share_id: folder.share_id,
         epoch,
         repaired_pubkeys: missing_pubkeys,
+    })
+}
+
+pub fn set_shared_folder_member_role(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    profile_id: IrisProfileId,
+    role: ShareRole,
+    created_at: i64,
+) -> Result<ShareMemberRoleOutcome, SharingError> {
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
+        return Err(SharingError::CurrentAppKeyCannotAdminShare);
+    }
+    let projection = folder.projection();
+    let signer_profile_id =
+        shared_folder_profile_id_for_app_key_with_projection(&projection, &signer_pubkey)
+            .ok_or(SharingError::CurrentAppKeyCannotAdminShare)?;
+    if signer_profile_id == profile_id {
+        return Err(SharingError::CannotChangeCurrentShareMemberRole);
+    }
+    let member_key = profile_id.to_string();
+    let members = shared_folder_members_with_projection(folder, &projection);
+    let Some(member) = members.get(&member_key) else {
+        return Err(SharingError::ShareMemberNotFound(profile_id));
+    };
+    if member.status == ShareMemberStatus::Revoked {
+        return Err(SharingError::ShareMemberRevoked(profile_id));
+    }
+
+    let member_op_time = next_share_member_op_time(folder, created_at);
+    if member.role != role {
+        folder
+            .member_ops
+            .push(sign_share_member_roster_op_with_parents(
+                signer_keys,
+                folder.share_id,
+                share_member_roster_parent_ids(folder),
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                ShareMemberRosterOp::SetMemberRole { profile_id, role },
+                member_op_time,
+            )?);
+        materialize_share_members_from_ops(folder);
+    }
+
+    let capabilities = role.capabilities();
+    let mut op_time = member_op_time.saturating_add(1);
+    for app_pubkey in active_share_app_key_pubkeys_for_profile(&projection, profile_id) {
+        let Some(facet) = projection.active_facets.get(&app_pubkey) else {
+            continue;
+        };
+        if facet.capabilities == capabilities {
+            continue;
+        }
+        folder.roster_ops.push(sign_share_roster_op_with_parents(
+            signer_keys,
+            folder.share_id,
+            iris_profile_roster_parent_ids(&folder.roster_ops),
+            IrisProfileRosterOp::SetCapabilities {
+                pubkey: app_pubkey,
+                capabilities,
+            },
+            op_time,
+        )?);
+        op_time = op_time.saturating_add(1);
+    }
+
+    Ok(ShareMemberRoleOutcome {
+        share_id: folder.share_id,
+        profile_id,
+        role,
     })
 }
 
@@ -4690,6 +4787,83 @@ mod tests {
             projection.key_wrap_status(&reader_pubkey, 1),
             crate::iris_profile::KeyWrapStatus::Available
         );
+    }
+
+    #[test]
+    fn setting_share_member_role_updates_member_and_appkey_capabilities() {
+        let owner_keys = Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let reader_keys = Keys::generate();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Photos",
+            "Photos",
+            None,
+            vec![ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: reader_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                label: Some("Phone".to_string()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".to_string()),
+            }],
+            20,
+        )
+        .unwrap();
+
+        let reader_pubkey = reader_keys.public_key().to_hex();
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &reader_pubkey),
+            ShareRootWriteAuthorization::InsufficientShareRole
+        );
+        assert!(!folder.projection().can_write_roots(&reader_pubkey));
+
+        let promoted = set_shared_folder_member_role(
+            &mut folder,
+            &owner_keys,
+            recipient_profile_id,
+            ShareRole::Editor,
+            30,
+        )
+        .unwrap();
+        assert_eq!(promoted.profile_id, recipient_profile_id);
+        assert_eq!(promoted.role, ShareRole::Editor);
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &reader_pubkey),
+            ShareRootWriteAuthorization::Authorized
+        );
+        assert!(folder.projection().can_write_roots(&reader_pubkey));
+        assert_eq!(
+            folder.projection().key_epochs.keys().next_back().copied(),
+            Some(1)
+        );
+
+        let promoted_admin = set_shared_folder_member_role(
+            &mut folder,
+            &owner_keys,
+            recipient_profile_id,
+            ShareRole::Admin,
+            35,
+        )
+        .unwrap();
+        assert_eq!(promoted_admin.role, ShareRole::Admin);
+        assert!(folder.projection().can_admin_profile(&reader_pubkey));
+
+        let demoted = set_shared_folder_member_role(
+            &mut folder,
+            &owner_keys,
+            recipient_profile_id,
+            ShareRole::Reader,
+            40,
+        )
+        .unwrap();
+        assert_eq!(demoted.role, ShareRole::Reader);
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &reader_pubkey),
+            ShareRootWriteAuthorization::InsufficientShareRole
+        );
+        assert!(!folder.projection().can_write_roots(&reader_pubkey));
     }
 
     #[test]

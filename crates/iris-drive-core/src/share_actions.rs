@@ -14,8 +14,8 @@ use crate::sharing::{
     create_shared_folder, default_share_shortcut_path, invite_shared_folder_member,
     invite_shared_folder_resolved_recipient, repair_shared_folder_key_epoch_wraps,
     resolve_share_recipient_from_evidence, revoke_shared_folder_member,
-    shared_folder_from_invite_for_profile, shared_folder_missing_key_wrap_pubkeys,
-    shared_folder_views,
+    set_shared_folder_member_role, shared_folder_from_invite_for_profile,
+    shared_folder_missing_key_wrap_pubkeys, shared_folder_views,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -54,6 +54,11 @@ pub enum ShareAction {
         #[serde(default)]
         reason: Option<String>,
     },
+    SetShareMemberRole {
+        share_id: IrisProfileId,
+        profile_id: IrisProfileId,
+        role: ShareRole,
+    },
     AddShareShortcut {
         share_id: IrisProfileId,
         #[serde(default)]
@@ -76,6 +81,8 @@ pub struct ShareActionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<IrisProfileId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ShareRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub epoch: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_share_invite: Option<String>,
@@ -97,6 +104,7 @@ pub struct ShareActionResult {
 struct ShareActionMetadata {
     share_id: Option<IrisProfileId>,
     profile_id: Option<IrisProfileId>,
+    role: Option<ShareRole>,
     epoch: Option<u64>,
     last_share_invite: Option<String>,
     shortcut: Option<ShareShortcut>,
@@ -130,6 +138,7 @@ pub fn dispatch_share_action(
         shares,
         share_id: metadata.share_id,
         profile_id: metadata.profile_id,
+        role: metadata.role,
         epoch: metadata.epoch,
         last_share_invite: metadata.last_share_invite,
         shortcut: metadata.shortcut,
@@ -212,6 +221,11 @@ fn apply_share_action(
                 now_seconds,
             )
         }
+        ShareAction::SetShareMemberRole {
+            share_id,
+            profile_id,
+            role,
+        } => set_share_member_role(config_dir, config, share_id, profile_id, role, now_seconds),
         ShareAction::AddShareShortcut {
             share_id,
             path,
@@ -363,6 +377,35 @@ fn revoke_share_member(
         profile_id: Some(outcome.profile_id),
         epoch: Some(outcome.epoch),
         revoked_app_pubkeys: outcome.revoked_app_pubkeys,
+        ..ShareActionMetadata::default()
+    })
+}
+
+fn set_share_member_role(
+    config_dir: &Path,
+    config: &mut AppConfig,
+    share_id: IrisProfileId,
+    profile_id: IrisProfileId,
+    role: ShareRole,
+    now_seconds: i64,
+) -> Result<ShareActionMetadata> {
+    let account = load_profile(config_dir, config)?;
+    let folder = config
+        .shared_folders
+        .iter_mut()
+        .find(|folder| folder.share_id == share_id)
+        .with_context(|| format!("share not found: {share_id}"))?;
+    let outcome = set_shared_folder_member_role(
+        folder,
+        account.app_key.keys(),
+        profile_id,
+        role,
+        now_seconds,
+    )?;
+    Ok(ShareActionMetadata {
+        share_id: Some(outcome.share_id),
+        profile_id: Some(outcome.profile_id),
+        role: Some(outcome.role),
         ..ShareActionMetadata::default()
     })
 }
@@ -531,6 +574,34 @@ mod tests {
         );
         assert_eq!(invited.epoch, Some(2));
         assert!(invited.revoked_app_pubkeys.is_empty());
+
+        let role_changed = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::SetShareMemberRole {
+                share_id,
+                profile_id: recipient_profile_id,
+                role: ShareRole::Reader,
+            },
+            25,
+        )
+        .unwrap();
+
+        assert_eq!(role_changed.share_id, Some(share_id));
+        assert_eq!(role_changed.profile_id, Some(recipient_profile_id));
+        assert_eq!(role_changed.role, Some(ShareRole::Reader));
+        assert_eq!(role_changed.epoch, None);
+        assert!(
+            role_changed
+                .shares
+                .iter()
+                .find(|share| share.share_id == share_id)
+                .unwrap()
+                .members
+                .iter()
+                .any(|member| {
+                    member.profile_id == recipient_profile_id && member.role == ShareRole::Reader
+                })
+        );
 
         let revoked = dispatch_share_action(
             owner_dir.path(),

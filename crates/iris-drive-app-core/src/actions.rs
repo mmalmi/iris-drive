@@ -101,6 +101,11 @@ pub enum NativeAppAction {
         profile_id: String,
         reason: String,
     },
+    SetShareMemberRole {
+        share_id: String,
+        profile_id: String,
+        role: String,
+    },
     AddShareShortcut {
         share_id: String,
         path: String,

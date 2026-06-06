@@ -341,6 +341,7 @@ impl NativeAppRuntime {
             | NativeAppAction::InviteShareMemberFromEvidence { .. }
             | NativeAppAction::AcceptShareInvite { .. }
             | NativeAppAction::RevokeShareMember { .. }
+            | NativeAppAction::SetShareMemberRole { .. }
             | NativeAppAction::AddShareShortcut { .. }
             | NativeAppAction::RepairShareWraps { .. }) => self.dispatch_share_action(share_action),
             NativeAppAction::ImportFile {
@@ -418,6 +419,15 @@ impl NativeAppRuntime {
                 share_id: share_id.parse()?,
                 profile_id: profile_id.parse()?,
                 reason: optional_trimmed(&reason),
+            },
+            NativeAppAction::SetShareMemberRole {
+                share_id,
+                profile_id,
+                role,
+            } => iris_drive_core::ShareAction::SetShareMemberRole {
+                share_id: share_id.parse()?,
+                profile_id: profile_id.parse()?,
+                role: parse_share_role(&role)?,
             },
             NativeAppAction::AddShareShortcut {
                 share_id,
@@ -2286,6 +2296,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
                 status_label: member.status.label().to_owned(),
                 app_key_count: member.app_key_count as u64,
                 can_revoke: member.can_revoke,
+                can_change_role: member.can_change_role,
             })
             .collect(),
         shortcut_paths: share.shortcut_paths,
