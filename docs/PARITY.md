@@ -99,6 +99,10 @@ Read-only share state uses the same core projection path through
 `iris_drive_core::share_action_state` / `SharedFolderView`, including source
 path, entity members, role/write authorization, repair-needed/key-unavailable
 state, missing-wrap detail, and shortcuts.
+Native shells render app-core share records rather than recalculating authority:
+macOS, iOS, Android, and Windows show source path, entity members, roles,
+repair state, and shortcuts, and route share create/invite/accept/revoke/role/
+shortcut/repair controls through Rust app-core actions.
 
 App-core and CLI status surfaces should expose profile roster actors as
 `app_actors`, `authorized_app_key_count`, `online_app_key_count`,

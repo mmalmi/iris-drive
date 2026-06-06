@@ -7,7 +7,9 @@ shared `idrive` CLI:
 - AppKey copy and owner-side approval
 - sync start/stop/restart
 - drive folder and snapshot link actions
-- AppKeys, network, and settings pages
+- AppKeys, shares, network, and settings pages
+- shared-folder create, invite-by-evidence, accept invite, shortcut, repair,
+  member role, and revoke actions through Rust app-core
 - local profile logout
 - Windows tray icon with show/open/start/stop/logout/quit actions
 - self-contained `win-x64` publish output for shortcuts/installers

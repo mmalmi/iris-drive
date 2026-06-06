@@ -206,6 +206,7 @@ public partial class MainWindow : Window
 
         RenderDrives(status);
         RenderPeers(status);
+        RenderShares(status);
         RenderBackups(status);
         RenderNetwork(status);
         try
@@ -240,6 +241,7 @@ public partial class MainWindow : Window
         StopButton.Visibility = Visibility.Collapsed;
         DrivesList.Items.Clear();
         PeersList.Items.Clear();
+        SharesList.Items.Clear();
         BackupsList.Items.Clear();
         RelaysList.Items.Clear();
         BlossomList.Items.Clear();
@@ -1342,6 +1344,7 @@ public partial class MainWindow : Window
     {
         DrivePage.Visibility = page == "Drive" ? Visibility.Visible : Visibility.Collapsed;
         DevicesPage.Visibility = page == "Devices" ? Visibility.Visible : Visibility.Collapsed;
+        SharesPage.Visibility = page == "Shares" ? Visibility.Visible : Visibility.Collapsed;
         BackupsPage.Visibility = page == "Backups" ? Visibility.Visible : Visibility.Collapsed;
         NetworkPage.Visibility = page == "Network" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "Settings" ? Visibility.Visible : Visibility.Collapsed;
@@ -1350,6 +1353,7 @@ public partial class MainWindow : Window
         {
             NavDriveButton,
             NavDevicesButton,
+            NavSharesButton,
             NavBackupsButton,
             NavNetworkButton,
             NavSettingsButton,

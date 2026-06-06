@@ -271,6 +271,129 @@ public sealed class IrisDriveService
             });
     }
 
+    public Task CreateShareAsync(string sourcePath, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            throw new InvalidOperationException("Source path is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "create_share",
+                ["source_path"] = sourcePath.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task AcceptShareInviteAsync(string invite)
+    {
+        if (string.IsNullOrWhiteSpace(invite))
+        {
+            throw new InvalidOperationException("Share invite is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "accept_share_invite",
+                ["invite"] = invite.Trim(),
+            });
+    }
+
+    public Task InviteShareMemberFromEvidenceAsync(
+        string shareId,
+        string evidenceJson,
+        string role,
+        string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            throw new InvalidOperationException("Recipient identity evidence is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "invite_share_member_from_evidence",
+                ["share_id"] = shareId.Trim(),
+                ["evidence_json"] = evidenceJson.Trim(),
+                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task AddShareShortcutAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_share_shortcut",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    public Task RepairShareWrapsAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "repair_share_wraps",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    public Task RevokeShareMemberAsync(string shareId, string profileId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId) || string.IsNullOrWhiteSpace(profileId))
+        {
+            throw new InvalidOperationException("Share and member are required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "revoke_share_member",
+                ["share_id"] = shareId.Trim(),
+                ["profile_id"] = profileId.Trim(),
+                ["reason"] = "Removed from share",
+            });
+    }
+
+    public Task SetShareMemberRoleAsync(string shareId, string profileId, string role)
+    {
+        if (string.IsNullOrWhiteSpace(shareId) ||
+            string.IsNullOrWhiteSpace(profileId) ||
+            string.IsNullOrWhiteSpace(role))
+        {
+            throw new InvalidOperationException("Share, member, and role are required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "set_share_member_role",
+                ["share_id"] = shareId.Trim(),
+                ["profile_id"] = profileId.Trim(),
+                ["role"] = role.Trim(),
+            });
+    }
+
     public Task SetNhashResolverAsync(bool enabled)
     {
         return RunAsync("nhash-resolver", enabled ? "enable" : "disable");

@@ -251,6 +251,12 @@
               <TextBlock Text="AppKeys" />
             </StackPanel>
           </Button>
+          <Button x:Name="NavSharesButton" Tag="Shares" Style="{StaticResource NavButton}" Click="Nav_Click">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Shares" />
+            </StackPanel>
+          </Button>
           <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8C7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
@@ -413,6 +419,33 @@
 
               <TextBlock Text="Linked AppKeys" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
+            </StackPanel>
+
+            <StackPanel x:Name="SharesPage" Visibility="Collapsed">
+              <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <TextBlock Text="Create share" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <DockPanel LastChildFill="True" Margin="0,0,0,12">
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="CreateShare_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Create" />
+                  </StackPanel>
+                </Button>
+                <TextBox x:Name="ShareNameBox" Tag="Name" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
+                <TextBox x:Name="ShareSourceBox" Tag="My Drive/Folder" MinHeight="34" />
+              </DockPanel>
+              <TextBlock Text="Accept invite" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <DockPanel LastChildFill="True" Margin="0,0,0,14">
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="AcceptShareInvite_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Accept" />
+                  </StackPanel>
+                </Button>
+                <TextBox x:Name="ShareInviteBox" Tag="iris-drive://share-invite/..." MinHeight="34" />
+              </DockPanel>
+              <TextBlock Text="Shared with me" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="SharesList" BorderBrush="{StaticResource IrisBorderBrush}" />
             </StackPanel>
 
             <StackPanel x:Name="BackupsPage" Visibility="Collapsed">

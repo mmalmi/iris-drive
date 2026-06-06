@@ -45,10 +45,23 @@ require_absent macos/Sources/IrisDriveMacApp.swift 'arguments: ["devices", comma
 
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_app_dispatch_json"
 require_contains windows/IrisDriveService.cs "nativeCore.RefreshJson()"
+require_contains windows/IrisDriveService.cs '["type"] = "create_share"'
+require_contains windows/IrisDriveService.cs '["type"] = "invite_share_member_from_evidence"'
+require_contains windows/IrisDriveService.cs '["type"] = "add_share_shortcut"'
+require_contains windows/IrisDriveService.cs '["type"] = "repair_share_wraps"'
+require_contains windows/IrisDriveService.cs '["type"] = "revoke_share_member"'
+require_contains windows/IrisDriveService.cs '["type"] = "set_share_member_role"'
 require_contains windows/IrisDriveModels.cs "FromNativeJson"
+require_contains windows/IrisDriveModels.cs "NativeShareRows"
+require_contains windows/MainWindow.xaml "NavSharesButton"
+require_contains windows/MainWindow.xaml "SharesList"
+require_contains windows/MainWindowShares.cs "RenderShares"
+require_contains windows/MainWindowShares.cs "InviteShareMemberFromEvidenceAsync"
+require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"
 require_contains windows/MainWindowDevices.cs "RejectDeviceAsync"
 require_absent windows/IrisDriveService.cs 'RunJsonAsync("status")'
 require_absent windows/IrisDriveService.cs 'RunJsonAsync("link-input", "validate"'
+require_absent windows/IrisDriveService.cs 'RunAsync("shares"'
 require_absent windows/IrisDriveService.cs 'RunAsync(BuildLabelArgs(new[] { "approve"'
 require_absent windows/IrisDriveService.cs 'RunAsync("devices", "appoint-admin"'
 

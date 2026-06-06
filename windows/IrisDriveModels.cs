@@ -37,6 +37,7 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
     public IReadOnlyList<BackupTargetRow> BackupTargets { get; init; } =
         Array.Empty<BackupTargetRow>();
+    public IReadOnlyList<ShareRow> Shares { get; init; } = Array.Empty<ShareRow>();
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
@@ -99,6 +100,7 @@ public sealed class IrisDriveStatusData
             Drives = NativeDriveRows(ui, setupComplete),
             Peers = NativePeerRows(ui),
             BackupTargets = backupTargets,
+            Shares = NativeShareRows(ui),
             Relays = StringArray(ui, "relays"),
             BlossomServers = backupTargets
                 .Where(target => target.Kind == "blossom")
@@ -249,6 +251,73 @@ public sealed class IrisDriveStatusData
         return rows;
     }
 
+    private static IReadOnlyList<ShareRow> NativeShareRows(JsonElement ui)
+    {
+        if (ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("shares", out var shares) ||
+            shares.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ShareRow>();
+        }
+
+        var rows = new List<ShareRow>();
+        foreach (var share in shares.EnumerateArray())
+        {
+            rows.Add(new ShareRow(
+                String(share, "share_id") ?? "",
+                String(share, "display_name") ?? "Shared folder",
+                String(share, "source_path") ?? "",
+                String(share, "shared_with_me_path") ?? "",
+                String(share, "role") ?? "",
+                String(share, "role_label") ?? "",
+                String(share, "key_status") ?? "",
+                String(share, "key_status_label") ?? "",
+                String(share, "write_authorization") ?? "",
+                String(share, "write_authorization_label") ?? "",
+                Bool(share, "can_write"),
+                Bool(share, "can_admin"),
+                NullableInt(share, "current_key_epoch"),
+                Bool(share, "has_current_key_wrap"),
+                Bool(share, "key_unavailable"),
+                Bool(share, "repair_needed"),
+                Int(share, "missing_key_wrap_count"),
+                StringArray(share, "missing_key_wraps"),
+                Int(share, "participant_count"),
+                Int(share, "app_key_count"),
+                NativeShareMemberRows(share),
+                StringArray(share, "shortcut_paths")));
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<ShareMemberRow> NativeShareMemberRows(JsonElement share)
+    {
+        if (!share.TryGetProperty("members", out var members) ||
+            members.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ShareMemberRow>();
+        }
+
+        var rows = new List<ShareMemberRow>();
+        foreach (var member in members.EnumerateArray())
+        {
+            rows.Add(new ShareMemberRow(
+                String(member, "profile_id") ?? "",
+                String(member, "display_name") ?? "",
+                String(member, "representative_npub_hint") ?? "",
+                String(member, "role") ?? "",
+                String(member, "role_label") ?? "",
+                String(member, "status") ?? "",
+                String(member, "status_label") ?? "",
+                Int(member, "app_key_count"),
+                Bool(member, "can_revoke"),
+                Bool(member, "can_change_role")));
+        }
+
+        return rows;
+    }
+
     private static string? EmptyToNull(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value;
@@ -329,6 +398,16 @@ public sealed class IrisDriveStatusData
             : 0;
     }
 
+    private static int? NullableInt(JsonElement root, string name)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt32(out var result)
+            ? result
+            : null;
+    }
+
     private static long Long(JsonElement root, string name)
     {
         return root.ValueKind == JsonValueKind.Object &&
@@ -367,6 +446,42 @@ public sealed record BackupTargetRow(
     string Title,
     string Subtitle,
     string State);
+
+public sealed record ShareRow(
+    string ShareId,
+    string DisplayName,
+    string SourcePath,
+    string SharedWithMePath,
+    string Role,
+    string RoleLabel,
+    string KeyStatus,
+    string KeyStatusLabel,
+    string WriteAuthorization,
+    string WriteAuthorizationLabel,
+    bool CanWrite,
+    bool CanAdmin,
+    int? CurrentKeyEpoch,
+    bool HasCurrentKeyWrap,
+    bool KeyUnavailable,
+    bool RepairNeeded,
+    int MissingKeyWrapCount,
+    IReadOnlyList<string> MissingKeyWraps,
+    int ParticipantCount,
+    int AppKeyCount,
+    IReadOnlyList<ShareMemberRow> Members,
+    IReadOnlyList<string> ShortcutPaths);
+
+public sealed record ShareMemberRow(
+    string ProfileId,
+    string DisplayName,
+    string RepresentativeNpubHint,
+    string Role,
+    string RoleLabel,
+    string Status,
+    string StatusLabel,
+    int AppKeyCount,
+    bool CanRevoke,
+    bool CanChangeRole);
 
 public sealed record FipsDiagnostics(
     bool Enabled,
