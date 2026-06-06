@@ -7,6 +7,7 @@ private let recoveryPhraseWordCount = 12
 private enum MainTab: Hashable {
     case drive
     case devices
+    case shares
     case backups
     case settings
 }
@@ -43,6 +44,14 @@ struct IrisDriveRootView: View {
                     Label("AppKeys", systemImage: "person.2.fill")
                 }
                 .tag(MainTab.devices)
+
+                NavigationStack {
+                    SharesView(model: model)
+                }
+                .tabItem {
+                    Label("Shares", systemImage: "person.3.fill")
+                }
+                .tag(MainTab.shares)
 
                 NavigationStack {
                     BackupsView(model: model)
@@ -872,6 +881,219 @@ private func iosUiTestValue(_ name: String) -> String {
     #endif
 }
 
+private struct SharesView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+
+    var body: some View {
+        Form {
+            Section("Create Share") {
+                TextField("Folder path", text: $model.shareSourceInput)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.createShare() }
+                TextField("Name", text: $model.shareNameInput)
+                    .onSubmit { model.createShare() }
+                Button {
+                    model.createShare()
+                } label: {
+                    Label("Create share", systemImage: "plus")
+                }
+                .disabled(model.shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Section("Accept Invite") {
+                TextField("Share invite", text: $model.shareInviteInput)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.acceptShareInvite() }
+                Button {
+                    model.acceptShareInvite()
+                } label: {
+                    Label("Accept invite", systemImage: "tray.and.arrow.down.fill")
+                }
+                .disabled(model.shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    model.copyLastShareInvite()
+                } label: {
+                    Label("Copy last invite", systemImage: "doc.on.doc")
+                }
+                .disabled(model.lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Section("Shared Folders") {
+                if model.shares.isEmpty {
+                    Text("No shared folders")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.shares) { share in
+                    ShareRow(model: model, share: share)
+                }
+            }
+        }
+        .navigationTitle("Shares")
+    }
+}
+
+private struct ShareRow: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let share: IrisDriveShare
+    @State private var showingInvite = false
+    @State private var revokeTarget: IrisDriveShareMember?
+
+    var body: some View {
+        DisclosureGroup {
+            LabeledContent("Role", value: share.roleLabel.isEmpty ? share.role : share.roleLabel)
+            LabeledContent("Key", value: share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel)
+            if let epoch = share.currentKeyEpoch {
+                LabeledContent("Epoch", value: "\(epoch)")
+            }
+            if let shortcut = share.shortcutPaths.first {
+                LabeledContent("Shortcut", value: shortText(shortcut))
+            }
+            HStack {
+                if share.canAdmin {
+                    Button {
+                        showingInvite = true
+                    } label: {
+                        Label("Invite", systemImage: "person.badge.plus")
+                    }
+                }
+                if share.repairNeeded || !share.missingKeyWraps.isEmpty {
+                    Button {
+                        model.repairShareWraps(shareId: share.shareId)
+                    } label: {
+                        Label("Repair", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                if share.shortcutPaths.isEmpty {
+                    Button {
+                        model.addShareShortcut(shareId: share.shareId, displayName: shareDisplayName(share))
+                    } label: {
+                        Label("Shortcut", systemImage: "link")
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            ForEach(share.members) { member in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(memberDisplayName(member))
+                        Text(memberMetadata(member))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if share.canAdmin,
+                       member.status != "revoked",
+                       member.profileId != model.localProfileId {
+                        Button(role: .destructive) {
+                            revokeTarget = member
+                        } label: {
+                            Label("Revoke", systemImage: "trash")
+                        }
+                        .labelStyle(.iconOnly)
+                    }
+                }
+            }
+        } label: {
+            VStack(alignment: .leading) {
+                Text(shareDisplayName(share))
+                Text("\(share.participantCount) people | \(share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .sheet(isPresented: $showingInvite) {
+            InviteShareMemberSheet(model: model, share: share)
+        }
+        .alert(
+            "Revoke access?",
+            isPresented: Binding(
+                get: { revokeTarget != nil },
+                set: { presented in
+                    if !presented {
+                        revokeTarget = nil
+                    }
+                }
+            ),
+            presenting: revokeTarget
+        ) { member in
+            Button("Revoke", role: .destructive) {
+                model.revokeShareMember(shareId: share.shareId, profileId: member.profileId)
+                revokeTarget = nil
+            }
+            Button("Cancel", role: .cancel) {
+                revokeTarget = nil
+            }
+        } message: { member in
+            Text("Revoke \(memberDisplayName(member)) from \(shareDisplayName(share))?")
+        }
+    }
+}
+
+private struct InviteShareMemberSheet: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let share: IrisDriveShare
+    @Environment(\.dismiss) private var dismiss
+    @State private var profileId = ""
+    @State private var appKey = ""
+    @State private var role = "reader"
+    @State private var representativeNpubHint = ""
+    @State private var displayName = ""
+    @State private var label = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Member") {
+                    TextField("IrisProfile UUID", text: $profileId)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("Recipient AppKey", text: $appKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Picker("Role", selection: $role) {
+                        Text("Reader").tag("reader")
+                        Text("Editor").tag("editor")
+                        Text("Admin").tag("admin")
+                    }
+                }
+                Section("Contact") {
+                    TextField("Representative npub", text: $representativeNpubHint)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("Name", text: $displayName)
+                    TextField("AppKey label", text: $label)
+                }
+            }
+            .navigationTitle("Invite")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Invite") {
+                        model.inviteShareMember(
+                            shareId: share.shareId,
+                            profileId: profileId,
+                            appKey: appKey,
+                            role: role,
+                            representativeNpubHint: representativeNpubHint,
+                            displayName: displayName,
+                            label: label
+                        )
+                        dismiss()
+                    }
+                    .disabled(
+                        profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+            }
+        }
+    }
+}
+
 private struct BackupsView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
@@ -1179,4 +1401,29 @@ private struct QrCodeView: View {
 
 private func byteString(_ bytes: UInt64) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+private func shareDisplayName(_ share: IrisDriveShare) -> String {
+    share.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "Shared folder"
+        : share.displayName
+}
+
+private func memberDisplayName(_ member: IrisDriveShareMember) -> String {
+    member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "IrisProfile"
+        : member.displayName
+}
+
+private func memberMetadata(_ member: IrisDriveShareMember) -> String {
+    [
+        member.roleLabel.isEmpty ? member.role : member.roleLabel,
+        member.statusLabel.isEmpty ? member.status : member.statusLabel,
+        shortText(member.representativeNpubHint.isEmpty ? member.profileId : member.representativeNpubHint),
+    ].joined(separator: " | ")
+}
+
+private func shortText(_ value: String) -> String {
+    guard value.count > 32 else { return value }
+    return "\(value.prefix(14))...\(value.suffix(10))"
 }

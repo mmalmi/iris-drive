@@ -73,12 +73,23 @@ just run-cli app-keys request <owner-npub-or-invite-url> --label "Laptop"
 just run-cli app-keys approve <app-key-request-url-or-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
+just run-cli shares create "Projects/Alpha" --name "Alpha"
+just run-cli shares invite <share-id> --profile <iris-profile-id> --app-key <recipient-appkey-npub> --role reader
+just run-cli shares accept <share-invite-url>
 just run-cli shares list
+just run-cli shares members <share-id>
+just run-cli shares revoke <share-id> <iris-profile-id>
 just run-cli shares shortcut <share-id> --parent "Projects"
 just run-cli shares repair-wraps <share-id>
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
+
+Native apps expose the same share operations from the **Shares** tab: create a
+shared folder, invite an IrisProfile member, accept an invite, revoke a member,
+add a shortcut, and repair missing key wraps. The UI shows people/profile
+members first; AppKeys only appear when an admin is entering recipient key
+material for an invite.
 
 When `idrive daemon` is running it starts a loopback browser gateway on port
 `17321` by default. The current primary drive can be opened at:
@@ -140,11 +151,11 @@ See the platform READMEs for focused instructions:
 
 | Platform | Status |
 | --- | --- |
-| macOS | SwiftUI/AppKit app, menu-bar control, File Provider domain, app-group/runtime wiring, local smoke fixture |
-| Linux x64 | GTK/libadwaita app, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
+| macOS | SwiftUI/AppKit app, Shares/AppKeys/Backups control, File Provider domain, app-group/runtime wiring, local smoke fixture |
+| Linux x64 | GTK/libadwaita app, Shares/AppKeys/Backups control, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
 | Windows x64 | WPF app, tray control, Cloud Files placeholder/hydration path, self-contained publish script |
-| Android arm64 | Compose shell plus SAF DocumentsProvider with create/read/write/rename/delete/list support and adb smoke |
-| iOS | SwiftUI shell plus File Provider extension, simulator smoke, multi-app harness peer |
+| Android arm64 | Compose shell with Shares/AppKeys/Backups plus SAF DocumentsProvider with create/read/write/rename/delete/list support and adb smoke |
+| iOS | SwiftUI shell with Shares/AppKeys/Backups plus File Provider extension, simulator smoke, multi-app harness peer |
 | CLI | `idrive` create/restore/link, daemon, provider bridge, FIPS sync, Blossom/cache, backups, updater |
 
 See [Platform GUI parity](docs/PARITY.md) for the detailed cross-platform

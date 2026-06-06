@@ -295,6 +295,7 @@ pub fn apply_remote_iris_profile_roster_op_event(
         return Ok(IrisProfileRosterOpApply::Current);
     }
     shared_folder.roster_ops = merge_profile_roster_ops(&shared_folder.roster_ops, &[op]);
+    crate::refresh_shared_folder_member_statuses_from_roster(shared_folder);
     Ok(IrisProfileRosterOpApply::Applied)
 }
 
@@ -424,7 +425,7 @@ pub fn apply_remote_drive_root_event(
     else {
         return Ok(DriveRootApply::NotOurScope);
     };
-    if !shared_folder.projection().can_write_roots(&app_key_hex) {
+    if !crate::shared_folder_app_key_can_write_roots(shared_folder, &app_key_hex) {
         return Ok(DriveRootApply::UnauthorizedAppKey);
     }
     apply_root_to_app_key_roots(

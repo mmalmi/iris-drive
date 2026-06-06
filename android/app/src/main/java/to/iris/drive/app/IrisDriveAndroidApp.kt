@@ -155,6 +155,7 @@ internal enum class MainTab(
 ) {
     MyDrive("My Drive", "tabMyDrive", R.drawable.ic_drive),
     Devices("AppKeys", "tabDevices", R.drawable.ic_devices),
+    Shares("Shares", "tabShares", R.drawable.ic_drive),
     Backups("Backups", "tabBackups", R.drawable.ic_backup),
     Settings("Settings", "tabSettings", R.drawable.ic_settings),
 }
@@ -185,6 +186,12 @@ internal fun IrisDriveAndroidApp(
     onRemoveBlossomServer: (String) -> Unit,
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
+    onCreateShare: (String, String) -> Unit,
+    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onAcceptShareInvite: (String) -> Unit,
+    onRevokeShareMember: (String, String) -> Unit,
+    onAddShareShortcut: (String, String) -> Unit,
+    onRepairShareWraps: (String) -> Unit,
     onAddRoot: (String, String) -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
@@ -280,6 +287,12 @@ internal fun IrisDriveAndroidApp(
                     onRemoveBlossomServer = onRemoveBlossomServer,
                     onSyncBackups = onSyncBackups,
                     onCheckBackups = onCheckBackups,
+                    onCreateShare = onCreateShare,
+                    onInviteShareMember = onInviteShareMember,
+                    onAcceptShareInvite = onAcceptShareInvite,
+                    onRevokeShareMember = onRevokeShareMember,
+                    onAddShareShortcut = onAddShareShortcut,
+                    onRepairShareWraps = onRepairShareWraps,
                 )
             }
         }

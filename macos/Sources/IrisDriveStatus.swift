@@ -14,6 +14,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var currentAppKeyNpub: String?
     @Published var deviceNpub: String?
+    @Published var profileId: String?
     @Published var appKeyLinkInviteURL: String?
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequestStatus] = []
     @Published var canAdminProfile = false
@@ -42,6 +43,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var blossomServers: [String] = []
     @Published var backupTargets: [IrisDriveBackupTarget] = []
+    @Published var shares: [IrisDriveShareStatus] = []
+    @Published var lastShareInviteURL: String?
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
@@ -205,6 +208,76 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
         status = json["status"] as? String ?? "unknown"
         statusLabel = json["status_label"] as? String ?? ""
         health = json["health"] as? String ?? "unknown"
+    }
+}
+
+struct IrisDriveShareStatus: Identifiable, Equatable {
+    let id: String
+    let shareId: String
+    let displayName: String
+    let sharedWithMePath: String
+    let role: String
+    let roleLabel: String
+    let keyStatus: String
+    let keyStatusLabel: String
+    let canWrite: Bool
+    let canAdmin: Bool
+    let currentKeyEpoch: Int?
+    let hasCurrentKeyWrap: Bool
+    let keyUnavailable: Bool
+    let repairNeeded: Bool
+    let missingKeyWraps: [String]
+    let participantCount: Int
+    let appKeyCount: Int
+    let members: [IrisDriveShareMemberStatus]
+    let shortcutPaths: [String]
+
+    init(json: [String: Any]) {
+        shareId = json["share_id"] as? String ?? UUID().uuidString
+        id = shareId
+        displayName = json["display_name"] as? String ?? ""
+        sharedWithMePath = json["shared_with_me_path"] as? String ?? ""
+        role = json["role"] as? String ?? ""
+        roleLabel = json["role_label"] as? String ?? ""
+        keyStatus = json["key_status"] as? String ?? ""
+        keyStatusLabel = json["key_status_label"] as? String ?? ""
+        canWrite = json["can_write"] as? Bool ?? false
+        canAdmin = json["can_admin"] as? Bool ?? false
+        currentKeyEpoch = (json["current_key_epoch"] as? NSNumber)?.intValue
+        hasCurrentKeyWrap = json["has_current_key_wrap"] as? Bool ?? false
+        keyUnavailable = json["key_unavailable"] as? Bool ?? false
+        repairNeeded = json["repair_needed"] as? Bool ?? false
+        missingKeyWraps = json["missing_key_wraps"] as? [String] ?? []
+        participantCount = (json["participant_count"] as? NSNumber)?.intValue ?? 0
+        appKeyCount = (json["app_key_count"] as? NSNumber)?.intValue ?? 0
+        members =
+            (json["members"] as? [[String: Any]] ?? [])
+            .map(IrisDriveShareMemberStatus.init(json:))
+        shortcutPaths = json["shortcut_paths"] as? [String] ?? []
+    }
+}
+
+struct IrisDriveShareMemberStatus: Identifiable, Equatable {
+    let id: String
+    let profileId: String
+    let displayName: String
+    let representativeNpubHint: String
+    let role: String
+    let roleLabel: String
+    let status: String
+    let statusLabel: String
+    let appKeyCount: Int
+
+    init(json: [String: Any]) {
+        profileId = json["profile_id"] as? String ?? UUID().uuidString
+        id = profileId
+        displayName = json["display_name"] as? String ?? ""
+        representativeNpubHint = json["representative_npub_hint"] as? String ?? ""
+        role = json["role"] as? String ?? ""
+        roleLabel = json["role_label"] as? String ?? ""
+        status = json["status"] as? String ?? ""
+        statusLabel = json["status_label"] as? String ?? ""
+        appKeyCount = (json["app_key_count"] as? NSNumber)?.intValue ?? 0
     }
 }
 

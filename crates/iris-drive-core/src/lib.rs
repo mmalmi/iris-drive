@@ -117,9 +117,16 @@ pub use projection::{
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use sharing::{
-    SHARED_WITH_ME_DIR, ShareKeyRepairOutcome, ShareRecipient, ShareRole, ShareShortcut,
-    SharedFolder, SharedFolderKeyStatus, SharedFolderView, SharingError, create_shared_folder,
-    current_shared_folder_key, default_share_shortcut_path, repair_shared_folder_key_epoch_wraps,
+    SHARE_INVITE_PREFIX, SHARE_INVITE_SCHEMA, SHARED_WITH_ME_DIR, ShareInviteBundle,
+    ShareInviteOutcome, ShareKeyRepairOutcome, ShareMember, ShareMemberRevokeOutcome,
+    ShareMemberStatus, ShareRecipient, ShareRole, ShareShortcut, SharedFolder,
+    SharedFolderKeyStatus, SharedFolderMemberView, SharedFolderView, SharingError,
+    create_shared_folder, current_shared_folder_key, default_share_shortcut_path,
+    encode_share_invite, invite_shared_folder_member, parse_share_invite,
+    refresh_shared_folder_member_statuses_from_roster, repair_shared_folder_key_epoch_wraps,
+    revoke_shared_folder_member, shared_folder_app_key_can_admin,
+    shared_folder_app_key_can_write_roots, shared_folder_from_invite_for_profile,
+    shared_folder_key_recipient_pubkeys, shared_folder_missing_key_wrap_pubkeys,
     shared_folder_view, shared_folder_views, shared_with_me_path,
 };
 pub use sync::{

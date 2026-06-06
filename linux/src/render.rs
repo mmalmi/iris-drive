@@ -99,6 +99,186 @@ pub(crate) fn render_backups(model: &AppRef, state: &NativeAppState) {
     }
 }
 
+pub(crate) fn render_shares(model: &AppRef, state: &NativeAppState) {
+    let list = &model.ui.shares;
+    clear_list(list);
+    for share in &state.ui.shares {
+        list.append(&share_row(model, state, share));
+    }
+    if list.first_child().is_none() {
+        list.append(&simple_row("No shared folders", ""));
+    }
+}
+
+fn share_row(
+    model: &AppRef,
+    state: &NativeAppState,
+    share: &iris_drive_app_core::state::UiShare,
+) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.set_selectable(false);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    body.set_margin_top(12);
+    body.set_margin_bottom(12);
+    body.set_margin_start(12);
+    body.set_margin_end(12);
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header.set_valign(gtk::Align::Center);
+
+    let icon = gtk::Image::from_icon_name("folder-publicshare-symbolic");
+    header.append(&icon);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(if share.display_name.is_empty() {
+        "Shared folder"
+    } else {
+        &share.display_name
+    }));
+    title.add_css_class("iris-row-title");
+    title.set_xalign(0.0);
+    labels.append(&title);
+
+    let mut metadata = Vec::new();
+    if !share.role_label.is_empty() {
+        metadata.push(share.role_label.clone());
+    }
+    if !share.key_status_label.is_empty() {
+        metadata.push(share.key_status_label.clone());
+    }
+    metadata.push(format!("{} people", share.participant_count));
+    if !share.shortcut_paths.is_empty() {
+        metadata.push(format!("shortcut {}", short_text(&share.shortcut_paths[0])));
+    }
+    let subtitle = gtk::Label::new(Some(&metadata.join(" | ")));
+    subtitle.add_css_class("iris-row-subtitle");
+    subtitle.set_xalign(0.0);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_max_width_chars(72);
+    labels.append(&subtitle);
+    header.append(&labels);
+
+    if share.repair_needed || !share.missing_key_wraps.is_empty() {
+        let repair = icon_button("emblem-synchronizing-symbolic", "Repair key wraps");
+        let model = Rc::clone(model);
+        let share_id = share.share_id.clone();
+        repair.connect_clicked(move |_| repair_share_wraps(&model, share_id.clone()));
+        header.append(&repair);
+    }
+
+    if share.shortcut_paths.is_empty() {
+        let shortcut = icon_button("emblem-symbolic-link-symbolic", "Add shortcut");
+        let model = Rc::clone(model);
+        let share_id = share.share_id.clone();
+        let display_name = share.display_name.clone();
+        shortcut.connect_clicked(move |_| {
+            add_share_shortcut(&model, share_id.clone(), display_name.clone());
+        });
+        header.append(&shortcut);
+    }
+
+    if share.can_admin {
+        let invite = icon_button("list-add-symbolic", "Invite member");
+        let model = Rc::clone(model);
+        let share_id = share.share_id.clone();
+        let display_name = share.display_name.clone();
+        invite.connect_clicked(move |_| {
+            show_invite_share_member_dialog(&model, share_id.clone(), display_name.clone());
+        });
+        header.append(&invite);
+    }
+
+    body.append(&header);
+
+    let local_profile_id = state
+        .ui
+        .profile
+        .as_ref()
+        .map(|profile| profile.profile_id.as_str())
+        .unwrap_or("");
+    for member in &share.members {
+        body.append(&share_member_row(
+            model,
+            share,
+            member,
+            local_profile_id,
+            share.can_admin,
+        ));
+    }
+
+    row.set_child(Some(&body));
+    row
+}
+
+fn share_member_row(
+    model: &AppRef,
+    share: &iris_drive_app_core::state::UiShare,
+    member: &iris_drive_app_core::state::UiShareMember,
+    local_profile_id: &str,
+    can_admin: bool,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(28);
+    row.set_valign(gtk::Align::Center);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(if member.display_name.is_empty() {
+        "IrisProfile"
+    } else {
+        &member.display_name
+    }));
+    title.add_css_class("iris-row-title");
+    title.set_xalign(0.0);
+    labels.append(&title);
+
+    let mut metadata = Vec::new();
+    if !member.role_label.is_empty() {
+        metadata.push(member.role_label.clone());
+    }
+    if !member.status_label.is_empty() {
+        metadata.push(member.status_label.clone());
+    }
+    if !member.representative_npub_hint.is_empty() {
+        metadata.push(short_text(&member.representative_npub_hint));
+    } else {
+        metadata.push(short_text(&member.profile_id));
+    }
+    let subtitle = gtk::Label::new(Some(&metadata.join(" | ")));
+    subtitle.add_css_class("iris-row-subtitle");
+    subtitle.set_xalign(0.0);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_max_width_chars(68);
+    labels.append(&subtitle);
+    row.append(&labels);
+
+    if can_admin && member.status != "revoked" && member.profile_id != local_profile_id {
+        let revoke = icon_button("user-trash-symbolic", "Revoke member");
+        revoke.add_css_class("destructive-action");
+        let model = Rc::clone(model);
+        let share_id = share.share_id.clone();
+        let profile_id = member.profile_id.clone();
+        let display_name = if member.display_name.is_empty() {
+            short_text(&member.profile_id)
+        } else {
+            member.display_name.clone()
+        };
+        revoke.connect_clicked(move |_| {
+            show_revoke_share_member_dialog(
+                &model,
+                share_id.clone(),
+                profile_id.clone(),
+                display_name.clone(),
+            );
+        });
+        row.append(&revoke);
+    }
+
+    row
+}
+
 fn backup_row(model: &AppRef, title: &str, subtitle: &str, target: &str) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(false);

@@ -164,7 +164,104 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(!share.key_unavailable);
     assert!(!share.repair_needed);
     assert_eq!(share.participant_count, 1);
+    assert_eq!(share.app_key_count, 1);
+    assert_eq!(share.members.len(), 1);
+    assert_eq!(
+        share.members[0].profile_id,
+        created.ui.profile.unwrap().profile_id
+    );
+    assert_eq!(share.members[0].display_name, "Mac");
+    assert_eq!(share.members[0].role, "admin");
+    assert_eq!(share.members[0].role_label, "Admin");
+    assert_eq!(share.members[0].status, "active");
+    assert_eq!(share.members[0].status_label, "Active");
+    assert_eq!(share.members[0].app_key_count, 1);
     assert_eq!(share.shortcut_paths, vec!["Projects/Alpha shared"]);
+}
+
+#[test]
+fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner_created = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let owner_profile = owner_created.ui.profile.clone().unwrap();
+    let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
+        source_path: "Projects/Alpha".to_owned(),
+        display_name: "Alpha".to_owned(),
+    });
+    assert!(created_share.error.is_empty(), "{}", created_share.error);
+    assert_eq!(created_share.ui.shares.len(), 1);
+    let share_id = created_share.ui.shares[0].share_id.clone();
+
+    let recipient_dir = tempfile::tempdir().unwrap();
+    let recipient_app = FfiApp::new(
+        recipient_dir.path().display().to_string(),
+        "test".to_owned(),
+    );
+    let recipient_created = recipient_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Recipient".to_owned(),
+    });
+    assert!(
+        recipient_created.error.is_empty(),
+        "{}",
+        recipient_created.error
+    );
+    let recipient_profile = recipient_created.ui.profile.clone().unwrap();
+
+    let invited = owner_app.dispatch(NativeAppAction::InviteShareMember {
+        share_id: share_id.clone(),
+        profile_id: recipient_profile.profile_id.clone(),
+        app_key: recipient_profile.current_app_key_pubkey.clone(),
+        role: "reader".to_owned(),
+        representative_npub_hint: "npub1alice".to_owned(),
+        display_name: "Alice".to_owned(),
+        label: "Recipient".to_owned(),
+    });
+    assert!(invited.error.is_empty(), "{}", invited.error);
+    assert!(
+        invited
+            .ui
+            .last_share_invite
+            .starts_with(iris_drive_core::SHARE_INVITE_PREFIX)
+    );
+
+    let accepted = recipient_app.dispatch(NativeAppAction::AcceptShareInvite {
+        invite: invited.ui.last_share_invite.clone(),
+    });
+    assert!(accepted.error.is_empty(), "{}", accepted.error);
+    assert_eq!(accepted.ui.shares.len(), 1);
+    assert_eq!(accepted.ui.shares[0].share_id, share_id);
+    assert_eq!(accepted.ui.shares[0].role, "reader");
+    assert_eq!(accepted.ui.shares[0].members.len(), 2);
+
+    let shortcut = recipient_app.dispatch(NativeAppAction::AddShareShortcut {
+        share_id: share_id.clone(),
+        path: String::new(),
+        parent: "Projects".to_owned(),
+        target_path: String::new(),
+    });
+    assert!(shortcut.error.is_empty(), "{}", shortcut.error);
+    assert_eq!(shortcut.ui.shares[0].shortcut_paths, vec!["Projects/Alpha"]);
+
+    let revoked = owner_app.dispatch(NativeAppAction::RevokeShareMember {
+        share_id,
+        profile_id: recipient_profile.profile_id,
+        reason: "removed".to_owned(),
+    });
+    assert!(revoked.error.is_empty(), "{}", revoked.error);
+    let owner_share = revoked.ui.shares.first().unwrap();
+    assert_eq!(
+        owner_share
+            .members
+            .iter()
+            .find(|member| member.profile_id != owner_profile.profile_id)
+            .unwrap()
+            .status,
+        "revoked"
+    );
 }
 
 #[test]

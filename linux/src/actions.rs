@@ -73,6 +73,258 @@ pub(crate) fn check_backups(model: &AppRef) {
     }
 }
 
+pub(crate) fn create_share(model: &AppRef) {
+    let source_path = model.ui.share_source_entry.text().trim().to_string();
+    if source_path.is_empty() {
+        model.ui.notice.set_text("Folder path is required");
+        return;
+    }
+    let display_name = model.ui.share_name_entry.text().trim().to_string();
+
+    match dispatch_desktop_action(NativeAppAction::CreateShare {
+        source_path,
+        display_name,
+    }) {
+        Ok(_) => {
+            model.ui.share_source_entry.set_text("");
+            model.ui.share_name_entry.set_text("");
+            model.ui.notice.set_text("Share created");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn accept_share_invite(model: &AppRef) {
+    let invite = model.ui.share_invite_entry.text().trim().to_string();
+    if invite.is_empty() {
+        model.ui.notice.set_text("Share invite is required");
+        return;
+    }
+
+    match dispatch_desktop_action(NativeAppAction::AcceptShareInvite { invite }) {
+        Ok(_) => {
+            model.ui.share_invite_entry.set_text("");
+            model.ui.notice.set_text("Share accepted");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn copy_last_share_invite(model: &AppRef) {
+    match desktop_state() {
+        Ok(state) if !state.ui.last_share_invite.is_empty() => copy_text(
+            model,
+            &state.ui.last_share_invite,
+            "Share invite copied",
+        ),
+        Ok(_) => model.ui.notice.set_text("No invite available"),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn show_invite_share_member_dialog(
+    model: &AppRef,
+    share_id: String,
+    share_name: String,
+) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Invite to share")
+        .modal(true)
+        .default_width(460)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some(&format!("Invite to {share_name}")));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let profile_id = setup_entry("IrisProfile UUID");
+    let app_key = setup_entry("Recipient AppKey");
+    let npub_hint = setup_entry("Representative npub");
+    let display_name = setup_entry("Name");
+    let label = setup_entry("AppKey label");
+    body.append(&profile_id);
+    body.append(&app_key);
+    body.append(&npub_hint);
+    body.append(&display_name);
+    body.append(&label);
+
+    let role = gtk::DropDown::from_strings(&["reader", "editor", "admin"]);
+    role.set_selected(0);
+    body.append(&role);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let invite = primary_button("Invite");
+    buttons.append(&cancel);
+    buttons.append(&invite);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let share_id = share_id.clone();
+        invite.connect_clicked(move |_| {
+            let profile_id = profile_id.text().trim().to_string();
+            let app_key = app_key.text().trim().to_string();
+            if profile_id.is_empty() || app_key.is_empty() {
+                model
+                    .ui
+                    .notice
+                    .set_text("IrisProfile UUID and AppKey are required");
+                return;
+            }
+            let role = match role.selected() {
+                1 => "editor",
+                2 => "admin",
+                _ => "reader",
+            }
+            .to_string();
+            match dispatch_desktop_action(NativeAppAction::InviteShareMember {
+                share_id: share_id.clone(),
+                profile_id,
+                app_key,
+                role,
+                representative_npub_hint: npub_hint.text().trim().to_string(),
+                display_name: display_name.text().trim().to_string(),
+                label: label.text().trim().to_string(),
+            }) {
+                Ok(state) => {
+                    if state.ui.last_share_invite.is_empty() {
+                        model.ui.notice.set_text("Share invite created");
+                    } else {
+                        copy_text(&model, &state.ui.last_share_invite, "Share invite copied");
+                    }
+                    refresh(&model);
+                    dialog.close();
+                }
+                Err(error) => model.ui.notice.set_text(&error),
+            }
+        });
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+pub(crate) fn repair_share_wraps(model: &AppRef, share_id: String) {
+    match dispatch_desktop_action(NativeAppAction::RepairShareWraps { share_id }) {
+        Ok(_) => {
+            model.ui.notice.set_text("Share wraps repaired");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn add_share_shortcut(model: &AppRef, share_id: String, display_name: String) {
+    let path = if display_name.trim().is_empty() {
+        "Shared folder".to_string()
+    } else {
+        display_name.trim().to_string()
+    };
+    match dispatch_desktop_action(NativeAppAction::AddShareShortcut {
+        share_id,
+        path,
+        parent: String::new(),
+        target_path: String::new(),
+    }) {
+        Ok(_) => {
+            model.ui.notice.set_text("Shortcut added");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn show_revoke_share_member_dialog(
+    model: &AppRef,
+    share_id: String,
+    profile_id: String,
+    display_name: String,
+) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Revoke share member")
+        .modal(true)
+        .default_width(380)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Revoke access?"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let message = gtk::Label::new(Some(&format!(
+        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this IrisProfile."
+    )));
+    message.add_css_class("iris-muted");
+    message.set_xalign(0.0);
+    message.set_wrap(true);
+    body.append(&message);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let revoke = pill_button("Revoke");
+    revoke.add_css_class("destructive-action");
+    buttons.append(&cancel);
+    buttons.append(&revoke);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        revoke.connect_clicked(move |_| {
+            match dispatch_desktop_action(NativeAppAction::RevokeShareMember {
+                share_id: share_id.clone(),
+                profile_id: profile_id.clone(),
+                reason: String::new(),
+            }) {
+                Ok(_) => {
+                    model.ui.notice.set_text("Share member revoked");
+                    refresh(&model);
+                    dialog.close();
+                }
+                Err(error) => model.ui.notice.set_text(&error),
+            }
+        });
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
 pub(crate) fn set_local_nhash_resolver(model: &AppRef, enabled: bool) {
     let command = if enabled { "enable" } else { "disable" };
     match run_idrive(["nhash-resolver", command]) {

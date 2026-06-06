@@ -6,6 +6,7 @@ import org.json.JSONObject
 internal data class AppState(
     val profile: ProfileState? = null,
     val roots: List<SyncRoot> = emptyList(),
+    val shares: List<ShareState> = emptyList(),
     val devices: List<DeviceState> = emptyList(),
     val relays: List<String> = emptyList(),
     val relayStatuses: List<RelayStatus> = emptyList(),
@@ -14,6 +15,7 @@ internal data class AppState(
     val sync: SyncState = SyncState(),
     val fips: FipsState = FipsState(),
     val snapshotLink: String = "",
+    val lastShareInvite: String = "",
     val error: String = "",
     val setupState: String = "not_configured",
     val setupLabel: String = "Not linked",
@@ -36,6 +38,7 @@ internal data class AppState(
             return AppState(
                 profile = ui.optJSONObject("profile")?.toProfile(),
                 roots = ui.optJSONArray("roots").toRoots(),
+                shares = ui.optJSONArray("shares").toShares(),
                 devices = ui.optJSONArray("devices").toDevices(),
                 relays = ui.optJSONArray("relays").toStrings(),
                 relayStatuses = ui.optJSONArray("relay_statuses").toRelayStatuses(),
@@ -44,6 +47,7 @@ internal data class AppState(
                 sync = ui.optJSONObject("sync")?.toSync() ?: SyncState(),
                 fips = ui.optJSONObject("fips")?.toFips() ?: FipsState(),
                 snapshotLink = ui.optString("snapshot_link"),
+                lastShareInvite = ui.optString("last_share_invite"),
                 error = json.optString("error"),
                 setupState = ui.optString("setup_state", "not_configured"),
                 setupLabel = ui.optString("setup_label", "Not linked"),
@@ -62,6 +66,7 @@ internal data class AppState(
 }
 
 internal data class ProfileState(
+    val profileId: String,
     val currentAppKeyNpub: String,
     val devicePubkey: String,
     val appKeyLabel: String,
@@ -115,6 +120,38 @@ internal data class BackupState(
     val state: String,
     val detail: String,
     val enabled: Boolean,
+)
+
+internal data class ShareState(
+    val shareId: String,
+    val displayName: String,
+    val sharedWithMePath: String,
+    val role: String,
+    val roleLabel: String,
+    val keyStatus: String,
+    val keyStatusLabel: String,
+    val canWrite: Boolean,
+    val canAdmin: Boolean,
+    val currentKeyEpoch: Long?,
+    val hasCurrentKeyWrap: Boolean,
+    val keyUnavailable: Boolean,
+    val repairNeeded: Boolean,
+    val missingKeyWraps: List<String>,
+    val participantCount: Int,
+    val appKeyCount: Int,
+    val members: List<ShareMemberState>,
+    val shortcutPaths: List<String>,
+)
+
+internal data class ShareMemberState(
+    val profileId: String,
+    val displayName: String,
+    val representativeNpubHint: String,
+    val role: String,
+    val roleLabel: String,
+    val status: String,
+    val statusLabel: String,
+    val appKeyCount: Int,
 )
 
 internal data class RelayStatus(
@@ -302,10 +339,67 @@ internal object NativeActions {
             .put("type", "remove_root")
             .put("name", name)
             .toString()
+
+    fun createShare(sourcePath: String, displayName: String): String =
+        JSONObject()
+            .put("type", "create_share")
+            .put("source_path", sourcePath)
+            .put("display_name", displayName)
+            .toString()
+
+    fun inviteShareMember(
+        shareId: String,
+        profileId: String,
+        appKey: String,
+        role: String,
+        representativeNpubHint: String,
+        displayName: String,
+        label: String,
+    ): String =
+        JSONObject()
+            .put("type", "invite_share_member")
+            .put("share_id", shareId)
+            .put("profile_id", profileId)
+            .put("app_key", appKey)
+            .put("role", role)
+            .put("representative_npub_hint", representativeNpubHint)
+            .put("display_name", displayName)
+            .put("label", label)
+            .toString()
+
+    fun acceptShareInvite(invite: String): String =
+        JSONObject()
+            .put("type", "accept_share_invite")
+            .put("invite", invite)
+            .toString()
+
+    fun revokeShareMember(shareId: String, profileId: String): String =
+        JSONObject()
+            .put("type", "revoke_share_member")
+            .put("share_id", shareId)
+            .put("profile_id", profileId)
+            .put("reason", "")
+            .toString()
+
+    fun addShareShortcut(shareId: String, path: String): String =
+        JSONObject()
+            .put("type", "add_share_shortcut")
+            .put("share_id", shareId)
+            .put("path", path)
+            .put("parent", "")
+            .put("target_path", "")
+            .toString()
+
+    fun repairShareWraps(shareId: String): String =
+        JSONObject()
+            .put("type", "repair_share_wraps")
+            .put("share_id", shareId)
+            .toString()
 }
 
 private fun JSONObject.toProfile(): ProfileState =
     ProfileState(
+        profileId = optString("profile_id"),
         currentAppKeyNpub = optString("current_app_key_npub"),
         devicePubkey = optString("current_app_key_npub"),
         appKeyLabel = optString("app_key_label"),
@@ -453,6 +547,58 @@ private fun JSONArray?.toBackups(): List<BackupState> {
                     state = item.optString("state"),
                     detail = item.optString("detail"),
                     enabled = item.optBoolean("enabled", true),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toShares(): List<ShareState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ShareState(
+                    shareId = item.optString("share_id"),
+                    displayName = item.optString("display_name"),
+                    sharedWithMePath = item.optString("shared_with_me_path"),
+                    role = item.optString("role"),
+                    roleLabel = item.optString("role_label"),
+                    keyStatus = item.optString("key_status"),
+                    keyStatusLabel = item.optString("key_status_label"),
+                    canWrite = item.optBoolean("can_write"),
+                    canAdmin = item.optBoolean("can_admin"),
+                    currentKeyEpoch = item.opt("current_key_epoch")?.let { (it as? Number)?.toLong() },
+                    hasCurrentKeyWrap = item.optBoolean("has_current_key_wrap"),
+                    keyUnavailable = item.optBoolean("key_unavailable"),
+                    repairNeeded = item.optBoolean("repair_needed"),
+                    missingKeyWraps = item.optJSONArray("missing_key_wraps").toStringList(),
+                    participantCount = item.optInt("participant_count"),
+                    appKeyCount = item.optInt("app_key_count"),
+                    members = item.optJSONArray("members").toShareMembers(),
+                    shortcutPaths = item.optJSONArray("shortcut_paths").toStringList(),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toShareMembers(): List<ShareMemberState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ShareMemberState(
+                    profileId = item.optString("profile_id"),
+                    displayName = item.optString("display_name"),
+                    representativeNpubHint = item.optString("representative_npub_hint"),
+                    role = item.optString("role"),
+                    roleLabel = item.optString("role_label"),
+                    status = item.optString("status"),
+                    statusLabel = item.optString("status_label"),
+                    appKeyCount = item.optInt("app_key_count"),
                 ),
             )
         }

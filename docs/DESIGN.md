@@ -11,10 +11,12 @@ discovery. P2P as far as each OS allows.
 - Sync that root across all of the user's app installs automatically.
 - Each app install seeds its blocks P2P to authorized peers through
   hashtree-over-FIPS.
-- **Share** folders with specific other IrisProfiles/AppKeys. A share has its
-  own cryptographic root, roster, roles, key epochs, wraps, and core-derived key
-  status (`available`, `repair_needed`, `key_unavailable`, etc.); recipients see
-  it under **Shared with me** and may add shortcuts into My Drive.
+- **Share** folders with specific other IrisProfile members. A share has its
+  own cryptographic root, entity roster, roles, key epochs, wraps, and
+  core-derived key status (`available`, `repair_needed`, `key_unavailable`,
+  etc.); AppKeys remain the concrete signing/decryption actors under each
+  member profile. Recipients see shares under **Shared with me** and may add
+  shortcuts into My Drive.
 - No DNS, SSL, CDNs, or centralized servers. Identity = IrisProfile UUID plus
   signed AppKey/recovery/social facets, not a primary Nostr pubkey.
 - Native shells per platform, single shared Rust core.
@@ -185,17 +187,30 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 
 ### Phase 4 — Sharing (weeks 11–13)
 
-- **Send invite**: `idrive share ./Photos --with <profile/appkey> --role reader`.
-  Creates an internal share root for `./Photos`, initializes a share roster,
-  and wraps the share key to recipients that can receive key wraps.
+- **Create share**: `idrive shares create Photos --name Photos`. Creates an
+  internal share root, initializes an entity-oriented share roster, and records
+  the owner IrisProfile as an admin member.
+- **Send invite**: `idrive shares invite <share-id> --profile <iris-profile-id>
+  --app-key <recipient-appkey-npub> --role reader`. The selected representative
+  npub/contact is only a discovery/display hint; access is granted to the
+  resolved IrisProfile member, while concrete AppKeys receive key wraps and
+  scoped signing/decryption capabilities. Inviting rotates the share epoch and
+  emits a compact invite bundle containing the current roster proof.
+- **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
+  imports the shared folder only if the invite names their IrisProfile.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
   (no timed fetches — see CLAUDE.md rule), surfaces "X shared 'Photos'."
 - **Receive share**: shared folders appear under `Shared with me/<name>`.
   Recipients can add shortcuts anywhere in My Drive. Team/shared DriveSpaces can
   come later; the first UX remains one Iris Drive.
-- **Revoke / leave**: owner publishes new key wrapped only to remaining
-  members. Prior content can't be recalled (content-addressed); matches
-  Drive/Dropbox reality.
+- **GUI parity**: native control panels render app-core `UiShare` and
+  `UiShareMember` state from the **Shares** tab and dispatch app-core actions
+  for create/invite/accept/revoke/shortcut/repair. They do not reimplement share
+  authority or key-wrap validation.
+- **Revoke / leave**: share admins revoke an IrisProfile member, tombstone all
+  known AppKeys for that profile in the share roster, rotate the share epoch,
+  and publish the new key only to remaining active members. Prior content can't
+  be recalled (content-addressed); matches Drive/Dropbox reality.
 
 ### Phase 5 — Windows + remaining desktop (weeks 13–16)
 

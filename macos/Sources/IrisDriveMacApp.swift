@@ -686,6 +686,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    func createShare(sourcePath: String, displayName: String) {
+        let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty else {
+            updateStatus("Folder path required")
+            return
+        }
+        dispatchNativeAction(
+            [
+                "type": "create_share",
+                "source_path": sourcePath,
+                "display_name": displayName,
+            ],
+            progress: "Creating share",
+            success: "Share created"
+        )
+    }
+
+    func acceptShareInvite(_ invite: String) {
+        let invite = invite.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !invite.isEmpty else {
+            updateStatus("Share invite required")
+            return
+        }
+        dispatchNativeAction(
+            ["type": "accept_share_invite", "invite": invite],
+            progress: "Accepting share",
+            success: "Share accepted"
+        )
+    }
+
+    func inviteShareMember(
+        shareId: String,
+        profileId: String,
+        appKey: String,
+        role: String,
+        representativeNpubHint: String,
+        displayName: String,
+        label: String
+    ) {
+        let profileId = profileId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !profileId.isEmpty, !appKey.isEmpty else {
+            updateStatus("IrisProfile UUID and AppKey required")
+            return
+        }
+        dispatchNativeAction(
+            [
+                "type": "invite_share_member",
+                "share_id": shareId,
+                "profile_id": profileId,
+                "app_key": appKey,
+                "role": role,
+                "representative_npub_hint": representativeNpubHint,
+                "display_name": displayName,
+                "label": label,
+            ],
+            progress: "Creating share invite",
+            success: "Share invite created"
+        ) {
+            if let invite = IrisDriveStatus.shared.lastShareInviteURL {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(invite, forType: .string)
+            }
+        }
+    }
+
+    func revokeShareMember(shareId: String, profileId: String) {
+        dispatchNativeAction(
+            [
+                "type": "revoke_share_member",
+                "share_id": shareId,
+                "profile_id": profileId,
+                "reason": "",
+            ],
+            progress: "Revoking share member",
+            success: "Share member revoked"
+        )
+    }
+
+    func addShareShortcut(shareId: String, displayName: String) {
+        let path = displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Shared folder"
+            : displayName
+        dispatchNativeAction(
+            [
+                "type": "add_share_shortcut",
+                "share_id": shareId,
+                "path": path,
+                "parent": "",
+                "target_path": "",
+            ],
+            progress: "Adding shortcut",
+            success: "Shortcut added"
+        )
+    }
+
+    func repairShareWraps(shareId: String) {
+        dispatchNativeAction(
+            ["type": "repair_share_wraps", "share_id": shareId],
+            progress: "Repairing share keys",
+            success: "Share keys repaired"
+        )
+    }
+
     @objc func quitApp() {
         NSApp.terminate(nil)
     }
@@ -1492,6 +1596,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.blocksDirectory = paths["blocks_dir"] as? String
 
             if let account {
+                status.profileId = account["profile_id"] as? String
                 status.currentAppKeyNpub = account["current_app_key_npub"] as? String
                 status.deviceNpub = account["current_app_key_npub"] as? String
                 status.canAdminProfile =
@@ -1504,6 +1609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     (account["inbound_app_key_link_requests"] as? [[String: Any]] ?? [])
                     .map(IrisDriveAppKeyLinkRequestStatus.init(json:))
             } else {
+                status.profileId = nil
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
                 status.appKeyLinkInviteURL = nil
@@ -1543,6 +1649,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)
             status.backupTargets =
                 (ui["backups"] as? [[String: Any]] ?? []).map(IrisDriveBackupTarget.init)
+            status.shares =
+                (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
+            let lastShareInvite = ui["last_share_invite"] as? String ?? ""
+            status.lastShareInviteURL = lastShareInvite.isEmpty ? nil : lastShareInvite
             status.fips = IrisDriveFipsStatus(json: ui["fips"] as? [String: Any] ?? [:])
             status.peers =
                 (ui["devices"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)

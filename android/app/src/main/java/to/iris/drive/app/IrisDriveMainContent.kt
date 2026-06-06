@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.RecoverySecretExport
+import to.iris.drive.app.core.ShareMemberState
+import to.iris.drive.app.core.ShareState
 
 @Composable
 internal fun AuthenticatedContent(
@@ -75,6 +77,12 @@ internal fun AuthenticatedContent(
     onRemoveBlossomServer: (String) -> Unit,
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
+    onCreateShare: (String, String) -> Unit,
+    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onAcceptShareInvite: (String) -> Unit,
+    onRevokeShareMember: (String, String) -> Unit,
+    onAddShareShortcut: (String, String) -> Unit,
+    onRepairShareWraps: (String) -> Unit,
 ) {
     when (selectedTab) {
         MainTab.MyDrive -> DriveContent(
@@ -107,6 +115,17 @@ internal fun AuthenticatedContent(
             onRemoveBlossomServer = onRemoveBlossomServer,
             onSyncBackups = onSyncBackups,
             onCheckBackups = onCheckBackups,
+        )
+        MainTab.Shares -> SharesContent(
+            padding = padding,
+            state = state,
+            onCopyText = onCopyText,
+            onCreateShare = onCreateShare,
+            onInviteShareMember = onInviteShareMember,
+            onAcceptShareInvite = onAcceptShareInvite,
+            onRevokeShareMember = onRevokeShareMember,
+            onAddShareShortcut = onAddShareShortcut,
+            onRepairShareWraps = onRepairShareWraps,
         )
         MainTab.Settings -> SettingsContent(
             padding = padding,
@@ -241,6 +260,44 @@ private fun BackupsContent(
                 onRemoveBlossomServer = onRemoveBlossomServer,
                 onSyncBackups = onSyncBackups,
                 onCheckBackups = onCheckBackups,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharesContent(
+    padding: PaddingValues,
+    state: AppState,
+    onCopyText: (String, String) -> Unit,
+    onCreateShare: (String, String) -> Unit,
+    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onAcceptShareInvite: (String) -> Unit,
+    onRevokeShareMember: (String, String) -> Unit,
+    onAddShareShortcut: (String, String) -> Unit,
+    onRepairShareWraps: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .testTag("sharesContent"),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.error.isNotBlank()) {
+            item { Notice(state.error) }
+        }
+        item {
+            SharesPanel(
+                state = state,
+                onCopyText = onCopyText,
+                onCreateShare = onCreateShare,
+                onInviteShareMember = onInviteShareMember,
+                onAcceptShareInvite = onAcceptShareInvite,
+                onRevokeShareMember = onRevokeShareMember,
+                onAddShareShortcut = onAddShareShortcut,
+                onRepairShareWraps = onRepairShareWraps,
             )
         }
     }
@@ -494,6 +551,279 @@ private fun BackupsPanel(
                         Text("Remove Blossom")
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharesPanel(
+    state: AppState,
+    onCopyText: (String, String) -> Unit,
+    onCreateShare: (String, String) -> Unit,
+    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onAcceptShareInvite: (String) -> Unit,
+    onRevokeShareMember: (String, String) -> Unit,
+    onAddShareShortcut: (String, String) -> Unit,
+    onRepairShareWraps: (String) -> Unit,
+) {
+    var sourceInput by remember { mutableStateOf("") }
+    var nameInput by remember { mutableStateOf("") }
+    var inviteInput by remember { mutableStateOf("") }
+    var inviteTarget by remember { mutableStateOf<ShareState?>(null) }
+    var revokeTarget by remember { mutableStateOf<Pair<ShareState, ShareMemberState>?>(null) }
+
+    inviteTarget?.let { share ->
+        InviteShareMemberDialog(
+            share = share,
+            onDismiss = { inviteTarget = null },
+            onInvite = { profileId, appKey, role, npubHint, displayName, label ->
+                onInviteShareMember(share.shareId, profileId, appKey, role, npubHint, displayName, label)
+                inviteTarget = null
+            },
+        )
+    }
+
+    revokeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { revokeTarget = null },
+            title = { Text("Revoke access") },
+            text = {
+                Text(
+                    "Revoke ${displayMemberName(target.second)} from ${displayShareName(target.first)}?",
+                    color = Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRevokeShareMember(target.first.shareId, target.second.profileId)
+                        revokeTarget = null
+                    },
+                ) {
+                    Text("Revoke", color = Danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { revokeTarget = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    CardSection(title = "Shares", trailing = "${state.shares.size}") {
+        OutlinedTextField(
+            value = sourceInput,
+            onValueChange = { sourceInput = it },
+            label = { Text("Folder path") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = nameInput,
+            onValueChange = { nameInput = it },
+            label = { Text("Name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                onCreateShare(sourceInput, nameInput)
+                sourceInput = ""
+                nameInput = ""
+            },
+            enabled = sourceInput.isNotBlank(),
+        ) {
+            Text("Create share")
+        }
+
+        OutlinedTextField(
+            value = inviteInput,
+            onValueChange = { inviteInput = it },
+            label = { Text("Share invite") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = {
+                    onAcceptShareInvite(inviteInput)
+                    inviteInput = ""
+                },
+                enabled = inviteInput.isNotBlank(),
+            ) {
+                Text("Accept invite")
+            }
+            OutlinedButton(
+                onClick = { onCopyText("Share invite", state.lastShareInvite) },
+                enabled = state.lastShareInvite.isNotBlank(),
+            ) {
+                Text("Copy invite")
+            }
+        }
+
+        if (state.shares.isEmpty()) {
+            Text("No shared folders", color = Muted)
+        }
+        state.shares.forEach { share ->
+            ShareItem(
+                share = share,
+                localProfileId = state.profile?.profileId.orEmpty(),
+                onInvite = { inviteTarget = share },
+                onRepair = { onRepairShareWraps(share.shareId) },
+                onShortcut = { onAddShareShortcut(share.shareId, displayShareName(share)) },
+                onRevoke = { member -> revokeTarget = share to member },
+            )
+        }
+    }
+}
+
+@Composable
+private fun InviteShareMemberDialog(
+    share: ShareState,
+    onDismiss: () -> Unit,
+    onInvite: (String, String, String, String, String, String) -> Unit,
+) {
+    var profileId by remember { mutableStateOf("") }
+    var appKey by remember { mutableStateOf("") }
+    var role by remember { mutableStateOf("reader") }
+    var npubHint by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+    var label by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Invite to ${displayShareName(share)}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = profileId,
+                    onValueChange = { profileId = it },
+                    label = { Text("IrisProfile UUID") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = appKey,
+                    onValueChange = { appKey = it },
+                    label = { Text("Recipient AppKey") },
+                    singleLine = true,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("reader", "editor", "admin").forEach { option ->
+                        OutlinedButton(onClick = { role = option }) {
+                            Text(if (role == option) option.uppercase() else option)
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = npubHint,
+                    onValueChange = { npubHint = it },
+                    label = { Text("Representative npub") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("AppKey label") },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onInvite(profileId, appKey, role, npubHint, displayName, label) },
+                enabled = profileId.isNotBlank() && appKey.isNotBlank(),
+            ) {
+                Text("Invite")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ShareItem(
+    share: ShareState,
+    localProfileId: String,
+    onInvite: () -> Unit,
+    onRepair: () -> Unit,
+    onShortcut: () -> Unit,
+    onRevoke: (ShareMemberState) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(displayShareName(share), fontWeight = FontWeight.SemiBold)
+        Text(
+            listOfNotNull(
+                share.roleLabel.ifBlank { share.role },
+                share.keyStatusLabel.ifBlank { share.keyStatus },
+                "${share.participantCount} people",
+                share.shortcutPaths.firstOrNull()?.let { "shortcut ${shortText(it)}" },
+            ).joinToString(" - "),
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (share.canAdmin) {
+                TextButton(onClick = onInvite) {
+                    Text("Invite")
+                }
+            }
+            if (share.repairNeeded || share.missingKeyWraps.isNotEmpty()) {
+                TextButton(onClick = onRepair) {
+                    Text("Repair")
+                }
+            }
+            if (share.shortcutPaths.isEmpty()) {
+                TextButton(onClick = onShortcut) {
+                    Text("Shortcut")
+                }
+            }
+        }
+        share.members.forEach { member ->
+            ShareMemberRow(
+                member = member,
+                canRevoke = share.canAdmin && member.status != "revoked" && member.profileId != localProfileId,
+                onRevoke = { onRevoke(member) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShareMemberRow(
+    member: ShareMemberState,
+    canRevoke: Boolean,
+    onRevoke: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(displayMemberName(member), color = Ink)
+            Text(
+                listOf(
+                    member.roleLabel.ifBlank { member.role },
+                    member.statusLabel.ifBlank { member.status },
+                    shortText(member.representativeNpubHint.ifBlank { member.profileId }),
+                ).joinToString(" - "),
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (canRevoke) {
+            TextButton(onClick = onRevoke) {
+                Text("Revoke", color = Danger)
             }
         }
     }
@@ -781,4 +1111,15 @@ private fun byteString(bytes: Long): String {
     } else {
         String.format("%.1f %s", value, units[index])
     }
+}
+
+private fun displayShareName(share: ShareState): String =
+    share.displayName.ifBlank { "Shared folder" }
+
+private fun displayMemberName(member: ShareMemberState): String =
+    member.displayName.ifBlank { "IrisProfile" }
+
+private fun shortText(value: String): String {
+    if (value.length <= 32) return value
+    return "${value.take(14)}...${value.takeLast(10)}"
 }

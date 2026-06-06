@@ -317,6 +317,7 @@ struct NativeAppState: Codable {
 
 struct NativeUiState: Codable {
     var roots: [NativeSyncRoot]
+    var shares: [NativeShare]
     var profile: NativeProfile?
     var devices: [NativeDevice]
     var relays: [String]
@@ -339,9 +340,11 @@ struct NativeUiState: Codable {
     var providerChangeKey: String
     var providerDirectoryPaths: [String]
     var snapshotLink: String
+    var lastShareInvite: String
 
     enum CodingKeys: String, CodingKey {
         case roots
+        case shares
         case profile
         case devices
         case relays
@@ -364,6 +367,7 @@ struct NativeUiState: Codable {
         case providerChangeKey = "provider_change_key"
         case providerDirectoryPaths = "provider_directory_paths"
         case snapshotLink = "snapshot_link"
+        case lastShareInvite = "last_share_invite"
     }
 }
 
@@ -420,6 +424,70 @@ struct NativeSyncRoot: Codable {
         case name
         case localPath = "local_path"
         case status
+    }
+}
+
+struct NativeShare: Codable {
+    var shareId: String
+    var displayName: String
+    var sharedWithMePath: String
+    var role: String
+    var roleLabel: String
+    var keyStatus: String
+    var keyStatusLabel: String
+    var canWrite: Bool
+    var canAdmin: Bool
+    var currentKeyEpoch: UInt64?
+    var hasCurrentKeyWrap: Bool
+    var keyUnavailable: Bool
+    var repairNeeded: Bool
+    var missingKeyWraps: [String]
+    var participantCount: UInt64
+    var appKeyCount: UInt64
+    var members: [NativeShareMember]
+    var shortcutPaths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case shareId = "share_id"
+        case displayName = "display_name"
+        case sharedWithMePath = "shared_with_me_path"
+        case role
+        case roleLabel = "role_label"
+        case keyStatus = "key_status"
+        case keyStatusLabel = "key_status_label"
+        case canWrite = "can_write"
+        case canAdmin = "can_admin"
+        case currentKeyEpoch = "current_key_epoch"
+        case hasCurrentKeyWrap = "has_current_key_wrap"
+        case keyUnavailable = "key_unavailable"
+        case repairNeeded = "repair_needed"
+        case missingKeyWraps = "missing_key_wraps"
+        case participantCount = "participant_count"
+        case appKeyCount = "app_key_count"
+        case members
+        case shortcutPaths = "shortcut_paths"
+    }
+}
+
+struct NativeShareMember: Codable {
+    var profileId: String
+    var displayName: String
+    var representativeNpubHint: String
+    var role: String
+    var roleLabel: String
+    var status: String
+    var statusLabel: String
+    var appKeyCount: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case profileId = "profile_id"
+        case displayName = "display_name"
+        case representativeNpubHint = "representative_npub_hint"
+        case role
+        case roleLabel = "role_label"
+        case status
+        case statusLabel = "status_label"
+        case appKeyCount = "app_key_count"
     }
 }
 

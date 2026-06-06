@@ -444,6 +444,8 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
             app_pubkey: reader.public_key().to_hex(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
+            representative_npub_hint: None,
+            display_name: Some("Reader".into()),
         }],
         10,
     )
@@ -889,6 +891,8 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
             app_pubkey: reader.state.app_key_pubkey.clone(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
+            representative_npub_hint: None,
+            display_name: Some("Reader".into()),
         }],
         10,
     )
@@ -946,6 +950,8 @@ fn apply_share_root_event_rejects_reader_publisher() {
             app_pubkey: reader.state.app_key_pubkey.clone(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
+            representative_npub_hint: None,
+            display_name: Some("Reader".into()),
         }],
         10,
     )
@@ -974,6 +980,77 @@ fn apply_share_root_event_rejects_reader_publisher() {
 
     let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.app_key.keys()))
         .expect("reader share root is inspected");
+
+    assert_eq!(outcome, DriveRootApply::UnauthorizedAppKey);
+    assert!(
+        cfg.shared_folder(folder.share_id)
+            .unwrap()
+            .app_key_roots
+            .is_empty()
+    );
+}
+
+#[test]
+fn apply_share_root_event_rejects_revoked_profile_member() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    let writer_dir = tempdir().unwrap();
+    let writer = Profile::create(writer_dir.path(), Some("Writer".into())).unwrap();
+    let mut folder = crate::create_shared_folder(
+        owner.app_key.keys(),
+        owner.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Owner".into()),
+        vec![ShareRecipient {
+            profile_id: writer.state.profile_id,
+            app_pubkey: writer.state.app_key_pubkey.clone(),
+            role: ShareRole::Editor,
+            label: Some("Writer".into()),
+            representative_npub_hint: None,
+            display_name: Some("Writer".into()),
+        }],
+        10,
+    )
+    .unwrap();
+    folder
+        .members
+        .get_mut(&writer.state.profile_id.to_string())
+        .expect("writer member exists")
+        .status = crate::ShareMemberStatus::Revoked;
+    assert!(
+        folder
+            .projection()
+            .can_write_roots(&writer.state.app_key_pubkey)
+    );
+    assert!(!crate::shared_folder_app_key_can_write_roots(
+        &folder,
+        &writer.state.app_key_pubkey
+    ));
+    let root = causal_encrypted_root(0x46, 20, 1, 1);
+    let authorized_recipients = folder
+        .projection()
+        .active_facets
+        .values()
+        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .map(|facet| facet.pubkey.clone())
+        .collect::<Vec<_>>();
+    let event = build_drive_root_event(
+        writer.app_key.keys(),
+        &folder.share_id.to_string(),
+        crate::PRIMARY_DRIVE_ID,
+        &root,
+        &authorized_recipients,
+    )
+    .unwrap();
+    let mut cfg = AppConfig {
+        profile: Some(owner.state.clone()),
+        shared_folders: vec![folder.clone()],
+        ..AppConfig::default()
+    };
+
+    let outcome = apply_remote_drive_root_event(&mut cfg, &event, Some(owner.app_key.keys()))
+        .expect("writer share root is inspected");
 
     assert_eq!(outcome, DriveRootApply::UnauthorizedAppKey);
     assert!(

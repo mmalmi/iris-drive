@@ -5,6 +5,7 @@ import SwiftUI
 private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
     case peers
+    case shares
     case backups
     case settings
 
@@ -16,6 +17,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "My Drive"
         case .peers:
             return "AppKeys"
+        case .shares:
+            return "Shares"
         case .backups:
             return "Backups"
         case .settings:
@@ -29,6 +32,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "externaldrive.fill"
         case .peers:
             return "person.2.fill"
+        case .shares:
+            return "person.3.fill"
         case .backups:
             return "lock.shield.fill"
         case .settings:
@@ -43,6 +48,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         switch IrisDriveScreenshotFixtures.tabArgument {
         case "device", "devices", "peers":
             return .peers
+        case "share", "shares":
+            return .shares
         case "backup", "backups":
             return .backups
         case "setting", "settings":
@@ -70,6 +77,12 @@ private enum IrisDriveSyncState {
     case attention
 }
 
+private struct ShareMemberRevokeTarget: Identifiable {
+    let id = UUID()
+    let share: IrisDriveShareStatus
+    let member: IrisDriveShareMemberStatus
+}
+
 private let setupControlWidth: CGFloat = 340
 private let recoveryPhraseWordCount = 12
 let setupButtonMinHeight: CGFloat = 44
@@ -81,6 +94,9 @@ struct IrisDriveControlPanel: View {
     @State private var relayInput = ""
     @State private var backupInput = ""
     @State private var backupLabel = ""
+    @State private var shareSourceInput = ""
+    @State private var shareNameInput = ""
+    @State private var shareInviteInput = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var setupMode = IrisDriveSetupMode.welcome
@@ -97,6 +113,8 @@ struct IrisDriveControlPanel: View {
     @State private var approveDeviceLabel = ""
     @State private var showAddDevice = false
     @State private var showAddBackup = false
+    @State private var inviteShare: IrisDriveShareStatus?
+    @State private var revokeShareMember: ShareMemberRevokeTarget?
     @State private var checkingAllBackups = false
     @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
@@ -130,6 +148,8 @@ struct IrisDriveControlPanel: View {
             page { driveHome }
         case .peers:
             page { peers }
+        case .shares:
+            page { shares }
         case .backups:
             page { backups }
         case .settings:
@@ -742,6 +762,115 @@ struct IrisDriveControlPanel: View {
         .frame(width: 420)
     }
 
+    // MARK: Shares
+
+    private var shares: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                SectionTitle("Shares")
+                Spacer()
+                if let invite = status.lastShareInviteURL {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(invite, forType: .string)
+                    } label: {
+                        Label("Copy Invite", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Create Share")
+                    .font(.headline)
+                TextField("Folder path", text: $shareSourceInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                TextField("Name (optional)", text: $shareNameInput)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    controller.createShare(
+                        sourcePath: shareSourceInput,
+                        displayName: shareNameInput
+                    )
+                    shareSourceInput = ""
+                    shareNameInput = ""
+                } label: {
+                    Label("Create Share", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Accept Invite")
+                    .font(.headline)
+                TextField("Share invite", text: $shareInviteInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                Button {
+                    controller.acceptShareInvite(shareInviteInput)
+                    shareInviteInput = ""
+                } label: {
+                    Label("Accept Invite", systemImage: "tray.and.arrow.down.fill")
+                }
+                .disabled(shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if status.shares.isEmpty {
+                emptyState("No shared folders")
+            } else {
+                ForEach(status.shares) { share in
+                    ShareStatusRow(
+                        share: share,
+                        localProfileId: status.profileId,
+                        onInvite: { inviteShare = share },
+                        onRepair: { controller.repairShareWraps(shareId: share.shareId) },
+                        onShortcut: {
+                            controller.addShareShortcut(
+                                shareId: share.shareId,
+                                displayName: shareDisplayName(share)
+                            )
+                        },
+                        onRevoke: { member in
+                            revokeShareMember = ShareMemberRevokeTarget(
+                                share: share,
+                                member: member
+                            )
+                        }
+                    )
+                }
+            }
+        }
+        .sheet(item: $inviteShare) { share in
+            InviteShareMemberSheet(controller: controller, share: share)
+        }
+        .alert(
+            "Revoke access?",
+            isPresented: Binding(
+                get: { revokeShareMember != nil },
+                set: { presented in
+                    if !presented {
+                        revokeShareMember = nil
+                    }
+                }
+            ),
+            presenting: revokeShareMember
+        ) { target in
+            Button("Revoke", role: .destructive) {
+                controller.revokeShareMember(
+                    shareId: target.share.shareId,
+                    profileId: target.member.profileId
+                )
+                revokeShareMember = nil
+            }
+            Button("Cancel", role: .cancel) {
+                revokeShareMember = nil
+            }
+        } message: { target in
+            Text("Revoke \(shareMemberDisplayName(target.member)) from \(shareDisplayName(target.share))?")
+        }
+    }
+
     // MARK: Backups
 
     private var backups: some View {
@@ -1220,6 +1349,171 @@ private struct MacRecoveryPhraseView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
     }
+}
+
+private struct ShareStatusRow: View {
+    let share: IrisDriveShareStatus
+    let localProfileId: String?
+    let onInvite: () -> Void
+    let onRepair: () -> Void
+    let onShortcut: () -> Void
+    let onRevoke: (IrisDriveShareMemberStatus) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(shareDisplayName(share))
+                        .font(.headline)
+                    Text(shareSummary(share))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if share.canAdmin {
+                    Button {
+                        onInvite()
+                    } label: {
+                        Label("Invite", systemImage: "person.badge.plus")
+                    }
+                }
+                if share.repairNeeded || !share.missingKeyWraps.isEmpty {
+                    Button {
+                        onRepair()
+                    } label: {
+                        Label("Repair", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                if share.shortcutPaths.isEmpty {
+                    Button {
+                        onShortcut()
+                    } label: {
+                        Label("Shortcut", systemImage: "link")
+                    }
+                }
+            }
+            ForEach(share.members) { member in
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(shareMemberDisplayName(member))
+                        Text(shareMemberSummary(member))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if share.canAdmin,
+                       member.status != "revoked",
+                       member.profileId != localProfileId {
+                        Button(role: .destructive) {
+                            onRevoke(member)
+                        } label: {
+                            Label("Revoke", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct InviteShareMemberSheet: View {
+    let controller: AppDelegate
+    let share: IrisDriveShareStatus
+    @Environment(\.dismiss) private var dismiss
+    @State private var profileId = ""
+    @State private var appKey = ""
+    @State private var role = "reader"
+    @State private var representativeNpubHint = ""
+    @State private var displayName = ""
+    @State private var label = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Invite to \(shareDisplayName(share))")
+                .font(.title3.weight(.semibold))
+            TextField("IrisProfile UUID", text: $profileId)
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+            TextField("Recipient AppKey", text: $appKey)
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+            Picker("Role", selection: $role) {
+                Text("Reader").tag("reader")
+                Text("Editor").tag("editor")
+                Text("Admin").tag("admin")
+            }
+            .pickerStyle(.segmented)
+            TextField("Representative npub", text: $representativeNpubHint)
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+            TextField("Name", text: $displayName)
+                .textFieldStyle(.roundedBorder)
+            TextField("AppKey label", text: $label)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                Button("Invite") {
+                    controller.inviteShareMember(
+                        shareId: share.shareId,
+                        profileId: profileId,
+                        appKey: appKey,
+                        role: role,
+                        representativeNpubHint: representativeNpubHint,
+                        displayName: displayName,
+                        label: label
+                    )
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+}
+
+private func shareDisplayName(_ share: IrisDriveShareStatus) -> String {
+    share.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "Shared folder"
+        : share.displayName
+}
+
+private func shareSummary(_ share: IrisDriveShareStatus) -> String {
+    [
+        share.roleLabel.isEmpty ? share.role : share.roleLabel,
+        share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel,
+        "\(share.participantCount) people",
+        share.shortcutPaths.first.map { "shortcut \(shortValue($0))" },
+    ].compactMap { $0 }.joined(separator: " | ")
+}
+
+private func shareMemberDisplayName(_ member: IrisDriveShareMemberStatus) -> String {
+    member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "IrisProfile"
+        : member.displayName
+}
+
+private func shareMemberSummary(_ member: IrisDriveShareMemberStatus) -> String {
+    [
+        member.roleLabel.isEmpty ? member.role : member.roleLabel,
+        member.statusLabel.isEmpty ? member.status : member.statusLabel,
+        shortValue(
+            member.representativeNpubHint.isEmpty
+                ? member.profileId
+                : member.representativeNpubHint
+        ),
+    ].joined(separator: " | ")
 }
 
 private struct AccountInfoRow: View {

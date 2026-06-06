@@ -130,6 +130,38 @@ class MainActivity : ComponentActivity() {
                 onCheckBackups = { target ->
                     dispatch(NativeActions.checkBackups(target))
                 },
+                onCreateShare = { sourcePath, displayName ->
+                    dispatch(NativeActions.createShare(sourcePath, displayName))
+                },
+                onInviteShareMember = { shareId, profileId, appKey, role, representativeNpubHint, displayName, label ->
+                    dispatch(
+                        NativeActions.inviteShareMember(
+                            shareId = shareId,
+                            profileId = profileId,
+                            appKey = appKey,
+                            role = role,
+                            representativeNpubHint = representativeNpubHint,
+                            displayName = displayName,
+                            label = label,
+                        ),
+                    ) { state ->
+                        if (state.lastShareInvite.isNotBlank()) {
+                            copyToClipboard("Share invite", state.lastShareInvite)
+                        }
+                    }
+                },
+                onAcceptShareInvite = { invite ->
+                    dispatch(NativeActions.acceptShareInvite(invite))
+                },
+                onRevokeShareMember = { shareId, profileId ->
+                    dispatch(NativeActions.revokeShareMember(shareId, profileId))
+                },
+                onAddShareShortcut = { shareId, path ->
+                    dispatch(NativeActions.addShareShortcut(shareId, path))
+                },
+                onRepairShareWraps = { shareId ->
+                    dispatch(NativeActions.repairShareWraps(shareId))
+                },
                 onAddRoot = { name, path -> dispatch(NativeActions.addRoot(name, path)) },
                 onStartSync = {
                     if (needsNotificationPermission()) {

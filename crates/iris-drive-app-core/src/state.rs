@@ -26,6 +26,7 @@ pub struct UiState {
     pub provider_change_key: String,
     pub provider_directory_paths: Vec<String>,
     pub snapshot_link: String,
+    pub last_share_invite: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,7 +54,21 @@ pub struct UiShare {
     pub repair_needed: bool,
     pub missing_key_wraps: Vec<String>,
     pub participant_count: u64,
+    pub app_key_count: u64,
+    pub members: Vec<UiShareMember>,
     pub shortcut_paths: Vec<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiShareMember {
+    pub profile_id: String,
+    pub display_name: String,
+    pub representative_npub_hint: String,
+    pub role: String,
+    pub role_label: String,
+    pub status: String,
+    pub status_label: String,
+    pub app_key_count: u64,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

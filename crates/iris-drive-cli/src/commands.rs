@@ -247,8 +247,59 @@ pub(crate) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum SharesCmd {
+    /// Create a cryptographic share root for a folder.
+    Create {
+        /// Folder path inside My Drive to share.
+        source_path: String,
+        /// Display name for recipients. Defaults to the last path segment.
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// List shared folders visible to this app install.
     List,
+    /// List members for one share.
+    Members {
+        /// Share UUID.
+        share_id: String,
+    },
+    /// Invite an `IrisProfile` member using one representative `AppKey`.
+    Invite {
+        /// Share UUID.
+        share_id: String,
+        /// Recipient `IrisProfile` UUID.
+        #[arg(long)]
+        profile: String,
+        /// Recipient `AppKey` pubkey (npub1... or 64-char hex).
+        #[arg(long = "app-key")]
+        app_key: String,
+        /// Recipient role: reader, editor, or admin.
+        #[arg(long, default_value = "reader")]
+        role: String,
+        /// Display/contact npub hint.
+        #[arg(long)]
+        npub: Option<String>,
+        /// Display name for this member.
+        #[arg(long)]
+        display_name: Option<String>,
+        /// Label for the recipient app install.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Accept/import a share invite bundle.
+    Accept {
+        /// Invite URL or base64url bundle.
+        invite: String,
+    },
+    /// Revoke one `IrisProfile` member from a share and rotate the share key.
+    Revoke {
+        /// Share UUID.
+        share_id: String,
+        /// `IrisProfile` UUID to revoke.
+        profile_id: String,
+        /// Optional reason recorded in `AppKey` tombstones.
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// Add a shortcut for a share into My Drive.
     Shortcut {
         /// Share UUID.

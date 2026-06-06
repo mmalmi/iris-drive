@@ -426,8 +426,7 @@ async fn append_share_root_events(
     let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
         .context("loading app key")?;
     for folder in &config.shared_folders {
-        let projection = folder.projection();
-        if !projection.can_write_roots(&state.app_key_pubkey) {
+        if !iris_drive_core::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey) {
             continue;
         }
         let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey) else {
@@ -437,12 +436,7 @@ async fn append_share_root_events(
             continue;
         }
         ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
-        let authorized_recipients = projection
-            .active_facets
-            .values()
-            .filter(|facet| facet.capabilities.can_receive_key_wraps)
-            .map(|facet| facet.pubkey.clone())
-            .collect::<Vec<_>>();
+        let authorized_recipients = iris_drive_core::shared_folder_key_recipient_pubkeys(folder);
         let event = iris_drive_core::nostr_events::build_drive_root_event(
             device.keys(),
             &folder.share_id.to_string(),

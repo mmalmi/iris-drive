@@ -38,6 +38,9 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var backupTargetInput = ""
     @Published var backupLabelInput = ""
     @Published var blossomEndpointInput = ""
+    @Published var shareSourceInput = ""
+    @Published var shareNameInput = ""
+    @Published var shareInviteInput = ""
     @Published var relays = defaultRelays
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var syncOverCellular = false
@@ -48,6 +51,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var devices: [IrisDriveDevice] = []
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
+    @Published var shares: [IrisDriveShare] = []
     @Published var roots: [IrisDriveRoot] = []
     @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
@@ -113,6 +117,14 @@ final class IrisDriveMobileModel: ObservableObject {
 
     var snapshotLink: String {
         lastState?.ui.snapshotLink ?? ""
+    }
+
+    var lastShareInvite: String {
+        lastState?.ui.lastShareInvite ?? ""
+    }
+
+    var localProfileId: String {
+        lastState?.ui.profile?.profileId ?? ""
     }
 
     var appKeyLinkRequest: String {
@@ -662,6 +674,11 @@ final class IrisDriveMobileModel: ObservableObject {
         UIPasteboard.general.string = snapshotLink
     }
 
+    func copyLastShareInvite() {
+        guard !lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        UIPasteboard.general.string = lastShareInvite
+    }
+
     func openSnapshotLink() {
         guard let url = URL(string: snapshotLink) else { return }
         UIApplication.shared.open(url)
@@ -749,6 +766,81 @@ final class IrisDriveMobileModel: ObservableObject {
                 "target": target,
             ], invalidatePendingState: true)
         }
+    }
+
+    func createShare() {
+        let sourcePath = shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty else { return }
+        dispatch([
+            "type": "create_share",
+            "source_path": sourcePath,
+            "display_name": shareNameInput,
+        ])
+        shareSourceInput = ""
+        shareNameInput = ""
+    }
+
+    func acceptShareInvite() {
+        let invite = shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !invite.isEmpty else { return }
+        dispatch([
+            "type": "accept_share_invite",
+            "invite": invite,
+        ])
+        shareInviteInput = ""
+    }
+
+    func inviteShareMember(
+        shareId: String,
+        profileId: String,
+        appKey: String,
+        role: String,
+        representativeNpubHint: String,
+        displayName: String,
+        label: String
+    ) {
+        let trimmedProfile = profileId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAppKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProfile.isEmpty, !trimmedAppKey.isEmpty else { return }
+        dispatch([
+            "type": "invite_share_member",
+            "share_id": shareId,
+            "profile_id": trimmedProfile,
+            "app_key": trimmedAppKey,
+            "role": role,
+            "representative_npub_hint": representativeNpubHint,
+            "display_name": displayName,
+            "label": label,
+        ])
+        copyLastShareInvite()
+    }
+
+    func revokeShareMember(shareId: String, profileId: String) {
+        dispatch([
+            "type": "revoke_share_member",
+            "share_id": shareId,
+            "profile_id": profileId,
+            "reason": "",
+        ])
+    }
+
+    func addShareShortcut(shareId: String, displayName: String) {
+        dispatch([
+            "type": "add_share_shortcut",
+            "share_id": shareId,
+            "path": displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Shared folder"
+                : displayName,
+            "parent": "",
+            "target_path": "",
+        ])
+    }
+
+    func repairShareWraps(shareId: String) {
+        dispatch([
+            "type": "repair_share_wraps",
+            "share_id": shareId,
+        ])
     }
 
     func resetLocalState() {
@@ -853,6 +945,7 @@ final class IrisDriveMobileModel: ObservableObject {
             inboundAppKeyLinkRequests = []
             roots = []
             backups = []
+            shares = []
             relays = defaultRelays
             relayStatuses = []
             relay = defaultRelay
@@ -922,6 +1015,39 @@ final class IrisDriveMobileModel: ObservableObject {
                 state: backup.state,
                 detail: backup.detail,
                 enabled: backup.enabled
+            )
+        }
+        shares = state.ui.shares.map { share in
+            IrisDriveShare(
+                shareId: share.shareId,
+                displayName: share.displayName,
+                sharedWithMePath: share.sharedWithMePath,
+                role: share.role,
+                roleLabel: share.roleLabel,
+                keyStatus: share.keyStatus,
+                keyStatusLabel: share.keyStatusLabel,
+                canWrite: share.canWrite,
+                canAdmin: share.canAdmin,
+                currentKeyEpoch: share.currentKeyEpoch,
+                hasCurrentKeyWrap: share.hasCurrentKeyWrap,
+                keyUnavailable: share.keyUnavailable,
+                repairNeeded: share.repairNeeded,
+                missingKeyWraps: share.missingKeyWraps,
+                participantCount: share.participantCount,
+                appKeyCount: share.appKeyCount,
+                members: share.members.map { member in
+                    IrisDriveShareMember(
+                        profileId: member.profileId,
+                        displayName: member.displayName,
+                        representativeNpubHint: member.representativeNpubHint,
+                        role: member.role,
+                        roleLabel: member.roleLabel,
+                        status: member.status,
+                        statusLabel: member.statusLabel,
+                        appKeyCount: member.appKeyCount
+                    )
+                },
+                shortcutPaths: share.shortcutPaths
             )
         }
         roots = state.ui.roots.map { root in

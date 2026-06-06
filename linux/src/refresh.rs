@@ -69,9 +69,17 @@ pub(crate) fn refresh(model: &AppRef) {
             let has_snapshot = snapshot_link(&state).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
+            if state.ui.last_share_invite.is_empty() {
+                model.ui.last_share_invite.set_text("-");
+                model.ui.copy_last_share_invite_button.set_sensitive(false);
+            } else {
+                model.ui.last_share_invite.set_text(&state.ui.last_share_invite);
+                model.ui.copy_last_share_invite_button.set_sensitive(true);
+            }
             render_drives(&model.ui.drives, &state);
             render_peers(model, &state);
             render_backups(model, &state);
+            render_shares(model, &state);
             render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &state);
         }
         Err(error) => {
@@ -97,11 +105,14 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.sidebar_online.set_text("0/0 online");
             model.ui.copy_snapshot_button.set_sensitive(false);
             model.ui.open_snapshot_button.set_sensitive(false);
+            model.ui.last_share_invite.set_text("-");
+            model.ui.copy_last_share_invite_button.set_sensitive(false);
             model.ui.recovery_phrase_button.set_visible(false);
             model.ui.notice.set_text(&error);
             clear_list(&model.ui.drives);
             clear_list(&model.ui.peers);
             clear_list(&model.ui.backups);
+            clear_list(&model.ui.shares);
             clear_list(&model.ui.relays);
             clear_list(&model.ui.blossom);
         }

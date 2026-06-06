@@ -74,6 +74,36 @@ pub enum NativeAppAction {
     RemoveRoot {
         name: String,
     },
+    CreateShare {
+        source_path: String,
+        display_name: String,
+    },
+    InviteShareMember {
+        share_id: String,
+        profile_id: String,
+        app_key: String,
+        role: String,
+        representative_npub_hint: String,
+        display_name: String,
+        label: String,
+    },
+    AcceptShareInvite {
+        invite: String,
+    },
+    RevokeShareMember {
+        share_id: String,
+        profile_id: String,
+        reason: String,
+    },
+    AddShareShortcut {
+        share_id: String,
+        path: String,
+        parent: String,
+        target_path: String,
+    },
+    RepairShareWraps {
+        share_id: String,
+    },
     ImportFile {
         display_name: String,
         source_path: String,

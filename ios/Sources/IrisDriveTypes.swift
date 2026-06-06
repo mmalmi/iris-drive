@@ -34,6 +34,40 @@ struct IrisDriveBackup: Identifiable, Equatable {
     var enabled: Bool
 }
 
+struct IrisDriveShare: Identifiable, Equatable {
+    var id: String { shareId }
+    var shareId: String
+    var displayName: String
+    var sharedWithMePath: String
+    var role: String
+    var roleLabel: String
+    var keyStatus: String
+    var keyStatusLabel: String
+    var canWrite: Bool
+    var canAdmin: Bool
+    var currentKeyEpoch: UInt64?
+    var hasCurrentKeyWrap: Bool
+    var keyUnavailable: Bool
+    var repairNeeded: Bool
+    var missingKeyWraps: [String]
+    var participantCount: UInt64
+    var appKeyCount: UInt64
+    var members: [IrisDriveShareMember]
+    var shortcutPaths: [String]
+}
+
+struct IrisDriveShareMember: Identifiable, Equatable {
+    var id: String { profileId }
+    var profileId: String
+    var displayName: String
+    var representativeNpubHint: String
+    var role: String
+    var roleLabel: String
+    var status: String
+    var statusLabel: String
+    var appKeyCount: UInt64
+}
+
 struct IrisDriveRelayStatus: Identifiable, Equatable {
     var id: String { url }
     var url: String

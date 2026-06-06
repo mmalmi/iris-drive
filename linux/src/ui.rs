@@ -206,6 +206,53 @@ pub(crate) fn build_ui(app: &adw::Application) {
     backup_controls.append(&sync_backups_button);
     backups_page.append(&backup_controls);
 
+    let shares_page = page_box();
+    shares_page.append(&section_title("Shares"));
+    let shares = gtk::ListBox::new();
+    shares.add_css_class("iris-drive-list");
+    shares.set_selection_mode(gtk::SelectionMode::None);
+    shares_page.append(&shares);
+
+    let share_create_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let share_source_entry = setup_entry("Folder path");
+    share_source_entry.set_hexpand(true);
+    let share_name_entry = setup_entry("Name");
+    share_name_entry.set_width_request(160);
+    let create_share_button = action_button(
+        "folder-new-symbolic",
+        "Create",
+        "Create shared folder",
+    );
+    share_create_controls.append(&share_source_entry);
+    share_create_controls.append(&share_name_entry);
+    share_create_controls.append(&create_share_button);
+    shares_page.append(&share_create_controls);
+
+    let share_accept_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let share_invite_entry = setup_entry("Share invite");
+    share_invite_entry.set_hexpand(true);
+    let accept_share_invite_button =
+        action_button("mail-mark-read-symbolic", "Accept", "Accept share invite");
+    share_accept_controls.append(&share_invite_entry);
+    share_accept_controls.append(&accept_share_invite_button);
+    shares_page.append(&share_accept_controls);
+
+    let last_invite_grid = gtk::Grid::new();
+    last_invite_grid.add_css_class("iris-summary");
+    last_invite_grid.set_column_spacing(10);
+    last_invite_grid.set_row_spacing(8);
+    last_invite_grid.set_hexpand(true);
+    let last_share_invite = value_label();
+    let copy_last_share_invite_button = icon_button("edit-copy-symbolic", "Copy invite");
+    add_copy_field(
+        &last_invite_grid,
+        0,
+        "Last invite",
+        &last_share_invite,
+        &copy_last_share_invite_button,
+    );
+    shares_page.append(&last_invite_grid);
+
     let network_page = page_box();
     network_page.append(&section_title("Network"));
     let fips = gtk::ListBox::new();
@@ -259,6 +306,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
     stack.add_titled(&peers_page, Some("devices"), "AppKeys");
+    stack.add_titled(&shares_page, Some("shares"), "Shares");
     stack.add_titled(&backups_page, Some("backups"), "Backups");
     stack.add_titled(&network_page, Some("network"), "Network");
     stack.add_titled(&settings_page, Some("settings"), "Settings");
@@ -266,6 +314,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let nav_items = [
         ("drive", "drive-harddisk-symbolic", "My Drive"),
         ("devices", "system-users-symbolic", "AppKeys"),
+        ("shares", "emblem-shared-symbolic", "Shares"),
         ("backups", "security-high-symbolic", "Backups"),
         ("network", "network-workgroup-symbolic", "Network"),
         ("settings", "preferences-system-symbolic", "Settings"),
@@ -348,6 +397,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             drives,
             peers,
             backups,
+            shares,
             fips,
             relays,
             blossom,
@@ -358,6 +408,13 @@ pub(crate) fn build_ui(app: &adw::Application) {
             relay_entry,
             backup_entry,
             backup_label_entry,
+            share_source_entry,
+            share_name_entry,
+            share_invite_entry,
+            create_share_button,
+            accept_share_invite_button,
+            last_share_invite,
+            copy_last_share_invite_button,
             init_button,
             folder_button,
             copy_snapshot_button,
@@ -450,6 +507,21 @@ pub(crate) fn build_ui(app: &adw::Application) {
     {
         let model = Rc::clone(&model);
         sync_backups_button.connect_clicked(move |_| sync_backups(&model));
+    }
+    {
+        let button = model.ui.create_share_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| create_share(&model));
+    }
+    {
+        let button = model.ui.accept_share_invite_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| accept_share_invite(&model));
+    }
+    {
+        let button = model.ui.copy_last_share_invite_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| copy_last_share_invite(&model));
     }
     model.ui.tray_on_close.connect_toggled(|button| {
         write_close_to_tray_on_close(button.is_active());
