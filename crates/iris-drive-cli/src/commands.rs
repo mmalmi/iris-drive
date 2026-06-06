@@ -262,16 +262,19 @@ pub(crate) enum SharesCmd {
         /// Share UUID.
         share_id: String,
     },
-    /// Invite an `IrisProfile` member using one representative `AppKey`.
+    /// Invite an `IrisProfile` member using profile evidence or one direct `AppKey`.
     Invite {
         /// Share UUID.
         share_id: String,
-        /// Recipient `IrisProfile` UUID.
+        /// Recipient `IrisProfile` UUID for direct `AppKey` invite.
         #[arg(long)]
-        profile: String,
-        /// Recipient `AppKey` pubkey (npub1... or 64-char hex).
+        profile: Option<String>,
+        /// Recipient `AppKey` pubkey (npub1... or 64-char hex) for direct invite.
         #[arg(long = "app-key")]
-        app_key: String,
+        app_key: Option<String>,
+        /// JSON file with signed `IrisProfile` roster ops and facet acceptances.
+        #[arg(long = "recipient-evidence")]
+        recipient_evidence: Option<PathBuf>,
         /// Recipient role: reader, editor, or admin.
         #[arg(long, default_value = "reader")]
         role: String,

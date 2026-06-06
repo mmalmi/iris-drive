@@ -13,6 +13,7 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
             share_id,
             profile,
             app_key,
+            recipient_evidence,
             role,
             npub,
             display_name,
@@ -20,8 +21,9 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
         } => cmd_shares_invite(
             config_dir,
             &share_id,
-            &profile,
-            &app_key,
+            profile.as_deref(),
+            app_key.as_deref(),
+            recipient_evidence.as_deref(),
             &role,
             npub,
             display_name,
@@ -142,8 +144,9 @@ fn cmd_shares_members(config_dir: &Path, share_id: &str) -> Result<()> {
 fn cmd_shares_invite(
     config_dir: &Path,
     share_id: &str,
-    profile_id: &str,
-    app_key: &str,
+    profile_id: Option<&str>,
+    app_key: Option<&str>,
+    recipient_evidence_path: Option<&Path>,
     role: &str,
     representative_npub_hint: Option<String>,
     display_name: Option<String>,
@@ -152,11 +155,7 @@ fn cmd_shares_invite(
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
-    let profile_id = profile_id
-        .parse::<iris_drive_core::IrisProfileId>()
-        .context("parsing recipient IrisProfile id")?;
     let role = parse_share_role(role)?;
-    let app_pubkey = normalize_pubkey_hex(app_key).context("parsing recipient AppKey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
@@ -168,19 +167,50 @@ fn cmd_shares_invite(
         .iter_mut()
         .find(|folder| folder.share_id == share_id)
         .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
-    let outcome = iris_drive_core::invite_shared_folder_member(
-        folder,
-        account.app_key.keys(),
-        iris_drive_core::ShareRecipient {
-            profile_id,
-            app_pubkey,
+    let outcome = if let Some(path) = recipient_evidence_path {
+        if profile_id.is_some()
+            || app_key.is_some()
+            || representative_npub_hint.is_some()
+            || label.is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "--recipient-evidence cannot be combined with --profile, --app-key, --npub, or --label"
+            ));
+        }
+        let evidence = load_share_recipient_evidence(path)?;
+        let resolved =
+            iris_drive_core::resolve_share_recipient_from_evidence(&evidence, display_name)
+                .context("resolving share recipient evidence")?;
+        iris_drive_core::invite_shared_folder_resolved_recipient(
+            folder,
+            account.app_key.keys(),
+            &resolved,
             role,
-            label,
-            representative_npub_hint,
-            display_name,
-        },
-        share_timestamp(),
-    )
+            share_timestamp(),
+        )
+    } else {
+        let profile_id = profile_id
+            .ok_or_else(|| anyhow::anyhow!("--profile is required without --recipient-evidence"))?
+            .parse::<iris_drive_core::IrisProfileId>()
+            .context("parsing recipient IrisProfile id")?;
+        let app_pubkey = normalize_pubkey_hex(app_key.ok_or_else(|| {
+            anyhow::anyhow!("--app-key is required without --recipient-evidence")
+        })?)
+        .context("parsing recipient AppKey")?;
+        iris_drive_core::invite_shared_folder_member(
+            folder,
+            account.app_key.keys(),
+            iris_drive_core::ShareRecipient {
+                profile_id,
+                app_pubkey,
+                role,
+                label,
+                representative_npub_hint,
+                display_name,
+            },
+            share_timestamp(),
+        )
+    }
     .context("inviting share member")?;
     let view = iris_drive_core::shared_folder_view(
         folder,
@@ -462,6 +492,15 @@ fn parse_share_role(value: &str) -> Result<iris_drive_core::ShareRole> {
     }
 }
 
+fn load_share_recipient_evidence(
+    path: &Path,
+) -> Result<iris_drive_core::ShareRecipientProfileEvidence> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading recipient evidence {}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("parsing recipient evidence {}", path.display()))
+}
+
 fn normalize_pubkey_hex(input: &str) -> Result<String> {
     let trimmed = input.trim();
     if trimmed.starts_with("npub1") {
@@ -489,6 +528,35 @@ fn share_timestamp() -> i64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn recipient_evidence_file(dir: &Path, recipient: &Profile, display_name: &str) -> PathBuf {
+        let acceptance_event = iris_drive_core::build_iris_profile_facet_acceptance_event(
+            recipient.app_key.keys(),
+            recipient.state.profile_id,
+            [iris_drive_core::IrisProfileKeyPurpose::AppKey],
+            recipient
+                .state
+                .profile_roster_ops
+                .first()
+                .map(|op| op.op_id.clone()),
+            20,
+        )
+        .unwrap();
+        let evidence = iris_drive_core::ShareRecipientProfileEvidence {
+            profile_id: recipient.state.profile_id,
+            representative_pubkey: Some(recipient.state.app_key_pubkey.clone()),
+            representative_npub: None,
+            display_name: Some(display_name.to_string()),
+            roster_ops: recipient.state.profile_roster_ops.clone(),
+            acceptances: vec![
+                iris_drive_core::parse_iris_profile_facet_acceptance_event(&acceptance_event)
+                    .unwrap(),
+            ],
+        };
+        let path = dir.join("recipient-evidence.json");
+        std::fs::write(&path, serde_json::to_vec(&evidence).unwrap()).unwrap();
+        path
+    }
 
     #[test]
     fn shares_shortcut_command_adds_unique_my_drive_shortcut() {
@@ -707,8 +775,9 @@ mod tests {
         cmd_shares_invite(
             owner_dir.path(),
             &folder.share_id.to_string(),
-            &recipient.state.profile_id.to_string(),
-            &recipient.state.app_key_pubkey,
+            Some(&recipient.state.profile_id.to_string()),
+            Some(&recipient.state.app_key_pubkey),
+            None,
             "reader",
             Some("npub1alice".into()),
             Some("Alice".into()),
@@ -747,6 +816,63 @@ mod tests {
         assert_eq!(
             iris_drive_core::current_shared_folder_key(accepted, recipient.app_key.keys()).unwrap(),
             iris_drive_core::current_shared_folder_key(accepted, owner.app_key.keys()).unwrap()
+        );
+    }
+
+    #[test]
+    fn shares_invite_command_resolves_recipient_evidence_file() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        let mut owner_config = AppConfig {
+            profile: Some(owner.state.clone()),
+            ..AppConfig::default()
+        };
+        let folder = iris_drive_core::create_shared_folder(
+            owner.app_key.keys(),
+            owner.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".into()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        owner_config.upsert_shared_folder(folder.clone());
+        owner_config.save(config_path_in(owner_dir.path())).unwrap();
+        let recipient_dir = tempdir().unwrap();
+        let recipient = Profile::create(recipient_dir.path(), Some("Recipient".into())).unwrap();
+        let evidence_path = recipient_evidence_file(recipient_dir.path(), &recipient, "Alice");
+
+        cmd_shares_invite(
+            owner_dir.path(),
+            &folder.share_id.to_string(),
+            None,
+            None,
+            Some(&evidence_path),
+            "editor",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let owner_saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        let invited = owner_saved.shared_folder(folder.share_id).unwrap();
+        let member = invited
+            .members
+            .get(&recipient.state.profile_id.to_string())
+            .unwrap();
+        assert_eq!(member.display_name.as_deref(), Some("Alice"));
+        assert_eq!(member.role, iris_drive_core::ShareRole::Editor);
+        assert_eq!(
+            invited
+                .participant_profiles
+                .get(&recipient.state.app_key_pubkey),
+            Some(&recipient.state.profile_id)
+        );
+        assert_eq!(
+            iris_drive_core::current_shared_folder_key(invited, recipient.app_key.keys()).unwrap(),
+            iris_drive_core::current_shared_folder_key(invited, owner.app_key.keys()).unwrap()
         );
     }
 

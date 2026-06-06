@@ -74,6 +74,7 @@ just run-cli app-keys approve <app-key-request-url-or-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
 just run-cli shares create "Projects/Alpha" --name "Alpha"
+just run-cli shares invite <share-id> --recipient-evidence recipient-profile.json --role reader
 just run-cli shares invite <share-id> --profile <iris-profile-id> --app-key <recipient-appkey-npub> --role reader
 just run-cli shares accept <share-invite-url>
 just run-cli shares list
@@ -89,7 +90,7 @@ Native apps expose the same share operations from the **Shares** tab: create a
 shared folder, invite an IrisProfile member, accept an invite, revoke a member,
 add a shortcut, and repair missing key wraps. The UI shows people/profile
 members first; AppKeys only appear when an admin is entering recipient key
-material for an invite.
+material for an invite or importing a signed recipient-evidence bundle.
 
 Share invites include a signed roster checkpoint that summarizes the current
 entity members, compact roster heads, key epoch, and missing-wrap state. The

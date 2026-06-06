@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
@@ -128,6 +129,26 @@ pub struct ResolvedShareRecipient {
     pub app_pubkeys: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_social_pubkeys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareRecipientProfileEvidence {
+    pub profile_id: IrisProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representative_pubkey: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representative_npub: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roster_ops: Vec<SignedIrisProfileRosterOp>,
+    #[serde(
+        default,
+        alias = "facet_acceptances",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub acceptances: Vec<SignedIrisProfileFacetAcceptance>,
 }
 
 impl ResolvedShareRecipient {
@@ -613,6 +634,20 @@ pub fn resolve_share_recipient_from_profile_evidence(
     })
 }
 
+pub fn resolve_share_recipient_from_evidence(
+    evidence: &ShareRecipientProfileEvidence,
+    display_name: Option<String>,
+) -> Result<ResolvedShareRecipient, SharingError> {
+    let representative_pubkey = evidence_representative_pubkey(evidence)?;
+    resolve_share_recipient_from_profile_evidence(
+        evidence.profile_id,
+        &representative_pubkey,
+        &evidence.roster_ops,
+        &evidence.acceptances,
+        display_name.or_else(|| evidence.display_name.clone()),
+    )
+}
+
 pub fn sign_share_roster_checkpoint(
     signer_keys: &Keys,
     folder: &SharedFolder,
@@ -736,6 +771,34 @@ pub fn validate_share_roster_checkpoint(
         ));
     }
     Ok(())
+}
+
+fn evidence_representative_pubkey(
+    evidence: &ShareRecipientProfileEvidence,
+) -> Result<String, SharingError> {
+    if let Some(pubkey) = evidence
+        .representative_pubkey
+        .as_deref()
+        .map(str::trim)
+        .filter(|pubkey| !pubkey.is_empty())
+    {
+        return PublicKey::from_hex(pubkey)
+            .map(|pubkey| pubkey.to_hex())
+            .map_err(|error| SharingError::InvalidPubkey(error.to_string()));
+    }
+    if let Some(npub) = evidence
+        .representative_npub
+        .as_deref()
+        .map(str::trim)
+        .filter(|npub| !npub.is_empty())
+    {
+        return PublicKey::from_bech32(npub)
+            .map(|pubkey| pubkey.to_hex())
+            .map_err(|error| SharingError::InvalidPubkey(error.to_string()));
+    }
+    Err(SharingError::RecipientResolution(
+        "recipient evidence is missing representative pubkey".to_string(),
+    ))
 }
 
 fn shared_folder_app_key_can_write_roots_with_projection(
@@ -1242,17 +1305,57 @@ pub fn invite_shared_folder_member(
     recipient: ShareRecipient,
     created_at: i64,
 ) -> Result<ShareInviteOutcome, SharingError> {
+    invite_shared_folder_recipients(folder, signer_keys, vec![recipient], created_at)
+}
+
+pub fn invite_shared_folder_resolved_recipient(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    recipient: &ResolvedShareRecipient,
+    role: ShareRole,
+    created_at: i64,
+) -> Result<ShareInviteOutcome, SharingError> {
+    invite_shared_folder_recipients(
+        folder,
+        signer_keys,
+        recipient.share_recipients(role),
+        created_at,
+    )
+}
+
+fn invite_shared_folder_recipients(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    recipients: Vec<ShareRecipient>,
+    created_at: i64,
+) -> Result<ShareInviteOutcome, SharingError> {
     let signer_pubkey = signer_keys.public_key().to_hex();
     if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
         return Err(SharingError::CurrentAppKeyCannotAdminShare);
     }
-    let invited = add_invited_share_member(folder, signer_keys, recipient, created_at)?;
+    let recipient_count = recipients.len();
+    let mut invited = None;
+    for (index, recipient) in recipients.into_iter().enumerate() {
+        let op_time = created_at.saturating_add(i64::try_from(index).unwrap_or(i64::MAX));
+        invited = Some(add_invited_share_member(
+            folder,
+            signer_keys,
+            recipient,
+            op_time,
+        )?);
+    }
+    let Some(invited) = invited else {
+        return Err(SharingError::RecipientResolution(
+            "share invite requires at least one recipient AppKey".to_string(),
+        ));
+    };
     let projection = folder.projection();
     let next_epoch = projection
         .key_epochs
         .keys()
         .next_back()
         .map_or(1, |epoch| epoch.saturating_add(1));
+    let op_offset = i64::try_from(recipient_count).unwrap_or(i64::MAX);
     let share_key = generate_share_key();
     let wrapped_dck = wrap_share_key(
         signer_keys,
@@ -1269,7 +1372,7 @@ pub fn invite_shared_folder_member(
             epoch: next_epoch,
             wrapped_dck,
         },
-        created_at.saturating_add(1),
+        created_at.saturating_add(op_offset),
     )?);
     let bundle = ShareInviteBundle {
         schema: SHARE_INVITE_SCHEMA,
@@ -1280,7 +1383,7 @@ pub fn invite_shared_folder_member(
         roster_checkpoint: Some(sign_share_roster_checkpoint(
             signer_keys,
             folder,
-            created_at.saturating_add(2),
+            created_at.saturating_add(op_offset).saturating_add(1),
         )?),
         created_at,
     };
@@ -2153,6 +2256,71 @@ mod tests {
             ),
             Err(SharingError::RecipientResolution(_))
         ));
+    }
+
+    #[test]
+    fn resolved_share_invite_wraps_all_appkeys_with_one_epoch() {
+        let owner = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let phone_pubkey = Keys::generate().public_key().to_hex();
+        let laptop_pubkey = Keys::generate().public_key().to_hex();
+        let mut app_pubkeys = vec![phone_pubkey.clone(), laptop_pubkey.clone()];
+        app_pubkeys.sort();
+        let mut folder = create_shared_folder(
+            &owner,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let resolved = ResolvedShareRecipient {
+            profile_id: recipient_profile_id,
+            representative_pubkey: phone_pubkey.clone(),
+            representative_npub: pubkey_npub(&phone_pubkey),
+            display_name: Some("Alice".to_string()),
+            app_pubkeys: app_pubkeys.clone(),
+            linked_social_pubkeys: vec![phone_pubkey.clone()],
+        };
+
+        let outcome = invite_shared_folder_resolved_recipient(
+            &mut folder,
+            &owner,
+            &resolved,
+            ShareRole::Editor,
+            20,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.profile_id, recipient_profile_id);
+        assert_eq!(outcome.epoch, 2);
+        let projection = folder.projection();
+        let epoch = projection.key_epochs.get(&2).unwrap();
+        assert!(epoch.wrapped_dck.contains_key(&owner.public_key().to_hex()));
+        assert!(epoch.wrapped_dck.contains_key(&phone_pubkey));
+        assert!(epoch.wrapped_dck.contains_key(&laptop_pubkey));
+        assert_eq!(
+            folder
+                .members
+                .get(&recipient_profile_id.to_string())
+                .unwrap()
+                .role,
+            ShareRole::Editor
+        );
+        let view = shared_folder_view(&folder, &[], &phone_pubkey);
+        let alice = view
+            .members
+            .iter()
+            .find(|member| member.profile_id == recipient_profile_id)
+            .unwrap();
+        assert_eq!(alice.display_name, "Alice");
+        assert_eq!(alice.app_key_count, 2);
+        let bundle = parse_share_invite(&outcome.invite_url).unwrap();
+        assert_eq!(bundle.recipient_profile_id, recipient_profile_id);
+        assert!(bundle.roster_checkpoint.is_some());
     }
 
     #[test]

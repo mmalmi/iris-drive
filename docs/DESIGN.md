@@ -190,14 +190,17 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - **Create share**: `idrive shares create Photos --name Photos`. Creates an
   internal share root, initializes an entity-oriented share roster, and records
   the owner IrisProfile as an admin member.
-- **Send invite**: `idrive shares invite <share-id> --profile <iris-profile-id>
-  --app-key <recipient-appkey-npub> --role reader`. The selected representative
-  npub/contact is only a discovery/display hint; access is granted to the
-  resolved IrisProfile member, while concrete AppKeys receive key wraps and
-  scoped signing/decryption capabilities. The recipient's IrisProfile roster is
-  the authority for key-to-UUID membership; the share roster only records
-  UUID-to-role membership. External contact indexes such as `nostr-social-graph`
-  may rank/search representative npubs, but they are not share authority.
+- **Send invite**: `idrive shares invite <share-id> --recipient-evidence
+  recipient-profile.json --role reader`. The evidence bundle contains the
+  selected representative npub/pubkey, signed IrisProfile roster ops, and
+  self-signed facet acceptances. Direct `--profile --app-key` remains a
+  diagnostic/admin path. The selected representative npub/contact is only a
+  discovery/display hint; access is granted to the resolved IrisProfile member,
+  while concrete AppKeys receive key wraps and scoped signing/decryption
+  capabilities. The recipient's IrisProfile roster is the authority for
+  key-to-UUID membership; the share roster only records UUID-to-role membership.
+  External contact indexes such as `nostr-social-graph` may rank/search
+  representative npubs, but they are not share authority.
   Inviting rotates the share epoch and emits a compact invite bundle containing
   a signed roster checkpoint/proof. The checkpoint summarizes entity members,
   compact roster heads, current key epoch, and missing-wrap state; the

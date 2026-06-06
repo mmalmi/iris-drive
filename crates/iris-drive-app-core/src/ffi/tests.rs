@@ -4,6 +4,35 @@ use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
 use std::path::Path;
 
+fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> String {
+    let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+    let state = config.profile.unwrap();
+    let account = iris_drive_core::Profile::load(state, config_dir).unwrap();
+    let acceptance_event = iris_drive_core::build_iris_profile_facet_acceptance_event(
+        account.app_key.keys(),
+        account.state.profile_id,
+        [iris_drive_core::IrisProfileKeyPurpose::AppKey],
+        account
+            .state
+            .profile_roster_ops
+            .first()
+            .map(|op| op.op_id.clone()),
+        20,
+    )
+    .unwrap();
+    let evidence = iris_drive_core::ShareRecipientProfileEvidence {
+        profile_id: account.state.profile_id,
+        representative_pubkey: Some(account.state.app_key_pubkey.clone()),
+        representative_npub: None,
+        display_name: Some(display_name.to_owned()),
+        roster_ops: account.state.profile_roster_ops,
+        acceptances: vec![
+            iris_drive_core::parse_iris_profile_facet_acceptance_event(&acceptance_event).unwrap(),
+        ],
+    };
+    serde_json::to_string(&evidence).unwrap()
+}
+
 #[test]
 fn dispatch_adds_updates_and_removes_roots() {
     let dir = tempfile::tempdir().unwrap();
@@ -262,6 +291,60 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
             .status,
         "revoked"
     );
+}
+
+#[test]
+fn app_action_invites_share_member_from_recipient_evidence() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner_created = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
+        source_path: "Projects/Alpha".to_owned(),
+        display_name: "Alpha".to_owned(),
+    });
+    assert!(created_share.error.is_empty(), "{}", created_share.error);
+    let share_id = created_share.ui.shares[0].share_id.clone();
+
+    let recipient_dir = tempfile::tempdir().unwrap();
+    let recipient_app = FfiApp::new(
+        recipient_dir.path().display().to_string(),
+        "test".to_owned(),
+    );
+    let recipient_created = recipient_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Recipient".to_owned(),
+    });
+    assert!(
+        recipient_created.error.is_empty(),
+        "{}",
+        recipient_created.error
+    );
+    let recipient_profile = recipient_created.ui.profile.clone().unwrap();
+    let invited = owner_app.dispatch(NativeAppAction::InviteShareMemberFromEvidence {
+        share_id,
+        evidence_json: share_recipient_evidence_json(recipient_dir.path(), "Alice"),
+        role: "editor".to_owned(),
+        display_name: String::new(),
+    });
+
+    assert!(invited.error.is_empty(), "{}", invited.error);
+    assert!(
+        invited
+            .ui
+            .last_share_invite
+            .starts_with(iris_drive_core::SHARE_INVITE_PREFIX)
+    );
+    let share = invited.ui.shares.first().unwrap();
+    let alice = share
+        .members
+        .iter()
+        .find(|member| member.profile_id == recipient_profile.profile_id)
+        .unwrap();
+    assert_eq!(alice.display_name, "Alice");
+    assert_eq!(alice.role, "editor");
+    assert_eq!(alice.app_key_count, 1);
 }
 
 #[test]

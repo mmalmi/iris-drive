@@ -87,6 +87,12 @@ pub enum NativeAppAction {
         display_name: String,
         label: String,
     },
+    InviteShareMemberFromEvidence {
+        share_id: String,
+        evidence_json: String,
+        role: String,
+        display_name: String,
+    },
     AcceptShareInvite {
         invite: String,
     },

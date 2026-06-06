@@ -328,6 +328,7 @@ impl NativeAppRuntime {
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
             share_action @ (NativeAppAction::CreateShare { .. }
             | NativeAppAction::InviteShareMember { .. }
+            | NativeAppAction::InviteShareMemberFromEvidence { .. }
             | NativeAppAction::AcceptShareInvite { .. }
             | NativeAppAction::RevokeShareMember { .. }
             | NativeAppAction::AddShareShortcut { .. }
@@ -365,6 +366,17 @@ impl NativeAppRuntime {
                 &representative_npub_hint,
                 &display_name,
                 &label,
+            ),
+            NativeAppAction::InviteShareMemberFromEvidence {
+                share_id,
+                evidence_json,
+                role,
+                display_name,
+            } => self.invite_share_member_from_evidence(
+                &share_id,
+                &evidence_json,
+                &role,
+                &display_name,
             ),
             NativeAppAction::AcceptShareInvite { invite } => self.accept_share_invite(&invite),
             NativeAppAction::RevokeShareMember {
@@ -1228,6 +1240,20 @@ impl NativeAppRuntime {
         }
     }
 
+    fn invite_share_member_from_evidence(
+        &mut self,
+        share_id: &str,
+        evidence_json: &str,
+        role: &str,
+        display_name: &str,
+    ) {
+        if let Err(error) =
+            self.try_invite_share_member_from_evidence(share_id, evidence_json, role, display_name)
+        {
+            self.state.error = format!("inviting share member: {error:#}");
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn try_invite_share_member(
         &mut self,
@@ -1265,6 +1291,45 @@ impl NativeAppRuntime {
                 representative_npub_hint: optional_trimmed(representative_npub_hint),
                 display_name: optional_trimmed(display_name),
             },
+            share_now_seconds(),
+        )?;
+        self.state.ui.last_share_invite = outcome.invite_url;
+        config.save(config_path_in(Path::new(&self.data_dir)))?;
+        Ok(())
+    }
+
+    fn try_invite_share_member_from_evidence(
+        &mut self,
+        share_id: &str,
+        evidence_json: &str,
+        role: &str,
+        display_name: &str,
+    ) -> anyhow::Result<()> {
+        let share_id = share_id.parse::<iris_drive_core::IrisProfileId>()?;
+        let role = parse_share_role(role)?;
+        let evidence: iris_drive_core::ShareRecipientProfileEvidence =
+            serde_json::from_str(evidence_json).context("parsing recipient evidence")?;
+        let resolved = iris_drive_core::resolve_share_recipient_from_evidence(
+            &evidence,
+            optional_trimmed(display_name),
+        )
+        .context("resolving share recipient evidence")?;
+        let mut config = AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))?;
+        let state = config
+            .profile
+            .clone()
+            .context("profile is required before inviting share members")?;
+        let account = Profile::load(state, Path::new(&self.data_dir)).context("loading profile")?;
+        let folder = config
+            .shared_folders
+            .iter_mut()
+            .find(|folder| folder.share_id == share_id)
+            .with_context(|| format!("share not found: {share_id}"))?;
+        let outcome = iris_drive_core::invite_shared_folder_resolved_recipient(
+            folder,
+            account.app_key.keys(),
+            &resolved,
+            role,
             share_now_seconds(),
         )?;
         self.state.ui.last_share_invite = outcome.invite_url;
