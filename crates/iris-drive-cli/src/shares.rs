@@ -415,7 +415,8 @@ fn share_view_json(view: &iris_drive_core::SharedFolderView) -> Value {
         "display_name": view.display_name.clone(),
         "source_path": view.source_path.clone(),
         "shared_with_me_path": view.shared_with_me_path.clone(),
-        "local_role": share_role_label(view.local_role),
+        "local_role": view.local_role.as_str(),
+        "local_role_label": view.local_role.label(),
         "key_status": view.key_status.as_str(),
         "key_status_label": view.key_status.label(),
         "can_write": view.can_write,
@@ -441,35 +442,12 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
         "profile_id": member.profile_id.to_string(),
         "display_name": member.display_name.clone(),
         "representative_npub_hint": member.representative_npub_hint.clone(),
-        "role": share_role_label(member.role),
-        "status": share_member_status_label(member.status),
-        "status_label": share_member_status_display_label(member.status),
+        "role": member.role.as_str(),
+        "role_label": member.role.label(),
+        "status": member.status.as_str(),
+        "status_label": member.status.label(),
         "app_key_count": member.app_key_count,
     })
-}
-
-fn share_role_label(role: iris_drive_core::ShareRole) -> &'static str {
-    match role {
-        iris_drive_core::ShareRole::Admin => "admin",
-        iris_drive_core::ShareRole::Editor => "editor",
-        iris_drive_core::ShareRole::Reader => "reader",
-    }
-}
-
-fn share_member_status_label(status: iris_drive_core::ShareMemberStatus) -> &'static str {
-    match status {
-        iris_drive_core::ShareMemberStatus::Pending => "pending",
-        iris_drive_core::ShareMemberStatus::Active => "active",
-        iris_drive_core::ShareMemberStatus::Revoked => "revoked",
-    }
-}
-
-fn share_member_status_display_label(status: iris_drive_core::ShareMemberStatus) -> &'static str {
-    match status {
-        iris_drive_core::ShareMemberStatus::Pending => "Pending",
-        iris_drive_core::ShareMemberStatus::Active => "Active",
-        iris_drive_core::ShareMemberStatus::Revoked => "Revoked",
-    }
 }
 
 fn default_display_name_for_share_path(source_path: &str) -> String {
@@ -482,14 +460,12 @@ fn default_display_name_for_share_path(source_path: &str) -> String {
 }
 
 fn parse_share_role(value: &str) -> Result<iris_drive_core::ShareRole> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "admin" => Ok(iris_drive_core::ShareRole::Admin),
-        "editor" | "writer" => Ok(iris_drive_core::ShareRole::Editor),
-        "reader" | "read" => Ok(iris_drive_core::ShareRole::Reader),
-        other => Err(anyhow::anyhow!(
-            "invalid share role {other}; expected reader, editor, or admin"
-        )),
-    }
+    iris_drive_core::ShareRole::parse_user_input(value).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid share role {}; expected reader, editor, or admin",
+            value.trim()
+        )
+    })
 }
 
 fn load_share_recipient_evidence(
@@ -631,6 +607,49 @@ mod tests {
                 .get(&account.state.app_key_pubkey),
             Some(&account.state.profile_id)
         );
+    }
+
+    #[test]
+    fn share_json_includes_core_projection_keys_and_labels() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let recipient_keys = nostr_sdk::Keys::generate();
+        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let folder = iris_drive_core::create_shared_folder(
+            account.app_key.keys(),
+            account.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Mac".into()),
+            vec![iris_drive_core::ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: iris_drive_core::ShareRole::Reader,
+                label: Some("Phone".into()),
+                representative_npub_hint: Some("npub1alice".into()),
+                display_name: Some("Alice".into()),
+            }],
+            10,
+        )
+        .unwrap();
+
+        let view = iris_drive_core::shared_folder_view(&folder, &[], &account.state.app_key_pubkey);
+        let share = share_view_json(&view);
+        assert_eq!(share["local_role"], "admin");
+        assert_eq!(share["local_role_label"], "Admin");
+        assert_eq!(share["key_status"], "available");
+        assert_eq!(share["key_status_label"], "Available");
+
+        let member = share["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|member| member["profile_id"] == recipient_profile_id.to_string())
+            .unwrap();
+        assert_eq!(member["role"], "reader");
+        assert_eq!(member["role_label"], "Reader");
+        assert_eq!(member["status"], "active");
+        assert_eq!(member["status_label"], "Active");
     }
 
     #[test]

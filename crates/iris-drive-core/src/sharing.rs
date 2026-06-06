@@ -76,6 +76,34 @@ pub enum ShareRole {
 
 impl ShareRole {
     #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Editor => "editor",
+            Self::Reader => "reader",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Admin => "Admin",
+            Self::Editor => "Editor",
+            Self::Reader => "Reader",
+        }
+    }
+
+    #[must_use]
+    pub fn parse_user_input(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "admin" => Some(Self::Admin),
+            "editor" | "writer" => Some(Self::Editor),
+            "reader" | "read" => Some(Self::Reader),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn capabilities(self) -> IrisProfileCapabilities {
         match self {
             Self::Admin => IrisProfileCapabilities::app_admin(),
@@ -174,6 +202,26 @@ pub enum ShareMemberStatus {
     Pending,
     Active,
     Revoked,
+}
+
+impl ShareMemberStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Active => "Active",
+            Self::Revoked => "Revoked",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1743,6 +1791,33 @@ mod tests {
                 display_name: Some("Recipient".to_string()),
             },
         )
+    }
+
+    #[test]
+    fn share_projection_vocabulary_is_core_owned() {
+        assert_eq!(ShareRole::Admin.as_str(), "admin");
+        assert_eq!(ShareRole::Admin.label(), "Admin");
+        assert_eq!(ShareRole::Editor.as_str(), "editor");
+        assert_eq!(ShareRole::Editor.label(), "Editor");
+        assert_eq!(ShareRole::Reader.as_str(), "reader");
+        assert_eq!(ShareRole::Reader.label(), "Reader");
+
+        assert_eq!(
+            ShareRole::parse_user_input("writer"),
+            Some(ShareRole::Editor)
+        );
+        assert_eq!(
+            ShareRole::parse_user_input(" read "),
+            Some(ShareRole::Reader)
+        );
+        assert_eq!(ShareRole::parse_user_input("owner"), None);
+
+        assert_eq!(ShareMemberStatus::Pending.as_str(), "pending");
+        assert_eq!(ShareMemberStatus::Pending.label(), "Pending");
+        assert_eq!(ShareMemberStatus::Active.as_str(), "active");
+        assert_eq!(ShareMemberStatus::Active.label(), "Active");
+        assert_eq!(ShareMemberStatus::Revoked.as_str(), "revoked");
+        assert_eq!(ShareMemberStatus::Revoked.label(), "Revoked");
     }
 
     fn folder_with_recipient_missing_wrap() -> (SharedFolder, String, String) {

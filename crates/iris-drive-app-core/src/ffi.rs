@@ -2479,8 +2479,8 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         share_id: share.share_id.to_string(),
         display_name: share.display_name,
         shared_with_me_path: share.shared_with_me_path,
-        role: share_role_key(share.local_role).to_owned(),
-        role_label: share_role_label(share.local_role).to_owned(),
+        role: share.local_role.as_str().to_owned(),
+        role_label: share.local_role.label().to_owned(),
         key_status: share.key_status.as_str().to_owned(),
         key_status_label: share.key_status.label().to_owned(),
         can_write: share.can_write,
@@ -2503,48 +2503,16 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
                 profile_id: member.profile_id.to_string(),
                 display_name: member.display_name,
                 representative_npub_hint: member.representative_npub_hint.unwrap_or_default(),
-                role: share_role_key(member.role).to_owned(),
-                role_label: share_role_label(member.role).to_owned(),
-                status: share_member_status_key(member.status).to_owned(),
-                status_label: share_member_status_label(member.status).to_owned(),
+                role: member.role.as_str().to_owned(),
+                role_label: member.role.label().to_owned(),
+                status: member.status.as_str().to_owned(),
+                status_label: member.status.label().to_owned(),
                 app_key_count: member.app_key_count as u64,
             })
             .collect(),
         shortcut_paths: share.shortcut_paths,
     })
     .collect()
-}
-
-fn share_role_key(role: iris_drive_core::ShareRole) -> &'static str {
-    match role {
-        iris_drive_core::ShareRole::Admin => "admin",
-        iris_drive_core::ShareRole::Editor => "editor",
-        iris_drive_core::ShareRole::Reader => "reader",
-    }
-}
-
-fn share_role_label(role: iris_drive_core::ShareRole) -> &'static str {
-    match role {
-        iris_drive_core::ShareRole::Admin => "Admin",
-        iris_drive_core::ShareRole::Editor => "Editor",
-        iris_drive_core::ShareRole::Reader => "Reader",
-    }
-}
-
-fn share_member_status_key(status: iris_drive_core::ShareMemberStatus) -> &'static str {
-    match status {
-        iris_drive_core::ShareMemberStatus::Pending => "pending",
-        iris_drive_core::ShareMemberStatus::Active => "active",
-        iris_drive_core::ShareMemberStatus::Revoked => "revoked",
-    }
-}
-
-fn share_member_status_label(status: iris_drive_core::ShareMemberStatus) -> &'static str {
-    match status {
-        iris_drive_core::ShareMemberStatus::Pending => "Pending",
-        iris_drive_core::ShareMemberStatus::Active => "Active",
-        iris_drive_core::ShareMemberStatus::Revoked => "Revoked",
-    }
 }
 
 fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyConnectivity {
@@ -2677,12 +2645,12 @@ fn optional_trimmed(value: &str) -> Option<String> {
 }
 
 fn parse_share_role(value: &str) -> anyhow::Result<iris_drive_core::ShareRole> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "admin" => Ok(iris_drive_core::ShareRole::Admin),
-        "editor" | "writer" => Ok(iris_drive_core::ShareRole::Editor),
-        "reader" | "read" => Ok(iris_drive_core::ShareRole::Reader),
-        other => anyhow::bail!("invalid share role {other}; expected reader, editor, or admin"),
-    }
+    iris_drive_core::ShareRole::parse_user_input(value).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid share role {}; expected reader, editor, or admin",
+            value.trim()
+        )
+    })
 }
 
 fn normalize_pubkey_hex(input: &str) -> anyhow::Result<String> {
