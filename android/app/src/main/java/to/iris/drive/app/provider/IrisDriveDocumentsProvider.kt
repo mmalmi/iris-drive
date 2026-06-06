@@ -127,7 +127,10 @@ class IrisDriveDocumentsProvider : DocumentsProvider() {
         if (entry.isDirectory) {
             var flags = Document.FLAG_DIR_SUPPORTS_CREATE
             if (!entry.isRoot) {
-                flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME
+                flags = flags or
+                    Document.FLAG_SUPPORTS_DELETE or
+                    Document.FLAG_SUPPORTS_RENAME or
+                    Document.FLAG_SUPPORTS_SETTINGS
             }
             return flags
         }

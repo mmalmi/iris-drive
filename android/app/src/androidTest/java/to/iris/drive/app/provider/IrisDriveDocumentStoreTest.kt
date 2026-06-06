@@ -70,6 +70,23 @@ class IrisDriveDocumentStoreTest {
     }
 
     @Test
+    fun resolvesProviderPathForShareableFolderDocumentId() {
+        val store = newStore()
+
+        val directory = store.createDocument(
+            IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
+            Document.MIME_TYPE_DIR,
+            "Projects",
+        )
+
+        assertEquals("Projects", store.providerPathForDocumentId(directory.documentId))
+        assertEquals("", store.providerPathForDocumentId(IrisDriveDocumentStore.ROOT_DOCUMENT_ID))
+        assertThrows(FileNotFoundException::class.java) {
+            store.providerPathForDocumentId("root/../outside")
+        }
+    }
+
+    @Test
     fun deDuplicatesNamesInOneDirectory() {
         val store = newStore()
 

@@ -135,6 +135,9 @@ internal class IrisDriveDocumentStore(
             NativeCore.providerPathIsChildDocument(parentPath, childPath)
         }.getOrDefault(false)
 
+    fun providerPathForDocumentId(documentId: String): String =
+        if (documentId == ROOT_DOCUMENT_ID) "" else pathForDocumentId(documentId)
+
     fun readDocumentToTemp(documentId: String): File {
         val path = pathForDocumentId(documentId)
         val target = tempFile("read")

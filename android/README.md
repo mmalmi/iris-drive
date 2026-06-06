@@ -21,5 +21,6 @@ just android-smoke
 The smoke builds the APK, installs it on the selected `adb` device or emulator,
 launches `MainActivity`, and verifies the SAF `DocumentsProvider` authority is
 registered. The provider exposes an app-private virtual root with create,
-read/write, rename, delete, and child-listing support for SAF clients. Pass the
-device through `IRIS_DRIVE_ANDROID_SERIAL` or `ANDROID_SERIAL`.
+read/write, rename, delete, child-listing, and non-root folder share-dialog
+handoff support for SAF clients. Pass the device through
+`IRIS_DRIVE_ANDROID_SERIAL` or `ANDROID_SERIAL`.

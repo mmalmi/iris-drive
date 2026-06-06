@@ -111,6 +111,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ShareDocumentSettingsActivity"
+            android:exported="true"
+            android:label="@string/share_folder_action_label"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.provider.action.DOCUMENT_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+            </intent-filter>
+        </activity>
+
         <provider
             android:name=".provider.IrisDriveDocumentsProvider"
             android:authorities="${documentsProviderAuthority}"

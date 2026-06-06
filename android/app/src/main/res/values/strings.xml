@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Iris Drive</string>
     <string name="share_target_label">Save to Iris Drive</string>
+    <string name="share_folder_action_label">Share folder</string>
     <string name="sync_notification_channel">Iris Drive sync</string>
 </resources>
