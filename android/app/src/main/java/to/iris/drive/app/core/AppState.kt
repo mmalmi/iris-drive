@@ -39,7 +39,7 @@ internal data class AppState(
                 profile = ui.optJSONObject("profile")?.toProfile(),
                 roots = ui.optJSONArray("roots").toRoots(),
                 shares = ui.optJSONArray("shares").toShares(),
-                devices = ui.optJSONArray("devices").toDevices(),
+                devices = ui.optJSONArray("app_actors").toDevices(),
                 relays = ui.optJSONArray("relays").toStrings(),
                 relayStatuses = ui.optJSONArray("relay_statuses").toRelayStatuses(),
                 backups = ui.optJSONArray("backups").toBackups(),
@@ -56,8 +56,8 @@ internal data class AppState(
                 isSetupComplete = ui.optBoolean("setup_complete"),
                 isAwaitingApproval = ui.optBoolean("awaiting_approval"),
                 isRevoked = ui.optBoolean("revoked"),
-                authorizedDeviceCount = ui.optInt("authorized_device_count"),
-                onlineDeviceCount = ui.optInt("online_device_count"),
+                authorizedDeviceCount = ui.optInt("authorized_app_key_count"),
+                onlineDeviceCount = ui.optInt("online_app_key_count"),
                 fileCount = ui.optInt("file_count"),
                 visibleFileBytes = ui.optLong("visible_file_bytes"),
             )
@@ -523,7 +523,7 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
     return buildList {
         for (index in 0 until length()) {
             val item = optJSONObject(index) ?: continue
-            val isCurrentDevice = item.optBoolean("is_current_device")
+            val isCurrentDevice = item.optBoolean("is_current_app_key")
             val isOnline = item.optBoolean("is_online")
             add(
                 DeviceState(

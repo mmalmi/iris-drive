@@ -74,6 +74,12 @@ non-root Iris Drive folders. Optional `recipient_npub`, `recipient_name`, and
 recipient evidence and roster ops remain the authority for the member's
 IrisProfile UUID and AppKeys.
 
+App-core and CLI status surfaces should expose profile roster actors as
+`app_actors`, `authorized_app_key_count`, `online_app_key_count`,
+`app_key_npub`, and `is_current_app_key`. FIPS transport diagnostics may keep
+their lower-level `*_device*` field names because they describe network
+endpoints rather than IrisProfile roster authority.
+
 ## Mobile test target
 
 iOS has a buildable SwiftUI shell plus a FileProvider extension registered by

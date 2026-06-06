@@ -5,7 +5,7 @@ pub struct UiState {
     pub roots: Vec<UiSyncRoot>,
     pub shares: Vec<UiShare>,
     pub profile: Option<UiProfile>,
-    pub devices: Vec<UiDevice>,
+    pub app_actors: Vec<UiAppActor>,
     pub relays: Vec<String>,
     pub relay_statuses: Vec<UiRelayStatus>,
     pub backups: Vec<UiBackup>,
@@ -19,8 +19,8 @@ pub struct UiState {
     pub setup_label: String,
     pub primary_status: String,
     pub primary_status_label: String,
-    pub authorized_device_count: u64,
-    pub online_device_count: u64,
+    pub authorized_app_key_count: u64,
+    pub online_app_key_count: u64,
     pub file_count: u64,
     pub visible_file_bytes: u64,
     pub provider_change_key: String,
@@ -107,7 +107,7 @@ pub struct UiAppKeyLinkRequest {
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct UiDevice {
+pub struct UiAppActor {
     pub pubkey: String,
     pub label: String,
     pub display_label: String,
@@ -118,7 +118,7 @@ pub struct UiDevice {
     pub connection_state: String,
     pub connection_label: String,
     pub detail: String,
-    pub is_current_device: bool,
+    pub is_current_app_key: bool,
     pub is_online: bool,
     pub can_revoke: bool,
     pub can_appoint_admin: bool,

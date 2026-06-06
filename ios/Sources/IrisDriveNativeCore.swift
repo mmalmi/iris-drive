@@ -346,7 +346,7 @@ struct NativeUiState: Codable {
         case roots
         case shares
         case profile
-        case devices
+        case devices = "app_actors"
         case relays
         case relayStatuses = "relay_statuses"
         case backups
@@ -360,8 +360,8 @@ struct NativeUiState: Codable {
         case setupLabel = "setup_label"
         case primaryStatus = "primary_status"
         case primaryStatusLabel = "primary_status_label"
-        case authorizedDeviceCount = "authorized_device_count"
-        case onlineDeviceCount = "online_device_count"
+        case authorizedDeviceCount = "authorized_app_key_count"
+        case onlineDeviceCount = "online_app_key_count"
         case fileCount = "file_count"
         case visibleFileBytes = "visible_file_bytes"
         case providerChangeKey = "provider_change_key"
@@ -601,7 +601,7 @@ struct NativeDevice: Codable {
         case connectionState = "connection_state"
         case connectionLabel = "connection_label"
         case detail
-        case isCurrentDevice = "is_current_device"
+        case isCurrentDevice = "is_current_app_key"
         case isOnline = "is_online"
         case canRevoke = "can_revoke"
         case canAppointAdmin = "can_appoint_admin"

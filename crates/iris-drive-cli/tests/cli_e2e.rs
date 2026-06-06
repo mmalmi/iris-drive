@@ -273,7 +273,7 @@ fn status_after_init_reports_initialized() {
     assert_eq!(drives[0]["drive_id"], "main");
     assert_eq!(drives[0]["role"], "owner");
     assert!(drives[0].get("working_dir").is_none());
-    assert_eq!(v["network"]["authorized_device_count"], 1);
+    assert_eq!(v["network"]["authorized_app_key_count"], 1);
     assert_eq!(v["network"]["published_app_key_roots"], 0);
     assert_eq!(v["network"]["fips"]["enabled"], false);
     assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
@@ -281,7 +281,7 @@ fn status_after_init_reports_initialized() {
     assert_eq!(v["network"]["fips"]["other_peer_count"], 0);
     let peers = v["peers"].as_array().unwrap();
     assert_eq!(peers.len(), 1);
-    assert_eq!(peers[0]["is_current_device"], true);
+    assert_eq!(peers[0]["is_current_app_key"], true);
     assert_eq!(peers[0]["authorized"], true);
     assert_eq!(peers[0]["has_root"], false);
 }
@@ -290,7 +290,7 @@ fn status_after_init_reports_initialized() {
 fn backup_targets_can_be_added_listed_and_removed() {
     let dir = tempdir().unwrap();
     let init = run_json(dir.path(), &["init"]);
-    let device_npub = current_app_key_npub(&init);
+    let app_key_npub = current_app_key_npub(&init);
 
     let added_blossom = run_json(
         dir.path(),
@@ -308,7 +308,7 @@ fn backup_targets_can_be_added_listed_and_removed() {
 
     let added_fips = run_json(
         dir.path(),
-        &["backups", "add", device_npub, "--label", "Vault"],
+        &["backups", "add", app_key_npub, "--label", "Vault"],
     );
     let targets = added_fips["backup_targets"].as_array().unwrap();
     assert_eq!(targets.len(), 2);
@@ -670,8 +670,8 @@ fn status_reports_fips_latency_for_direct_peer() {
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+    let linked_app_key_npub = current_app_key_npub(&linked).to_string();
+    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -688,11 +688,11 @@ fn status_reports_fips_latency_for_direct_peer() {
             "updated_at": now,
             "fips_block_sync": {
                 "endpoint_npub": "npub1local",
-                "authorized_peers": [linked_device_npub.clone()],
-                "connected_peers": [linked_device_npub.clone()],
+                "authorized_peers": [linked_app_key_npub.clone()],
+                "connected_peers": [linked_app_key_npub.clone()],
                 "mesh_peers": [],
                 "peer_statuses": [{
-                    "npub": linked_device_npub.clone(),
+                    "npub": linked_app_key_npub.clone(),
                     "transport_addr": "udp:10.44.1.2:2121",
                     "transport_type": "udp",
                     "srtt_ms": 31,
@@ -712,8 +712,8 @@ fn status_reports_fips_latency_for_direct_peer() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["device_npub"] == linked_device_npub)
-        .expect("linked device peer");
+        .find(|peer| peer["app_key_npub"] == linked_app_key_npub)
+        .expect("linked AppKey peer");
     assert_eq!(linked_peer["fips_online"], true);
     assert_eq!(linked_peer["fips_online_via"], "direct");
     assert_eq!(linked_peer["fips_transport_type"], "udp");
@@ -736,8 +736,8 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+    let linked_app_key_npub = current_app_key_npub(&linked).to_string();
+    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -754,9 +754,9 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
             "updated_at": now,
             "fips_block_sync": {
                 "endpoint_npub": "npub1local",
-                "authorized_peers": [linked_device_npub.clone()],
+                "authorized_peers": [linked_app_key_npub.clone()],
                 "connected_peers": [],
-                "mesh_peers": [linked_device_npub.clone()],
+                "mesh_peers": [linked_app_key_npub.clone()],
             },
         }))
         .unwrap(),
@@ -768,8 +768,8 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["device_npub"] == linked_device_npub)
-        .expect("linked device peer");
+        .find(|peer| peer["app_key_npub"] == linked_app_key_npub)
+        .expect("linked AppKey peer");
     assert_eq!(linked_peer["fips_online"], true);
     assert_eq!(linked_peer["fips_direct_online"], false);
     assert_eq!(linked_peer["fips_mesh_online"], true);
@@ -786,8 +786,8 @@ fn status_drops_stale_fips_mesh_peers() {
         linked_dir.path(),
         &["link", &owner_invite, "--label", "linux-peer"],
     );
-    let linked_device_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_device_npub]);
+    let linked_app_key_npub = current_app_key_npub(&linked).to_string();
+    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
 
     std::fs::write(
         owner_dir.path().join("daemon-status.json"),
@@ -795,11 +795,11 @@ fn status_drops_stale_fips_mesh_peers() {
             "updated_at": 1,
             "fips_block_sync": {
                 "endpoint_npub": "npub1local",
-                "authorized_peers": [linked_device_npub.clone()],
-                "connected_peers": [linked_device_npub.clone()],
-                "mesh_peers": [linked_device_npub.clone()],
+                "authorized_peers": [linked_app_key_npub.clone()],
+                "connected_peers": [linked_app_key_npub.clone()],
+                "mesh_peers": [linked_app_key_npub.clone()],
                 "peer_statuses": [{
-                    "npub": linked_device_npub.clone(),
+                    "npub": linked_app_key_npub.clone(),
                     "transport_type": "udp",
                     "srtt_ms": 19,
                 }],
@@ -824,8 +824,8 @@ fn status_drops_stale_fips_mesh_peers() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["device_npub"] == linked_device_npub)
-        .expect("linked device peer");
+        .find(|peer| peer["app_key_npub"] == linked_app_key_npub)
+        .expect("linked AppKey peer");
     assert_eq!(linked_peer["fips_online"], false);
     assert_eq!(linked_peer["fips_online_via"], serde_json::Value::Null);
 }
@@ -834,7 +834,7 @@ fn status_drops_stale_fips_mesh_peers() {
 fn status_marks_current_device_fips_online_when_daemon_is_running() {
     let dir = tempdir().unwrap();
     let init = run_json(dir.path(), &["init", "--label", "macos"]);
-    let device_npub = current_app_key_npub(&init).to_string();
+    let app_key_npub = current_app_key_npub(&init).to_string();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -849,7 +849,7 @@ fn status_marks_current_device_fips_online_when_daemon_is_running() {
         serde_json::to_vec(&serde_json::json!({
             "updated_at": now,
             "fips_block_sync": {
-                "endpoint_npub": device_npub,
+                "endpoint_npub": app_key_npub,
                 "authorized_peers": [],
                 "connected_peers": [],
                 "mesh_peers": [],
@@ -864,8 +864,8 @@ fn status_marks_current_device_fips_online_when_daemon_is_running() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["is_current_device"] == true)
-        .expect("current device peer");
+        .find(|peer| peer["is_current_app_key"] == true)
+        .expect("current AppKey peer");
     assert_eq!(current_peer["fips_online"], true);
     assert_eq!(current_peer["fips_online_via"], "local");
 }
@@ -897,8 +897,8 @@ fn status_marks_current_device_local_online_without_fips_transport_snapshot() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["is_current_device"] == true)
-        .expect("current device peer");
+        .find(|peer| peer["is_current_app_key"] == true)
+        .expect("current AppKey peer");
     assert_eq!(current_peer["fips_online"], true);
     assert_eq!(current_peer["fips_online_via"], "local");
 }

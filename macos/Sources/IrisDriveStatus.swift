@@ -401,7 +401,7 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
             ?? json["pubkey"] as? String
             ?? UUID().uuidString
         let labelValue = json["label"] as? String
-        let isCurrentDeviceValue = json["is_current_device"] as? Bool ?? false
+        let isCurrentDeviceValue = json["is_current_app_key"] as? Bool ?? false
         let stateValue = json["state"] as? String
         let authorizedValue =
             json["authorized"] as? Bool

@@ -105,14 +105,14 @@ fn profile_actions_populate_mobile_parity_state() {
     );
     assert!(!account.app_key_link_invite.contains("local-owner"));
     assert!(!account.app_key_link_invite.contains("device-"));
-    assert_eq!(state.ui.devices.len(), 1);
-    assert_eq!(state.ui.devices[0].label, "Pixel");
-    assert_eq!(state.ui.devices[0].display_label, "This AppKey");
-    assert_eq!(state.ui.devices[0].role, "admin");
-    assert_eq!(state.ui.devices[0].role_label, "Admin");
-    assert_eq!(state.ui.devices[0].state_label, "Linked");
-    assert_eq!(state.ui.devices[0].connection_state, "local");
-    assert_eq!(state.ui.devices[0].connection_label, "This AppKey");
+    assert_eq!(state.ui.app_actors.len(), 1);
+    assert_eq!(state.ui.app_actors[0].label, "Pixel");
+    assert_eq!(state.ui.app_actors[0].display_label, "This AppKey");
+    assert_eq!(state.ui.app_actors[0].role, "admin");
+    assert_eq!(state.ui.app_actors[0].role_label, "Admin");
+    assert_eq!(state.ui.app_actors[0].state_label, "Linked");
+    assert_eq!(state.ui.app_actors[0].connection_state, "local");
+    assert_eq!(state.ui.app_actors[0].connection_label, "This AppKey");
     assert!(state.ui.snapshot_link.is_empty());
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
@@ -131,8 +131,8 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.setup_label, "Linked");
     assert_eq!(state.ui.primary_status, "ready");
     assert_eq!(state.ui.primary_status_label, "Ready");
-    assert_eq!(state.ui.authorized_device_count, 1);
-    assert_eq!(state.ui.online_device_count, 0);
+    assert_eq!(state.ui.authorized_app_key_count, 1);
+    assert_eq!(state.ui.online_app_key_count, 0);
     assert!(state.ui.shares.is_empty());
 
     let state = app.dispatch(NativeAppAction::StartSync);
@@ -560,8 +560,8 @@ fn uninitialized_state_exposes_summary_defaults() {
     assert_eq!(state.ui.setup_label, "Not linked");
     assert_eq!(state.ui.primary_status, "not_setup");
     assert_eq!(state.ui.primary_status_label, "Ready");
-    assert_eq!(state.ui.authorized_device_count, 0);
-    assert_eq!(state.ui.online_device_count, 0);
+    assert_eq!(state.ui.authorized_app_key_count, 0);
+    assert_eq!(state.ui.online_app_key_count, 0);
     assert_eq!(state.ui.file_count, 0);
     assert_eq!(state.ui.visible_file_bytes, 0);
 }
@@ -708,7 +708,7 @@ fn logout_clears_local_profile_state_and_key_material() {
 
     assert!(state.error.is_empty());
     assert!(state.ui.profile.is_none());
-    assert!(state.ui.devices.is_empty());
+    assert!(state.ui.app_actors.is_empty());
     assert!(state.ui.roots.is_empty());
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
@@ -753,19 +753,19 @@ fn link_action_tracks_pending_approval() {
     assert!(!account.app_key_link_request.contains("local-owner"));
     assert!(!account.app_key_link_request.contains("app_key=device-"));
     assert!(
-        state.ui.devices.is_empty(),
-        "pending devices should not appear in the authorized-device roster"
+        state.ui.app_actors.is_empty(),
+        "pending AppKeys should not appear in the authorized AppKey roster"
     );
     assert_eq!(state.ui.setup_state, "awaiting_approval");
     assert!(!state.ui.setup_complete);
     assert!(state.ui.awaiting_approval);
     assert!(!state.ui.revoked);
     assert_eq!(state.ui.primary_status, "awaiting_approval");
-    assert_eq!(state.ui.authorized_device_count, 0);
+    assert_eq!(state.ui.authorized_app_key_count, 0);
 }
 
 #[test]
-fn owner_can_approve_and_revoke_linked_devices() {
+fn owner_can_approve_and_revoke_linked_app_keys() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
 
@@ -787,7 +787,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
         label: "Phone".to_owned(),
     });
 
-    assert!(state.ui.devices.iter().any(|device| {
+    assert!(state.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device
             && device.label == "Phone"
             && device.role == "member"
@@ -798,7 +798,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
     let state = app.dispatch(NativeAppAction::AppointAdmin {
         app_key_pubkey: linked_device.clone(),
     });
-    assert!(state.ui.devices.iter().any(|device| {
+    assert!(state.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device
             && device.role == "admin"
             && device.can_demote_admin
@@ -808,7 +808,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
     let state = app.dispatch(NativeAppAction::DemoteAdmin {
         app_key_pubkey: linked_device.clone(),
     });
-    assert!(state.ui.devices.iter().any(|device| {
+    assert!(state.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device
             && device.role == "member"
             && !device.can_demote_admin
@@ -822,7 +822,7 @@ fn owner_can_approve_and_revoke_linked_devices() {
     assert!(
         !state
             .ui
-            .devices
+            .app_actors
             .iter()
             .any(|device| device.pubkey == linked_device)
     );
@@ -853,7 +853,7 @@ fn delete_device_json_action_revokes_linked_device() {
     assert!(
         state
             .ui
-            .devices
+            .app_actors
             .iter()
             .any(|device| device.pubkey == linked_device)
     );
@@ -868,7 +868,7 @@ fn delete_device_json_action_revokes_linked_device() {
     assert!(
         state
             .ui
-            .devices
+            .app_actors
             .iter()
             .all(|device| device.label != "Phone")
     );
@@ -903,8 +903,8 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     let authorized = linked_app.refresh();
     let account = authorized.ui.profile.as_ref().expect("account exists");
     assert_eq!(account.authorization_state, "authorized");
-    assert!(authorized.ui.devices.iter().any(|device| {
-        device.pubkey == linked_device && device.label == "Phone" && device.is_current_device
+    assert!(authorized.ui.app_actors.iter().any(|device| {
+        device.pubkey == linked_device && device.label == "Phone" && device.is_current_app_key
     }));
 
     let running = linked_app.dispatch(NativeAppAction::StartSync);
@@ -924,7 +924,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     assert!(account.app_key_link_request.is_empty());
     assert!(account.app_key_link_invite.is_empty());
     assert!(account.inbound_app_key_link_requests.is_empty());
-    assert!(refreshed.ui.devices.is_empty());
+    assert!(refreshed.ui.app_actors.is_empty());
     assert!(refreshed.ui.roots.is_empty());
     assert!(refreshed.ui.snapshot_link.is_empty());
     assert!(!refreshed.ui.sync.running);
@@ -970,7 +970,13 @@ fn native_fips_status_drives_device_online_presence() {
         label: "Phone".to_owned(),
     });
     assert!(approved.error.is_empty());
-    assert!(approved.ui.devices.iter().all(|device| !device.is_online));
+    assert!(
+        approved
+            .ui
+            .app_actors
+            .iter()
+            .all(|device| !device.is_online)
+    );
 
     write_native_fips_status_fixture(
         owner_dir.path(),
@@ -982,11 +988,11 @@ fn native_fips_status_drives_device_online_presence() {
     let refreshed = app.refresh();
     let current = refreshed
         .ui
-        .devices
+        .app_actors
         .iter()
         .find(|device| device.pubkey == current_device)
         .expect("current device in roster");
-    assert!(current.is_current_device);
+    assert!(current.is_current_app_key);
     assert!(current.is_online);
     assert_eq!(current.state, "Linked");
     assert_eq!(current.connection_state, "local");
@@ -1006,11 +1012,11 @@ fn native_fips_status_drives_device_online_presence() {
     );
     let linked = refreshed
         .ui
-        .devices
+        .app_actors
         .iter()
         .find(|device| device.pubkey == linked_device)
         .expect("linked device in roster");
-    assert!(!linked.is_current_device);
+    assert!(!linked.is_current_app_key);
     assert!(linked.is_online);
     assert_eq!(linked.state, "Linked");
     assert_eq!(linked.connection_state, "direct");
@@ -1026,7 +1032,7 @@ fn native_fips_status_drives_device_online_presence() {
     let mesh_only = app.refresh();
     let linked = mesh_only
         .ui
-        .devices
+        .app_actors
         .iter()
         .find(|device| device.pubkey == linked_device)
         .expect("linked device in roster");
@@ -1042,14 +1048,14 @@ fn native_fips_status_drives_device_online_presence() {
         super::unix_now_seconds().saturating_sub(120),
     );
     let stale = app.refresh();
-    assert!(stale.ui.devices.iter().all(|device| !device.is_online));
+    assert!(stale.ui.app_actors.iter().all(|device| !device.is_online));
     assert_eq!(stale.ui.fips.state, "stale");
     assert_eq!(stale.ui.fips.state_label, "Stale");
     assert_eq!(stale.ui.fips.roster_label, "0/1 online");
     assert_eq!(stale.ui.fips.roster_online_device_count, 0);
     let linked = stale
         .ui
-        .devices
+        .app_actors
         .iter()
         .find(|device| device.pubkey == linked_device)
         .expect("linked device in stale roster");
@@ -1112,7 +1118,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
         label: String::new(),
     });
     assert!(approved.error.is_empty());
-    assert!(approved.ui.devices.iter().any(|device| {
+    assert!(approved.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
 }
@@ -1169,7 +1175,7 @@ fn owner_can_reject_inbound_app_key_link_request() {
     assert!(
         rejected
             .ui
-            .devices
+            .app_actors
             .iter()
             .all(|device| device.pubkey != linked_device)
     );

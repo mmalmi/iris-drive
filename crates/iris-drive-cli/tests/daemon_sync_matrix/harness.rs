@@ -394,7 +394,7 @@ impl SyncCluster {
             self.debug_state_with_rerun_hint()
         );
         assert_eq!(
-            status["network"]["authorized_device_count"].as_u64(),
+            status["network"]["authorized_app_key_count"].as_u64(),
             Some(expected_devices),
             "{} status should report {expected_devices} authorized devices\n{}",
             client.label(),

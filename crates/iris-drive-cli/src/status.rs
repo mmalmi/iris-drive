@@ -75,7 +75,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .unwrap_or_else(|| conflict_status_payload(&[]));
     let peers = peer_statuses(config_dir, &config, daemon_status.as_ref());
     let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &peers);
-    let authorized_device_count = peers
+    let authorized_app_key_count = peers
         .iter()
         .filter(|peer| {
             peer.get("authorized")
@@ -83,7 +83,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 .unwrap_or(false)
         })
         .count();
-    let online_device_count = peers
+    let online_app_key_count = peers
         .iter()
         .filter(|peer| {
             peer.get("fips_online")
@@ -109,8 +109,8 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             "summary": status_summary(
                 initialized,
                 profile_block.as_ref(),
-                authorized_device_count,
-                online_device_count,
+                authorized_app_key_count,
+                online_app_key_count,
                 file_count,
                 visible_file_bytes,
                 &sync_status,
@@ -145,7 +145,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "blossom_servers": config.blossom_servers,
                 "backup_target_count": backup_target_count,
                 "backup_targets": backup_targets,
-                "authorized_device_count": authorized_device_count,
+                "authorized_app_key_count": authorized_app_key_count,
                 "published_app_key_roots": published_app_key_roots,
                 "relay_statuses": normalized_relay_statuses(&config, daemon_status.as_ref()),
                 "fips": fips_diagnostics,
@@ -163,8 +163,8 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
 pub(crate) fn status_summary(
     initialized: bool,
     profile: Option<&Value>,
-    authorized_device_count: usize,
-    online_device_count: usize,
+    authorized_app_key_count: usize,
+    online_app_key_count: usize,
     file_count: Option<usize>,
     visible_file_bytes: Option<u64>,
     sync_status: &str,
@@ -191,8 +191,8 @@ pub(crate) fn status_summary(
         "sync_status": sync_status,
         "sync_status_label": sync_status_label(sync_status),
         "provider_refresh_key": provider_refresh_key,
-        "authorized_device_count": authorized_device_count,
-        "online_device_count": online_device_count,
+        "authorized_app_key_count": authorized_app_key_count,
+        "online_app_key_count": online_app_key_count,
         "file_count": file_count.unwrap_or_default(),
         "visible_file_bytes": visible_file_bytes.unwrap_or_default(),
     })
@@ -456,8 +456,8 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let profile_block = status_profile_block(&config);
-    let (authorized_device_count, online_device_count) =
-        daemon_summary_device_counts(&config, payload);
+    let (authorized_app_key_count, online_app_key_count) =
+        daemon_summary_app_key_counts(&config, payload);
     let file_count = payload
         .get("summary")
         .and_then(|summary| summary.get("file_count"))
@@ -489,8 +489,8 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
     let summary = status_summary(
         already_initialized(config_dir),
         profile_block.as_ref(),
-        authorized_device_count,
-        online_device_count,
+        authorized_app_key_count,
+        online_app_key_count,
         file_count,
         visible_file_bytes,
         &sync_status,
@@ -511,7 +511,7 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
     }
 }
 
-fn daemon_summary_device_counts(config: &AppConfig, payload: &Value) -> (usize, usize) {
+fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize, usize) {
     let Some(account) = config.profile.as_ref() else {
         return (0, 0);
     };
@@ -946,12 +946,12 @@ pub(crate) fn conflict_state_label(state: &iris_drive_core::ConflictState) -> &'
     }
 }
 
-pub(crate) fn device_sync_state(
-    is_current_device: bool,
+pub(crate) fn app_key_sync_state(
+    is_current_app_key: bool,
     has_root: bool,
     root_available: Option<bool>,
 ) -> &'static str {
-    if is_current_device {
+    if is_current_app_key {
         return if has_root { "local" } else { "not imported" };
     }
     match (has_root, root_available) {

@@ -185,7 +185,7 @@ enum IrisDriveScreenshotFixtures {
             "display_label": current ? "This AppKey" : label,
             "role": role,
             "role_label": role == "admin" ? "Admin" : "Member",
-            "is_current_device": current,
+            "is_current_app_key": current,
             "authorized": true,
             "fips_online": online,
             "connection_state": connectionState,

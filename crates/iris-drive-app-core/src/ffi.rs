@@ -63,7 +63,7 @@ pub(crate) use crate::native_provider::{
     native_provider_resolve_path_json, native_provider_write_json,
 };
 use crate::state::{
-    NativeAppState, UiAppKeyLinkRequest, UiBackup, UiDevice, UiFipsPeerStatus, UiFipsStatus,
+    NativeAppState, UiAppActor, UiAppKeyLinkRequest, UiBackup, UiFipsPeerStatus, UiFipsStatus,
     UiPaths, UiProfile, UiRelayStatus, UiShare, UiShareMember, UiState, UiSyncRoot, UiSyncStatus,
 };
 
@@ -548,7 +548,7 @@ impl NativeAppRuntime {
             Ok(_) => {
                 self.stop_app_key_link_exchange();
                 self.state.ui.roots.clear();
-                self.state.ui.devices.clear();
+                self.state.ui.app_actors.clear();
                 self.set_sync_running(false);
             }
             Err(error) => {
@@ -1053,14 +1053,14 @@ impl NativeAppRuntime {
             self.set_sync_running(false);
             self.state.ui.roots.clear();
             self.state.ui.shares.clear();
-            self.state.ui.devices.clear();
+            self.state.ui.app_actors.clear();
             self.state.ui.snapshot_link.clear();
             self.refresh_ui_summary(None);
             return;
         }
         let fips_status = load_native_fips_status(Path::new(&self.data_dir));
         let ui_fips_status = ui_fips_status(fips_status.as_ref());
-        self.state.ui.devices = devices_from_account(&account, &ui_fips_status);
+        self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
         update_snapshot_link(&mut self.state, &config);
         self.refresh_provider_summary();
         self.refresh_ui_summary(Some(ui_fips_status));
@@ -1111,13 +1111,13 @@ impl NativeAppRuntime {
             .clone_into(&mut self.state.ui.setup_label);
         primary_status_label(&self.state.ui.primary_status)
             .clone_into(&mut self.state.ui.primary_status_label);
-        self.state.ui.authorized_device_count = self.state.ui.devices.len() as u64;
-        self.state.ui.online_device_count = self
+        self.state.ui.authorized_app_key_count = self.state.ui.app_actors.len() as u64;
+        self.state.ui.online_app_key_count = self
             .state
             .ui
-            .devices
+            .app_actors
             .iter()
-            .filter(|device| device.is_online)
+            .filter(|app_actor| app_actor.is_online)
             .count() as u64;
         self.state.ui.fips = fips_status.unwrap_or_else(paused_ui_fips_status);
     }
@@ -1868,7 +1868,7 @@ fn handle_native_app_key_link_request(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             peer = message.peer_id,
-            device_npub = pubkey_npub(&app_key_hex),
+            app_key_npub = pubkey_npub(&app_key_hex),
             requested_at = frame.requested_at,
             "received native app-key-link request over FIPS"
         );
@@ -1898,7 +1898,7 @@ fn handle_native_app_key_link_request_event(
             .map_err(|error| format!("saving config: {error}"))?;
         tracing::debug!(
             event_id = %event.id.to_hex(),
-            device_npub = pubkey_npub(&event.pubkey.to_hex()),
+            app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
             "received native app-key-link request over relay"
         );
     }
@@ -2437,10 +2437,10 @@ fn pubkey_npub(hex: &str) -> String {
         .unwrap_or_else(|| hex.to_owned())
 }
 
-fn devices_from_account(
+fn app_actors_from_account(
     state: &iris_drive_core::ProfileState,
     fips_status: &UiFipsStatus,
-) -> Vec<UiDevice> {
+) -> Vec<UiAppActor> {
     let Some(app_keys) = state.app_keys.as_ref() else {
         return Vec::new();
     };
@@ -2448,7 +2448,7 @@ fn devices_from_account(
     let current_app_key_online = fips_status.fresh
         && (fips_status.endpoint_npub.is_empty()
             || fips_status.endpoint_npub == current_app_key_npub);
-    let connectivity = device_connectivity_from_fips_status(fips_status);
+    let connectivity = app_key_connectivity_from_fips_status(fips_status);
 
     app_key_roster_rows(
         &app_keys.app_actors,
@@ -2458,7 +2458,7 @@ fn devices_from_account(
         &connectivity,
     )
     .iter()
-    .map(|app_key| UiDevice {
+    .map(|app_key| UiAppActor {
         pubkey: app_key.npub.clone(),
         label: app_key.label.clone().unwrap_or_default(),
         display_label: app_key.display_label.clone(),
@@ -2469,7 +2469,7 @@ fn devices_from_account(
         role: app_key.role.clone(),
         role_label: app_key.role_label.clone(),
         detail: app_key.npub.clone(),
-        is_current_device: app_key.is_current_app_key,
+        is_current_app_key: app_key.is_current_app_key,
         is_online: app_key.is_online,
         can_revoke: app_key.can_revoke,
         can_appoint_admin: app_key.can_appoint_admin,
@@ -2523,7 +2523,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
     .collect()
 }
 
-fn device_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyConnectivity {
+fn app_key_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyConnectivity {
     if !fips_status.fresh {
         return AppKeyConnectivity::default();
     }

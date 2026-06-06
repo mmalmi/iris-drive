@@ -188,8 +188,10 @@ fn status_summary_emits_shared_setup_and_count_fields() {
     assert_eq!(summary["setup_label"], "Linked");
     assert_eq!(summary["primary_status"], "ready");
     assert_eq!(summary["primary_status_label"], "Ready");
-    assert_eq!(summary["authorized_device_count"], 2);
-    assert_eq!(summary["online_device_count"], 1);
+    assert_eq!(summary["authorized_app_key_count"], 2);
+    assert_eq!(summary["online_app_key_count"], 1);
+    assert!(summary.get("authorized_device_count").is_none());
+    assert!(summary.get("online_device_count").is_none());
     assert_eq!(summary["file_count"], 3);
     assert_eq!(summary["visible_file_bytes"], 42);
     assert_eq!(summary["sync_status"], "up to date");
@@ -299,8 +301,9 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     let peers = peer_statuses(dir.path(), &config, Some(&daemon_status));
     let current = peers
         .iter()
-        .find(|peer| peer["is_current_device"] == true)
-        .expect("current device peer");
+        .find(|peer| peer["is_current_app_key"] == true)
+        .expect("current AppKey peer");
+    assert!(current.get("is_current_device").is_none());
     assert_eq!(current["display_label"], "This AppKey");
     assert_eq!(current["role_label"], "Admin");
     assert_eq!(current["connection_state"], "local");
@@ -312,8 +315,9 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
 
     let linked = peers
         .iter()
-        .find(|peer| peer["device_npub"] == linked_npub)
-        .expect("linked device peer");
+        .find(|peer| peer["app_key_npub"] == linked_npub)
+        .expect("linked AppKey peer");
+    assert!(linked.get("device_npub").is_none());
     assert_eq!(linked["display_label"], "Phone");
     assert_eq!(linked["role_label"], "Member");
     assert_eq!(linked["connection_state"], "direct");
@@ -415,8 +419,8 @@ fn daemon_status_writer_persists_normalized_summary_for_clients() {
     assert_eq!(status["summary"]["setup_label"], "Linked");
     assert_eq!(status["summary"]["primary_status"], "ready");
     assert_eq!(status["summary"]["primary_status_label"], "Ready");
-    assert_eq!(status["summary"]["authorized_device_count"], 2);
-    assert_eq!(status["summary"]["online_device_count"], 2);
+    assert_eq!(status["summary"]["authorized_app_key_count"], 2);
+    assert_eq!(status["summary"]["online_app_key_count"], 2);
     assert_eq!(status["summary"]["sync_status"], "up to date");
     assert_eq!(status["summary"]["sync_status_label"], "Up to date");
 }
@@ -449,7 +453,7 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
     let status: Value =
         serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
             .unwrap();
-    assert_eq!(status["summary"]["authorized_device_count"], 1);
+    assert_eq!(status["summary"]["authorized_app_key_count"], 1);
     assert_eq!(
         status["summary"]["provider_refresh_key"],
         format!("current:{root_cid}")

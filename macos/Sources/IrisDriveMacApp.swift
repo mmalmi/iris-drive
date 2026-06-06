@@ -1716,8 +1716,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.syncStatus = sync["status"] as? String ?? status.syncStatus
                 status.syncStatusLabel = sync["status_label"] as? String ?? status.syncStatusLabel
             }
-            status.authorizedDeviceCount = Self.intValue(ui["authorized_device_count"]) ?? 0
-            status.onlineDeviceCount = Self.intValue(ui["online_device_count"]) ?? 0
+            status.authorizedDeviceCount = Self.intValue(ui["authorized_app_key_count"]) ?? 0
+            status.onlineDeviceCount = Self.intValue(ui["online_app_key_count"]) ?? 0
             status.fileCount = Self.intValue(ui["file_count"]) ?? 0
             status.visibleFileBytes = Self.int64Value(ui["visible_file_bytes"]) ?? 0
             status.relays = ui["relays"] as? [String] ?? []
@@ -1731,7 +1731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.lastShareInviteURL = lastShareInvite.isEmpty ? nil : lastShareInvite
             status.fips = IrisDriveFipsStatus(json: ui["fips"] as? [String: Any] ?? [:])
             status.peers =
-                (ui["devices"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)
+                (ui["app_actors"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)
             status.lastUpload = nil
 
             if status.setupComplete, let paths = self.runtimePathsForMenu {
@@ -2023,9 +2023,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.syncStatusLabel = syncStatusLabel
         }
         status.authorizedDeviceCount =
-            Self.intValue(summary["authorized_device_count"]) ?? 0
+            Self.intValue(summary["authorized_app_key_count"]) ?? 0
         status.onlineDeviceCount =
-            Self.intValue(summary["online_device_count"]) ?? 0
+            Self.intValue(summary["online_app_key_count"]) ?? 0
         status.fileCount = Self.intValue(summary["file_count"]) ?? 0
         status.visibleFileBytes =
             Self.int64Value(summary["visible_file_bytes"]) ?? 0

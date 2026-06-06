@@ -233,7 +233,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         peers.is_empty(),
         "pending AppKeys should not appear in roster"
     );
-    assert_eq!(status["network"]["authorized_device_count"], 0);
+    assert_eq!(status["network"]["authorized_app_key_count"], 0);
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists()); // never on a linked device
 }
@@ -399,7 +399,7 @@ fn app_keys_can_appoint_and_demote_admin() {
     assert_eq!(promoted["role"], "admin");
     let status = run_json(owner_dir.path(), &["status"]);
     assert!(status["peers"].as_array().unwrap().iter().any(|device| {
-        device["device_npub"].as_str() == Some(linked_app_key)
+        device["app_key_npub"].as_str() == Some(linked_app_key)
             && device["role"].as_str() == Some("admin")
     }));
     let roster = run_json(owner_dir.path(), &["app-keys", "list"]);

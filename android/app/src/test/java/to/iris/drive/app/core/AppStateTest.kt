@@ -65,7 +65,7 @@ class AppStateTest {
                     "connection_label": "TCP, 12 ms"
                   }]
                 },
-                "devices": [{
+                "app_actors": [{
                   "pubkey": "device-a",
                   "label": "Pixel",
                   "display_label": "This AppKey",
@@ -76,7 +76,7 @@ class AppStateTest {
                   "connection_state": "local",
                   "connection_label": "This AppKey",
                   "detail": "device-a",
-                  "is_current_device": true,
+                  "is_current_app_key": true,
                   "is_online": true
                 }]
               },

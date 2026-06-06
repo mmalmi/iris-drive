@@ -67,7 +67,7 @@ pub fn provider_refresh_key(current_root_cid: Option<&str>, peers: &[serde_json:
 
     for peer in peers {
         let label = non_empty_json_str(peer, "label")
-            .or_else(|| non_empty_json_str(peer, "device_npub"))
+            .or_else(|| non_empty_json_str(peer, "app_key_npub"))
             .or_else(|| non_empty_json_str(peer, "app_key_pubkey"))
             .unwrap_or("peer");
         let root_cid = non_empty_json_str(peer, "root_cid").unwrap_or("no-root");
@@ -357,7 +357,7 @@ mod tests {
                 }
             }),
             serde_json::json!({
-                "device_npub": "npub1device",
+                "app_key_npub": "npub1appkey",
                 "root_cid": "peer-root-a",
                 "sync_state": "pending"
             }),
@@ -369,7 +369,7 @@ mod tests {
                 "Laptop:blocks:peer-root-b:fips:2:3:5|",
                 "Laptop:peer-root-b:synced:true|",
                 "current:current-root|",
-                "npub1device:peer-root-a:pending:false"
+                "npub1appkey:peer-root-a:pending:false"
             )
         );
     }

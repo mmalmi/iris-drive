@@ -82,7 +82,7 @@ pub(crate) fn peer_statuses(
             .map(|root| root_file_count(config_dir, root).is_some());
         let fips_peer_status = fips_peer_statuses.get(&app_key.npub);
         let sync_state =
-            device_sync_state(app_key.is_current_app_key, root.is_some(), root_available);
+            app_key_sync_state(app_key.is_current_app_key, root.is_some(), root_available);
         let last_block_sync = root_cid
             .as_ref()
             .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
@@ -95,13 +95,13 @@ pub(crate) fn peer_statuses(
         );
         json!({
             "app_key_pubkey": app_key.pubkey_hex,
-            "device_npub": app_key.npub,
+            "app_key_npub": app_key.npub,
             "label": app_key.label,
             "display_label": app_key.display_label,
             "role": app_key.role,
             "role_label": app_key.role_label,
             "authorized": true,
-            "is_current_device": app_key.is_current_app_key,
+            "is_current_app_key": app_key.is_current_app_key,
             "added_at": app_key.added_at,
             "fips_authorized": authorized_fips.contains(&app_key.npub),
             "fips_online": app_key.is_online,
