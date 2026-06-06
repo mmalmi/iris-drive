@@ -117,7 +117,9 @@ pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
-pub use share_actions::{ShareAction, ShareActionResult, dispatch_share_action};
+pub use share_actions::{
+    ShareAction, ShareActionResult, dispatch_share_action, share_action_state,
+};
 pub use sharing::{
     KIND_SHARE_ROSTER_CHECKPOINT, ResolvedShareRecipient, SHARE_INVITE_PREFIX, SHARE_INVITE_SCHEMA,
     SHARE_ROSTER_CHECKPOINT_SCHEMA, SHARED_WITH_ME_DIR, ShareInviteBundle, ShareInviteOutcome,

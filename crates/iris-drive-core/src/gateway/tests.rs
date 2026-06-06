@@ -363,6 +363,56 @@ async fn gateway_share_action_creates_share_with_core_projection() {
 }
 
 #[tokio::test]
+async fn gateway_share_action_get_returns_current_core_projection() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({
+        "type": "create_share",
+        "source_path": "Projects/Alpha",
+        "display_name": "Alpha"
+    })
+    .to_string();
+    let created = http_request(
+        server.local_addr(),
+        "POST",
+        "localhost",
+        "/api/iris-drive/share-action",
+        &[("content-type", "application/json")],
+        body.as_bytes(),
+    )
+    .await;
+    assert!(created.starts_with("HTTP/1.1 200 OK"), "{created}");
+
+    let response = http_request(
+        server.local_addr(),
+        "GET",
+        "localhost",
+        "/api/iris-drive/share-action",
+        &[],
+        b"",
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.contains("\"source_path\":\"Projects/Alpha\""),
+        "{response}"
+    );
+    assert!(response.contains("\"shares\":[{"), "{response}");
+
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn gateway_share_action_allows_drive_web_preflight_to_loopback() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
@@ -397,7 +447,7 @@ async fn gateway_share_action_allows_drive_web_preflight_to_loopback() {
         "{response}"
     );
     assert!(
-        response.contains("access-control-allow-methods: POST, OPTIONS"),
+        response.contains("access-control-allow-methods: GET, POST, OPTIONS"),
         "{response}"
     );
 

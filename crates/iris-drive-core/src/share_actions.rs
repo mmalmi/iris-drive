@@ -150,6 +150,35 @@ pub fn dispatch_share_action(
     })
 }
 
+pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let current_app_pubkey = config
+        .profile
+        .as_ref()
+        .context("profile is required before reading share state")?
+        .app_key_pubkey
+        .clone();
+    let shares = shared_folder_views(
+        &config.shared_folders,
+        &config.share_shortcuts,
+        &current_app_pubkey,
+    );
+    Ok(ShareActionResult {
+        shares,
+        share_id: None,
+        profile_id: None,
+        role: None,
+        epoch: None,
+        last_share_invite: None,
+        shortcut: None,
+        repaired_key_wrap_count: None,
+        remaining_missing_key_wrap_count: None,
+        revoked_app_pubkeys: Vec::new(),
+        repaired_key_wrap_pubkeys: Vec::new(),
+        remaining_missing_key_wrap_pubkeys: Vec::new(),
+    })
+}
+
 fn apply_share_action(
     config_dir: &Path,
     config: &mut AppConfig,

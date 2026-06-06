@@ -357,6 +357,11 @@ fn handle_share_action_api(
                 .expect("response"),
         );
     }
+    if method == Method::GET {
+        let result = crate::share_action_state(&state.config_dir)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+        return share_action_json_response(&result, cors_origin.as_ref());
+    }
     if method != Method::POST {
         return Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into()));
     }
@@ -364,15 +369,20 @@ fn handle_share_action_api(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("share action json: {e}")))?;
     let result = crate::dispatch_share_action(&state.config_dir, action, gateway_now_seconds())
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-    let body = serde_json::to_vec(&result)
+    share_action_json_response(&result, cors_origin.as_ref())
+}
+
+fn share_action_json_response(
+    result: &crate::ShareActionResult,
+    cors_origin: Option<&HeaderValue>,
+) -> Result<Response, (StatusCode, String)> {
+    let body = serde_json::to_vec(result)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(
-        share_action_response_builder(StatusCode::OK, cors_origin.as_ref())
-            .header(CONTENT_TYPE, "application/json")
-            .header(CACHE_CONTROL, "no-store")
-            .body(Body::from(body))
-            .expect("response"),
-    )
+    Ok(share_action_response_builder(StatusCode::OK, cors_origin)
+        .header(CONTENT_TYPE, "application/json")
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from(body))
+        .expect("response"))
 }
 
 fn share_action_response_builder(
@@ -380,7 +390,7 @@ fn share_action_response_builder(
     cors_origin: Option<&HeaderValue>,
 ) -> http::response::Builder {
     let mut builder = response_builder(status, false)
-        .header(ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS")
+        .header(ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
         .header(ACCESS_CONTROL_ALLOW_HEADERS, "content-type")
         .header(VARY, "origin");
     if let Some(origin) = cors_origin {
