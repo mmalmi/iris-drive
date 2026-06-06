@@ -28,50 +28,50 @@ pub(crate) fn render_drives(list: &gtk::ListBox, state: &NativeAppState) {
 pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
-    if state.ui.devices.is_empty() {
+    if state.ui.app_actors.is_empty() {
         list.append(&simple_row("No AppKeys", ""));
         return;
     }
-    for peer in &state.ui.devices {
-        let title = if peer.display_label.is_empty() {
+    for actor in &state.ui.app_actors {
+        let title = if actor.display_label.is_empty() {
             "AppKey"
         } else {
-            &peer.display_label
+            &actor.display_label
         };
-        let device_npub = peer.pubkey.as_str();
+        let app_key_pubkey = actor.pubkey.as_str();
         let mut metadata = Vec::new();
-        if peer.is_current_device {
+        if actor.is_current_app_key {
             metadata.push("this AppKey".to_string());
-            if !device_npub.is_empty() {
-                metadata.push(format!("AppKey: {device_npub}"));
+            if !app_key_pubkey.is_empty() {
+                metadata.push(format!("AppKey: {app_key_pubkey}"));
             }
         }
-        metadata.push(if peer.role_label.is_empty() {
+        metadata.push(if actor.role_label.is_empty() {
             "Member".to_string()
         } else {
-            peer.role_label.clone()
+            actor.role_label.clone()
         });
-        if !peer.state_label.is_empty() {
-            metadata.push(peer.state_label.clone());
+        if !actor.state_label.is_empty() {
+            metadata.push(actor.state_label.clone());
         }
-        if !peer.detail.is_empty() {
-            metadata.push(peer.detail.clone());
+        if !actor.detail.is_empty() {
+            metadata.push(actor.detail.clone());
         }
-        let connection = if peer.connection_label.is_empty() {
+        let connection = if actor.connection_label.is_empty() {
             "Offline"
         } else {
-            &peer.connection_label
+            &actor.connection_label
         };
         list.append(&peer_row(
             model,
             title,
             &metadata.join(" | "),
             connection,
-            peer.is_online,
-            device_npub,
-            peer.can_appoint_admin,
-            peer.can_demote_admin,
-            peer.can_revoke,
+            actor.is_online,
+            app_key_pubkey,
+            actor.can_appoint_admin,
+            actor.can_demote_admin,
+            actor.can_revoke,
         ));
     }
 }
@@ -141,6 +141,10 @@ fn share_row(
     title.set_xalign(0.0);
     labels.append(&title);
 
+    if !share.source_path.trim().is_empty() {
+        labels.append(&share_detail_label(&share.source_path, 72));
+    }
+
     let mut metadata = Vec::new();
     if !share.role_label.is_empty() {
         metadata.push(share.role_label.clone());
@@ -148,19 +152,18 @@ fn share_row(
     if !share.key_status_label.is_empty() {
         metadata.push(share.key_status_label.clone());
     }
-    metadata.push(format!("{} people", share.participant_count));
+    metadata.push(share_participant_text(share.participant_count));
     if !share.shortcut_paths.is_empty() {
         metadata.push(format!("shortcut {}", short_text(&share.shortcut_paths[0])));
     }
-    let subtitle = gtk::Label::new(Some(&metadata.join(" | ")));
-    subtitle.add_css_class("iris-row-subtitle");
-    subtitle.set_xalign(0.0);
-    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    subtitle.set_max_width_chars(72);
-    labels.append(&subtitle);
+    labels.append(&share_detail_label(&metadata.join(" | "), 72));
+    let repair_text = share_repair_text(share);
+    if let Some(repair_text) = repair_text.as_deref() {
+        labels.append(&share_detail_label(&repair_text, 72));
+    }
     header.append(&labels);
 
-    if share.repair_needed || !share.missing_key_wraps.is_empty() {
+    if repair_text.is_some() {
         let repair = icon_button("emblem-synchronizing-symbolic", "Repair key wraps");
         let model = Rc::clone(model);
         let share_id = share.share_id.clone();
@@ -210,6 +213,38 @@ fn share_row(
 
     row.set_child(Some(&body));
     row
+}
+
+fn share_detail_label(text: &str, max_width_chars: i32) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("iris-row-subtitle");
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    label.set_max_width_chars(max_width_chars);
+    label
+}
+
+fn share_participant_text(count: u64) -> String {
+    let noun = if count == 1 { "person" } else { "people" };
+    format!("{count} {noun}")
+}
+
+fn share_repair_text(share: &iris_drive_app_core::state::UiShare) -> Option<String> {
+    if !share.repair_needed && share.missing_key_wrap_count == 0 {
+        return None;
+    }
+    if share.missing_key_wrap_count > 0 {
+        let plural = if share.missing_key_wrap_count == 1 {
+            ""
+        } else {
+            "s"
+        };
+        return Some(format!(
+            "{} missing access wrap{}",
+            share.missing_key_wrap_count, plural
+        ));
+    }
+    Some("Repair needed".to_string())
 }
 
 fn share_member_row(
@@ -357,7 +392,10 @@ pub(crate) fn render_fips_network(list: &gtk::ListBox, ui: &UiState) {
     };
     list.append(&simple_row("State", state));
     list.append(&simple_row("Roster FIPS", roster));
-    list.append(&simple_row("Other FIPS", &fips.other_peer_count.to_string()));
+    list.append(&simple_row(
+        "Other FIPS",
+        &fips.other_peer_count.to_string(),
+    ));
     list.append(&simple_row(
         "Direct FIPS",
         &fips.direct_device_count.to_string(),
@@ -453,7 +491,7 @@ pub(crate) fn peer_row(
     subtitle: &str,
     state: &str,
     is_online: bool,
-    device_npub: &str,
+    app_key_pubkey: &str,
     can_appoint_admin: bool,
     can_demote_admin: bool,
     can_revoke: bool,
@@ -498,8 +536,8 @@ pub(crate) fn peer_row(
     if can_appoint_admin {
         let appoint = icon_button("contact-new-symbolic", "Make admin");
         let model = Rc::clone(model);
-        let device_npub = device_npub.to_string();
-        appoint.connect_clicked(move |_| match appoint_admin(&device_npub) {
+        let app_key_pubkey = app_key_pubkey.to_string();
+        appoint.connect_clicked(move |_| match appoint_admin(&app_key_pubkey) {
             Ok(()) => {
                 restart_daemon(&model);
                 model.ui.notice.set_text("AppKey made admin");
@@ -513,8 +551,8 @@ pub(crate) fn peer_row(
     if can_demote_admin {
         let demote = icon_button("changes-prevent-symbolic", "Remove admin");
         let model = Rc::clone(model);
-        let device_npub = device_npub.to_string();
-        demote.connect_clicked(move |_| match demote_admin(&device_npub) {
+        let app_key_pubkey = app_key_pubkey.to_string();
+        demote.connect_clicked(move |_| match demote_admin(&app_key_pubkey) {
             Ok(()) => {
                 restart_daemon(&model);
                 model.ui.notice.set_text("Admin removed");
@@ -528,10 +566,10 @@ pub(crate) fn peer_row(
     if can_revoke {
         let delete = icon_button("user-trash-symbolic", "Remove AppKey");
         let model = Rc::clone(model);
-        let device_npub = device_npub.to_string();
+        let app_key_pubkey = app_key_pubkey.to_string();
         let title = title.to_string();
         delete.connect_clicked(move |_| {
-            show_delete_device_dialog(&model, device_npub.clone(), title.clone());
+            show_delete_device_dialog(&model, app_key_pubkey.clone(), title.clone());
         });
         body.append(&delete);
     }

@@ -25,6 +25,13 @@ require_absent() {
 require_contains linux/src/daemon_control.rs "iris_drive_app_core::FfiApp"
 require_contains linux/src/daemon_control.rs "dispatch_desktop_action"
 require_contains linux/src/actions.rs "Reject"
+require_contains linux/src/render.rs "state.ui.app_actors"
+require_contains linux/src/render.rs "share.source_path"
+require_contains linux/src/render.rs "missing access wrap"
+require_contains linux/src/data.rs "authorized_app_key_count"
+require_absent linux/src/render.rs "state.ui.devices"
+require_absent linux/src/data.rs "authorized_device_count"
+require_absent linux/src/render.rs "missing_key_wraps.join"
 require_absent linux/src/setup.rs 'run_idrive(["revoke", device])'
 require_absent linux/src/setup.rs 'run_idrive(["devices", "appoint-admin", device])'
 require_absent linux/src/setup.rs 'run_idrive(["devices", "demote-admin", device])'

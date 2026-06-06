@@ -38,7 +38,10 @@ pub(crate) fn refresh(model: &AppRef) {
             let device_npub = account.map(|account| account.current_app_key_npub.as_str());
             model.ui.app_key.set_text(&short_value(app_key_npub));
             model.ui.device.set_text(&short_value(device_npub));
-            model.ui.account_app_key.set_text(app_key_npub.unwrap_or("-"));
+            model
+                .ui
+                .account_app_key
+                .set_text(app_key_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
             model
                 .ui
@@ -51,7 +54,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.snapshot.set_text(&snapshot_value(&state));
             model.ui.files.set_text(&file_count_value(&state));
             model.ui.storage.set_text(&storage_value(&state));
-            model.ui.devices.set_text(&device_count_value(&state));
+            model.ui.devices.set_text(&app_key_count_value(&state));
             model
                 .ui
                 .sidebar_online
@@ -73,7 +76,10 @@ pub(crate) fn refresh(model: &AppRef) {
                 model.ui.last_share_invite.set_text("-");
                 model.ui.copy_last_share_invite_button.set_sensitive(false);
             } else {
-                model.ui.last_share_invite.set_text(&state.ui.last_share_invite);
+                model
+                    .ui
+                    .last_share_invite
+                    .set_text(&state.ui.last_share_invite);
                 model.ui.copy_last_share_invite_button.set_sensitive(true);
             }
             render_drives(&model.ui.drives, &state);

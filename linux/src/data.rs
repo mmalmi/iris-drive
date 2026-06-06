@@ -60,15 +60,15 @@ pub(crate) fn storage_value(state: &NativeAppState) -> String {
     format_bytes(state.ui.visible_file_bytes)
 }
 
-pub(crate) fn device_count_value(state: &NativeAppState) -> String {
+pub(crate) fn app_key_count_value(state: &NativeAppState) -> String {
     format!(
         "{}/{}",
-        state.ui.online_device_count, state.ui.authorized_device_count
+        state.ui.online_app_key_count, state.ui.authorized_app_key_count
     )
 }
 
 pub(crate) fn sidebar_online_value(state: &NativeAppState) -> String {
-    format!("{} online", device_count_value(state))
+    format!("{} online", app_key_count_value(state))
 }
 
 pub(crate) fn primary_status_label_value(state: &NativeAppState) -> &str {

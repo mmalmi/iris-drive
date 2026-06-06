@@ -779,7 +779,11 @@ pub(crate) fn link_device(link_target: &str) -> Result<(), String> {
 }
 
 pub(crate) fn relink_device(link_target: &str) -> Result<(), String> {
-    run_idrive_owned(&["link".to_string(), link_target.to_string(), "--force".to_string()])
+    run_idrive_owned(&[
+        "link".to_string(),
+        link_target.to_string(),
+        "--force".to_string(),
+    ])
 }
 
 pub(crate) fn revoke_device(device: &str) -> Result<(), String> {

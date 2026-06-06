@@ -218,11 +218,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
     share_source_entry.set_hexpand(true);
     let share_name_entry = setup_entry("Name");
     share_name_entry.set_width_request(160);
-    let create_share_button = action_button(
-        "folder-new-symbolic",
-        "Create",
-        "Create shared folder",
-    );
+    let create_share_button =
+        action_button("folder-new-symbolic", "Create", "Create shared folder");
     share_create_controls.append(&share_source_entry);
     share_create_controls.append(&share_name_entry);
     share_create_controls.append(&create_share_button);
@@ -472,7 +469,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
     }
     {
         let model = Rc::clone(&model);
-        copy_app_key_button.connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
+        copy_app_key_button
+            .connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
     }
     {
         let model = Rc::clone(&model);

@@ -114,11 +114,9 @@ pub(crate) fn accept_share_invite(model: &AppRef) {
 
 pub(crate) fn copy_last_share_invite(model: &AppRef) {
     match desktop_state() {
-        Ok(state) if !state.ui.last_share_invite.is_empty() => copy_text(
-            model,
-            &state.ui.last_share_invite,
-            "Share invite copied",
-        ),
+        Ok(state) if !state.ui.last_share_invite.is_empty() => {
+            copy_text(model, &state.ui.last_share_invite, "Share invite copied")
+        }
         Ok(_) => model.ui.notice.set_text("No invite available"),
         Err(error) => model.ui.notice.set_text(&error),
     }
@@ -724,10 +722,8 @@ pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
         body.append(&error);
     } else {
         let word_index = Rc::new(Cell::new(0_usize));
-        let word_label = gtk::Label::new(Some(&format!(
-            "Word 1 of {}",
-            RECOVERY_PHRASE_WORD_COUNT
-        )));
+        let word_label =
+            gtk::Label::new(Some(&format!("Word 1 of {}", RECOVERY_PHRASE_WORD_COUNT)));
         word_label.add_css_class("iris-field-name");
         word_label.set_xalign(0.0);
         body.append(&word_label);
