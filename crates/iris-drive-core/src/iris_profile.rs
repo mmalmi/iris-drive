@@ -203,6 +203,8 @@ impl IrisProfileCapabilities {
 #[serde(deny_unknown_fields)]
 pub struct IrisProfileFacet {
     pub pubkey: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<IrisProfileId>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub purposes: BTreeSet<IrisProfileKeyPurpose>,
     #[serde(default)]
@@ -280,11 +282,18 @@ impl IrisProfileFacet {
     {
         Self {
             pubkey: pubkey.into(),
+            profile_id: None,
             purposes: purposes.into_iter().collect(),
             capabilities,
             added_at,
             label,
         }
+    }
+
+    #[must_use]
+    pub fn with_profile_id(mut self, profile_id: IrisProfileId) -> Self {
+        self.profile_id = Some(profile_id);
+        self
     }
 
     #[must_use]
@@ -312,6 +321,8 @@ pub struct IrisProfileKeyEpoch {
 #[serde(deny_unknown_fields)]
 pub struct IrisProfileTombstone {
     pub pubkey: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<IrisProfileId>,
     pub removed_by_pubkey: String,
     pub removed_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -950,11 +961,15 @@ fn apply_projected_op(
             true
         }
         IrisProfileRosterOp::TombstoneFacet { pubkey, reason } => {
-            projection.active_facets.remove(pubkey);
+            let profile_id = projection
+                .active_facets
+                .remove(pubkey)
+                .and_then(|facet| facet.profile_id);
             projection.tombstones.insert(
                 pubkey.clone(),
                 IrisProfileTombstone {
                     pubkey: pubkey.clone(),
+                    profile_id,
                     removed_by_pubkey: signed.signer_pubkey.clone(),
                     removed_at: signed.content.created_at,
                     reason: reason.clone(),

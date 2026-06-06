@@ -290,15 +290,70 @@ impl SharedFolder {
 
     #[must_use]
     pub fn member_for_app_key(&self, app_pubkey: &str) -> Option<&ShareMember> {
-        let profile_id = self.participant_profiles.get(app_pubkey)?;
-        self.members.get(&profile_id.to_string())
+        let projection = self.projection();
+        member_for_app_key_with_projection(self, &projection, app_pubkey)
     }
 
     #[must_use]
     pub fn active_member_for_app_key(&self, app_pubkey: &str) -> Option<&ShareMember> {
-        self.member_for_app_key(app_pubkey)
-            .filter(|member| member.is_active())
+        let projection = self.projection();
+        active_member_for_app_key_with_projection(self, &projection, app_pubkey)
     }
+}
+
+fn shared_folder_profile_id_for_app_key_with_projection(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+    app_pubkey: &str,
+) -> Option<IrisProfileId> {
+    projection
+        .active_facets
+        .get(app_pubkey)
+        .and_then(|facet| facet.profile_id)
+        .or_else(|| {
+            projection
+                .tombstones
+                .get(app_pubkey)
+                .and_then(|tombstone| tombstone.profile_id)
+        })
+        .or_else(|| folder.participant_profiles.get(app_pubkey).copied())
+}
+
+fn shared_folder_participant_profiles_with_projection(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+) -> BTreeMap<String, IrisProfileId> {
+    let mut participant_profiles = folder.participant_profiles.clone();
+    for (app_pubkey, facet) in &projection.active_facets {
+        if let Some(profile_id) = facet.profile_id {
+            participant_profiles.insert(app_pubkey.clone(), profile_id);
+        }
+    }
+    for (app_pubkey, tombstone) in &projection.tombstones {
+        if let Some(profile_id) = tombstone.profile_id {
+            participant_profiles.insert(app_pubkey.clone(), profile_id);
+        }
+    }
+    participant_profiles
+}
+
+fn member_for_app_key_with_projection<'a>(
+    folder: &'a SharedFolder,
+    projection: &IrisProfileRosterProjection,
+    app_pubkey: &str,
+) -> Option<&'a ShareMember> {
+    let profile_id =
+        shared_folder_profile_id_for_app_key_with_projection(folder, projection, app_pubkey)?;
+    folder.members.get(&profile_id.to_string())
+}
+
+fn active_member_for_app_key_with_projection<'a>(
+    folder: &'a SharedFolder,
+    projection: &IrisProfileRosterProjection,
+    app_pubkey: &str,
+) -> Option<&'a ShareMember> {
+    member_for_app_key_with_projection(folder, projection, app_pubkey)
+        .filter(|member| member.is_active())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -592,7 +647,7 @@ pub fn shared_folder_view(
         missing_key_wrap_pubkeys,
         participant_count: active_share_member_count(folder),
         app_key_count: projection.active_facets.len(),
-        members: shared_folder_member_views(folder),
+        members: shared_folder_member_views(folder, &projection),
         shortcut_paths,
     }
 }
@@ -644,7 +699,7 @@ fn share_key_status(
     current_key_epoch: Option<u64>,
     missing_key_wrap_pubkeys: &[String],
 ) -> SharedFolderKeyStatus {
-    match folder.member_for_app_key(current_app_pubkey) {
+    match member_for_app_key_with_projection(folder, projection, current_app_pubkey) {
         Some(member) if member.status == ShareMemberStatus::Revoked => {
             return SharedFolderKeyStatus::Revoked;
         }
@@ -686,14 +741,12 @@ pub fn shared_folder_app_key_write_authorization(
 #[must_use]
 pub fn shared_folder_authorized_writer_pubkeys(folder: &SharedFolder) -> Vec<String> {
     let projection = folder.projection();
-    folder
-        .participant_profiles
-        .keys()
+    shared_folder_participant_profiles_with_projection(folder, &projection)
+        .into_keys()
         .filter(|pubkey| {
             shared_folder_app_key_write_authorization_with_projection(folder, &projection, pubkey)
                 .is_authorized()
         })
-        .cloned()
         .collect()
 }
 
@@ -932,7 +985,9 @@ fn shared_folder_app_key_write_authorization_with_projection(
     projection: &IrisProfileRosterProjection,
     app_pubkey: &str,
 ) -> ShareRootWriteAuthorization {
-    let Some(profile_id) = folder.participant_profiles.get(app_pubkey) else {
+    let Some(profile_id) =
+        shared_folder_profile_id_for_app_key_with_projection(folder, projection, app_pubkey)
+    else {
         return ShareRootWriteAuthorization::UnknownAppKey;
     };
     let Some(member) = folder.members.get(&profile_id.to_string()) else {
@@ -963,8 +1018,7 @@ fn shared_folder_app_key_can_admin_with_projection(
     projection: &IrisProfileRosterProjection,
     app_pubkey: &str,
 ) -> bool {
-    folder
-        .active_member_for_app_key(app_pubkey)
+    active_member_for_app_key_with_projection(folder, projection, app_pubkey)
         .is_some_and(|member| member.role == ShareRole::Admin)
         && projection.can_admin_profile(app_pubkey)
 }
@@ -991,7 +1045,9 @@ fn active_share_key_recipients(
         .active_facets
         .values()
         .filter(|facet| facet.capabilities.can_receive_key_wraps)
-        .filter(|facet| folder.active_member_for_app_key(&facet.pubkey).is_some())
+        .filter(|facet| {
+            active_member_for_app_key_with_projection(folder, projection, &facet.pubkey).is_some()
+        })
         .map(|facet| facet.pubkey.clone())
         .collect()
 }
@@ -1095,7 +1151,7 @@ fn share_roster_checkpoint_content(
         tombstoned_app_key_pubkeys: tombstoned_share_app_key_pubkeys(folder, &projection),
         current_key_epoch,
         missing_key_wrap_pubkeys,
-        members: shared_folder_member_views(folder),
+        members: shared_folder_member_views(folder, &projection),
         client_nonce,
         created_at,
     }
@@ -1109,7 +1165,9 @@ fn active_share_app_key_pubkeys(
         .active_facets
         .values()
         .filter(|facet| facet.is_app_key())
-        .filter(|facet| folder.active_member_for_app_key(&facet.pubkey).is_some())
+        .filter(|facet| {
+            active_member_for_app_key_with_projection(folder, projection, &facet.pubkey).is_some()
+        })
         .map(|facet| facet.pubkey.clone())
         .collect()
 }
@@ -1121,7 +1179,10 @@ fn tombstoned_share_app_key_pubkeys(
     projection
         .tombstones
         .keys()
-        .filter(|pubkey| folder.participant_profiles.contains_key(*pubkey))
+        .filter(|pubkey| {
+            shared_folder_profile_id_for_app_key_with_projection(folder, projection, pubkey)
+                .is_some()
+        })
         .cloned()
         .collect()
 }
@@ -1177,9 +1238,14 @@ fn active_share_member_count(folder: &SharedFolder) -> usize {
         .count()
 }
 
-fn shared_folder_member_views(folder: &SharedFolder) -> Vec<SharedFolderMemberView> {
+fn shared_folder_member_views(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+) -> Vec<SharedFolderMemberView> {
     let mut app_key_counts = BTreeMap::<IrisProfileId, usize>::new();
-    for profile_id in folder.participant_profiles.values() {
+    for profile_id in
+        shared_folder_participant_profiles_with_projection(folder, projection).values()
+    {
         *app_key_counts.entry(*profile_id).or_default() += 1;
     }
     let mut members = folder
@@ -1294,7 +1360,8 @@ pub fn create_shared_folder(
                 created_at,
                 local_label,
                 ShareRole::Admin.capabilities(),
-            ),
+            )
+            .with_profile_id(owner_profile_id),
         },
         created_at,
     )?);
@@ -1315,7 +1382,8 @@ pub fn create_shared_folder(
                     op_time,
                     recipient.label,
                     member_role.capabilities(),
-                ),
+                )
+                .with_profile_id(recipient.profile_id),
             },
             op_time,
         )?);
@@ -1582,7 +1650,8 @@ fn add_invited_share_member(
                 created_at,
                 recipient.label,
                 member_role.capabilities(),
-            ),
+            )
+            .with_profile_id(recipient.profile_id),
         },
         created_at,
     )?);
@@ -1710,11 +1779,10 @@ pub fn revoke_shared_folder_member(
     if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
         return Err(SharingError::CurrentAppKeyCannotAdminShare);
     }
-    let signer_profile_id = folder
-        .participant_profiles
-        .get(&signer_pubkey)
-        .copied()
-        .ok_or(SharingError::CurrentAppKeyCannotAdminShare)?;
+    let projection = folder.projection();
+    let signer_profile_id =
+        shared_folder_profile_id_for_app_key_with_projection(folder, &projection, &signer_pubkey)
+            .ok_or(SharingError::CurrentAppKeyCannotAdminShare)?;
     if signer_profile_id == profile_id {
         return Err(SharingError::CannotRevokeCurrentShareMember);
     }
@@ -1739,12 +1807,12 @@ pub fn revoke_shared_folder_member(
     }
     member.status = ShareMemberStatus::Revoked;
 
-    let mut revoked_app_pubkeys = folder
-        .participant_profiles
-        .iter()
-        .filter(|(_, member_profile_id)| **member_profile_id == profile_id)
-        .map(|(app_pubkey, _)| app_pubkey.clone())
-        .collect::<Vec<_>>();
+    let mut revoked_app_pubkeys =
+        shared_folder_participant_profiles_with_projection(folder, &projection)
+            .into_iter()
+            .filter(|(_, member_profile_id)| *member_profile_id == profile_id)
+            .map(|(app_pubkey, _)| app_pubkey)
+            .collect::<Vec<_>>();
     revoked_app_pubkeys.sort();
 
     let mut op_time = created_at;
@@ -1798,11 +1866,13 @@ pub fn revoke_shared_folder_member(
 pub fn refresh_shared_folder_member_statuses_from_roster(folder: &mut SharedFolder) {
     let projection = folder.projection();
     let mut app_keys_by_profile = BTreeMap::<IrisProfileId, Vec<String>>::new();
-    for (app_pubkey, profile_id) in &folder.participant_profiles {
+    for (app_pubkey, profile_id) in
+        shared_folder_participant_profiles_with_projection(folder, &projection)
+    {
         app_keys_by_profile
-            .entry(*profile_id)
+            .entry(profile_id)
             .or_default()
-            .push(app_pubkey.clone());
+            .push(app_pubkey);
     }
     for (profile_id, app_pubkeys) in app_keys_by_profile {
         if app_pubkeys.is_empty() {
@@ -2426,6 +2496,45 @@ mod tests {
                 && member.role == ShareRole::Editor
                 && member.status == ShareMemberStatus::Active
                 && member.display_name == "Recipient"
+                && member.app_key_count == 1
+        }));
+    }
+
+    #[test]
+    fn share_authority_uses_roster_facet_profile_binding() {
+        let owner_keys = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let (recipient_keys, recipient) = recipient(ShareRole::Editor);
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            vec![recipient],
+            10,
+        )
+        .unwrap();
+        folder.participant_profiles.clear();
+
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &recipient_pubkey),
+            ShareRootWriteAuthorization::Authorized
+        );
+        let mut expected_recipients =
+            vec![owner_keys.public_key().to_hex(), recipient_pubkey.clone()];
+        expected_recipients.sort();
+        assert_eq!(
+            shared_folder_key_recipient_pubkeys(&folder),
+            expected_recipients
+        );
+        let view = shared_folder_view(&folder, &[], &recipient_pubkey);
+        assert_eq!(view.local_role, ShareRole::Editor);
+        assert_eq!(view.key_status, SharedFolderKeyStatus::Available);
+        assert!(view.members.iter().any(|member| {
+            member.profile_id != owner_profile_id
+                && member.role == ShareRole::Editor
                 && member.app_key_count == 1
         }));
     }
