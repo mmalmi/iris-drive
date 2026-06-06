@@ -81,6 +81,11 @@ actions and returns core `SharedFolderView` projections. Regular HTTPS browser
 pages keep using the app handoff URL instead of implementing authority logic in
 web code.
 
+If contact search supplies signed recipient evidence, `drive.iris.to` may pass
+that opaque evidence JSON to `invite_share_member_from_evidence`; Rust core
+resolves the representative npub to an IrisProfile member and AppKeys before
+granting access.
+
 CLI, UniFFI app-core, and the local gateway all route share mutations through
 `iris_drive_core::dispatch_share_action`. Surface-specific code may parse UI
 strings and render JSON/records, but create/invite/accept/revoke/shortcut/repair
