@@ -2501,11 +2501,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         has_current_key_wrap: share.has_current_key_wrap,
         key_unavailable: share.key_unavailable,
         repair_needed: share.repair_needed,
-        missing_key_wraps: share
-            .missing_key_wrap_pubkeys
-            .into_iter()
-            .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(&pubkey))
-            .collect(),
+        missing_key_wrap_count: share.missing_key_wrap_count as u64,
         participant_count: share.participant_count as u64,
         app_key_count: share.app_key_count as u64,
         members: share

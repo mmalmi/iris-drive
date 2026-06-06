@@ -194,6 +194,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(share.has_current_key_wrap);
     assert!(!share.key_unavailable);
     assert!(!share.repair_needed);
+    assert_eq!(share.missing_key_wrap_count, 0);
     assert_eq!(share.participant_count, 1);
     assert_eq!(share.app_key_count, 1);
     assert_eq!(share.members.len(), 1);

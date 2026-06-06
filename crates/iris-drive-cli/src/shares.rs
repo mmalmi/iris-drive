@@ -427,6 +427,7 @@ fn share_view_json(view: &iris_drive_core::SharedFolderView) -> Value {
         "has_current_key_wrap": view.has_current_key_wrap,
         "key_unavailable": view.key_unavailable,
         "repair_needed": view.repair_needed,
+        "missing_key_wrap_count": view.missing_key_wrap_count,
         "missing_key_wraps": view
             .missing_key_wrap_pubkeys
             .iter()

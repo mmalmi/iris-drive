@@ -820,6 +820,7 @@ pub struct SharedFolderView {
     pub has_current_key_wrap: bool,
     pub key_unavailable: bool,
     pub repair_needed: bool,
+    pub missing_key_wrap_count: usize,
     pub missing_key_wrap_pubkeys: Vec<String>,
     pub participant_count: usize,
     pub app_key_count: usize,
@@ -1066,6 +1067,7 @@ pub fn shared_folder_view(
         has_current_key_wrap,
         key_unavailable,
         repair_needed,
+        missing_key_wrap_count: missing_key_wrap_pubkeys.len(),
         missing_key_wrap_pubkeys,
         participant_count: active_share_member_count(folder),
         app_key_count: projection.active_facets.len(),
@@ -3381,6 +3383,7 @@ mod tests {
         assert!(view.has_current_key_wrap);
         assert!(!view.key_unavailable);
         assert!(!view.repair_needed);
+        assert_eq!(view.missing_key_wrap_count, 0);
         assert!(view.missing_key_wrap_pubkeys.is_empty());
         assert_eq!(view.participant_count, 2);
         assert_eq!(view.app_key_count, 2);
@@ -3919,6 +3922,7 @@ mod tests {
         assert!(owner_view.has_current_key_wrap);
         assert!(!owner_view.key_unavailable);
         assert!(owner_view.repair_needed);
+        assert_eq!(owner_view.missing_key_wrap_count, 1);
         assert_eq!(
             owner_view.missing_key_wrap_pubkeys,
             vec![recipient_pubkey.clone()]
@@ -3930,6 +3934,7 @@ mod tests {
         assert!(!recipient_view.has_current_key_wrap);
         assert!(recipient_view.key_unavailable);
         assert!(recipient_view.repair_needed);
+        assert_eq!(recipient_view.missing_key_wrap_count, 1);
         assert_eq!(
             recipient_view.missing_key_wrap_pubkeys,
             vec![recipient_pubkey]

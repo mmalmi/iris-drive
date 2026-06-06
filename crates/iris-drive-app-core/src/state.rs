@@ -54,7 +54,7 @@ pub struct UiShare {
     pub has_current_key_wrap: bool,
     pub key_unavailable: bool,
     pub repair_needed: bool,
-    pub missing_key_wraps: Vec<String>,
+    pub missing_key_wrap_count: u64,
     pub participant_count: u64,
     pub app_key_count: u64,
     pub members: Vec<UiShareMember>,
