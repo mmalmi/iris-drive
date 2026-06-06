@@ -1285,6 +1285,7 @@ pub fn validate_share_roster_checkpoint(
     folder: &SharedFolder,
     checkpoint: &SignedShareRosterCheckpoint,
 ) -> Result<(), SharingError> {
+    validate_shared_folder_member_roster_ops(folder)?;
     let event = Event::from_json(&checkpoint.event_json)
         .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
     let parsed = parse_share_roster_checkpoint_event(&event)?;
@@ -1308,6 +1309,30 @@ pub fn validate_share_roster_checkpoint(
     if checkpoint.content != expected {
         return Err(SharingError::RosterCheckpoint(
             "checkpoint does not match share roster projection".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_shared_folder_member_roster_ops(folder: &SharedFolder) -> Result<(), SharingError> {
+    for op in &folder.member_ops {
+        validate_signed_share_member_roster_op(op)?;
+    }
+    Ok(())
+}
+
+fn validate_signed_share_member_roster_op(
+    signed: &SignedShareMemberRosterOp,
+) -> Result<(), SharingError> {
+    let event = Event::from_json(&signed.event_json)
+        .map_err(|error| SharingError::ShareMemberRoster(error.to_string()))?;
+    let parsed = parse_share_member_roster_op_event(&event)?;
+    if parsed.op_id != signed.op_id
+        || parsed.signer_pubkey != signed.signer_pubkey
+        || parsed.content != signed.content
+    {
+        return Err(SharingError::ShareMemberRoster(
+            "member roster op event_json does not match op fields".to_string(),
         ));
     }
     Ok(())
@@ -2291,6 +2316,7 @@ pub fn parse_share_invite(input: &str) -> Result<ShareInviteBundle, SharingError
             bundle.schema
         )));
     }
+    validate_shared_folder_member_roster_ops(&bundle.shared_folder)?;
     if let Some(checkpoint) = &bundle.roster_checkpoint {
         validate_share_roster_checkpoint(&bundle.shared_folder, checkpoint)?;
     }
@@ -2302,11 +2328,10 @@ pub fn shared_folder_from_invite_for_profile(
     local_profile_id: IrisProfileId,
 ) -> Result<SharedFolder, SharingError> {
     let bundle = parse_share_invite(invite)?;
+    let projection = bundle.shared_folder.projection();
+    let members = shared_folder_members_with_projection(&bundle.shared_folder, &projection);
     if bundle.recipient_profile_id != local_profile_id
-        || !bundle
-            .shared_folder
-            .members
-            .contains_key(&local_profile_id.to_string())
+        || !members.contains_key(&local_profile_id.to_string())
     {
         return Err(SharingError::ShareInviteNotForLocalProfile { local_profile_id });
     }
@@ -4180,6 +4205,95 @@ mod tests {
         assert!(matches!(
             parse_share_invite(&tampered),
             Err(SharingError::RosterCheckpoint(_))
+        ));
+    }
+
+    #[test]
+    fn share_invite_acceptance_projects_members_from_signed_member_ops() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let invite = invite_shared_folder_member(
+            &mut folder,
+            &owner_keys,
+            ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                label: Some("Phone".to_string()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".to_string()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let mut bundle = parse_share_invite(&invite.invite_url).unwrap();
+        bundle.shared_folder.members.clear();
+        let cacheless_invite = encode_share_invite(&bundle).unwrap();
+
+        let accepted =
+            shared_folder_from_invite_for_profile(&cacheless_invite, recipient_profile_id).unwrap();
+        assert_eq!(accepted.share_id, folder.share_id);
+        assert_eq!(
+            accepted
+                .member_projection()
+                .members
+                .get(&recipient_profile_id.to_string())
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("Alice")
+        );
+    }
+
+    #[test]
+    fn share_invite_rejects_tampered_member_roster_event_json() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let invite = invite_shared_folder_member(
+            &mut folder,
+            &owner_keys,
+            ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                label: Some("Phone".to_string()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".to_string()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let mut bundle = parse_share_invite(&invite.invite_url).unwrap();
+        bundle.shared_folder.member_ops[0].event_json = "{}".to_string();
+        let tampered = encode_share_invite(&bundle).unwrap();
+
+        assert!(matches!(
+            parse_share_invite(&tampered),
+            Err(SharingError::ShareMemberRoster(_))
         ));
     }
 
