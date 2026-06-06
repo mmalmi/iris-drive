@@ -1702,10 +1702,11 @@ pub fn shared_folder_from_invite_for_profile(
     local_profile_id: IrisProfileId,
 ) -> Result<SharedFolder, SharingError> {
     let bundle = parse_share_invite(invite)?;
-    if !bundle
-        .shared_folder
-        .members
-        .contains_key(&local_profile_id.to_string())
+    if bundle.recipient_profile_id != local_profile_id
+        || !bundle
+            .shared_folder
+            .members
+            .contains_key(&local_profile_id.to_string())
     {
         return Err(SharingError::ShareInviteNotForLocalProfile { local_profile_id });
     }
@@ -3138,6 +3139,10 @@ mod tests {
             current_shared_folder_key(&accepted, &recipient_keys).unwrap(),
             current_shared_folder_key(&accepted, &owner_keys).unwrap()
         );
+        assert!(matches!(
+            shared_folder_from_invite_for_profile(&invite.invite_url, owner_profile_id),
+            Err(SharingError::ShareInviteNotForLocalProfile { .. })
+        ));
         assert!(matches!(
             shared_folder_from_invite_for_profile(&invite.invite_url, IrisProfileId::new_v4()),
             Err(SharingError::ShareInviteNotForLocalProfile { .. })
