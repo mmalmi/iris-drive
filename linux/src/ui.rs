@@ -370,6 +370,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
         ui: Ui {
             sidebar,
             setup,
+            stack,
             sidebar_online,
             main_view,
             main,
@@ -596,6 +597,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
         });
     }
 
+    register_active_model(&model);
     refresh(&model);
+    drain_pending_launch_inputs(&model);
     window.present();
 }

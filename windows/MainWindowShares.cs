@@ -207,6 +207,61 @@ public partial class MainWindow
             Margin = new Thickness(8, 0, 0, 0),
         };
 
+    private bool OpenShareDialogFromLink(string input)
+    {
+        var classification = IrisDriveNativeCore.ClassifyLinkInput(input);
+        if (!string.Equals(classification.Kind, "share_dialog", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        OpenShareDialogFromLink(classification);
+        return true;
+    }
+
+    private void OpenShareDialogFromLink(IrisDriveLinkInputClassification classification)
+    {
+        SelectPage("Shares");
+        Show();
+        if (WindowState == System.Windows.WindowState.Minimized)
+        {
+            WindowState = System.Windows.WindowState.Normal;
+        }
+        Activate();
+        ShareSourceBox.Focus();
+
+        if (!classification.IsValid || string.IsNullOrWhiteSpace(classification.ShareSourcePath))
+        {
+            NoticeText.Text = string.IsNullOrWhiteSpace(classification.Error)
+                ? "Share folder path is required."
+                : classification.Error.Trim();
+            return;
+        }
+
+        ShareSourceBox.Text = classification.ShareSourcePath.Trim();
+        ShareNameBox.Text = classification.ShareDisplayName.Trim();
+
+        var recipient = FirstNonEmpty(
+            classification.ShareRecipientDisplayName,
+            classification.ShareRecipientNpubHint,
+            classification.ShareRecipientProfileId);
+        NoticeText.Text = string.IsNullOrWhiteSpace(recipient)
+            ? "Share folder selected"
+            : $"Share folder selected for {recipient}";
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+        return "";
+    }
+
     private async void CreateShare_Click(object sender, RoutedEventArgs e)
     {
         try

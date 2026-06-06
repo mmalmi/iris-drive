@@ -48,6 +48,17 @@ public sealed class IrisDriveNativeCore : IDisposable
             isComplete.ValueKind == JsonValueKind.True;
     }
 
+    public static IrisDriveLinkInputClassification ClassifyLinkInput(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return IrisDriveLinkInputClassification.Empty;
+        }
+
+        return IrisDriveLinkInputClassification.FromJson(
+            TakeString(iris_drive_classify_link_input_json(input.Trim())));
+    }
+
     public static RecoverySecretExport ExportRecoverySecret(string dataDirectory)
     {
         if (string.IsNullOrWhiteSpace(dataDirectory))
@@ -106,9 +117,80 @@ public sealed class IrisDriveNativeCore : IDisposable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_classify_link_input_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr iris_drive_export_recovery_secret_json(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern void iris_drive_string_free(IntPtr value);
+}
+
+public sealed record IrisDriveLinkInputClassification(
+    string Kind,
+    bool IsComplete,
+    bool IsValid,
+    string NormalizedInput,
+    string AppKeyPubkey,
+    string AdminAppKeyPubkey,
+    bool HasLinkSecret,
+    string ShareSourcePath,
+    string ShareDisplayName,
+    string ShareRecipientNpubHint,
+    string ShareRecipientDisplayName,
+    string ShareRecipientProfileId,
+    string Error)
+{
+    public static IrisDriveLinkInputClassification Empty { get; } = new(
+        "empty",
+        false,
+        false,
+        "",
+        "",
+        "",
+        false,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "");
+
+    public static IrisDriveLinkInputClassification FromJson(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        var root = document.RootElement;
+        return new IrisDriveLinkInputClassification(
+            String(root, "kind") ?? "unknown",
+            Bool(root, "is_complete"),
+            Bool(root, "is_valid"),
+            String(root, "normalized_input") ?? "",
+            String(root, "app_key_pubkey") ?? "",
+            String(root, "admin_app_key_pubkey") ?? "",
+            Bool(root, "has_link_secret"),
+            String(root, "share_source_path") ?? "",
+            String(root, "share_display_name") ?? "",
+            String(root, "share_recipient_npub_hint") ?? "",
+            String(root, "share_recipient_display_name") ?? "",
+            String(root, "share_recipient_profile_id") ?? "",
+            String(root, "error") ?? "");
+    }
+
+    private static string? String(JsonElement element, string property)
+    {
+        return element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(property, out var value) &&
+            value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+    }
+
+    private static bool Bool(JsonElement element, string property)
+    {
+        return element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(property, out var value) &&
+            value.ValueKind == JsonValueKind.True;
+    }
 }

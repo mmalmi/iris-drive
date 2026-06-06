@@ -43,9 +43,13 @@ public partial class MainWindow : Window
     private bool updatingRecoveryWordBox;
     private bool settingsUpdating;
     private Forms.NotifyIcon? trayIcon;
+    private string[] pendingLaunchArguments;
 
-    public MainWindow()
+    public MainWindow(string[]? launchArguments = null)
     {
+        pendingLaunchArguments = launchArguments?
+            .Where(argument => !string.IsNullOrWhiteSpace(argument))
+            .ToArray() ?? Array.Empty<string>();
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
@@ -64,6 +68,16 @@ public partial class MainWindow : Window
         _ = Task.Run(WindowsIcon.RefreshShortcutIcons);
         refreshTimer.Start();
         await RefreshAsync();
+        ApplyLaunchArguments(pendingLaunchArguments);
+    }
+
+    internal void ApplyLaunchArguments(string[] launchArguments)
+    {
+        pendingLaunchArguments = Array.Empty<string>();
+        foreach (var argument in launchArguments)
+        {
+            OpenShareDialogFromLink(argument);
+        }
     }
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)

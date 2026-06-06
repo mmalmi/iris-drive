@@ -33,5 +33,11 @@ Name: "{autodesktop}\Iris Drive"; Filename: "{app}\IrisDrive.exe"; IconFilename:
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\iris-drive"; ValueType: string; ValueName: ""; ValueData: "URL:Iris Drive Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\iris-drive"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\iris-drive\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\IrisDrive.exe,0"
+Root: HKCU; Subkey: "Software\Classes\iris-drive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\IrisDrive.exe"" ""%1"""
+
 [Run]
 Filename: "{app}\IrisDrive.exe"; Description: "Launch Iris Drive"; Flags: nowait postinstall skipifsilent

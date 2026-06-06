@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use iris_drive_app_core::{NativeAppAction, NativeAppState, UiState};
+use iris_drive_app_core::{
+    LinkInputClassification, NativeAppAction, NativeAppState, UiState, classify_link_input,
+};
 
 mod actions;
 mod daemon_control;
@@ -37,12 +39,16 @@ const RECOVERY_PHRASE_WORD_COUNT: usize = 12;
 
 thread_local! {
     static TRAY_APP_HOLD: RefCell<Option<gio::ApplicationHoldGuard>> = const { RefCell::new(None) };
+    static APP_INSTANCE_LOCK: RefCell<Option<AppInstanceLock>> = const { RefCell::new(None) };
+    static ACTIVE_MODEL: RefCell<Option<AppRef>> = const { RefCell::new(None) };
+    static PENDING_LAUNCH_INPUTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
 struct Ui {
     sidebar: gtk::Box,
     setup: gtk::Box,
+    stack: gtk::Stack,
     sidebar_online: gtk::Label,
     main_view: gtk::ScrolledWindow,
     main: gtk::Box,
@@ -140,19 +146,122 @@ enum TrayCommand {
 }
 
 fn main() -> glib::ExitCode {
-    let _app_lock = match AppInstanceLock::acquire() {
-        Ok(lock) => lock,
-        Err(error) => {
-            eprintln!("{error}");
-            return glib::ExitCode::SUCCESS;
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .build();
+    app.connect_startup(|app| {
+        match AppInstanceLock::acquire() {
+            Ok(lock) => {
+                APP_INSTANCE_LOCK.with(|slot| {
+                    *slot.borrow_mut() = Some(lock);
+                });
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                app.quit();
+                return;
+            }
         }
-    };
-
-    let app = adw::Application::builder().application_id(APP_ID).build();
-    app.connect_startup(|_| {
         gtk::Window::set_default_icon_name("iris-drive");
         install_css();
     });
-    app.connect_activate(build_ui);
+    app.connect_activate(|app| {
+        if let Some(window) = app.active_window() {
+            window.present();
+            return;
+        }
+        build_ui(app);
+    });
+    app.connect_open(|app, files, _hint| {
+        if app.active_window().is_none() {
+            build_ui(app);
+        }
+        for file in files {
+            handle_launch_input(&file.uri());
+        }
+        if let Some(window) = app.active_window() {
+            window.present();
+        }
+    });
     app.run()
+}
+
+fn register_active_model(model: &AppRef) {
+    ACTIVE_MODEL.with(|slot| {
+        *slot.borrow_mut() = Some(Rc::clone(model));
+    });
+}
+
+fn drain_pending_launch_inputs(model: &AppRef) {
+    let pending = PENDING_LAUNCH_INPUTS.with(|slot| slot.take());
+    for input in pending {
+        apply_launch_input(model, &input);
+    }
+}
+
+fn handle_launch_input(input: &str) {
+    let handled = ACTIVE_MODEL.with(|slot| {
+        if let Some(model) = slot.borrow().as_ref() {
+            apply_launch_input(model, input);
+            true
+        } else {
+            false
+        }
+    });
+    if !handled {
+        PENDING_LAUNCH_INPUTS.with(|slot| slot.borrow_mut().push(input.to_owned()));
+    }
+}
+
+fn apply_launch_input(model: &AppRef, input: &str) {
+    let classification = classify_link_input(input.to_owned());
+    if classification.kind == "share_dialog" {
+        apply_share_dialog_link(model, &classification);
+    }
+}
+
+fn apply_share_dialog_link(model: &AppRef, classification: &LinkInputClassification) {
+    model.ui.stack.set_visible_child_name("shares");
+    if !classification.is_valid || classification.share_source_path.trim().is_empty() {
+        model.ui.notice.set_text(
+            if classification.error.trim().is_empty() {
+                "Share folder path is required."
+            } else {
+                classification.error.trim()
+            },
+        );
+        return;
+    }
+
+    model
+        .ui
+        .share_source_entry
+        .set_text(classification.share_source_path.trim());
+    model
+        .ui
+        .share_name_entry
+        .set_text(classification.share_display_name.trim());
+
+    let recipient = first_non_empty([
+        classification.share_recipient_display_name.as_str(),
+        classification.share_recipient_npub_hint.as_str(),
+        classification.share_recipient_profile_id.as_str(),
+    ]);
+    if recipient.is_empty() {
+        model.ui.notice.set_text("Share folder selected");
+    } else {
+        model
+            .ui
+            .notice
+            .set_text(&format!("Share folder selected for {recipient}"));
+    }
+}
+
+fn first_non_empty(values: [&str; 3]) -> &str {
+    values
+        .into_iter()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or("")
 }
