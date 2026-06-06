@@ -86,6 +86,11 @@ that opaque evidence JSON to `invite_share_member_from_evidence`; Rust core
 resolves the representative npub to an IrisProfile member and AppKeys before
 granting access.
 
+Share invite pages may render a static preview from the signed invite bundle.
+When the local gateway/native endpoint is available, accepting an invite and
+adding a shortcut dispatch `accept_share_invite` and `add_share_shortcut`
+through Rust core instead of writing browser-local authority state.
+
 CLI, UniFFI app-core, and the local gateway all route share mutations through
 `iris_drive_core::dispatch_share_action`. Surface-specific code may parse UI
 strings and render JSON/records, but create, invite, accept, role, revoke,
