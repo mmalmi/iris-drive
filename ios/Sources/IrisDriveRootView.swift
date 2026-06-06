@@ -1046,18 +1046,18 @@ private struct InviteShareMemberSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Recipient Evidence") {
+                Section("Recipient") {
                     TextEditor(text: $evidenceJson)
                         .font(.system(.body, design: .monospaced))
                         .frame(minHeight: 120)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                Section("Member") {
-                    TextField("IrisProfile UUID", text: $profileId)
+                Section("Advanced AppActor") {
+                    TextField("Member profile UUID", text: $profileId)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Recipient AppKey", text: $appKey)
+                    TextField("Recipient AppActor pubkey", text: $appKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Picker("Role", selection: $role) {
@@ -1067,11 +1067,11 @@ private struct InviteShareMemberSheet: View {
                     }
                 }
                 Section("Contact") {
-                    TextField("Representative npub", text: $representativeNpubHint)
+                    TextField("Contact npub", text: $representativeNpubHint)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField("Name", text: $displayName)
-                    TextField("AppKey label", text: $label)
+                    TextField("AppActor label", text: $label)
                 }
             }
             .navigationTitle("Invite")

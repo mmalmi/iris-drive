@@ -213,6 +213,10 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("tabShares").activate()
         compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithText("Recipient identity evidence").assertIsDisplayed()
+        compose.onNodeWithText("Member profile UUID").assertIsDisplayed()
+        compose.onNodeWithText("Recipient AppActor pubkey").assertIsDisplayed()
+        compose.onNodeWithText("AppActor label").assertIsDisplayed()
         compose.onNodeWithTag("shareRecipientEvidenceInput")
             .performTextInput("""{"profile_id":"profile-1"}""")
         compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()

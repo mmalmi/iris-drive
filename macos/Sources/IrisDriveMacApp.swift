@@ -728,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let profileId = profileId.trimmingCharacters(in: .whitespacesAndNewlines)
         let appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !profileId.isEmpty, !appKey.isEmpty else {
-            updateStatus("IrisProfile UUID and AppKey required")
+            updateStatus("Member profile UUID and AppActor required")
             return
         }
         dispatchNativeAction(

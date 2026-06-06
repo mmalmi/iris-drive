@@ -711,7 +711,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = evidenceJson,
                     onValueChange = { evidenceJson = it },
-                    label = { Text("Recipient evidence JSON") },
+                    label = { Text("Recipient identity evidence") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(112.dp)
@@ -722,13 +722,13 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = profileId,
                     onValueChange = { profileId = it },
-                    label = { Text("IrisProfile UUID") },
+                    label = { Text("Member profile UUID") },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = appKey,
                     onValueChange = { appKey = it },
-                    label = { Text("Recipient AppKey") },
+                    label = { Text("Recipient AppActor pubkey") },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -741,7 +741,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = npubHint,
                     onValueChange = { npubHint = it },
-                    label = { Text("Representative npub") },
+                    label = { Text("Contact npub") },
                     singleLine = true,
                 )
                 OutlinedTextField(
@@ -753,7 +753,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("AppKey label") },
+                    label = { Text("AppActor label") },
                     singleLine = true,
                 )
             }
