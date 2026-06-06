@@ -199,12 +199,14 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   while concrete AppKeys receive key wraps and scoped signing/decryption
   capabilities. The recipient's IrisProfile roster and self-links prove
   key-to-UUID identity. The share member roster records signed
-  UUID-to-role/status grants, and each share AppKey facet carries the member
-  IrisProfile UUID used for share-root authorization; tombstones preserve that
-  UUID so revoked-key status remains explainable after removal. Projected member
-  maps and any separate AppKey-to-IrisProfile map are derived/cache data, not
-  authority. External contact indexes such as `nostr-social-graph` may
-  rank/search representative npubs, but they are not share authority.
+  UUID-to-role/status grants plus the key-roster heads that proved signer
+  authority at the time of the member change, and each share AppKey facet
+  carries the member IrisProfile UUID used for share-root authorization;
+  tombstones preserve that UUID so revoked-key status remains explainable after
+  removal. Projected member maps and any separate AppKey-to-IrisProfile map are
+  derived/cache data, not authority. External contact indexes such as
+  `nostr-social-graph` may rank/search representative npubs, but they are not
+  share authority.
   Inviting rotates the share epoch and emits a compact invite bundle containing
   a signed roster checkpoint/proof. The checkpoint summarizes entity members,
   compact AppKey/key-epoch and member-roster heads, current key epoch, and

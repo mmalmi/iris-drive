@@ -288,6 +288,8 @@ pub struct ShareMemberRosterOpContent {
     pub actor_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_roster_parents: Vec<String>,
     pub client_nonce: String,
     pub created_at: i64,
     pub op: ShareMemberRosterOp,
@@ -572,8 +574,13 @@ fn share_member_signer_can_apply_with_parents(
     signed: &SignedShareMemberRosterOp,
     accepted_ops_by_id: &BTreeMap<String, SignedShareMemberRosterOp>,
 ) -> bool {
+    let Some(key_parent_projection) =
+        project_share_key_roster_parent_closure(folder, key_projection, signed)
+    else {
+        return false;
+    };
     if projection.members.is_empty() {
-        return is_valid_share_member_bootstrap_op(folder, key_projection, signed);
+        return is_valid_share_member_bootstrap_op(folder, &key_parent_projection, signed);
     }
     if signed.content.parents.is_empty() {
         return false;
@@ -586,7 +593,57 @@ fn share_member_signer_can_apply_with_parents(
     ) else {
         return false;
     };
-    share_member_signer_can_apply(folder, key_projection, &parent_projection.members, signed)
+    share_member_signer_can_apply(
+        folder,
+        &key_parent_projection,
+        &parent_projection.members,
+        signed,
+    )
+}
+
+fn project_share_key_roster_parent_closure(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    signed: &SignedShareMemberRosterOp,
+) -> Option<IrisProfileRosterProjection> {
+    if signed.content.key_roster_parents.is_empty() {
+        return None;
+    }
+    let accepted = key_projection
+        .accepted_op_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let ops_by_id = folder
+        .roster_ops
+        .iter()
+        .filter(|op| accepted.contains(&op.op_id))
+        .map(|op| (op.op_id.clone(), op.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut pending = signed.content.key_roster_parents.clone();
+    let mut seen = BTreeSet::new();
+    while let Some(parent_id) = pending.pop() {
+        if !seen.insert(parent_id.clone()) {
+            continue;
+        }
+        let parent = ops_by_id.get(&parent_id)?;
+        pending.extend(parent.content.parents.iter().cloned());
+    }
+    let parent_ops = seen
+        .into_iter()
+        .map(|op_id| ops_by_id.get(&op_id).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    let parent_projection = project_iris_profile_roster(folder.share_id, parent_ops);
+    if signed
+        .content
+        .key_roster_parents
+        .iter()
+        .all(|parent| parent_projection.accepted_op_ids.contains(parent))
+    {
+        Some(parent_projection)
+    } else {
+        None
+    }
 }
 
 fn project_share_member_parent_closure(
@@ -1851,6 +1908,7 @@ fn build_initial_share_rosters(
     let mut member_ops = vec![sign_share_member_roster_op(
         owner_keys,
         share_id,
+        iris_profile_roster_parent_ids(&roster_ops),
         ShareMemberRosterOp::GrantMember {
             member: participants
                 .members
@@ -1960,6 +2018,7 @@ fn push_initial_share_member_grant(
             roster_ops,
             member_ops,
         ),
+        iris_profile_roster_parent_ids(roster_ops),
         ShareMemberRosterOp::GrantMember {
             member: context
                 .participants
@@ -2251,6 +2310,7 @@ fn add_invited_share_member(
             signer_keys,
             folder.share_id,
             share_member_roster_parent_ids(folder),
+            iris_profile_roster_parent_ids(&folder.roster_ops),
             ShareMemberRosterOp::GrantMember {
                 member: member.clone(),
             },
@@ -2442,6 +2502,7 @@ pub fn revoke_shared_folder_member(
             signer_keys,
             folder.share_id,
             share_member_roster_parent_ids(folder),
+            iris_profile_roster_parent_ids(&folder.roster_ops),
             ShareMemberRosterOp::RevokeMember {
                 profile_id,
                 reason: reason.map(str::to_string),
@@ -2555,20 +2616,36 @@ fn sign_share_roster_op_with_parents(
 fn sign_share_member_roster_op(
     signer_keys: &Keys,
     share_id: IrisProfileId,
+    key_roster_parents: Vec<String>,
     op: ShareMemberRosterOp,
     created_at: i64,
 ) -> Result<SignedShareMemberRosterOp, SharingError> {
-    sign_share_member_roster_op_with_parents(signer_keys, share_id, Vec::new(), op, created_at)
+    sign_share_member_roster_op_with_parents(
+        signer_keys,
+        share_id,
+        Vec::new(),
+        key_roster_parents,
+        op,
+        created_at,
+    )
 }
 
 fn sign_share_member_roster_op_with_parents(
     signer_keys: &Keys,
     share_id: IrisProfileId,
     parents: Vec<String>,
+    key_roster_parents: Vec<String>,
     op: ShareMemberRosterOp,
     created_at: i64,
 ) -> Result<SignedShareMemberRosterOp, SharingError> {
-    let event = build_share_member_roster_op_event(signer_keys, share_id, parents, op, created_at)?;
+    let event = build_share_member_roster_op_event(
+        signer_keys,
+        share_id,
+        parents,
+        key_roster_parents,
+        op,
+        created_at,
+    )?;
     parse_share_member_roster_op_event(&event)
 }
 
@@ -2576,6 +2653,7 @@ pub fn build_share_member_roster_op_event(
     signer_keys: &Keys,
     share_id: IrisProfileId,
     parents: Vec<String>,
+    key_roster_parents: Vec<String>,
     op: ShareMemberRosterOp,
     created_at: i64,
 ) -> Result<Event, SharingError> {
@@ -2586,6 +2664,7 @@ pub fn build_share_member_roster_op_event(
         share_id,
         actor_pubkey: signer_keys.public_key().to_hex(),
         parents,
+        key_roster_parents,
         client_nonce: client_nonce.clone(),
         created_at,
         op,
@@ -3112,6 +3191,7 @@ mod tests {
                 signer,
                 folder.share_id,
                 share_member_roster_parent_ids(folder),
+                iris_profile_roster_parent_ids(&folder.roster_ops),
                 ShareMemberRosterOp::GrantMember { member },
                 created_at,
             )
@@ -3404,6 +3484,55 @@ mod tests {
         assert_eq!(checkpoint.content.rejected_member_op_count, 0);
         assert_eq!(checkpoint.content.members.len(), 2);
         validate_share_roster_checkpoint(&folder, &checkpoint).unwrap();
+    }
+
+    #[test]
+    fn share_member_ops_remain_valid_after_signing_appkey_is_tombstoned() {
+        let owner_keys = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let replacement_keys = Keys::generate();
+        let (recipient_keys, recipient) = recipient(ShareRole::Editor);
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            vec![recipient],
+            10,
+        )
+        .unwrap();
+        append_profile_facet(
+            &mut folder.roster_ops,
+            &owner_keys,
+            folder.share_id,
+            IrisProfileFacet::app_key(
+                replacement_keys.public_key().to_hex(),
+                30,
+                Some("Replacement".to_string()),
+                ShareRole::Admin.capabilities(),
+            )
+            .with_profile_id(owner_profile_id),
+            30,
+        );
+        append_profile_tombstone(
+            &mut folder.roster_ops,
+            &owner_keys,
+            folder.share_id,
+            owner_keys.public_key().to_hex(),
+            31,
+        );
+        folder.members.clear();
+
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+        let member_projection = project_shared_folder_member_roster(&folder);
+
+        assert_eq!(member_projection.accepted_op_ids.len(), 2);
+        assert!(member_projection.rejected_op_ids.is_empty());
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &recipient_pubkey),
+            ShareRootWriteAuthorization::Authorized
+        );
     }
 
     #[test]
