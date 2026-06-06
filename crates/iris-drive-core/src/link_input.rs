@@ -30,6 +30,9 @@ pub struct LinkInputClassification {
     pub has_link_secret: bool,
     pub share_source_path: String,
     pub share_display_name: String,
+    pub share_recipient_npub_hint: String,
+    pub share_recipient_display_name: String,
+    pub share_recipient_profile_id: String,
     pub error: String,
 }
 
@@ -230,34 +233,26 @@ fn classify_share_dialog_link_input(input: &str) -> Option<LinkInputClassificati
     }
 
     let query = input.split_once('?').map_or("", |(_, query)| query);
-    let path = match decoded_query_value(query, "path") {
-        Ok(path) => path.unwrap_or_default().trim().to_owned(),
+    let path = match decoded_first_query_value_or_default(query, &["path"]) {
+        Ok(path) => path,
         Err(error) => {
-            return Some(LinkInputClassification {
-                kind: "share_dialog".to_owned(),
-                normalized_input: input.to_owned(),
-                error: error.to_string(),
-                ..LinkInputClassification::default()
-            });
+            return Some(share_dialog_error(input, &error));
         }
     };
-    let display_name = match decoded_query_value(query, "name").and_then(|name| {
-        if name.is_some() {
-            Ok(name)
-        } else {
-            decoded_query_value(query, "display_name")
-        }
-    }) {
-        Ok(display_name) => display_name.unwrap_or_default().trim().to_owned(),
+    let display_name = match decoded_first_query_value_or_default(query, &["name", "display_name"])
+    {
+        Ok(display_name) => display_name,
         Err(error) => {
-            return Some(LinkInputClassification {
-                kind: "share_dialog".to_owned(),
-                normalized_input: input.to_owned(),
-                error: error.to_string(),
-                ..LinkInputClassification::default()
-            });
+            return Some(share_dialog_error(input, &error));
         }
     };
+    let (recipient_npub_hint, recipient_display_name, recipient_profile_id) =
+        match share_dialog_recipient_hints(query) {
+            Ok(hints) => hints,
+            Err(error) => {
+                return Some(share_dialog_error(input, &error));
+            }
+        };
 
     let is_complete = !path.is_empty();
     let error = if is_complete {
@@ -272,9 +267,48 @@ fn classify_share_dialog_link_input(input: &str) -> Option<LinkInputClassificati
         is_valid: is_complete,
         share_source_path: path,
         share_display_name: display_name,
+        share_recipient_npub_hint: recipient_npub_hint,
+        share_recipient_display_name: recipient_display_name,
+        share_recipient_profile_id: recipient_profile_id,
         error,
         ..LinkInputClassification::default()
     })
+}
+
+fn share_dialog_recipient_hints(query: &str) -> Result<(String, String, String)> {
+    Ok((
+        decoded_first_query_value_or_default(query, &["recipient_npub"])?,
+        decoded_first_query_value_or_default(query, &["recipient_name", "recipient_display_name"])?,
+        decoded_first_query_value_or_default(
+            query,
+            &["recipient_profile", "recipient_profile_id"],
+        )?,
+    ))
+}
+
+fn share_dialog_error(input: &str, error: &anyhow::Error) -> LinkInputClassification {
+    LinkInputClassification {
+        kind: "share_dialog".to_owned(),
+        normalized_input: input.to_owned(),
+        error: error.to_string(),
+        ..LinkInputClassification::default()
+    }
+}
+
+fn decoded_first_query_value_or_default(query: &str, names: &[&str]) -> Result<String> {
+    match decoded_first_query_value(query, names)? {
+        Some(value) => Ok(value.trim().to_owned()),
+        None => Ok(String::new()),
+    }
+}
+
+fn decoded_first_query_value(query: &str, names: &[&str]) -> Result<Option<String>> {
+    for name in names {
+        if let Some(value) = decoded_query_value(query, name)? {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
 }
 
 fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool {
@@ -419,6 +453,16 @@ mod tests {
         assert!(app_link.is_valid);
         assert_eq!(app_link.share_source_path, "My Drive/Projects");
         assert_eq!(app_link.share_display_name, "Projects");
+
+        let hinted = classify_link_input(
+            "https://drive.iris.to/share?path=Projects%2FAlpha&name=Alpha&recipient_npub=npub1alice&recipient_name=Alice&recipient_profile=123e4567-e89b-42d3-a456-426614174000",
+        );
+        assert_eq!(hinted.share_recipient_npub_hint, "npub1alice");
+        assert_eq!(hinted.share_recipient_display_name, "Alice");
+        assert_eq!(
+            hinted.share_recipient_profile_id,
+            "123e4567-e89b-42d3-a456-426614174000"
+        );
 
         let web_link = classify_link_input("https://drive.iris.to/share?path=%2FShared%20Source");
         assert_eq!(web_link.kind, "share_dialog");

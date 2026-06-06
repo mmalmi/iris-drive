@@ -65,6 +65,9 @@ struct IrisDriveShareDialogRequest: Identifiable, Equatable {
     let id = UUID()
     let sourcePath: String
     let displayName: String
+    let recipientNpubHint: String
+    let recipientDisplayName: String
+    let recipientProfileId: String
 }
 
 struct IrisDriveAppKeyLinkRequestStatus: Identifiable, Equatable {

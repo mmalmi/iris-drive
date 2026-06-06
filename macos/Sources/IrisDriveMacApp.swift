@@ -333,7 +333,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if classification["kind"] as? String == "share_dialog" {
             openShareDialog(
                 sourcePath: classification["share_source_path"] as? String ?? "",
-                displayName: classification["share_display_name"] as? String ?? ""
+                displayName: classification["share_display_name"] as? String ?? "",
+                recipientNpubHint: classification["share_recipient_npub_hint"] as? String ?? "",
+                recipientDisplayName: classification["share_recipient_display_name"] as? String ?? "",
+                recipientProfileId: classification["share_recipient_profile_id"] as? String ?? ""
             )
             return true
         }
@@ -344,7 +347,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private func openShareDialog(sourcePath: String, displayName: String) {
+    private func openShareDialog(
+        sourcePath: String,
+        displayName: String,
+        recipientNpubHint: String = "",
+        recipientDisplayName: String = "",
+        recipientProfileId: String = ""
+    ) {
         let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sourcePath.isEmpty else {
             showControlPanel()
@@ -353,7 +362,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         IrisDriveStatus.shared.pendingShareDialog = IrisDriveShareDialogRequest(
             sourcePath: sourcePath,
-            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+            recipientNpubHint: recipientNpubHint.trimmingCharacters(in: .whitespacesAndNewlines),
+            recipientDisplayName: recipientDisplayName.trimmingCharacters(in: .whitespacesAndNewlines),
+            recipientProfileId: recipientProfileId.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         showControlPanel()
         updateStatus("Share folder selected")

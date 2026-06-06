@@ -331,6 +331,9 @@ class MainActivity : ComponentActivity() {
                     openShareDialog(
                         classification.optString("share_source_path"),
                         classification.optString("share_display_name"),
+                        classification.optString("share_recipient_npub_hint"),
+                        classification.optString("share_recipient_display_name"),
+                        classification.optString("share_recipient_profile_id"),
                     )
                 }
 
@@ -399,7 +402,13 @@ class MainActivity : ComponentActivity() {
             DOCUMENTS_ROOT_DOCUMENT_ID,
         ).toString()
 
-    private fun openShareDialog(sourcePath: String, displayName: String) {
+    private fun openShareDialog(
+        sourcePath: String,
+        displayName: String,
+        recipientNpubHint: String = "",
+        recipientDisplayName: String = "",
+        recipientProfileId: String = "",
+    ) {
         val trimmedPath = sourcePath.trim()
         if (trimmedPath.isBlank()) {
             Toast.makeText(this, "Share folder path required", Toast.LENGTH_SHORT).show()
@@ -410,6 +419,9 @@ class MainActivity : ComponentActivity() {
             id = nextShareDialogRequestId,
             sourcePath = trimmedPath,
             displayName = displayName.trim(),
+            recipientNpubHint = recipientNpubHint.trim(),
+            recipientDisplayName = recipientDisplayName.trim(),
+            recipientProfileId = recipientProfileId.trim(),
         )
     }
 

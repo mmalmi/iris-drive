@@ -47,6 +47,12 @@ import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.core.ShareMemberState
 import to.iris.drive.app.core.ShareState
 
+private data class ShareInvitePrefill(
+    val profileId: String = "",
+    val npubHint: String = "",
+    val displayName: String = "",
+)
+
 @Composable
 internal fun AuthenticatedContent(
     padding: PaddingValues,
@@ -584,16 +590,23 @@ private fun SharesPanel(
     var inviteInput by remember { mutableStateOf("") }
     var inviteTarget by remember { mutableStateOf<ShareState?>(null) }
     var revokeTarget by remember { mutableStateOf<Pair<ShareState, ShareMemberState>?>(null) }
+    var invitePrefill by remember { mutableStateOf(ShareInvitePrefill()) }
 
     LaunchedEffect(shareDialogRequest?.id) {
         val request = shareDialogRequest ?: return@LaunchedEffect
         sourceInput = request.sourcePath
         nameInput = request.displayName
+        invitePrefill = ShareInvitePrefill(
+            profileId = request.recipientProfileId,
+            npubHint = request.recipientNpubHint,
+            displayName = request.recipientDisplayName,
+        )
     }
 
     inviteTarget?.let { share ->
         InviteShareMemberDialog(
             share = share,
+            prefill = invitePrefill,
             onDismiss = { inviteTarget = null },
             onInvite = { evidenceJson, profileId, appKey, role, npubHint, displayName, label ->
                 if (evidenceJson.isNotBlank()) {
@@ -708,15 +721,16 @@ private fun SharesPanel(
 @Composable
 private fun InviteShareMemberDialog(
     share: ShareState,
+    prefill: ShareInvitePrefill,
     onDismiss: () -> Unit,
     onInvite: (String, String, String, String, String, String, String) -> Unit,
 ) {
     var evidenceJson by remember { mutableStateOf("") }
-    var profileId by remember { mutableStateOf("") }
+    var profileId by remember(share.shareId, prefill.profileId) { mutableStateOf(prefill.profileId) }
     var appKey by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("reader") }
-    var npubHint by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf("") }
+    var npubHint by remember(share.shareId, prefill.npubHint) { mutableStateOf(prefill.npubHint) }
+    var displayName by remember(share.shareId, prefill.displayName) { mutableStateOf(prefill.displayName) }
     var label by remember { mutableStateOf("") }
 
     AlertDialog(
@@ -740,6 +754,7 @@ private fun InviteShareMemberDialog(
                     onValueChange = { profileId = it },
                     label = { Text("Member profile UUID") },
                     singleLine = true,
+                    modifier = Modifier.testTag("shareRecipientProfileInput"),
                 )
                 OutlinedTextField(
                     value = appKey,
@@ -759,12 +774,14 @@ private fun InviteShareMemberDialog(
                     onValueChange = { npubHint = it },
                     label = { Text("Contact npub") },
                     singleLine = true,
+                    modifier = Modifier.testTag("shareRecipientNpubInput"),
                 )
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
                     label = { Text("Name") },
                     singleLine = true,
+                    modifier = Modifier.testTag("shareRecipientNameInput"),
                 )
                 OutlinedTextField(
                     value = label,

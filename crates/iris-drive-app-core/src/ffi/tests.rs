@@ -618,13 +618,19 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert_eq!(unrelated.kind, "unknown");
 
     let share_dialog = super::classify_link_input(
-        "https://drive.iris.to/share?path=My%20Drive%2FPhotos&name=Photos".to_owned(),
+        "https://drive.iris.to/share?path=My%20Drive%2FPhotos&name=Photos&recipient_npub=npub1alice&recipient_name=Alice&recipient_profile=123e4567-e89b-42d3-a456-426614174000".to_owned(),
     );
     assert_eq!(share_dialog.kind, "share_dialog");
     assert!(share_dialog.is_complete);
     assert!(share_dialog.is_valid);
     assert_eq!(share_dialog.share_source_path, "My Drive/Photos");
     assert_eq!(share_dialog.share_display_name, "Photos");
+    assert_eq!(share_dialog.share_recipient_npub_hint, "npub1alice");
+    assert_eq!(share_dialog.share_recipient_display_name, "Alice");
+    assert_eq!(
+        share_dialog.share_recipient_profile_id,
+        "123e4567-e89b-42d3-a456-426614174000"
+    );
 }
 
 #[test]

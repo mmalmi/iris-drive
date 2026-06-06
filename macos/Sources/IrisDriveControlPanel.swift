@@ -97,6 +97,9 @@ struct IrisDriveControlPanel: View {
     @State private var shareSourceInput = ""
     @State private var shareNameInput = ""
     @State private var shareInviteInput = ""
+    @State private var shareRecipientNpubHint = ""
+    @State private var shareRecipientDisplayName = ""
+    @State private var shareRecipientProfileId = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var setupMode = IrisDriveSetupMode.welcome
@@ -773,6 +776,9 @@ struct IrisDriveControlPanel: View {
         selectedTab = .shares
         shareSourceInput = request.sourcePath
         shareNameInput = request.displayName
+        shareRecipientNpubHint = request.recipientNpubHint
+        shareRecipientDisplayName = request.recipientDisplayName
+        shareRecipientProfileId = request.recipientProfileId
     }
 
     private var shares: some View {
@@ -853,7 +859,13 @@ struct IrisDriveControlPanel: View {
             }
         }
         .sheet(item: $inviteShare) { share in
-            InviteShareMemberSheet(controller: controller, share: share)
+            InviteShareMemberSheet(
+                controller: controller,
+                share: share,
+                profileId: shareRecipientProfileId,
+                representativeNpubHint: shareRecipientNpubHint,
+                displayName: shareRecipientDisplayName
+            )
         }
         .alert(
             "Revoke access?",
@@ -1442,6 +1454,20 @@ private struct InviteShareMemberSheet: View {
     @State private var representativeNpubHint = ""
     @State private var displayName = ""
     @State private var label = ""
+
+    init(
+        controller: AppDelegate,
+        share: IrisDriveShareStatus,
+        profileId: String = "",
+        representativeNpubHint: String = "",
+        displayName: String = ""
+    ) {
+        self.controller = controller
+        self.share = share
+        _profileId = State(initialValue: profileId)
+        _representativeNpubHint = State(initialValue: representativeNpubHint)
+        _displayName = State(initialValue: displayName)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

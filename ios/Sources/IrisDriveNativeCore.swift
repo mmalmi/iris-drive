@@ -381,6 +381,9 @@ struct NativeLinkInputClassification: Codable {
     var hasLinkSecret: Bool = false
     var shareSourcePath: String = ""
     var shareDisplayName: String = ""
+    var shareRecipientNpubHint: String = ""
+    var shareRecipientDisplayName: String = ""
+    var shareRecipientProfileId: String = ""
     var error: String = ""
 
     init(error: String = "") {
@@ -397,6 +400,9 @@ struct NativeLinkInputClassification: Codable {
         case hasLinkSecret = "has_link_secret"
         case shareSourcePath = "share_source_path"
         case shareDisplayName = "share_display_name"
+        case shareRecipientNpubHint = "share_recipient_npub_hint"
+        case shareRecipientDisplayName = "share_recipient_display_name"
+        case shareRecipientProfileId = "share_recipient_profile_id"
         case error
     }
 }

@@ -116,6 +116,9 @@ internal data class ShareDialogRequest(
     val id: Long,
     val sourcePath: String,
     val displayName: String,
+    val recipientNpubHint: String = "",
+    val recipientDisplayName: String = "",
+    val recipientProfileId: String = "",
 )
 
 internal fun fillRecoveryWords(

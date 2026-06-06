@@ -69,7 +69,10 @@ is `iris-drive://share?path=<folder>&name=<optional-name>` or
 `https://drive.iris.to/share?...`; native shells select the **Shares** tab and
 prefill the create-share form, while app-core remains responsible for the actual
 share creation. Android exposes this through the SAF folder settings action for
-non-root Iris Drive folders.
+non-root Iris Drive folders. Optional `recipient_npub`, `recipient_name`, and
+`recipient_profile` query fields prefill invite/contact fields only; signed
+recipient evidence and roster ops remain the authority for the member's
+IrisProfile UUID and AppKeys.
 
 ## Mobile test target
 

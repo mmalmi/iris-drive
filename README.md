@@ -96,7 +96,11 @@ OS share/open integrations do not grant access by themselves. They open the app
 share dialog for a selected Iris Drive folder using
 `iris-drive://share?path=<folder>&name=<optional-name>` or the equivalent
 `https://drive.iris.to/share?...` route; the user still confirms through the
-normal Shares tab create flow.
+normal Shares tab create flow. Web/contact handoff may include
+`recipient_npub`, `recipient_name`, and `recipient_profile` query hints to
+prefill the invite form, but those hints are display/discovery data only. Signed
+recipient evidence and roster ops establish the IrisProfile member that receives
+access.
 
 Share invites include a signed roster checkpoint that summarizes the current
 entity members, the materialized AppKey-to-IrisProfile participant mapping,

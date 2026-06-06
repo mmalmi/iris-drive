@@ -265,6 +265,63 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun shareDialogRecipientHintsPrefillInviteDialogOnly() {
+        var inviteCount = 0
+        val share = ShareState(
+            shareId = "123e4567-e89b-42d3-a456-426614174000",
+            displayName = "Projects",
+            sharedWithMePath = "Shared with me/Projects",
+            role = "admin",
+            roleLabel = "Admin",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            writeAuthorization = "authorized",
+            writeAuthorizationLabel = "Authorized",
+            canWrite = true,
+            canAdmin = true,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 1,
+            appKeyCount = 1,
+            members = emptyList(),
+            shortcutPaths = emptyList(),
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            shareDialogRequest = ShareDialogRequest(
+                id = 1,
+                sourcePath = "My Drive/Projects",
+                displayName = "Projects",
+                recipientNpubHint = "npub1alice",
+                recipientDisplayName = "Alice",
+                recipientProfileId = "123e4567-e89b-42d3-a456-426614174111",
+            ),
+            onInviteShareMember = { _, _, _, _, _, _, _ -> inviteCount += 1 },
+        )
+
+        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
+        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithTag("shareRecipientProfileInput")
+            .assertTextContains("123e4567-e89b-42d3-a456-426614174111")
+        compose.onNodeWithTag("shareRecipientNpubInput")
+            .assertTextContains("npub1alice")
+        compose.onNodeWithTag("shareRecipientNameInput")
+            .assertTextContains("Alice")
+        compose.onNodeWithTag("shareInviteConfirm").assertIsNotEnabled()
+
+        assertEquals(0, inviteCount)
+    }
+
+    @Test
     fun documentsProviderListsNativeProviderRoot() {
         val dataDir = tempDataDir("iris-drive-provider")
         val handle = NativeCore.appNew(dataDir.absolutePath, "ui-test").also(nativeHandles::add)

@@ -137,6 +137,9 @@ pub struct LinkInputClassification {
     pub has_link_secret: bool,
     pub share_source_path: String,
     pub share_display_name: String,
+    pub share_recipient_npub_hint: String,
+    pub share_recipient_display_name: String,
+    pub share_recipient_profile_id: String,
     pub error: String,
 }
 
@@ -152,6 +155,9 @@ impl From<iris_drive_core::LinkInputClassification> for LinkInputClassification 
             has_link_secret: value.has_link_secret,
             share_source_path: value.share_source_path,
             share_display_name: value.share_display_name,
+            share_recipient_npub_hint: value.share_recipient_npub_hint,
+            share_recipient_display_name: value.share_recipient_display_name,
+            share_recipient_profile_id: value.share_recipient_profile_id,
             error: value.error,
         }
     }

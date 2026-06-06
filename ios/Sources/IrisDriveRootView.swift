@@ -1012,7 +1012,13 @@ private struct ShareRow: View {
             }
         }
         .sheet(isPresented: $showingInvite) {
-            InviteShareMemberSheet(model: model, share: share)
+            InviteShareMemberSheet(
+                model: model,
+                share: share,
+                profileId: model.shareRecipientProfileId,
+                representativeNpubHint: model.shareRecipientNpubHint,
+                displayName: model.shareRecipientDisplayName
+            )
         }
         .alert(
             "Revoke access?",
@@ -1050,6 +1056,20 @@ private struct InviteShareMemberSheet: View {
     @State private var representativeNpubHint = ""
     @State private var displayName = ""
     @State private var label = ""
+
+    init(
+        model: IrisDriveMobileModel,
+        share: IrisDriveShare,
+        profileId: String = "",
+        representativeNpubHint: String = "",
+        displayName: String = ""
+    ) {
+        self.model = model
+        self.share = share
+        _profileId = State(initialValue: profileId)
+        _representativeNpubHint = State(initialValue: representativeNpubHint)
+        _displayName = State(initialValue: displayName)
+    }
 
     var body: some View {
         NavigationStack {

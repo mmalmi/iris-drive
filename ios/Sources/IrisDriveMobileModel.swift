@@ -41,6 +41,9 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var shareSourceInput = ""
     @Published var shareNameInput = ""
     @Published var shareInviteInput = ""
+    @Published var shareRecipientNpubHint = ""
+    @Published var shareRecipientDisplayName = ""
+    @Published var shareRecipientProfileId = ""
     @Published var shareDialogRequestId: UInt64 = 0
     @Published var relays = defaultRelays
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
@@ -781,11 +784,20 @@ final class IrisDriveMobileModel: ObservableObject {
         shareNameInput = ""
     }
 
-    func openShareDialog(sourcePath: String, displayName: String) {
+    func openShareDialog(
+        sourcePath: String,
+        displayName: String,
+        recipientNpubHint: String = "",
+        recipientDisplayName: String = "",
+        recipientProfileId: String = ""
+    ) {
         let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sourcePath.isEmpty else { return }
         shareSourceInput = sourcePath
         shareNameInput = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        shareRecipientNpubHint = recipientNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        shareRecipientDisplayName = recipientDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        shareRecipientProfileId = recipientProfileId.trimmingCharacters(in: .whitespacesAndNewlines)
         shareDialogRequestId &+= 1
     }
 
@@ -890,7 +902,10 @@ final class IrisDriveMobileModel: ObservableObject {
         if linkInput.kind == "share_dialog" {
             openShareDialog(
                 sourcePath: linkInput.shareSourcePath,
-                displayName: linkInput.shareDisplayName
+                displayName: linkInput.shareDisplayName,
+                recipientNpubHint: linkInput.shareRecipientNpubHint,
+                recipientDisplayName: linkInput.shareRecipientDisplayName,
+                recipientProfileId: linkInput.shareRecipientProfileId
             )
             return
         }
