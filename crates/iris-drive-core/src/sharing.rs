@@ -1493,12 +1493,31 @@ pub fn current_shared_folder_key(
     app_keys: &Keys,
 ) -> Result<[u8; 32], SharingError> {
     let projection = folder.projection();
+    let current_pubkey = app_keys.public_key().to_hex();
+    let Some(member) = member_for_app_key_with_projection(folder, &projection, &current_pubkey)
+    else {
+        return Err(SharingError::NoWrapForCurrentAppKey);
+    };
+    if member.status == ShareMemberStatus::Revoked {
+        return Err(SharingError::ShareMemberRevoked(member.profile_id));
+    }
+    if !member.is_active() {
+        return Err(SharingError::NoWrapForCurrentAppKey);
+    }
+    let Some(facet) = projection.active_facets.get(&current_pubkey) else {
+        return Err(SharingError::NoWrapForCurrentAppKey);
+    };
+    if !facet.is_app_key()
+        || !facet.capabilities.can_receive_key_wraps
+        || !facet.capabilities.can_decrypt_key_epochs
+    {
+        return Err(SharingError::NoWrapForCurrentAppKey);
+    }
     let key_epoch = projection
         .key_epochs
         .values()
         .next_back()
         .ok_or(SharingError::NoKeyEpoch)?;
-    let current_pubkey = app_keys.public_key().to_hex();
     let wrap = key_epoch
         .wrapped_dck
         .get(&current_pubkey)
@@ -3065,6 +3084,33 @@ mod tests {
                 .wrapped_dck
                 .contains_key(&phone_keys.public_key().to_hex())
         );
+
+        let laptop_pubkey = laptop_keys.public_key().to_hex();
+        let current_key = current_shared_folder_key(&folder, &owner_keys).unwrap();
+        let leaked_wrap = wrap_share_key(
+            &owner_keys,
+            std::iter::once(laptop_pubkey.as_str()),
+            &current_key,
+        )
+        .unwrap();
+        folder.roster_ops.push(
+            sign_share_roster_op_with_parents(
+                &owner_keys,
+                folder.share_id,
+                iris_profile_roster_parent_ids(&folder.roster_ops),
+                IrisProfileRosterOp::RepairKeyWraps {
+                    epoch: 2,
+                    wrapped_dck: leaked_wrap,
+                },
+                21,
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            current_shared_folder_key(&folder, &laptop_keys),
+            Err(SharingError::ShareMemberRevoked(profile_id))
+                if profile_id == recipient_profile_id
+        ));
 
         let revoked_view = shared_folder_view(&folder, &[], &laptop_keys.public_key().to_hex());
         assert_eq!(revoked_view.key_status, SharedFolderKeyStatus::Revoked);
