@@ -194,11 +194,14 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   --app-key <recipient-appkey-npub> --role reader`. The selected representative
   npub/contact is only a discovery/display hint; access is granted to the
   resolved IrisProfile member, while concrete AppKeys receive key wraps and
-  scoped signing/decryption capabilities. Inviting rotates the share epoch and
-  emits a compact invite bundle containing a signed roster checkpoint/proof.
-  The checkpoint summarizes entity members, compact roster heads, current key
-  epoch, and missing-wrap state; the append-only roster op log remains
-  authoritative.
+  scoped signing/decryption capabilities. The recipient's IrisProfile roster is
+  the authority for key-to-UUID membership; the share roster only records
+  UUID-to-role membership. External contact indexes such as `nostr-social-graph`
+  may rank/search representative npubs, but they are not share authority.
+  Inviting rotates the share epoch and emits a compact invite bundle containing
+  a signed roster checkpoint/proof. The checkpoint summarizes entity members,
+  compact roster heads, current key epoch, and missing-wrap state; the
+  append-only roster op log remains authoritative.
 - **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
   imports the shared folder only if the invite names their IrisProfile.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
