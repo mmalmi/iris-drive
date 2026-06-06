@@ -41,6 +41,7 @@ pub struct UiSyncRoot {
 pub struct UiShare {
     pub share_id: String,
     pub display_name: String,
+    pub source_path: String,
     pub shared_with_me_path: String,
     pub role: String,
     pub role_label: String,
@@ -55,6 +56,7 @@ pub struct UiShare {
     pub key_unavailable: bool,
     pub repair_needed: bool,
     pub missing_key_wrap_count: u64,
+    pub missing_key_wraps: Vec<String>,
     pub participant_count: u64,
     pub app_key_count: u64,
     pub members: Vec<UiShareMember>,

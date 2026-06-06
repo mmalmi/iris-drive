@@ -83,19 +83,8 @@ fn cmd_shares_create(config_dir: &Path, source_path: &str, name: Option<&str>) -
 }
 
 fn cmd_shares_list(config_dir: &Path) -> Result<()> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let current_app_pubkey = config
-        .profile
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
-        .app_key_pubkey
-        .clone();
-    let views = iris_drive_core::shared_folder_views(
-        &config.shared_folders,
-        &config.share_shortcuts,
-        &current_app_pubkey,
-    );
-    println!("{}", json!({ "shares": share_views_json(&views) }));
+    let result = iris_drive_core::share_action_state(config_dir).context("reading share state")?;
+    println!("{}", json!({ "shares": share_views_json(&result.shares) }));
     Ok(())
 }
 
@@ -103,18 +92,12 @@ fn cmd_shares_members(config_dir: &Path, share_id: &str) -> Result<()> {
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let current_app_pubkey = config
-        .profile
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?
-        .app_key_pubkey
-        .clone();
-    let folder = config
-        .shared_folder(share_id)
+    let result = iris_drive_core::share_action_state(config_dir).context("reading share state")?;
+    let view = result
+        .shares
+        .iter()
+        .find(|view| view.share_id == share_id)
         .ok_or_else(|| anyhow::anyhow!("share not found: {share_id}"))?;
-    let view =
-        iris_drive_core::shared_folder_view(folder, &config.share_shortcuts, &current_app_pubkey);
     println!(
         "{}",
         json!({

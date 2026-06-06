@@ -2267,6 +2267,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
     .map(|share| UiShare {
         share_id: share.share_id.to_string(),
         display_name: share.display_name,
+        source_path: share.source_path,
         shared_with_me_path: share.shared_with_me_path,
         role: share.local_role.as_str().to_owned(),
         role_label: share.local_role.label().to_owned(),
@@ -2281,6 +2282,11 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         key_unavailable: share.key_unavailable,
         repair_needed: share.repair_needed,
         missing_key_wrap_count: share.missing_key_wrap_count as u64,
+        missing_key_wraps: share
+            .missing_key_wrap_pubkeys
+            .iter()
+            .map(|pubkey| pubkey_npub(pubkey))
+            .collect(),
         participant_count: share.participant_count as u64,
         app_key_count: share.app_key_count as u64,
         members: share

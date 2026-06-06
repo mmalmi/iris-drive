@@ -219,10 +219,12 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   Recipients can add shortcuts anywhere in My Drive. Team/shared DriveSpaces can
   come later; the first UX remains one Iris Drive.
 - **GUI parity**: native control panels render app-core `UiShare` and
-  `UiShareMember` state from the **Shares** tab and dispatch app-core actions
-  for create, invite, accept, role changes, revoke, shortcut, and repair.
-  Invite dialogs accept signed recipient evidence before falling back to direct
-  AppKey entry. They do not reimplement share authority or key-wrap validation.
+  `UiShareMember` state from the **Shares** tab, including source path,
+  role/status, repair-needed/missing-wrap detail, and shortcut state. They
+  dispatch app-core actions for create, invite, accept, role changes, revoke,
+  shortcut, and repair. Invite dialogs accept signed recipient evidence before
+  falling back to direct AppKey entry. They do not reimplement share authority
+  or key-wrap validation.
 - **Revoke / leave**: share admins revoke an IrisProfile member, tombstone all
   known AppKeys for that profile in the share roster, rotate the share epoch,
   and publish the new key only to remaining active members. Prior content can't

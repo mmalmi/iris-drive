@@ -42,6 +42,40 @@ fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMembe
         .unwrap()
 }
 
+fn remove_share_wrap_for_epoch(
+    folder: &mut iris_drive_core::SharedFolder,
+    signer_keys: &nostr_sdk::Keys,
+    epoch: u64,
+    removed_pubkey: &str,
+) {
+    for op in &mut folder.roster_ops {
+        if let iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
+            epoch: op_epoch,
+            wrapped_dck,
+        } = &mut op.content.op
+            && *op_epoch == epoch
+        {
+            let mut next_wraps = wrapped_dck.clone();
+            next_wraps.remove(removed_pubkey);
+            let event = iris_drive_core::build_iris_profile_roster_op_event(
+                signer_keys,
+                folder.share_id,
+                op.content.parents.clone(),
+                None,
+                iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
+                    epoch: *op_epoch,
+                    wrapped_dck: next_wraps,
+                },
+                op.content.created_at,
+            )
+            .unwrap();
+            *op = iris_drive_core::parse_iris_profile_roster_op_event(&event).unwrap();
+            return;
+        }
+    }
+    panic!("share key epoch {epoch} not found");
+}
+
 #[test]
 fn dispatch_adds_updates_and_removes_roots() {
     let dir = tempfile::tempdir().unwrap();
@@ -190,6 +224,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     let share = &refreshed.ui.shares[0];
     assert_eq!(share.share_id, folder.share_id.to_string());
     assert_eq!(share.display_name, "Alpha");
+    assert_eq!(share.source_path, "Projects/Alpha");
     assert_eq!(share.shared_with_me_path, "Shared with me/Alpha");
     assert_eq!(share.role, "admin");
     assert_eq!(share.role_label, "Admin");
@@ -204,6 +239,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(!share.key_unavailable);
     assert!(!share.repair_needed);
     assert_eq!(share.missing_key_wrap_count, 0);
+    assert!(share.missing_key_wraps.is_empty());
     assert_eq!(share.participant_count, 1);
     assert_eq!(share.app_key_count, 1);
     assert_eq!(share.members.len(), 1);
@@ -218,6 +254,68 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert_eq!(share.members[0].status_label, "Active");
     assert_eq!(share.members[0].app_key_count, 1);
     assert_eq!(share.shortcut_paths, vec!["Projects/Alpha shared"]);
+}
+
+#[test]
+fn app_state_surfaces_share_missing_wrap_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    assert!(created.error.is_empty(), "{}", created.error);
+
+    let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let account = iris_drive_core::Profile::load(config.profile.clone().unwrap(), dir.path())
+        .expect("account loads");
+    let recipient_keys = nostr_sdk::Keys::generate();
+    let recipient_pubkey = recipient_keys.public_key().to_hex();
+    let mut folder = iris_drive_core::create_shared_folder(
+        account.app_key.keys(),
+        account.state.profile_id,
+        "Projects/Alpha",
+        "Alpha",
+        Some("Mac".to_owned()),
+        vec![iris_drive_core::ShareRecipient {
+            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            app_pubkey: recipient_pubkey.clone(),
+            role: iris_drive_core::ShareRole::Reader,
+            label: Some("Phone".to_owned()),
+            representative_npub_hint: None,
+            display_name: Some("Phone".to_owned()),
+        }],
+        10,
+    )
+    .unwrap();
+    let current_epoch = folder
+        .projection()
+        .key_epochs
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap();
+    remove_share_wrap_for_epoch(
+        &mut folder,
+        account.app_key.keys(),
+        current_epoch,
+        &recipient_pubkey,
+    );
+    config.upsert_shared_folder(folder);
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let refreshed = app.refresh();
+
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    let share = refreshed.ui.shares.first().unwrap();
+    assert_eq!(share.key_status, "repair_needed");
+    assert!(share.repair_needed);
+    assert_eq!(share.missing_key_wrap_count, 1);
+    assert_eq!(
+        share.missing_key_wraps,
+        vec![iris_drive_core::app_key_summary::pubkey_npub(
+            &recipient_pubkey
+        )]
+    );
 }
 
 #[test]

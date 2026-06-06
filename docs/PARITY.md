@@ -95,6 +95,10 @@ CLI, UniFFI app-core, and the local gateway all route share mutations through
 `iris_drive_core::dispatch_share_action`. Surface-specific code may parse UI
 strings and render JSON/records, but create, invite, accept, role, revoke,
 shortcut, and repair state transitions stay in Rust core.
+Read-only share state uses the same core projection path through
+`iris_drive_core::share_action_state` / `SharedFolderView`, including source
+path, entity members, role/write authorization, repair-needed/key-unavailable
+state, missing-wrap detail, and shortcuts.
 
 App-core and CLI status surfaces should expose profile roster actors as
 `app_actors`, `authorized_app_key_count`, `online_app_key_count`,
