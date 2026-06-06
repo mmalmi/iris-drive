@@ -74,6 +74,13 @@ non-root Iris Drive folders. Optional `recipient_npub`, `recipient_name`, and
 recipient evidence and roster ops remain the authority for the member's
 IrisProfile UUID and AppKeys.
 
+When `drive.iris.to` is served through the local Iris Drive gateway/native
+runtime, the share dialog may POST `create_share` and later share-management
+actions to `/api/iris-drive/share-action`. That route dispatches Rust core share
+actions and returns core `SharedFolderView` projections. Regular HTTPS browser
+pages keep using the app handoff URL instead of implementing authority logic in
+web code.
+
 App-core and CLI status surfaces should expose profile roster actors as
 `app_actors`, `authorized_app_key_count`, `online_app_key_count`,
 `app_key_npub`, and `is_current_app_key`. FIPS transport diagnostics may keep

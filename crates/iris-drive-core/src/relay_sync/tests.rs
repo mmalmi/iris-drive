@@ -10,7 +10,10 @@ use crate::nostr_events::{
     build_private_hashtree_root_event,
 };
 use crate::profile::{AppKeyAuthorizationState, Profile};
-use crate::sharing::{ShareRecipient, ShareRole};
+use crate::sharing::{
+    ShareMemberRosterOp, ShareRecipient, ShareRole, build_share_member_roster_op_event,
+    parse_share_member_roster_op_event,
+};
 use hashtree_core::Cid;
 use tempfile::tempdir;
 
@@ -1013,11 +1016,21 @@ fn apply_share_root_event_rejects_revoked_profile_member() {
         10,
     )
     .unwrap();
+    let member_revoke_event = build_share_member_roster_op_event(
+        owner.app_key.keys(),
+        folder.share_id,
+        folder.member_projection().accepted_op_ids,
+        folder.projection().accepted_op_ids,
+        ShareMemberRosterOp::RevokeMember {
+            profile_id: writer.state.profile_id,
+            reason: None,
+        },
+        20,
+    )
+    .unwrap();
     folder
-        .members
-        .get_mut(&writer.state.profile_id.to_string())
-        .expect("writer member exists")
-        .status = crate::ShareMemberStatus::Revoked;
+        .member_ops
+        .push(parse_share_member_roster_op_event(&member_revoke_event).unwrap());
     assert!(
         folder
             .projection()

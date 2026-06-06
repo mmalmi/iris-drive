@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::header::{
-    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, COOKIE, ETAG, HOST,
-    IF_NONE_MATCH, RANGE, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+    ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+    COOKIE, ETAG, HOST, IF_NONE_MATCH, ORIGIN, RANGE, SET_COOKIE, VARY, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
@@ -49,6 +50,7 @@ const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";
 const IRIS_LOCALHOST_SUFFIX: &str = ".iris.localhost";
 const IRIS_LOCAL_SUFFIX: &str = ".iris.local";
 const KEY_COOKIE: &str = "iris_htree_key";
+const SHARE_ACTION_API_PATH: &str = "/api/iris-drive/share-action";
 
 #[derive(Debug, Error)]
 pub enum GatewayError {
@@ -267,8 +269,9 @@ async fn gateway_handler(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
-    match handle_gateway_request(state, method, uri, headers).await {
+    match handle_gateway_request(state, method, uri, headers, body).await {
         Ok(response) => response,
         Err((status, message)) => text_response(status, &message),
     }
@@ -279,7 +282,12 @@ async fn handle_gateway_request(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Response, (StatusCode, String)> {
+    if uri.path() == SHARE_ACTION_API_PATH {
+        return handle_share_action_api(&state, &method, &headers, body.as_ref());
+    }
+
     let request = resolve_gateway_request(&state, &uri, &headers)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -330,6 +338,122 @@ async fn handle_gateway_request(
             serve_file(&state.tree, &cid, options).await
         }
     }
+}
+
+fn handle_share_action_api(
+    state: &GatewayState,
+    method: &Method,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<Response, (StatusCode, String)> {
+    let cors_origin = share_action_cors_origin(headers)?;
+    if !share_action_host_allowed(headers) {
+        return Err((StatusCode::BAD_REQUEST, "invalid share action host".into()));
+    }
+    if method == Method::OPTIONS {
+        return Ok(
+            share_action_response_builder(StatusCode::NO_CONTENT, cors_origin.as_ref())
+                .body(Body::empty())
+                .expect("response"),
+        );
+    }
+    if method != Method::POST {
+        return Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into()));
+    }
+    let action = serde_json::from_slice::<crate::ShareAction>(body)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("share action json: {e}")))?;
+    let result = crate::dispatch_share_action(&state.config_dir, action, gateway_now_seconds())
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    let body = serde_json::to_vec(&result)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(
+        share_action_response_builder(StatusCode::OK, cors_origin.as_ref())
+            .header(CONTENT_TYPE, "application/json")
+            .header(CACHE_CONTROL, "no-store")
+            .body(Body::from(body))
+            .expect("response"),
+    )
+}
+
+fn share_action_response_builder(
+    status: StatusCode,
+    cors_origin: Option<&HeaderValue>,
+) -> http::response::Builder {
+    let mut builder = response_builder(status, false)
+        .header(ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS")
+        .header(ACCESS_CONTROL_ALLOW_HEADERS, "content-type")
+        .header(VARY, "origin");
+    if let Some(origin) = cors_origin {
+        builder = builder.header(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    }
+    builder
+}
+
+fn share_action_host_allowed(headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(normalize_host)
+    else {
+        return false;
+    };
+    is_loopback_host(&host)
+        || host == LOCAL_PORTAL_HOST
+        || host.ends_with(DRIVE_HOST_SUFFIX)
+        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
+        || host.ends_with(IRIS_LOCAL_SUFFIX)
+}
+
+fn share_action_cors_origin(
+    headers: &HeaderMap,
+) -> Result<Option<HeaderValue>, (StatusCode, String)> {
+    let Some(origin) = headers.get(ORIGIN) else {
+        return Ok(None);
+    };
+    let origin_str = origin
+        .to_str()
+        .map_err(|_| (StatusCode::FORBIDDEN, "invalid origin".to_string()))?;
+    let Some(host) = origin_host(origin_str) else {
+        return Err((StatusCode::FORBIDDEN, "invalid origin".into()));
+    };
+    if share_action_origin_host_allowed(&host) {
+        return Ok(Some(origin.clone()));
+    }
+    Err((StatusCode::FORBIDDEN, "origin is not allowed".into()))
+}
+
+fn share_action_origin_host_allowed(host: &str) -> bool {
+    let host = normalize_host(host);
+    is_loopback_host(&host)
+        || host == "drive.iris.to"
+        || host == LOCAL_PORTAL_HOST
+        || host.ends_with(DRIVE_HOST_SUFFIX)
+        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
+        || host.ends_with(IRIS_LOCAL_SUFFIX)
+        || host.ends_with(".htree.localhost")
+}
+
+fn origin_host(origin: &str) -> Option<String> {
+    let rest = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))?;
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.starts_with('[') {
+        return authority.split(']').next().map(|value| format!("{value}]"));
+    }
+    authority
+        .split(':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn gateway_now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 async fn proxy_htree_daemon_request(

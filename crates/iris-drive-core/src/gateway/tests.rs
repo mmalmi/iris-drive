@@ -315,6 +315,95 @@ async fn gateway_rejects_unknown_hosts() {
     server.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn gateway_share_action_creates_share_with_core_projection() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({
+        "type": "create_share",
+        "source_path": "Projects/Alpha",
+        "display_name": "Alpha"
+    })
+    .to_string();
+    let response = http_request(
+        server.local_addr(),
+        "POST",
+        "localhost",
+        "/api/iris-drive/share-action",
+        &[("content-type", "application/json")],
+        body.as_bytes(),
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.contains("\"source_path\":\"Projects/Alpha\""),
+        "{response}"
+    );
+    assert!(
+        response.contains("\"display_name\":\"Alpha\""),
+        "{response}"
+    );
+    assert!(response.contains("\"local_role\":\"admin\""), "{response}");
+
+    let saved = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+    assert_eq!(saved.shared_folders.len(), 1);
+    assert_eq!(saved.shared_folders[0].source_path, "Projects/Alpha");
+
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn gateway_share_action_allows_drive_web_preflight_to_loopback() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let response = http_request(
+        server.local_addr(),
+        "OPTIONS",
+        "127.0.0.1",
+        "/api/iris-drive/share-action",
+        &[
+            ("origin", "https://drive.iris.to"),
+            ("access-control-request-method", "POST"),
+        ],
+        b"",
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 204 No Content"),
+        "{response}"
+    );
+    assert!(
+        response.contains("access-control-allow-origin: https://drive.iris.to"),
+        "{response}"
+    );
+    assert!(
+        response.contains("access-control-allow-methods: POST, OPTIONS"),
+        "{response}"
+    );
+
+    server.shutdown().await.unwrap();
+}
+
 async fn http_get(addr: SocketAddr, host: &str, path: &str) -> String {
     http_request(addr, "GET", host, path, &[], b"").await
 }
