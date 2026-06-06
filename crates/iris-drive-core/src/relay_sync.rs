@@ -425,7 +425,9 @@ pub fn apply_remote_drive_root_event(
     else {
         return Ok(DriveRootApply::NotOurScope);
     };
-    if !crate::shared_folder_app_key_can_write_roots(shared_folder, &app_key_hex) {
+    let authorization =
+        crate::shared_folder_app_key_write_authorization(shared_folder, &app_key_hex);
+    if !authorization.is_authorized() {
         return Ok(DriveRootApply::UnauthorizedAppKey);
     }
     apply_root_to_app_key_roots(

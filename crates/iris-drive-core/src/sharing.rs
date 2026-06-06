@@ -469,6 +469,57 @@ impl SharedFolderKeyStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShareRootWriteAuthorization {
+    Authorized,
+    UnknownAppKey,
+    UnknownMember,
+    PendingMember,
+    RevokedMember,
+    InsufficientShareRole,
+    AppKeyNotActive,
+    NotAnAppKey,
+    AppKeyCannotWriteRoots,
+}
+
+impl ShareRootWriteAuthorization {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Authorized => "authorized",
+            Self::UnknownAppKey => "unknown_app_key",
+            Self::UnknownMember => "unknown_member",
+            Self::PendingMember => "pending_member",
+            Self::RevokedMember => "revoked_member",
+            Self::InsufficientShareRole => "insufficient_share_role",
+            Self::AppKeyNotActive => "app_key_not_active",
+            Self::NotAnAppKey => "not_an_app_key",
+            Self::AppKeyCannotWriteRoots => "app_key_cannot_write_roots",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Authorized => "Authorized",
+            Self::UnknownAppKey => "Unknown AppKey",
+            Self::UnknownMember => "Unknown member",
+            Self::PendingMember => "Pending member",
+            Self::RevokedMember => "Revoked member",
+            Self::InsufficientShareRole => "Insufficient share role",
+            Self::AppKeyNotActive => "AppKey not active",
+            Self::NotAnAppKey => "Not an AppKey",
+            Self::AppKeyCannotWriteRoots => "AppKey cannot write roots",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_authorized(self) -> bool {
+        matches!(self, Self::Authorized)
+    }
+}
+
 #[must_use]
 pub fn shared_folder_views(
     shared_folders: &[SharedFolder],
@@ -615,8 +666,30 @@ fn share_key_status(
 
 #[must_use]
 pub fn shared_folder_app_key_can_write_roots(folder: &SharedFolder, app_pubkey: &str) -> bool {
+    shared_folder_app_key_write_authorization(folder, app_pubkey).is_authorized()
+}
+
+#[must_use]
+pub fn shared_folder_app_key_write_authorization(
+    folder: &SharedFolder,
+    app_pubkey: &str,
+) -> ShareRootWriteAuthorization {
     let projection = folder.projection();
-    shared_folder_app_key_can_write_roots_with_projection(folder, &projection, app_pubkey)
+    shared_folder_app_key_write_authorization_with_projection(folder, &projection, app_pubkey)
+}
+
+#[must_use]
+pub fn shared_folder_authorized_writer_pubkeys(folder: &SharedFolder) -> Vec<String> {
+    let projection = folder.projection();
+    folder
+        .participant_profiles
+        .keys()
+        .filter(|pubkey| {
+            shared_folder_app_key_write_authorization_with_projection(folder, &projection, pubkey)
+                .is_authorized()
+        })
+        .cloned()
+        .collect()
 }
 
 #[must_use]
@@ -854,10 +927,39 @@ fn shared_folder_app_key_can_write_roots_with_projection(
     projection: &IrisProfileRosterProjection,
     app_pubkey: &str,
 ) -> bool {
-    folder
-        .active_member_for_app_key(app_pubkey)
-        .is_some_and(|member| member.role.rank() >= ShareRole::Editor.rank())
-        && projection.can_write_roots(app_pubkey)
+    shared_folder_app_key_write_authorization_with_projection(folder, projection, app_pubkey)
+        .is_authorized()
+}
+
+fn shared_folder_app_key_write_authorization_with_projection(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+    app_pubkey: &str,
+) -> ShareRootWriteAuthorization {
+    let Some(profile_id) = folder.participant_profiles.get(app_pubkey) else {
+        return ShareRootWriteAuthorization::UnknownAppKey;
+    };
+    let Some(member) = folder.members.get(&profile_id.to_string()) else {
+        return ShareRootWriteAuthorization::UnknownMember;
+    };
+    match member.status {
+        ShareMemberStatus::Pending => return ShareRootWriteAuthorization::PendingMember,
+        ShareMemberStatus::Revoked => return ShareRootWriteAuthorization::RevokedMember,
+        ShareMemberStatus::Active => {}
+    }
+    if member.role.rank() < ShareRole::Editor.rank() {
+        return ShareRootWriteAuthorization::InsufficientShareRole;
+    }
+    let Some(facet) = projection.active_facets.get(app_pubkey) else {
+        return ShareRootWriteAuthorization::AppKeyNotActive;
+    };
+    if !facet.is_app_key() {
+        return ShareRootWriteAuthorization::NotAnAppKey;
+    }
+    if !facet.capabilities.can_write_roots {
+        return ShareRootWriteAuthorization::AppKeyCannotWriteRoots;
+    }
+    ShareRootWriteAuthorization::Authorized
 }
 
 fn shared_folder_app_key_can_admin_with_projection(
@@ -1818,6 +1920,152 @@ mod tests {
         assert_eq!(ShareMemberStatus::Active.label(), "Active");
         assert_eq!(ShareMemberStatus::Revoked.as_str(), "revoked");
         assert_eq!(ShareMemberStatus::Revoked.label(), "Revoked");
+
+        assert_eq!(
+            ShareRootWriteAuthorization::Authorized.as_str(),
+            "authorized"
+        );
+        assert_eq!(
+            ShareRootWriteAuthorization::Authorized.label(),
+            "Authorized"
+        );
+        assert!(ShareRootWriteAuthorization::Authorized.is_authorized());
+        assert_eq!(
+            ShareRootWriteAuthorization::InsufficientShareRole.as_str(),
+            "insufficient_share_role"
+        );
+        assert_eq!(
+            ShareRootWriteAuthorization::InsufficientShareRole.label(),
+            "Insufficient share role"
+        );
+        assert!(!ShareRootWriteAuthorization::RevokedMember.is_authorized());
+    }
+
+    #[test]
+    fn share_root_write_authorization_explains_profile_member_and_facet_state() {
+        let owner_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let reader_keys = Keys::generate();
+        let reader_pubkey = reader_keys.public_key().to_hex();
+        let reader_profile_id = IrisProfileId::new_v4();
+        let folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".into()),
+            vec![ShareRecipient {
+                profile_id: reader_profile_id,
+                app_pubkey: reader_pubkey.clone(),
+                role: ShareRole::Reader,
+                label: Some("Reader".into()),
+                representative_npub_hint: None,
+                display_name: Some("Reader".into()),
+            }],
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &owner_pubkey),
+            ShareRootWriteAuthorization::Authorized
+        );
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &reader_pubkey),
+            ShareRootWriteAuthorization::InsufficientShareRole
+        );
+        assert_eq!(
+            shared_folder_authorized_writer_pubkeys(&folder),
+            vec![owner_pubkey.clone()]
+        );
+
+        let stranger_pubkey = Keys::generate().public_key().to_hex();
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &stranger_pubkey),
+            ShareRootWriteAuthorization::UnknownAppKey
+        );
+
+        let mut inconsistent = folder.clone();
+        inconsistent
+            .participant_profiles
+            .insert(stranger_pubkey.clone(), IrisProfileId::new_v4());
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&inconsistent, &stranger_pubkey),
+            ShareRootWriteAuthorization::UnknownMember
+        );
+
+        let mut pending = folder.clone();
+        pending
+            .members
+            .get_mut(&reader_profile_id.to_string())
+            .unwrap()
+            .status = ShareMemberStatus::Pending;
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&pending, &reader_pubkey),
+            ShareRootWriteAuthorization::PendingMember
+        );
+
+        let mut revoked = folder.clone();
+        revoked
+            .members
+            .get_mut(&reader_profile_id.to_string())
+            .unwrap()
+            .status = ShareMemberStatus::Revoked;
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&revoked, &reader_pubkey),
+            ShareRootWriteAuthorization::RevokedMember
+        );
+
+        let mut promoted_reader = folder.clone();
+        promoted_reader
+            .members
+            .get_mut(&reader_profile_id.to_string())
+            .unwrap()
+            .role = ShareRole::Editor;
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&promoted_reader, &reader_pubkey),
+            ShareRootWriteAuthorization::AppKeyCannotWriteRoots
+        );
+
+        let mut missing_facet = promoted_reader.clone();
+        missing_facet.roster_ops.clear();
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&missing_facet, &reader_pubkey),
+            ShareRootWriteAuthorization::AppKeyNotActive
+        );
+
+        let social_keys = Keys::generate();
+        let social_pubkey = social_keys.public_key().to_hex();
+        let social_profile_id = IrisProfileId::new_v4();
+        let mut social_folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Social",
+            "Social",
+            Some("Owner".into()),
+            Vec::new(),
+            20,
+        )
+        .unwrap();
+        append_profile_facet(
+            &mut social_folder.roster_ops,
+            &owner_keys,
+            social_folder.share_id,
+            IrisProfileFacet::social_profile(social_pubkey.clone(), 21, None),
+            21,
+        );
+        social_folder.members.insert(
+            social_profile_id.to_string(),
+            ShareMember::active(social_profile_id, ShareRole::Editor, None, None),
+        );
+        social_folder
+            .participant_profiles
+            .insert(social_pubkey.clone(), social_profile_id);
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&social_folder, &social_pubkey),
+            ShareRootWriteAuthorization::NotAnAppKey
+        );
     }
 
     fn folder_with_recipient_missing_wrap() -> (SharedFolder, String, String) {

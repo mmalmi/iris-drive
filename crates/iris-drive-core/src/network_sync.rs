@@ -136,13 +136,7 @@ pub async fn sync_once_with_fips(
     .context("fetching drive roots")?;
     let mut drive_root_events = drive_root_events;
     for folder in &config.shared_folders {
-        let share_writers = folder
-            .projection()
-            .active_facets
-            .values()
-            .filter(|facet| facet.capabilities.can_write_roots)
-            .map(|facet| facet.pubkey.clone())
-            .collect::<Vec<_>>();
+        let share_writers = crate::shared_folder_authorized_writer_pubkeys(folder);
         let mut share_events = relay_sync::fetch_drive_roots(
             &client,
             &folder.share_id.to_string(),
