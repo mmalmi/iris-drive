@@ -2483,6 +2483,8 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         role_label: share.local_role.label().to_owned(),
         key_status: share.key_status.as_str().to_owned(),
         key_status_label: share.key_status.label().to_owned(),
+        write_authorization: share.write_authorization.as_str().to_owned(),
+        write_authorization_label: share.write_authorization.label().to_owned(),
         can_write: share.can_write,
         can_admin: share.can_admin,
         current_key_epoch: share.current_key_epoch,

@@ -186,6 +186,8 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert_eq!(share.role_label, "Admin");
     assert_eq!(share.key_status, "available");
     assert_eq!(share.key_status_label, "Available");
+    assert_eq!(share.write_authorization, "authorized");
+    assert_eq!(share.write_authorization_label, "Authorized");
     assert!(share.can_write);
     assert!(share.can_admin);
     assert_eq!(share.current_key_epoch, Some(1));

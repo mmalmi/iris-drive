@@ -183,6 +183,8 @@ class IrisDriveAndroidGuiFlowTest {
             roleLabel = "Admin",
             keyStatus = "available",
             keyStatusLabel = "Available",
+            writeAuthorization = "authorized",
+            writeAuthorizationLabel = "Authorized",
             canWrite = true,
             canAdmin = true,
             currentKeyEpoch = 1,

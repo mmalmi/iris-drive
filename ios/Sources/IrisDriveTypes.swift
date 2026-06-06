@@ -43,6 +43,8 @@ struct IrisDriveShare: Identifiable, Equatable {
     var roleLabel: String
     var keyStatus: String
     var keyStatusLabel: String
+    var writeAuthorization: String
+    var writeAuthorizationLabel: String
     var canWrite: Bool
     var canAdmin: Bool
     var currentKeyEpoch: UInt64?

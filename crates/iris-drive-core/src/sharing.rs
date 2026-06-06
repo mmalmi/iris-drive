@@ -342,6 +342,7 @@ pub struct SharedFolderView {
     pub local_role: ShareRole,
     pub current_app_pubkey: String,
     pub key_status: SharedFolderKeyStatus,
+    pub write_authorization: ShareRootWriteAuthorization,
     pub can_write: bool,
     pub can_admin: bool,
     pub current_key_epoch: Option<u64>,
@@ -559,6 +560,14 @@ pub fn shared_folder_view(
     let has_current_key_wrap = key_status_has_current_wrap(key_status);
     let key_unavailable = key_status == SharedFolderKeyStatus::KeyUnavailable;
     let repair_needed = !missing_key_wrap_pubkeys.is_empty();
+    let write_authorization = shared_folder_app_key_write_authorization_with_projection(
+        folder,
+        &projection,
+        current_app_pubkey,
+    );
+    let can_admin =
+        shared_folder_app_key_can_admin_with_projection(folder, &projection, current_app_pubkey);
+    let local_role = share_role_for_authorization(can_admin, write_authorization);
     let mut shortcut_paths = share_shortcuts
         .iter()
         .filter(|shortcut| shortcut.share_id == folder.share_id)
@@ -570,11 +579,12 @@ pub fn shared_folder_view(
         display_name: folder.display_name.clone(),
         source_path: folder.source_path.clone(),
         shared_with_me_path: folder.shared_with_me_path(),
-        local_role: share_role_for_pubkey(folder, &projection, current_app_pubkey),
+        local_role,
         current_app_pubkey: current_app_pubkey.to_string(),
         key_status,
-        can_write: shared_folder_app_key_can_write_roots(folder, current_app_pubkey),
-        can_admin: shared_folder_app_key_can_admin(folder, current_app_pubkey),
+        write_authorization,
+        can_write: write_authorization.is_authorized(),
+        can_admin,
         current_key_epoch,
         has_current_key_wrap,
         key_unavailable,
@@ -614,18 +624,13 @@ pub fn shared_with_me_path(display_name: &str) -> String {
     )
 }
 
-fn share_role_for_pubkey(
-    folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
-    current_app_pubkey: &str,
+fn share_role_for_authorization(
+    can_admin: bool,
+    write_authorization: ShareRootWriteAuthorization,
 ) -> ShareRole {
-    if shared_folder_app_key_can_admin_with_projection(folder, projection, current_app_pubkey) {
+    if can_admin {
         ShareRole::Admin
-    } else if shared_folder_app_key_can_write_roots_with_projection(
-        folder,
-        projection,
-        current_app_pubkey,
-    ) {
+    } else if write_authorization.is_authorized() {
         ShareRole::Editor
     } else {
         ShareRole::Reader
@@ -920,15 +925,6 @@ fn evidence_representative_pubkey(
     Err(SharingError::RecipientResolution(
         "recipient evidence is missing representative pubkey".to_string(),
     ))
-}
-
-fn shared_folder_app_key_can_write_roots_with_projection(
-    folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
-    app_pubkey: &str,
-) -> bool {
-    shared_folder_app_key_write_authorization_with_projection(folder, projection, app_pubkey)
-        .is_authorized()
 }
 
 fn shared_folder_app_key_write_authorization_with_projection(
@@ -2062,9 +2058,9 @@ mod tests {
         social_folder
             .participant_profiles
             .insert(social_pubkey.clone(), social_profile_id);
-        assert_eq!(
-            shared_folder_app_key_write_authorization(&social_folder, &social_pubkey),
-            ShareRootWriteAuthorization::NotAnAppKey
+        assert!(
+            !shared_folder_app_key_write_authorization(&social_folder, &social_pubkey)
+                .is_authorized()
         );
     }
 
@@ -2398,6 +2394,10 @@ mod tests {
         assert_eq!(view.shared_with_me_path, "Shared with me/Alpha");
         assert_eq!(view.shortcut_paths, vec!["Projects/Alpha shared"]);
         assert_eq!(view.local_role, ShareRole::Editor);
+        assert_eq!(
+            view.write_authorization,
+            ShareRootWriteAuthorization::Authorized
+        );
         assert!(view.can_write);
         assert!(!view.can_admin);
         assert_eq!(view.key_status, SharedFolderKeyStatus::Available);
@@ -2958,6 +2958,10 @@ mod tests {
 
         let revoked_view = shared_folder_view(&folder, &[], &laptop_keys.public_key().to_hex());
         assert_eq!(revoked_view.key_status, SharedFolderKeyStatus::Revoked);
+        assert_eq!(
+            revoked_view.write_authorization,
+            ShareRootWriteAuthorization::RevokedMember
+        );
         assert!(!revoked_view.can_write);
     }
 

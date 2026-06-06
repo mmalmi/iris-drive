@@ -1044,6 +1044,8 @@ final class IrisDriveMobileModel: ObservableObject {
                 roleLabel: share.roleLabel,
                 keyStatus: share.keyStatus,
                 keyStatusLabel: share.keyStatusLabel,
+                writeAuthorization: share.writeAuthorization,
+                writeAuthorizationLabel: share.writeAuthorizationLabel,
                 canWrite: share.canWrite,
                 canAdmin: share.canAdmin,
                 currentKeyEpoch: share.currentKeyEpoch,

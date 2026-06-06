@@ -419,6 +419,8 @@ fn share_view_json(view: &iris_drive_core::SharedFolderView) -> Value {
         "local_role_label": view.local_role.label(),
         "key_status": view.key_status.as_str(),
         "key_status_label": view.key_status.label(),
+        "write_authorization": view.write_authorization.as_str(),
+        "write_authorization_label": view.write_authorization.label(),
         "can_write": view.can_write,
         "can_admin": view.can_admin,
         "current_key_epoch": view.current_key_epoch,
@@ -639,6 +641,8 @@ mod tests {
         assert_eq!(share["local_role_label"], "Admin");
         assert_eq!(share["key_status"], "available");
         assert_eq!(share["key_status_label"], "Available");
+        assert_eq!(share["write_authorization"], "authorized");
+        assert_eq!(share["write_authorization_label"], "Authorized");
 
         let member = share["members"]
             .as_array()

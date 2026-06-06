@@ -220,6 +220,8 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
     let roleLabel: String
     let keyStatus: String
     let keyStatusLabel: String
+    let writeAuthorization: String
+    let writeAuthorizationLabel: String
     let canWrite: Bool
     let canAdmin: Bool
     let currentKeyEpoch: Int?
@@ -241,6 +243,8 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
         roleLabel = json["role_label"] as? String ?? ""
         keyStatus = json["key_status"] as? String ?? ""
         keyStatusLabel = json["key_status_label"] as? String ?? ""
+        writeAuthorization = json["write_authorization"] as? String ?? ""
+        writeAuthorizationLabel = json["write_authorization_label"] as? String ?? ""
         canWrite = json["can_write"] as? Bool ?? false
         canAdmin = json["can_admin"] as? Bool ?? false
         currentKeyEpoch = (json["current_key_epoch"] as? NSNumber)?.intValue

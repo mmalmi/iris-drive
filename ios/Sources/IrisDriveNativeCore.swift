@@ -435,6 +435,8 @@ struct NativeShare: Codable {
     var roleLabel: String
     var keyStatus: String
     var keyStatusLabel: String
+    var writeAuthorization: String
+    var writeAuthorizationLabel: String
     var canWrite: Bool
     var canAdmin: Bool
     var currentKeyEpoch: UInt64?
@@ -455,6 +457,8 @@ struct NativeShare: Codable {
         case roleLabel = "role_label"
         case keyStatus = "key_status"
         case keyStatusLabel = "key_status_label"
+        case writeAuthorization = "write_authorization"
+        case writeAuthorizationLabel = "write_authorization_label"
         case canWrite = "can_write"
         case canAdmin = "can_admin"
         case currentKeyEpoch = "current_key_epoch"

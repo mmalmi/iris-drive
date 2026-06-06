@@ -46,6 +46,8 @@ pub struct UiShare {
     pub role_label: String,
     pub key_status: String,
     pub key_status_label: String,
+    pub write_authorization: String,
+    pub write_authorization_label: String,
     pub can_write: bool,
     pub can_admin: bool,
     pub current_key_epoch: Option<u64>,
