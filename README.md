@@ -89,8 +89,8 @@ just run-cli backups sync
 Native apps expose the same share operations from the **Shares** tab: create a
 shared folder, invite an IrisProfile member, accept an invite, revoke a member,
 add a shortcut, and repair missing key wraps. The UI shows people/profile
-members first; AppKeys only appear when an admin is entering recipient key
-material for an invite or importing a signed recipient-evidence bundle.
+members first; invite dialogs prefer signed recipient-evidence JSON and keep
+direct AppKey entry as an admin fallback.
 
 Share invites include a signed roster checkpoint that summarizes the current
 entity members, compact roster heads, key epoch, and missing-wrap state. The

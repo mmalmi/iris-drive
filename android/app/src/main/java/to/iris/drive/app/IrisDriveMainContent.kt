@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -79,6 +80,7 @@ internal fun AuthenticatedContent(
     onCheckBackups: (String) -> Unit,
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -122,6 +124,7 @@ internal fun AuthenticatedContent(
             onCopyText = onCopyText,
             onCreateShare = onCreateShare,
             onInviteShareMember = onInviteShareMember,
+            onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
             onAcceptShareInvite = onAcceptShareInvite,
             onRevokeShareMember = onRevokeShareMember,
             onAddShareShortcut = onAddShareShortcut,
@@ -272,6 +275,7 @@ private fun SharesContent(
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -294,6 +298,7 @@ private fun SharesContent(
                 onCopyText = onCopyText,
                 onCreateShare = onCreateShare,
                 onInviteShareMember = onInviteShareMember,
+                onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
                 onAddShareShortcut = onAddShareShortcut,
@@ -562,6 +567,7 @@ private fun SharesPanel(
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
+    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -577,8 +583,12 @@ private fun SharesPanel(
         InviteShareMemberDialog(
             share = share,
             onDismiss = { inviteTarget = null },
-            onInvite = { profileId, appKey, role, npubHint, displayName, label ->
-                onInviteShareMember(share.shareId, profileId, appKey, role, npubHint, displayName, label)
+            onInvite = { evidenceJson, profileId, appKey, role, npubHint, displayName, label ->
+                if (evidenceJson.isNotBlank()) {
+                    onInviteShareMemberFromEvidence(share.shareId, evidenceJson, role, displayName)
+                } else {
+                    onInviteShareMember(share.shareId, profileId, appKey, role, npubHint, displayName, label)
+                }
                 inviteTarget = null
             },
         )
@@ -683,8 +693,9 @@ private fun SharesPanel(
 private fun InviteShareMemberDialog(
     share: ShareState,
     onDismiss: () -> Unit,
-    onInvite: (String, String, String, String, String, String) -> Unit,
+    onInvite: (String, String, String, String, String, String, String) -> Unit,
 ) {
+    var evidenceJson by remember { mutableStateOf("") }
     var profileId by remember { mutableStateOf("") }
     var appKey by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("reader") }
@@ -697,6 +708,17 @@ private fun InviteShareMemberDialog(
         title = { Text("Invite to ${displayShareName(share)}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = evidenceJson,
+                    onValueChange = { evidenceJson = it },
+                    label = { Text("Recipient evidence JSON") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(112.dp)
+                        .testTag("shareRecipientEvidenceInput"),
+                    minLines = 3,
+                    maxLines = 5,
+                )
                 OutlinedTextField(
                     value = profileId,
                     onValueChange = { profileId = it },
@@ -738,8 +760,19 @@ private fun InviteShareMemberDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onInvite(profileId, appKey, role, npubHint, displayName, label) },
-                enabled = profileId.isNotBlank() && appKey.isNotBlank(),
+                modifier = Modifier.testTag("shareInviteConfirm"),
+                onClick = {
+                    onInvite(
+                        evidenceJson,
+                        profileId,
+                        appKey,
+                        role,
+                        npubHint,
+                        displayName,
+                        label,
+                    )
+                },
+                enabled = evidenceJson.isNotBlank() || (profileId.isNotBlank() && appKey.isNotBlank()),
             ) {
                 Text("Invite")
             }

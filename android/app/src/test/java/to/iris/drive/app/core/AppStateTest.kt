@@ -7,6 +7,24 @@ import org.json.JSONObject
 
 class AppStateTest {
     @Test
+    fun shareRecipientEvidenceActionSerializesForAppCore() {
+        val action = JSONObject(
+            NativeActions.inviteShareMemberFromEvidence(
+                shareId = "share-1",
+                evidenceJson = """{"profile_id":"profile-1"}""",
+                role = "editor",
+                displayName = "Alice",
+            ),
+        )
+
+        assertEquals("invite_share_member_from_evidence", action.getString("type"))
+        assertEquals("share-1", action.getString("share_id"))
+        assertEquals("""{"profile_id":"profile-1"}""", action.getString("evidence_json"))
+        assertEquals("editor", action.getString("role"))
+        assertEquals("Alice", action.getString("display_name"))
+    }
+
+    @Test
     fun appCoreLabelsAreParsedFromNativeState() {
         val state = AppState.fromJson(
             """
@@ -145,6 +163,7 @@ class AppStateTest {
     fun deviceAdminStateFeedsDerivedStats() {
         val state = AppState(
             profile = ProfileState(
+                profileId = "profile-a",
                 currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
                 appKeyLabel = "Pixel",
@@ -215,6 +234,7 @@ class AppStateTest {
     fun pendingApprovalDoesNotCompleteSetup() {
         val state = AppState(
             profile = ProfileState(
+                profileId = "profile-a",
                 currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
                 appKeyLabel = "Pixel",
@@ -237,6 +257,7 @@ class AppStateTest {
     fun revokedDeviceDoesNotCompleteSetup() {
         val state = AppState(
             profile = ProfileState(
+                profileId = "profile-a",
                 currentAppKeyNpub = "app-key",
                 devicePubkey = "device-a",
                 appKeyLabel = "Pixel",

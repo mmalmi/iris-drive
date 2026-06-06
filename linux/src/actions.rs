@@ -150,6 +150,16 @@ pub(crate) fn show_invite_share_member_dialog(
     title.set_xalign(0.0);
     body.append(&title);
 
+    let evidence_label = gtk::Label::new(Some("Recipient evidence JSON"));
+    evidence_label.set_xalign(0.0);
+    evidence_label.add_css_class("iris-muted");
+    let evidence = gtk::TextView::new();
+    evidence.set_monospace(true);
+    evidence.set_wrap_mode(gtk::WrapMode::WordChar);
+    evidence.set_size_request(-1, 112);
+    body.append(&evidence_label);
+    body.append(&evidence);
+
     let profile_id = setup_entry("IrisProfile UUID");
     let app_key = setup_entry("Recipient AppKey");
     let npub_hint = setup_entry("Representative npub");
@@ -182,30 +192,43 @@ pub(crate) fn show_invite_share_member_dialog(
         let dialog = dialog.clone();
         let share_id = share_id.clone();
         invite.connect_clicked(move |_| {
-            let profile_id = profile_id.text().trim().to_string();
-            let app_key = app_key.text().trim().to_string();
-            if profile_id.is_empty() || app_key.is_empty() {
-                model
-                    .ui
-                    .notice
-                    .set_text("IrisProfile UUID and AppKey are required");
-                return;
-            }
+            let buffer = evidence.buffer();
+            let (start, end) = buffer.bounds();
+            let evidence_json = buffer.text(&start, &end, true).trim().to_string();
             let role = match role.selected() {
                 1 => "editor",
                 2 => "admin",
                 _ => "reader",
             }
             .to_string();
-            match dispatch_desktop_action(NativeAppAction::InviteShareMember {
-                share_id: share_id.clone(),
-                profile_id,
-                app_key,
-                role,
-                representative_npub_hint: npub_hint.text().trim().to_string(),
-                display_name: display_name.text().trim().to_string(),
-                label: label.text().trim().to_string(),
-            }) {
+            let result = if evidence_json.is_empty() {
+                let profile_id = profile_id.text().trim().to_string();
+                let app_key = app_key.text().trim().to_string();
+                if profile_id.is_empty() || app_key.is_empty() {
+                    model
+                        .ui
+                        .notice
+                        .set_text("IrisProfile UUID and AppKey are required");
+                    return;
+                }
+                dispatch_desktop_action(NativeAppAction::InviteShareMember {
+                    share_id: share_id.clone(),
+                    profile_id,
+                    app_key,
+                    role,
+                    representative_npub_hint: npub_hint.text().trim().to_string(),
+                    display_name: display_name.text().trim().to_string(),
+                    label: label.text().trim().to_string(),
+                })
+            } else {
+                dispatch_desktop_action(NativeAppAction::InviteShareMemberFromEvidence {
+                    share_id: share_id.clone(),
+                    evidence_json,
+                    role,
+                    display_name: display_name.text().trim().to_string(),
+                })
+            };
+            match result {
                 Ok(state) => {
                     if state.ui.last_share_invite.is_empty() {
                         model.ui.notice.set_text("Share invite created");

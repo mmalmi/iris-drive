@@ -1424,6 +1424,7 @@ private struct InviteShareMemberSheet: View {
     let controller: AppDelegate
     let share: IrisDriveShareStatus
     @Environment(\.dismiss) private var dismiss
+    @State private var evidenceJson = ""
     @State private var profileId = ""
     @State private var appKey = ""
     @State private var role = "reader"
@@ -1435,6 +1436,16 @@ private struct InviteShareMemberSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Invite to \(shareDisplayName(share))")
                 .font(.title3.weight(.semibold))
+            Text("Recipient evidence JSON")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $evidenceJson)
+                .font(.system(.body, design: .monospaced))
+                .frame(height: 120)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: .separatorColor))
+                )
             TextField("IrisProfile UUID", text: $profileId)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
@@ -1460,21 +1471,33 @@ private struct InviteShareMemberSheet: View {
                     dismiss()
                 }
                 Button("Invite") {
-                    controller.inviteShareMember(
-                        shareId: share.shareId,
-                        profileId: profileId,
-                        appKey: appKey,
-                        role: role,
-                        representativeNpubHint: representativeNpubHint,
-                        displayName: displayName,
-                        label: label
-                    )
+                    if evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        controller.inviteShareMember(
+                            shareId: share.shareId,
+                            profileId: profileId,
+                            appKey: appKey,
+                            role: role,
+                            representativeNpubHint: representativeNpubHint,
+                            displayName: displayName,
+                            label: label
+                        )
+                    } else {
+                        controller.inviteShareMemberFromEvidence(
+                            shareId: share.shareId,
+                            evidenceJson: evidenceJson,
+                            role: role,
+                            displayName: displayName
+                        )
+                    }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                        (
+                            profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
                 )
             }
         }

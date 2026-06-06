@@ -367,6 +367,20 @@ internal object NativeActions {
             .put("label", label)
             .toString()
 
+    fun inviteShareMemberFromEvidence(
+        shareId: String,
+        evidenceJson: String,
+        role: String,
+        displayName: String,
+    ): String =
+        JSONObject()
+            .put("type", "invite_share_member_from_evidence")
+            .put("share_id", shareId)
+            .put("evidence_json", evidenceJson)
+            .put("role", role)
+            .put("display_name", displayName)
+            .toString()
+
     fun acceptShareInvite(invite: String): String =
         JSONObject()
             .put("type", "accept_share_invite")

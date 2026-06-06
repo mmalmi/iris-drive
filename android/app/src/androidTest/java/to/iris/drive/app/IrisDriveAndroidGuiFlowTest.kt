@@ -41,6 +41,7 @@ import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.RelayStatus
 import to.iris.drive.app.core.RecoverySecretExport
+import to.iris.drive.app.core.ShareState
 import to.iris.drive.app.core.SyncState
 import to.iris.drive.app.provider.IrisDriveDocumentStore
 
@@ -168,6 +169,64 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("manualDeviceAdd").assertIsNotEnabled()
         dismissSoftKeyboard()
+    }
+
+    @Test
+    fun shareInviteDialogDispatchesRecipientEvidence() {
+        val evidenceInvites = mutableListOf<List<String>>()
+        var directInviteCount = 0
+        val share = ShareState(
+            shareId = "123e4567-e89b-42d3-a456-426614174000",
+            displayName = "Alpha",
+            sharedWithMePath = "Shared with me/Alpha",
+            role = "admin",
+            roleLabel = "Admin",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            canWrite = true,
+            canAdmin = true,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 1,
+            appKeyCount = 1,
+            members = emptyList(),
+            shortcutPaths = emptyList(),
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onInviteShareMember = { _, _, _, _, _, _, _ -> directInviteCount += 1 },
+            onInviteShareMemberFromEvidence = { shareId, evidenceJson, role, displayName ->
+                evidenceInvites += listOf(shareId, evidenceJson, role, displayName)
+            },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithTag("shareRecipientEvidenceInput")
+            .performTextInput("""{"profile_id":"profile-1"}""")
+        compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
+
+        assertEquals(0, directInviteCount)
+        assertEquals(
+            listOf(
+                listOf(
+                    share.shareId,
+                    """{"profile_id":"profile-1"}""",
+                    "reader",
+                    "",
+                ),
+            ),
+            evidenceInvites,
+        )
     }
 
     @Test
@@ -488,6 +547,15 @@ class IrisDriveAndroidGuiFlowTest {
         onRemoveBlossomServer: (String) -> Unit = {},
         onSyncBackups: (String) -> Unit = {},
         onCheckBackups: (String) -> Unit = {},
+        onCreateShare: (String, String) -> Unit = { _, _ -> },
+        onInviteShareMember: (String, String, String, String, String, String, String) -> Unit =
+            { _, _, _, _, _, _, _ -> },
+        onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit =
+            { _, _, _, _ -> },
+        onAcceptShareInvite: (String) -> Unit = {},
+        onRevokeShareMember: (String, String) -> Unit = { _, _ -> },
+        onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
+        onRepairShareWraps: (String) -> Unit = {},
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
         compose.setContent {
@@ -517,6 +585,13 @@ class IrisDriveAndroidGuiFlowTest {
                 onRemoveBlossomServer = onRemoveBlossomServer,
                 onSyncBackups = onSyncBackups,
                 onCheckBackups = onCheckBackups,
+                onCreateShare = onCreateShare,
+                onInviteShareMember = onInviteShareMember,
+                onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+                onAcceptShareInvite = onAcceptShareInvite,
+                onRevokeShareMember = onRevokeShareMember,
+                onAddShareShortcut = onAddShareShortcut,
+                onRepairShareWraps = onRepairShareWraps,
                 onStartSync = {},
                 onStopSync = {},
             )
@@ -588,6 +663,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     private fun profileState() = to.iris.drive.app.core.ProfileState(
+        profileId = "profile-a",
         currentAppKeyNpub = "app-key",
         devicePubkey = "device-a",
         appKeyLabel = "Pixel",

@@ -752,6 +752,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func inviteShareMemberFromEvidence(
+        shareId: String,
+        evidenceJson: String,
+        role: String,
+        displayName: String
+    ) {
+        let evidenceJson = evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !evidenceJson.isEmpty else {
+            updateStatus("Recipient evidence required")
+            return
+        }
+        dispatchNativeAction(
+            [
+                "type": "invite_share_member_from_evidence",
+                "share_id": shareId,
+                "evidence_json": evidenceJson,
+                "role": role,
+                "display_name": displayName,
+            ],
+            progress: "Creating share invite",
+            success: "Share invite created"
+        ) {
+            if let invite = IrisDriveStatus.shared.lastShareInviteURL {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(invite, forType: .string)
+            }
+        }
+    }
+
     func revokeShareMember(shareId: String, profileId: String) {
         dispatchNativeAction(
             [

@@ -150,6 +150,20 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onInviteShareMemberFromEvidence = { shareId, evidenceJson, role, displayName ->
+                    dispatch(
+                        NativeActions.inviteShareMemberFromEvidence(
+                            shareId = shareId,
+                            evidenceJson = evidenceJson,
+                            role = role,
+                            displayName = displayName,
+                        ),
+                    ) { state ->
+                        if (state.lastShareInvite.isNotBlank()) {
+                            copyToClipboard("Share invite", state.lastShareInvite)
+                        }
+                    }
+                },
                 onAcceptShareInvite = { invite ->
                     dispatch(NativeActions.acceptShareInvite(invite))
                 },

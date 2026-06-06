@@ -1035,6 +1035,7 @@ private struct InviteShareMemberSheet: View {
     @ObservedObject var model: IrisDriveMobileModel
     let share: IrisDriveShare
     @Environment(\.dismiss) private var dismiss
+    @State private var evidenceJson = ""
     @State private var profileId = ""
     @State private var appKey = ""
     @State private var role = "reader"
@@ -1045,6 +1046,13 @@ private struct InviteShareMemberSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Recipient Evidence") {
+                    TextEditor(text: $evidenceJson)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 120)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
                 Section("Member") {
                     TextField("IrisProfile UUID", text: $profileId)
                         .textInputAutocapitalization(.never)
@@ -1073,20 +1081,32 @@ private struct InviteShareMemberSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Invite") {
-                        model.inviteShareMember(
-                            shareId: share.shareId,
-                            profileId: profileId,
-                            appKey: appKey,
-                            role: role,
-                            representativeNpubHint: representativeNpubHint,
-                            displayName: displayName,
-                            label: label
-                        )
+                        if evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            model.inviteShareMember(
+                                shareId: share.shareId,
+                                profileId: profileId,
+                                appKey: appKey,
+                                role: role,
+                                representativeNpubHint: representativeNpubHint,
+                                displayName: displayName,
+                                label: label
+                            )
+                        } else {
+                            model.inviteShareMemberFromEvidence(
+                                shareId: share.shareId,
+                                evidenceJson: evidenceJson,
+                                role: role,
+                                displayName: displayName
+                            )
+                        }
                         dismiss()
                     }
                     .disabled(
-                        profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                            appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                            (
+                                profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                    appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            )
                     )
                 }
             }

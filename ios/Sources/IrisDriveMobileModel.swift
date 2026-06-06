@@ -815,6 +815,24 @@ final class IrisDriveMobileModel: ObservableObject {
         copyLastShareInvite()
     }
 
+    func inviteShareMemberFromEvidence(
+        shareId: String,
+        evidenceJson: String,
+        role: String,
+        displayName: String
+    ) {
+        let evidenceJson = evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !evidenceJson.isEmpty else { return }
+        dispatch([
+            "type": "invite_share_member_from_evidence",
+            "share_id": shareId,
+            "evidence_json": evidenceJson,
+            "role": role,
+            "display_name": displayName,
+        ])
+        copyLastShareInvite()
+    }
+
     func revokeShareMember(shareId: String, profileId: String) {
         dispatch([
             "type": "revoke_share_member",

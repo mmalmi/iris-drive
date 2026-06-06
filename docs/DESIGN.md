@@ -214,8 +214,9 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   come later; the first UX remains one Iris Drive.
 - **GUI parity**: native control panels render app-core `UiShare` and
   `UiShareMember` state from the **Shares** tab and dispatch app-core actions
-  for create/invite/accept/revoke/shortcut/repair. They do not reimplement share
-  authority or key-wrap validation.
+  for create/invite/accept/revoke/shortcut/repair. Invite dialogs accept signed
+  recipient evidence before falling back to direct AppKey entry. They do not
+  reimplement share authority or key-wrap validation.
 - **Revoke / leave**: share admins revoke an IrisProfile member, tombstone all
   known AppKeys for that profile in the share roster, rotate the share epoch,
   and publish the new key only to remaining active members. Prior content can't
