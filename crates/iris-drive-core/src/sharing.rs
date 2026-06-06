@@ -1342,6 +1342,7 @@ pub fn validate_share_roster_checkpoint(
     folder: &SharedFolder,
     checkpoint: &SignedShareRosterCheckpoint,
 ) -> Result<(), SharingError> {
+    validate_shared_folder_roster_ops(folder)?;
     validate_shared_folder_member_roster_ops(folder)?;
     let event = Event::from_json(&checkpoint.event_json)
         .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
@@ -1367,6 +1368,30 @@ pub fn validate_share_roster_checkpoint(
         return Err(SharingError::RosterCheckpoint(
             "checkpoint does not match share roster projection".to_string(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_shared_folder_roster_ops(folder: &SharedFolder) -> Result<(), SharingError> {
+    for op in &folder.roster_ops {
+        validate_signed_iris_profile_roster_op(op)?;
+    }
+    Ok(())
+}
+
+fn validate_signed_iris_profile_roster_op(
+    signed: &SignedIrisProfileRosterOp,
+) -> Result<(), SharingError> {
+    let event = Event::from_json(&signed.event_json)
+        .map_err(|error| SharingError::IrisProfile(IrisProfileError::Event(error.to_string())))?;
+    let parsed = parse_iris_profile_roster_op_event(&event).map_err(SharingError::from)?;
+    if parsed.op_id != signed.op_id
+        || parsed.signer_pubkey != signed.signer_pubkey
+        || parsed.content != signed.content
+    {
+        return Err(SharingError::IrisProfile(IrisProfileError::Event(
+            "roster op event_json does not match op fields".to_string(),
+        )));
     }
     Ok(())
 }
@@ -2376,6 +2401,7 @@ pub fn parse_share_invite(input: &str) -> Result<ShareInviteBundle, SharingError
             bundle.schema
         )));
     }
+    validate_shared_folder_roster_ops(&bundle.shared_folder)?;
     validate_shared_folder_member_roster_ops(&bundle.shared_folder)?;
     if let Some(checkpoint) = &bundle.roster_checkpoint {
         validate_share_roster_checkpoint(&bundle.shared_folder, checkpoint)?;
@@ -4334,6 +4360,46 @@ mod tests {
         assert!(matches!(
             parse_share_invite(&tampered),
             Err(SharingError::RosterCheckpoint(_))
+        ));
+    }
+
+    #[test]
+    fn share_invite_rejects_tampered_key_roster_event_json() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let invite = invite_shared_folder_member(
+            &mut folder,
+            &owner_keys,
+            ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                label: Some("Phone".to_string()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".to_string()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let mut bundle = parse_share_invite(&invite.invite_url).unwrap();
+        bundle.shared_folder.roster_ops[0].event_json = "{}".to_string();
+        let tampered = encode_share_invite(&bundle).unwrap();
+
+        assert!(matches!(
+            parse_share_invite(&tampered),
+            Err(SharingError::IrisProfile(_))
         ));
     }
 
