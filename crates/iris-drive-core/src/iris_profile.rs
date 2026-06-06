@@ -626,6 +626,23 @@ pub fn parse_iris_profile_roster_op_event(
     })
 }
 
+pub fn validate_signed_iris_profile_roster_op(
+    signed: &SignedIrisProfileRosterOp,
+) -> Result<(), IrisProfileError> {
+    let event = Event::from_json(&signed.event_json)
+        .map_err(|error| IrisProfileError::Event(error.to_string()))?;
+    let parsed = parse_iris_profile_roster_op_event(&event)?;
+    if parsed.op_id != signed.op_id
+        || parsed.signer_pubkey != signed.signer_pubkey
+        || parsed.content != signed.content
+    {
+        return Err(IrisProfileError::Event(
+            "roster op event_json does not match op fields".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn parse_iris_profile_facet_acceptance_event(
     event: &Event,
 ) -> Result<SignedIrisProfileFacetAcceptance, IrisProfileError> {
@@ -928,6 +945,10 @@ where
 
     let mut accepted_ops_by_id = BTreeMap::new();
     for op in ops {
+        if validate_signed_iris_profile_roster_op(&op).is_err() {
+            projection.rejected_op_ids.push(op.op_id);
+            continue;
+        }
         if apply_projected_op(&mut projection, &op, &accepted_ops_by_id) {
             projection.accepted_op_ids.push(op.op_id.clone());
             accepted_ops_by_id.insert(op.op_id.clone(), op);
@@ -1230,6 +1251,23 @@ mod tests {
         assert_eq!(op.content.actor_pubkey, app.public_key().to_hex());
         assert!(!op.op_id.is_empty());
         assert!(op.event_json.contains("iris-profile/"));
+    }
+
+    #[test]
+    fn profile_roster_projection_rejects_tampered_signed_fields() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let mut op = bootstrap_op(&admin, profile_id, 10);
+        let op_id = op.op_id.clone();
+        if let IrisProfileRosterOp::AddFacet { facet } = &mut op.content.op {
+            facet.label = Some("forged label".to_string());
+        }
+
+        let projection = project(profile_id, vec![op]);
+
+        assert!(projection.accepted_op_ids.is_empty());
+        assert_eq!(projection.rejected_op_ids, vec![op_id]);
+        assert!(projection.active_facets.is_empty());
     }
 
     #[test]

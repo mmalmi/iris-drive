@@ -942,7 +942,21 @@ mod tests {
                 &mut op.content.op
                 && *epoch == current_epoch
             {
-                wrapped_dck.remove(&recipient_pubkey);
+                let mut missing_recipient_wraps = wrapped_dck.clone();
+                missing_recipient_wraps.remove(&recipient_pubkey);
+                let event = iris_drive_core::build_iris_profile_roster_op_event(
+                    account.app_key.keys(),
+                    folder.share_id,
+                    op.content.parents.clone(),
+                    None,
+                    iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
+                        epoch: *epoch,
+                        wrapped_dck: missing_recipient_wraps,
+                    },
+                    op.content.created_at,
+                )
+                .unwrap();
+                *op = iris_drive_core::parse_iris_profile_roster_op_event(&event).unwrap();
             }
         }
         assert_eq!(

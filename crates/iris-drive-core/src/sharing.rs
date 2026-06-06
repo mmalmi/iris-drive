@@ -17,6 +17,7 @@ use crate::iris_profile::{
     SignedIrisProfileFacetAcceptance, SignedIrisProfileRosterOp,
     build_iris_profile_roster_op_event, iris_profile_roster_parent_ids, iris_profile_tag_kind,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
+    validate_signed_iris_profile_roster_op,
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
@@ -479,6 +480,10 @@ where
 
     let mut accepted_ops_by_id = BTreeMap::new();
     for op in ops {
+        if validate_signed_share_member_roster_op(&op).is_err() {
+            projection.rejected_op_ids.push(op.op_id);
+            continue;
+        }
         if apply_share_member_roster_op(
             &mut projection,
             folder,
@@ -1374,23 +1379,6 @@ pub fn validate_share_roster_checkpoint(
 fn validate_shared_folder_roster_ops(folder: &SharedFolder) -> Result<(), SharingError> {
     for op in &folder.roster_ops {
         validate_signed_iris_profile_roster_op(op)?;
-    }
-    Ok(())
-}
-
-fn validate_signed_iris_profile_roster_op(
-    signed: &SignedIrisProfileRosterOp,
-) -> Result<(), SharingError> {
-    let event = Event::from_json(&signed.event_json)
-        .map_err(|error| SharingError::IrisProfile(IrisProfileError::Event(error.to_string())))?;
-    let parsed = parse_iris_profile_roster_op_event(&event).map_err(SharingError::from)?;
-    if parsed.op_id != signed.op_id
-        || parsed.signer_pubkey != signed.signer_pubkey
-        || parsed.content != signed.content
-    {
-        return Err(SharingError::IrisProfile(IrisProfileError::Event(
-            "roster op event_json does not match op fields".to_string(),
-        )));
     }
     Ok(())
 }
@@ -3547,6 +3535,59 @@ mod tests {
         assert_eq!(checkpoint.content.rejected_member_op_count, 0);
         assert_eq!(checkpoint.content.members.len(), 2);
         validate_share_roster_checkpoint(&folder, &checkpoint).unwrap();
+    }
+
+    #[test]
+    fn share_member_projection_rejects_tampered_signed_fields() {
+        let owner_keys = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let (recipient_keys, recipient) = recipient(ShareRole::Editor);
+        let recipient_profile_id = recipient.profile_id;
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            vec![recipient],
+            10,
+        )
+        .unwrap();
+        let tampered = folder
+            .member_ops
+            .iter_mut()
+            .find(|op| match &op.content.op {
+                ShareMemberRosterOp::GrantMember { member } => {
+                    member.profile_id == recipient_profile_id
+                }
+                ShareMemberRosterOp::SetMemberRole { profile_id, .. }
+                | ShareMemberRosterOp::RevokeMember { profile_id, .. } => {
+                    *profile_id == recipient_profile_id
+                }
+            })
+            .expect("recipient member op");
+        let op_id = tampered.op_id.clone();
+        if let ShareMemberRosterOp::GrantMember { member } = &mut tampered.content.op {
+            member.display_name = Some("forged display name".to_string());
+        }
+        folder.members.clear();
+
+        let member_projection = project_shared_folder_member_roster(&folder);
+
+        assert!(member_projection.accepted_op_ids.len() < folder.member_ops.len());
+        assert!(member_projection.rejected_op_ids.contains(&op_id));
+        assert!(
+            !member_projection
+                .members
+                .contains_key(&recipient_profile_id.to_string())
+        );
+        assert_eq!(
+            shared_folder_app_key_write_authorization(
+                &folder,
+                &recipient_keys.public_key().to_hex()
+            ),
+            ShareRootWriteAuthorization::UnknownMember
+        );
     }
 
     #[test]
