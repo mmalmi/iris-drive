@@ -3,21 +3,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Keys, PublicKey};
+use nostr_sdk::{Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::config::AppKeyRootRef;
 use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileRosterOp, IrisProfileRosterProjection, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, iris_profile_roster_parent_ids,
+    build_iris_profile_roster_op_event, iris_profile_roster_parent_ids, iris_profile_tag_kind,
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
 pub const SHARED_WITH_ME_DIR: &str = "Shared with me";
 pub const SHARE_INVITE_SCHEMA: u32 = 1;
+pub const SHARE_ROSTER_CHECKPOINT_SCHEMA: u32 = 1;
+pub const KIND_SHARE_ROSTER_CHECKPOINT: u16 = 30_078;
 pub const SHARE_INVITE_PREFIX: &str = "iris-drive://share-invite/";
 
 #[derive(Debug, Error)]
@@ -48,6 +51,8 @@ pub enum SharingError {
     CannotRevokeCurrentShareMember,
     #[error("share invite: {0}")]
     Invite(String),
+    #[error("share roster checkpoint: {0}")]
+    RosterCheckpoint(String),
     #[error("failed to wrap share key: {0}")]
     Wrap(String),
     #[error("failed to unwrap share key: {0}")]
@@ -289,7 +294,38 @@ pub struct ShareInviteBundle {
     pub role: ShareRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representative_npub_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster_checkpoint: Option<SignedShareRosterCheckpoint>,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareRosterCheckpointContent {
+    pub schema: u32,
+    pub share_id: IrisProfileId,
+    pub signer_pubkey: String,
+    pub roster_head_op_ids: Vec<String>,
+    pub accepted_op_count: usize,
+    pub rejected_op_count: usize,
+    pub active_app_key_pubkeys: Vec<String>,
+    pub tombstoned_app_key_pubkeys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_key_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_key_wrap_pubkeys: Vec<String>,
+    pub members: Vec<SharedFolderMemberView>,
+    pub client_nonce: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignedShareRosterCheckpoint {
+    pub checkpoint_id: String,
+    pub signer_pubkey: String,
+    pub content: ShareRosterCheckpointContent,
+    pub event_json: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,6 +533,131 @@ pub fn shared_folder_missing_key_wrap_pubkeys(folder: &SharedFolder, epoch: u64)
     active_share_key_recipients_missing_wraps(folder, &projection, epoch)
 }
 
+pub fn sign_share_roster_checkpoint(
+    signer_keys: &Keys,
+    folder: &SharedFolder,
+    created_at: i64,
+) -> Result<SignedShareRosterCheckpoint, SharingError> {
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
+        return Err(SharingError::CurrentAppKeyCannotAdminShare);
+    }
+    let client_nonce = Uuid::new_v4().to_string();
+    let content =
+        share_roster_checkpoint_content(folder, &signer_pubkey, client_nonce.clone(), created_at);
+    let content_json =
+        serde_json::to_string(&content).map_err(|error| SharingError::Invite(error.to_string()))?;
+    let ts = u64::try_from(created_at).unwrap_or(0);
+    let event = EventBuilder::new(
+        Kind::from(KIND_SHARE_ROSTER_CHECKPOINT),
+        content_json,
+        vec![
+            Tag::identifier(share_roster_checkpoint_d_tag(
+                folder.share_id,
+                &client_nonce,
+            )),
+            Tag::custom(iris_profile_tag_kind(), [folder.share_id.to_string()]),
+            Tag::public_key(signer_keys.public_key()),
+        ],
+    )
+    .custom_created_at(nostr_sdk::Timestamp::from(ts))
+    .to_event(signer_keys)
+    .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
+    parse_share_roster_checkpoint_event(&event)
+}
+
+pub fn parse_share_roster_checkpoint_event(
+    event: &Event,
+) -> Result<SignedShareRosterCheckpoint, SharingError> {
+    let kind = event.kind.as_u16();
+    if kind != KIND_SHARE_ROSTER_CHECKPOINT {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "invalid kind: expected {KIND_SHARE_ROSTER_CHECKPOINT}, got {kind}"
+        )));
+    }
+    let d_tag = event
+        .identifier()
+        .ok_or_else(|| SharingError::RosterCheckpoint("missing d tag".to_string()))?;
+    let (d_tag_share_id, d_tag_nonce) = parse_share_roster_checkpoint_d_tag(d_tag)?;
+    event
+        .verify()
+        .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
+    let content: ShareRosterCheckpointContent = serde_json::from_str(&event.content)
+        .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
+    if content.schema != SHARE_ROSTER_CHECKPOINT_SCHEMA {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "unsupported schema {}",
+            content.schema
+        )));
+    }
+    if content.share_id != d_tag_share_id {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "d-tag share {} does not match content share {}",
+            d_tag_share_id, content.share_id
+        )));
+    }
+    if content.client_nonce != d_tag_nonce {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "d-tag nonce {} does not match content nonce {}",
+            d_tag_nonce, content.client_nonce
+        )));
+    }
+    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    if content.created_at != event_created_at {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "event created_at {} does not match content created_at {}",
+            event_created_at, content.created_at
+        )));
+    }
+    let signer_pubkey = event.pubkey.to_hex();
+    if signer_pubkey != content.signer_pubkey {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "event signer {} does not match checkpoint signer {}",
+            signer_pubkey, content.signer_pubkey
+        )));
+    }
+    PublicKey::from_hex(&content.signer_pubkey)
+        .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
+    Ok(SignedShareRosterCheckpoint {
+        checkpoint_id: event.id.to_hex(),
+        signer_pubkey,
+        content,
+        event_json: event.as_json(),
+    })
+}
+
+pub fn validate_share_roster_checkpoint(
+    folder: &SharedFolder,
+    checkpoint: &SignedShareRosterCheckpoint,
+) -> Result<(), SharingError> {
+    let event = Event::from_json(&checkpoint.event_json)
+        .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
+    let parsed = parse_share_roster_checkpoint_event(&event)?;
+    if parsed.checkpoint_id != checkpoint.checkpoint_id
+        || parsed.signer_pubkey != checkpoint.signer_pubkey
+        || parsed.content != checkpoint.content
+    {
+        return Err(SharingError::RosterCheckpoint(
+            "checkpoint event_json does not match checkpoint fields".to_string(),
+        ));
+    }
+    if !shared_folder_app_key_can_admin(folder, &checkpoint.signer_pubkey) {
+        return Err(SharingError::CurrentAppKeyCannotAdminShare);
+    }
+    let expected = share_roster_checkpoint_content(
+        folder,
+        &checkpoint.signer_pubkey,
+        checkpoint.content.client_nonce.clone(),
+        checkpoint.content.created_at,
+    );
+    if checkpoint.content != expected {
+        return Err(SharingError::RosterCheckpoint(
+            "checkpoint does not match share roster projection".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn shared_folder_app_key_can_write_roots_with_projection(
     folder: &SharedFolder,
     projection: &IrisProfileRosterProjection,
@@ -544,6 +705,102 @@ fn active_share_key_recipients(
         .filter(|facet| folder.active_member_for_app_key(&facet.pubkey).is_some())
         .map(|facet| facet.pubkey.clone())
         .collect()
+}
+
+fn share_roster_checkpoint_content(
+    folder: &SharedFolder,
+    signer_pubkey: &str,
+    client_nonce: String,
+    created_at: i64,
+) -> ShareRosterCheckpointContent {
+    let projection = folder.projection();
+    let current_key_epoch = projection.key_epochs.keys().next_back().copied();
+    let missing_key_wrap_pubkeys = current_key_epoch.map_or_else(Vec::new, |epoch| {
+        active_share_key_recipients_missing_wraps(folder, &projection, epoch)
+    });
+    ShareRosterCheckpointContent {
+        schema: SHARE_ROSTER_CHECKPOINT_SCHEMA,
+        share_id: folder.share_id,
+        signer_pubkey: signer_pubkey.to_string(),
+        roster_head_op_ids: share_roster_head_op_ids(folder.share_id, &folder.roster_ops),
+        accepted_op_count: projection.accepted_op_ids.len(),
+        rejected_op_count: projection.rejected_op_ids.len(),
+        active_app_key_pubkeys: active_share_app_key_pubkeys(folder, &projection),
+        tombstoned_app_key_pubkeys: tombstoned_share_app_key_pubkeys(folder, &projection),
+        current_key_epoch,
+        missing_key_wrap_pubkeys,
+        members: shared_folder_member_views(folder),
+        client_nonce,
+        created_at,
+    }
+}
+
+fn active_share_app_key_pubkeys(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+) -> Vec<String> {
+    projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.is_app_key())
+        .filter(|facet| folder.active_member_for_app_key(&facet.pubkey).is_some())
+        .map(|facet| facet.pubkey.clone())
+        .collect()
+}
+
+fn tombstoned_share_app_key_pubkeys(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+) -> Vec<String> {
+    projection
+        .tombstones
+        .keys()
+        .filter(|pubkey| folder.participant_profiles.contains_key(*pubkey))
+        .cloned()
+        .collect()
+}
+
+fn share_roster_head_op_ids(
+    share_id: IrisProfileId,
+    ops: &[SignedIrisProfileRosterOp],
+) -> Vec<String> {
+    let projection = project_iris_profile_roster(share_id, ops.to_vec());
+    let accepted = projection
+        .accepted_op_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let parented = ops
+        .iter()
+        .filter(|op| accepted.contains(&op.op_id))
+        .flat_map(|op| op.content.parents.iter().cloned())
+        .filter(|op_id| accepted.contains(op_id))
+        .collect::<BTreeSet<_>>();
+    accepted.difference(&parented).cloned().collect()
+}
+
+fn share_roster_checkpoint_d_tag(share_id: IrisProfileId, client_nonce: &str) -> String {
+    format!("iris-drive/share/{share_id}/roster-checkpoint/{client_nonce}")
+}
+
+fn parse_share_roster_checkpoint_d_tag(
+    d_tag: &str,
+) -> Result<(IrisProfileId, String), SharingError> {
+    let rest = d_tag
+        .strip_prefix("iris-drive/share/")
+        .ok_or_else(|| SharingError::RosterCheckpoint(format!("missing prefix: {d_tag}")))?;
+    let (share_id, nonce) = rest
+        .split_once("/roster-checkpoint/")
+        .ok_or_else(|| SharingError::RosterCheckpoint(format!("missing checkpoint: {d_tag}")))?;
+    if nonce.is_empty() || nonce.contains('/') {
+        return Err(SharingError::RosterCheckpoint(format!(
+            "invalid nonce: {d_tag}"
+        )));
+    }
+    let share_id = share_id
+        .parse::<IrisProfileId>()
+        .map_err(|error| SharingError::RosterCheckpoint(format!("invalid share UUID: {error}")))?;
+    Ok((share_id, nonce.to_string()))
 }
 
 fn active_share_member_count(folder: &SharedFolder) -> usize {
@@ -832,59 +1089,7 @@ pub fn invite_shared_folder_member(
     if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
         return Err(SharingError::CurrentAppKeyCannotAdminShare);
     }
-    PublicKey::from_hex(&recipient.app_pubkey)
-        .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
-    let member_key = recipient.profile_id.to_string();
-    if folder
-        .members
-        .get(&member_key)
-        .is_some_and(|member| member.status == ShareMemberStatus::Revoked)
-    {
-        return Err(SharingError::ShareMemberRevoked(recipient.profile_id));
-    }
-    folder
-        .members
-        .entry(member_key)
-        .and_modify(|member| {
-            member.role = ShareRole::strongest(member.role, recipient.role);
-            if member.representative_npub_hint.is_none() {
-                member
-                    .representative_npub_hint
-                    .clone_from(&recipient.representative_npub_hint);
-            }
-            if member.display_name.is_none() {
-                member.display_name.clone_from(&recipient.display_name);
-            }
-        })
-        .or_insert_with(|| {
-            ShareMember::active(
-                recipient.profile_id,
-                recipient.role,
-                recipient.representative_npub_hint.clone(),
-                recipient.display_name.clone(),
-            )
-        });
-    folder
-        .participant_profiles
-        .insert(recipient.app_pubkey.clone(), recipient.profile_id);
-    let member_role = folder
-        .members
-        .get(&recipient.profile_id.to_string())
-        .map_or(recipient.role, |member| member.role);
-    folder.roster_ops.push(sign_share_roster_op_with_parents(
-        signer_keys,
-        folder.share_id,
-        iris_profile_roster_parent_ids(&folder.roster_ops),
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
-                recipient.app_pubkey.clone(),
-                created_at,
-                recipient.label,
-                member_role.capabilities(),
-            ),
-        },
-        created_at,
-    )?);
+    let invited = add_invited_share_member(folder, signer_keys, recipient, created_at)?;
     let projection = folder.projection();
     let next_epoch = projection
         .key_epochs
@@ -912,9 +1117,14 @@ pub fn invite_shared_folder_member(
     let bundle = ShareInviteBundle {
         schema: SHARE_INVITE_SCHEMA,
         shared_folder: folder.clone(),
-        recipient_profile_id: recipient.profile_id,
-        role: member_role,
-        representative_npub_hint: recipient.representative_npub_hint,
+        recipient_profile_id: invited.profile_id,
+        role: invited.role,
+        representative_npub_hint: invited.representative_npub_hint,
+        roster_checkpoint: Some(sign_share_roster_checkpoint(
+            signer_keys,
+            folder,
+            created_at.saturating_add(2),
+        )?),
         created_at,
     };
     let invite_url = encode_share_invite(&bundle)?;
@@ -923,6 +1133,57 @@ pub fn invite_shared_folder_member(
         profile_id: bundle.recipient_profile_id,
         epoch: next_epoch,
         invite_url,
+    })
+}
+
+struct InvitedShareMember {
+    profile_id: IrisProfileId,
+    role: ShareRole,
+    representative_npub_hint: Option<String>,
+}
+
+fn add_invited_share_member(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    recipient: ShareRecipient,
+    created_at: i64,
+) -> Result<InvitedShareMember, SharingError> {
+    PublicKey::from_hex(&recipient.app_pubkey)
+        .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
+    let member_key = recipient.profile_id.to_string();
+    if folder
+        .members
+        .get(&member_key)
+        .is_some_and(|member| member.status == ShareMemberStatus::Revoked)
+    {
+        return Err(SharingError::ShareMemberRevoked(recipient.profile_id));
+    }
+    upsert_share_member(&mut folder.members, &recipient);
+    folder
+        .participant_profiles
+        .insert(recipient.app_pubkey.clone(), recipient.profile_id);
+    let member_role = folder
+        .members
+        .get(&recipient.profile_id.to_string())
+        .map_or(recipient.role, |member| member.role);
+    folder.roster_ops.push(sign_share_roster_op_with_parents(
+        signer_keys,
+        folder.share_id,
+        iris_profile_roster_parent_ids(&folder.roster_ops),
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                recipient.app_pubkey,
+                created_at,
+                recipient.label,
+                member_role.capabilities(),
+            ),
+        },
+        created_at,
+    )?);
+    Ok(InvitedShareMember {
+        profile_id: recipient.profile_id,
+        role: member_role,
+        representative_npub_hint: recipient.representative_npub_hint,
     })
 }
 
@@ -954,6 +1215,9 @@ pub fn parse_share_invite(input: &str) -> Result<ShareInviteBundle, SharingError
             "unsupported schema {}",
             bundle.schema
         )));
+    }
+    if let Some(checkpoint) = &bundle.roster_checkpoint {
+        validate_share_roster_checkpoint(&bundle.shared_folder, checkpoint)?;
     }
     Ok(bundle)
 }
@@ -1817,10 +2081,19 @@ mod tests {
         let accepted =
             shared_folder_from_invite_for_profile(&invite.invite_url, recipient_profile_id)
                 .unwrap();
+        let bundle = parse_share_invite(&invite.invite_url).unwrap();
+        let checkpoint = bundle.roster_checkpoint.as_ref().unwrap();
         let projection = accepted.projection();
 
         assert!(invite.invite_url.starts_with(SHARE_INVITE_PREFIX));
         assert_eq!(invite.epoch, 2);
+        assert_eq!(checkpoint.content.share_id, folder.share_id);
+        assert_eq!(checkpoint.signer_pubkey, owner_keys.public_key().to_hex());
+        assert_eq!(checkpoint.content.accepted_op_count, 4);
+        assert_eq!(checkpoint.content.roster_head_op_ids.len(), 1);
+        assert_eq!(checkpoint.content.current_key_epoch, Some(2));
+        assert_eq!(checkpoint.content.members.len(), 2);
+        assert!(checkpoint.content.missing_key_wrap_pubkeys.is_empty());
         assert_eq!(
             accepted
                 .members
@@ -1841,6 +2114,51 @@ mod tests {
         assert!(matches!(
             shared_folder_from_invite_for_profile(&invite.invite_url, IrisProfileId::new_v4()),
             Err(SharingError::ShareInviteNotForLocalProfile { .. })
+        ));
+    }
+
+    #[test]
+    fn share_invite_rejects_tampered_roster_checkpoint() {
+        let owner_keys = Keys::generate();
+        let recipient_keys = Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            IrisProfileId::new_v4(),
+            "Projects/Alpha",
+            "Alpha",
+            Some("Owner".to_string()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let invite = invite_shared_folder_member(
+            &mut folder,
+            &owner_keys,
+            ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                label: Some("Phone".to_string()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".to_string()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let mut bundle = parse_share_invite(&invite.invite_url).unwrap();
+        bundle
+            .roster_checkpoint
+            .as_mut()
+            .unwrap()
+            .content
+            .accepted_op_count += 1;
+        let tampered = encode_share_invite(&bundle).unwrap();
+
+        assert!(matches!(
+            parse_share_invite(&tampered),
+            Err(SharingError::RosterCheckpoint(_))
         ));
     }
 

@@ -195,7 +195,10 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   npub/contact is only a discovery/display hint; access is granted to the
   resolved IrisProfile member, while concrete AppKeys receive key wraps and
   scoped signing/decryption capabilities. Inviting rotates the share epoch and
-  emits a compact invite bundle containing the current roster proof.
+  emits a compact invite bundle containing a signed roster checkpoint/proof.
+  The checkpoint summarizes entity members, compact roster heads, current key
+  epoch, and missing-wrap state; the append-only roster op log remains
+  authoritative.
 - **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
   imports the shared folder only if the invite names their IrisProfile.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
@@ -248,8 +251,9 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 2. **Authority model**: signed append-only roster op logs with deterministic
    projection, tombstones, and key-wrap status/repair state derived in Rust
    core. Facet acceptance events are self-signed breadcrumbs, not roster
-   authority. Do not add a general CRDT library unless it clearly simplifies
-   this model.
+   authority. Signed checkpoints may summarize a projected roster for invites
+   or transport, but they do not replace the op log. Do not add a general CRDT
+   library unless it clearly simplifies this model.
 3. **Drive granularity**: one user-facing My Drive, with internal share roots
    for shared folders. Recipients see Shared with me and optional shortcuts,
    not a pile of separate sidebar drives.

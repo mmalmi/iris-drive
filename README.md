@@ -91,6 +91,11 @@ add a shortcut, and repair missing key wraps. The UI shows people/profile
 members first; AppKeys only appear when an admin is entering recipient key
 material for an invite.
 
+Share invites include a signed roster checkpoint that summarizes the current
+entity members, compact roster heads, key epoch, and missing-wrap state. The
+append-only roster op log remains the source of truth; the checkpoint is an
+invite-time proof for recipients and web preview surfaces.
+
 When `idrive daemon` is running it starts a loopback browser gateway on port
 `17321` by default. The current primary drive can be opened at:
 

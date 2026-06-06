@@ -724,6 +724,7 @@ mod tests {
             recipient_profile_id: recipient.state.profile_id,
             role: iris_drive_core::ShareRole::Reader,
             representative_npub_hint: Some("npub1alice".into()),
+            roster_checkpoint: None,
             created_at: 20,
         };
         let invite = iris_drive_core::encode_share_invite(&bundle).unwrap();
