@@ -370,6 +370,7 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
         "status": member.status.as_str(),
         "status_label": member.status.label(),
         "app_key_count": member.app_key_count,
+        "can_revoke": member.can_revoke,
     })
 }
 

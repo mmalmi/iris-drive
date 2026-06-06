@@ -71,6 +71,7 @@ pub struct UiShareMember {
     pub status: String,
     pub status_label: String,
     pub app_key_count: u64,
+    pub can_revoke: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -253,6 +253,19 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
         label: "Recipient".to_owned(),
     });
     assert!(invited.error.is_empty(), "{}", invited.error);
+    let invited_owner_share = invited.ui.shares.first().unwrap();
+    assert!(
+        invited_owner_share
+            .members
+            .iter()
+            .any(|member| member.profile_id == recipient_profile.profile_id && member.can_revoke)
+    );
+    assert!(
+        invited_owner_share
+            .members
+            .iter()
+            .any(|member| member.profile_id == owner_profile.profile_id && !member.can_revoke)
+    );
     assert!(
         invited
             .ui

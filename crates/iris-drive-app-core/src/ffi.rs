@@ -2285,6 +2285,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
                 status: member.status.as_str().to_owned(),
                 status_label: member.status.label().to_owned(),
                 app_key_count: member.app_key_count as u64,
+                can_revoke: member.can_revoke,
             })
             .collect(),
         shortcut_paths: share.shortcut_paths,

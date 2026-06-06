@@ -837,6 +837,8 @@ pub struct SharedFolderMemberView {
     pub display_name: String,
     pub representative_npub_hint: Option<String>,
     pub app_key_count: usize,
+    #[serde(default)]
+    pub can_revoke: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1071,7 +1073,7 @@ pub fn shared_folder_view(
         missing_key_wrap_pubkeys,
         participant_count: active_share_member_count(folder),
         app_key_count: projection.active_facets.len(),
-        members: shared_folder_member_views(folder, &projection),
+        members: shared_folder_member_views(folder, &projection, current_app_pubkey, can_admin),
         shortcut_paths,
     }
 }
@@ -1618,7 +1620,12 @@ fn share_roster_checkpoint_content(
         tombstoned_app_key_pubkeys: tombstoned_share_app_key_pubkeys(&projection),
         current_key_epoch,
         missing_key_wrap_pubkeys,
-        members: shared_folder_member_views(folder, &projection),
+        members: shared_folder_member_views(
+            folder,
+            &projection,
+            signer_pubkey,
+            shared_folder_app_key_can_admin_with_projection(folder, &projection, signer_pubkey),
+        ),
         client_nonce,
         created_at,
     }
@@ -1723,11 +1730,15 @@ fn active_share_member_count(folder: &SharedFolder) -> usize {
 fn shared_folder_member_views(
     folder: &SharedFolder,
     projection: &IrisProfileRosterProjection,
+    current_app_pubkey: &str,
+    current_app_key_can_admin: bool,
 ) -> Vec<SharedFolderMemberView> {
     let mut app_key_counts = BTreeMap::<IrisProfileId, usize>::new();
     for profile_id in shared_folder_participant_profiles_with_projection(projection).values() {
         *app_key_counts.entry(*profile_id).or_default() += 1;
     }
+    let current_profile_id =
+        shared_folder_profile_id_for_app_key_with_projection(projection, current_app_pubkey);
     let mut members = shared_folder_members_with_projection(folder, projection)
         .values()
         .map(|member| SharedFolderMemberView {
@@ -1740,6 +1751,9 @@ fn shared_folder_member_views(
                 .get(&member.profile_id)
                 .copied()
                 .unwrap_or_default(),
+            can_revoke: current_app_key_can_admin
+                && member.status != ShareMemberStatus::Revoked
+                && current_profile_id != Some(member.profile_id),
         })
         .collect::<Vec<_>>();
     members.sort_by(|left, right| {
@@ -3696,6 +3710,20 @@ mod tests {
         assert_eq!(alice.app_key_count, 2);
         assert_eq!(view.local_role, ShareRole::Editor);
         assert!(view.can_write);
+
+        let owner_view = shared_folder_view(&folder, &[], &owner_keys.public_key().to_hex());
+        let owner_member = owner_view
+            .members
+            .iter()
+            .find(|member| member.profile_id == owner_profile_id)
+            .expect("owner member is projected");
+        let alice_for_owner = owner_view
+            .members
+            .iter()
+            .find(|member| member.profile_id == recipient_profile_id)
+            .expect("recipient member is projected for owner");
+        assert!(!owner_member.can_revoke);
+        assert!(alice_for_owner.can_revoke);
     }
 
     #[test]
