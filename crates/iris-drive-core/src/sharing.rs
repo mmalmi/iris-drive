@@ -22,7 +22,9 @@ use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
 pub const SHARED_WITH_ME_DIR: &str = "Shared with me";
 pub const SHARE_INVITE_SCHEMA: u32 = 1;
+pub const SHARE_MEMBER_ROSTER_SCHEMA: u32 = 1;
 pub const SHARE_ROSTER_CHECKPOINT_SCHEMA: u32 = 1;
+pub const KIND_SHARE_MEMBER_ROSTER_OP: u16 = 30_078;
 pub const KIND_SHARE_ROSTER_CHECKPOINT: u16 = 30_078;
 pub const SHARE_INVITE_PREFIX: &str = "iris-drive://share-invite/";
 
@@ -54,6 +56,8 @@ pub enum SharingError {
     CannotRevokeCurrentShareMember,
     #[error("share invite: {0}")]
     Invite(String),
+    #[error("share member roster: {0}")]
+    ShareMemberRoster(String),
     #[error("share roster checkpoint: {0}")]
     RosterCheckpoint(String),
     #[error("recipient resolution: {0}")]
@@ -260,6 +264,54 @@ impl ShareMember {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum ShareMemberRosterOp {
+    GrantMember {
+        member: ShareMember,
+    },
+    SetMemberRole {
+        profile_id: IrisProfileId,
+        role: ShareRole,
+    },
+    RevokeMember {
+        profile_id: IrisProfileId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareMemberRosterOpContent {
+    pub schema: u32,
+    pub share_id: IrisProfileId,
+    pub actor_pubkey: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
+    pub client_nonce: String,
+    pub created_at: i64,
+    pub op: ShareMemberRosterOp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignedShareMemberRosterOp {
+    pub op_id: String,
+    pub signer_pubkey: String,
+    pub content: ShareMemberRosterOpContent,
+    pub event_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareMemberRosterProjection {
+    pub share_id: IrisProfileId,
+    pub members: BTreeMap<String, ShareMember>,
+    pub accepted_op_ids: Vec<String>,
+    pub rejected_op_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedFolder {
     pub share_id: IrisProfileId,
@@ -269,6 +321,8 @@ pub struct SharedFolder {
     pub local_role: ShareRole,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, ShareMember>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member_ops: Vec<SignedShareMemberRosterOp>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub participant_profiles: BTreeMap<String, IrisProfileId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -284,18 +338,24 @@ impl SharedFolder {
     }
 
     #[must_use]
+    pub fn member_projection(&self) -> ShareMemberRosterProjection {
+        let projection = self.projection();
+        project_shared_folder_member_roster_with_projection(self, &projection)
+    }
+
+    #[must_use]
     pub fn shared_with_me_path(&self) -> String {
         shared_with_me_path(&self.display_name)
     }
 
     #[must_use]
-    pub fn member_for_app_key(&self, app_pubkey: &str) -> Option<&ShareMember> {
+    pub fn member_for_app_key(&self, app_pubkey: &str) -> Option<ShareMember> {
         let projection = self.projection();
         member_for_app_key_with_projection(self, &projection, app_pubkey)
     }
 
     #[must_use]
-    pub fn active_member_for_app_key(&self, app_pubkey: &str) -> Option<&ShareMember> {
+    pub fn active_member_for_app_key(&self, app_pubkey: &str) -> Option<ShareMember> {
         let projection = self.projection();
         active_member_for_app_key_with_projection(self, &projection, app_pubkey)
     }
@@ -337,23 +397,318 @@ fn shared_folder_participant_profiles_with_projection(
     participant_profiles
 }
 
-fn member_for_app_key_with_projection<'a>(
-    folder: &'a SharedFolder,
-    projection: &IrisProfileRosterProjection,
-    app_pubkey: &str,
-) -> Option<&'a ShareMember> {
-    let profile_id =
-        shared_folder_profile_id_for_app_key_with_projection(folder, projection, app_pubkey)?;
-    folder.members.get(&profile_id.to_string())
+#[must_use]
+pub fn project_shared_folder_member_roster(folder: &SharedFolder) -> ShareMemberRosterProjection {
+    let projection = folder.projection();
+    project_shared_folder_member_roster_with_projection(folder, &projection)
 }
 
-fn active_member_for_app_key_with_projection<'a>(
-    folder: &'a SharedFolder,
+fn project_shared_folder_member_roster_from_parts(
+    share_id: IrisProfileId,
+    owner_profile_id: IrisProfileId,
+    participant_profiles: &BTreeMap<String, IrisProfileId>,
+    roster_ops: &[SignedIrisProfileRosterOp],
+    member_ops: &[SignedShareMemberRosterOp],
+) -> ShareMemberRosterProjection {
+    let folder = SharedFolder {
+        share_id,
+        owner_profile_id,
+        source_path: String::new(),
+        display_name: String::new(),
+        local_role: ShareRole::Admin,
+        members: BTreeMap::new(),
+        member_ops: member_ops.to_vec(),
+        participant_profiles: participant_profiles.clone(),
+        app_key_roots: BTreeMap::new(),
+        roster_ops: roster_ops.to_vec(),
+    };
+    project_shared_folder_member_roster(&folder)
+}
+
+fn share_member_roster_parent_ids(folder: &SharedFolder) -> Vec<String> {
+    project_shared_folder_member_roster(folder).accepted_op_ids
+}
+
+fn share_member_roster_parent_ids_for_parts(
+    share_id: IrisProfileId,
+    owner_profile_id: IrisProfileId,
+    participant_profiles: &BTreeMap<String, IrisProfileId>,
+    roster_ops: &[SignedIrisProfileRosterOp],
+    member_ops: &[SignedShareMemberRosterOp],
+) -> Vec<String> {
+    project_shared_folder_member_roster_from_parts(
+        share_id,
+        owner_profile_id,
+        participant_profiles,
+        roster_ops,
+        member_ops,
+    )
+    .accepted_op_ids
+}
+
+fn project_shared_folder_member_roster_with_projection(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+) -> ShareMemberRosterProjection {
+    project_shared_folder_member_roster_ops(folder, key_projection, folder.member_ops.clone())
+}
+
+fn project_shared_folder_member_roster_ops<I>(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    ops: I,
+) -> ShareMemberRosterProjection
+where
+    I: IntoIterator<Item = SignedShareMemberRosterOp>,
+{
+    let mut projection = ShareMemberRosterProjection {
+        share_id: folder.share_id,
+        members: BTreeMap::new(),
+        accepted_op_ids: Vec::new(),
+        rejected_op_ids: Vec::new(),
+    };
+    let mut ops = ops
+        .into_iter()
+        .filter(|op| op.content.share_id == folder.share_id)
+        .collect::<Vec<_>>();
+    ops.sort_by(|left, right| {
+        left.content
+            .created_at
+            .cmp(&right.content.created_at)
+            .then_with(|| left.op_id.cmp(&right.op_id))
+    });
+
+    let mut accepted_ops_by_id = BTreeMap::new();
+    for op in ops {
+        if apply_share_member_roster_op(
+            &mut projection,
+            folder,
+            key_projection,
+            &op,
+            &accepted_ops_by_id,
+        ) {
+            projection.accepted_op_ids.push(op.op_id.clone());
+            accepted_ops_by_id.insert(op.op_id.clone(), op);
+        } else {
+            projection.rejected_op_ids.push(op.op_id);
+        }
+    }
+    projection
+}
+
+fn apply_share_member_roster_op(
+    projection: &mut ShareMemberRosterProjection,
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    signed: &SignedShareMemberRosterOp,
+    accepted_ops_by_id: &BTreeMap<String, SignedShareMemberRosterOp>,
+) -> bool {
+    if !share_member_signer_can_apply_with_parents(
+        projection,
+        folder,
+        key_projection,
+        signed,
+        accepted_ops_by_id,
+    ) {
+        return false;
+    }
+    match &signed.content.op {
+        ShareMemberRosterOp::GrantMember { member } => {
+            if member.status == ShareMemberStatus::Revoked {
+                return false;
+            }
+            merge_share_member_grant(&mut projection.members, member.clone())
+        }
+        ShareMemberRosterOp::SetMemberRole { profile_id, role } => {
+            let Some(member) = projection.members.get_mut(&profile_id.to_string()) else {
+                return false;
+            };
+            if member.status == ShareMemberStatus::Revoked {
+                return false;
+            }
+            member.role = *role;
+            true
+        }
+        ShareMemberRosterOp::RevokeMember { profile_id, .. } => {
+            let Some(member) = projection.members.get_mut(&profile_id.to_string()) else {
+                return false;
+            };
+            member.status = ShareMemberStatus::Revoked;
+            true
+        }
+    }
+}
+
+fn merge_share_member_grant(
+    members: &mut BTreeMap<String, ShareMember>,
+    granted: ShareMember,
+) -> bool {
+    members
+        .entry(granted.profile_id.to_string())
+        .and_modify(|existing| {
+            existing.role = ShareRole::strongest(existing.role, granted.role);
+            if existing.status == ShareMemberStatus::Pending
+                && granted.status == ShareMemberStatus::Active
+            {
+                existing.status = ShareMemberStatus::Active;
+            }
+            if existing.representative_npub_hint.is_none() {
+                existing
+                    .representative_npub_hint
+                    .clone_from(&granted.representative_npub_hint);
+            }
+            if existing.display_name.is_none() {
+                existing.display_name.clone_from(&granted.display_name);
+            }
+        })
+        .or_insert(granted);
+    true
+}
+
+fn share_member_signer_can_apply_with_parents(
+    projection: &ShareMemberRosterProjection,
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    signed: &SignedShareMemberRosterOp,
+    accepted_ops_by_id: &BTreeMap<String, SignedShareMemberRosterOp>,
+) -> bool {
+    if projection.members.is_empty() {
+        return is_valid_share_member_bootstrap_op(folder, key_projection, signed);
+    }
+    if signed.content.parents.is_empty() {
+        return false;
+    }
+    let Some(parent_projection) = project_share_member_parent_closure(
+        folder,
+        key_projection,
+        &signed.content.parents,
+        accepted_ops_by_id,
+    ) else {
+        return false;
+    };
+    share_member_signer_can_apply(folder, key_projection, &parent_projection.members, signed)
+}
+
+fn project_share_member_parent_closure(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    parents: &[String],
+    accepted_ops_by_id: &BTreeMap<String, SignedShareMemberRosterOp>,
+) -> Option<ShareMemberRosterProjection> {
+    let mut pending = parents.to_vec();
+    let mut seen = BTreeSet::new();
+    while let Some(parent_id) = pending.pop() {
+        if !seen.insert(parent_id.clone()) {
+            continue;
+        }
+        let parent = accepted_ops_by_id.get(&parent_id)?;
+        pending.extend(parent.content.parents.iter().cloned());
+    }
+    let parent_ops = seen
+        .into_iter()
+        .map(|op_id| accepted_ops_by_id.get(&op_id).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    let parent_projection =
+        project_shared_folder_member_roster_ops(folder, key_projection, parent_ops);
+    if parents
+        .iter()
+        .all(|parent| parent_projection.accepted_op_ids.contains(parent))
+    {
+        Some(parent_projection)
+    } else {
+        None
+    }
+}
+
+fn is_valid_share_member_bootstrap_op(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    signed: &SignedShareMemberRosterOp,
+) -> bool {
+    let ShareMemberRosterOp::GrantMember { member } = &signed.content.op else {
+        return false;
+    };
+    member.profile_id == folder.owner_profile_id
+        && member.role == ShareRole::Admin
+        && member.status == ShareMemberStatus::Active
+        && share_member_signer_profile_id(folder, key_projection, &signed.signer_pubkey)
+            == Some(folder.owner_profile_id)
+        && key_projection.can_admin_profile(&signed.signer_pubkey)
+}
+
+fn share_member_signer_can_apply(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    members: &BTreeMap<String, ShareMember>,
+    signed: &SignedShareMemberRosterOp,
+) -> bool {
+    let Some(profile_id) =
+        share_member_signer_profile_id(folder, key_projection, &signed.signer_pubkey)
+    else {
+        return false;
+    };
+    members
+        .get(&profile_id.to_string())
+        .is_some_and(|member| member.is_active() && member.role == ShareRole::Admin)
+        && key_projection.can_admin_profile(&signed.signer_pubkey)
+}
+
+fn share_member_signer_profile_id(
+    folder: &SharedFolder,
+    key_projection: &IrisProfileRosterProjection,
+    signer_pubkey: &str,
+) -> Option<IrisProfileId> {
+    shared_folder_profile_id_for_app_key_with_projection(folder, key_projection, signer_pubkey)
+}
+
+fn shared_folder_members_with_projection(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+) -> BTreeMap<String, ShareMember> {
+    if folder.member_ops.is_empty() {
+        folder.members.clone()
+    } else {
+        project_shared_folder_member_roster_with_projection(folder, projection).members
+    }
+}
+
+fn materialize_share_members_from_ops(folder: &mut SharedFolder) {
+    if folder.member_ops.is_empty() {
+        return;
+    }
+    folder.members = project_shared_folder_member_roster(folder).members;
+}
+
+fn next_share_member_op_time(folder: &SharedFolder, requested_at: i64) -> i64 {
+    folder
+        .member_ops
+        .iter()
+        .map(|op| op.content.created_at)
+        .max()
+        .map_or(requested_at, |last| {
+            requested_at.max(last.saturating_add(1))
+        })
+}
+
+fn member_for_app_key_with_projection(
+    folder: &SharedFolder,
     projection: &IrisProfileRosterProjection,
     app_pubkey: &str,
-) -> Option<&'a ShareMember> {
+) -> Option<ShareMember> {
+    let profile_id =
+        shared_folder_profile_id_for_app_key_with_projection(folder, projection, app_pubkey)?;
+    shared_folder_members_with_projection(folder, projection)
+        .get(&profile_id.to_string())
+        .cloned()
+}
+
+fn active_member_for_app_key_with_projection(
+    folder: &SharedFolder,
+    projection: &IrisProfileRosterProjection,
+    app_pubkey: &str,
+) -> Option<ShareMember> {
     member_for_app_key_with_projection(folder, projection, app_pubkey)
-        .filter(|member| member.is_active())
+        .filter(ShareMember::is_active)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,8 +821,14 @@ pub struct ShareRosterCheckpointContent {
     pub share_id: IrisProfileId,
     pub signer_pubkey: String,
     pub roster_head_op_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member_roster_head_op_ids: Vec<String>,
     pub accepted_op_count: usize,
     pub rejected_op_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub accepted_member_op_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_member_op_count: usize,
     pub active_app_key_pubkeys: Vec<String>,
     pub tombstoned_app_key_pubkeys: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -990,7 +1351,8 @@ fn shared_folder_app_key_write_authorization_with_projection(
     else {
         return ShareRootWriteAuthorization::UnknownAppKey;
     };
-    let Some(member) = folder.members.get(&profile_id.to_string()) else {
+    let members = shared_folder_members_with_projection(folder, projection);
+    let Some(member) = members.get(&profile_id.to_string()) else {
         return ShareRootWriteAuthorization::UnknownMember;
     };
     match member.status {
@@ -1136,6 +1498,8 @@ fn share_roster_checkpoint_content(
     created_at: i64,
 ) -> ShareRosterCheckpointContent {
     let projection = folder.projection();
+    let member_projection =
+        project_shared_folder_member_roster_with_projection(folder, &projection);
     let current_key_epoch = projection.key_epochs.keys().next_back().copied();
     let missing_key_wrap_pubkeys = current_key_epoch.map_or_else(Vec::new, |epoch| {
         active_share_key_recipients_missing_wraps(folder, &projection, epoch)
@@ -1145,8 +1509,15 @@ fn share_roster_checkpoint_content(
         share_id: folder.share_id,
         signer_pubkey: signer_pubkey.to_string(),
         roster_head_op_ids: share_roster_head_op_ids(folder.share_id, &folder.roster_ops),
+        member_roster_head_op_ids: share_member_roster_head_op_ids(
+            folder.share_id,
+            &folder.member_ops,
+            &member_projection,
+        ),
         accepted_op_count: projection.accepted_op_ids.len(),
         rejected_op_count: projection.rejected_op_ids.len(),
+        accepted_member_op_count: member_projection.accepted_op_ids.len(),
+        rejected_member_op_count: member_projection.rejected_op_ids.len(),
         active_app_key_pubkeys: active_share_app_key_pubkeys(folder, &projection),
         tombstoned_app_key_pubkeys: tombstoned_share_app_key_pubkeys(folder, &projection),
         current_key_epoch,
@@ -1206,6 +1577,25 @@ fn share_roster_head_op_ids(
     accepted.difference(&parented).cloned().collect()
 }
 
+fn share_member_roster_head_op_ids(
+    share_id: IrisProfileId,
+    ops: &[SignedShareMemberRosterOp],
+    projection: &ShareMemberRosterProjection,
+) -> Vec<String> {
+    let accepted = projection
+        .accepted_op_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let parented = ops
+        .iter()
+        .filter(|op| op.content.share_id == share_id && accepted.contains(&op.op_id))
+        .flat_map(|op| op.content.parents.iter().cloned())
+        .filter(|op_id| accepted.contains(op_id))
+        .collect::<BTreeSet<_>>();
+    accepted.difference(&parented).cloned().collect()
+}
+
 fn share_roster_checkpoint_d_tag(share_id: IrisProfileId, client_nonce: &str) -> String {
     format!("iris-drive/share/{share_id}/roster-checkpoint/{client_nonce}")
 }
@@ -1231,8 +1621,8 @@ fn parse_share_roster_checkpoint_d_tag(
 }
 
 fn active_share_member_count(folder: &SharedFolder) -> usize {
-    folder
-        .members
+    let projection = folder.projection();
+    shared_folder_members_with_projection(folder, &projection)
         .values()
         .filter(|member| member.is_active())
         .count()
@@ -1248,8 +1638,7 @@ fn shared_folder_member_views(
     {
         *app_key_counts.entry(*profile_id).or_default() += 1;
     }
-    let mut members = folder
-        .members
+    let mut members = shared_folder_members_with_projection(folder, projection)
         .values()
         .map(|member| SharedFolderMemberView {
             profile_id: member.profile_id,
@@ -1284,6 +1673,11 @@ fn key_status_has_current_wrap(status: SharedFolderKeyStatus) -> bool {
         status,
         SharedFolderKeyStatus::Available | SharedFolderKeyStatus::RepairNeeded
     )
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 fn unique_share_shortcut_path(
@@ -1339,74 +1733,39 @@ pub fn create_shared_folder(
     let display_name = sanitized_provider_file_name(display_name);
     let share_id = IrisProfileId::new_v4();
     let owner_pubkey = owner_keys.public_key().to_hex();
-    let ShareParticipants {
-        participant_profiles,
-        members,
-        recipients_by_app_key,
-    } = collect_share_participants(
+    let participants = collect_share_participants(
         &owner_pubkey,
         owner_profile_id,
         local_label.clone(),
         recipients,
     )?;
-
-    let mut ops = Vec::new();
-    ops.push(sign_share_roster_op(
+    let InitialShareRoster {
+        mut roster_ops,
+        member_ops,
+        members,
+        next_roster_op_time,
+    } = build_initial_share_rosters(
         owner_keys,
         share_id,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
-                owner_pubkey,
-                created_at,
-                local_label,
-                ShareRole::Admin.capabilities(),
-            )
-            .with_profile_id(owner_profile_id),
-        },
+        owner_profile_id,
+        local_label,
+        &participants,
         created_at,
-    )?);
-
-    let mut op_time = created_at;
-    for recipient in recipients_by_app_key.into_values() {
-        op_time += 1;
-        let member_role = members
-            .get(&recipient.profile_id.to_string())
-            .map_or(recipient.role, |member| member.role);
-        ops.push(sign_share_roster_op_with_parents(
-            owner_keys,
-            share_id,
-            iris_profile_roster_parent_ids(&ops),
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::app_key(
-                    recipient.app_pubkey,
-                    op_time,
-                    recipient.label,
-                    member_role.capabilities(),
-                )
-                .with_profile_id(recipient.profile_id),
-            },
-            op_time,
-        )?);
-    }
+    )?;
 
     let share_key = generate_share_key();
-    let projection = project_iris_profile_roster(share_id, ops.clone());
-    let recipients = projection
-        .active_facets
-        .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
-        .map(|facet| facet.pubkey.as_str())
-        .collect::<BTreeSet<_>>();
+    let projection = project_iris_profile_roster(share_id, roster_ops.clone());
+    let recipients = active_initial_share_key_recipients(&projection, &members);
     let wrapped_dck = wrap_share_key(owner_keys, recipients, &share_key)?;
-    ops.push(sign_share_roster_op_with_parents(
+    roster_ops.push(sign_share_roster_op_with_parents(
         owner_keys,
         share_id,
-        iris_profile_roster_parent_ids(&ops),
+        iris_profile_roster_parent_ids(&roster_ops),
         IrisProfileRosterOp::RotateKeyEpoch {
             epoch: 1,
             wrapped_dck,
         },
-        op_time + 1,
+        next_roster_op_time,
     )?);
 
     Ok(SharedFolder {
@@ -1416,16 +1775,215 @@ pub fn create_shared_folder(
         display_name,
         local_role: ShareRole::Admin,
         members,
-        participant_profiles,
+        member_ops,
+        participant_profiles: participants.participant_profiles,
         app_key_roots: BTreeMap::new(),
-        roster_ops: ops,
+        roster_ops,
     })
+}
+
+struct InitialShareRoster {
+    roster_ops: Vec<SignedIrisProfileRosterOp>,
+    member_ops: Vec<SignedShareMemberRosterOp>,
+    members: BTreeMap<String, ShareMember>,
+    next_roster_op_time: i64,
 }
 
 struct ShareParticipants {
     participant_profiles: BTreeMap<String, IrisProfileId>,
     members: BTreeMap<String, ShareMember>,
     recipients_by_app_key: BTreeMap<String, ShareRecipient>,
+}
+
+fn build_initial_share_rosters(
+    owner_keys: &nostr_sdk::Keys,
+    share_id: IrisProfileId,
+    owner_profile_id: IrisProfileId,
+    local_label: Option<String>,
+    participants: &ShareParticipants,
+    created_at: i64,
+) -> Result<InitialShareRoster, SharingError> {
+    let context = InitialShareRosterContext {
+        owner_keys,
+        share_id,
+        owner_profile_id,
+        participants,
+    };
+    let mut roster_ops = vec![sign_share_roster_op(
+        owner_keys,
+        share_id,
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                owner_keys.public_key().to_hex(),
+                created_at,
+                local_label,
+                ShareRole::Admin.capabilities(),
+            )
+            .with_profile_id(owner_profile_id),
+        },
+        created_at,
+    )?];
+    let mut member_ops = vec![sign_share_member_roster_op(
+        owner_keys,
+        share_id,
+        ShareMemberRosterOp::GrantMember {
+            member: participants
+                .members
+                .get(&owner_profile_id.to_string())
+                .cloned()
+                .unwrap_or_else(|| {
+                    ShareMember::active(owner_profile_id, ShareRole::Admin, None, None)
+                }),
+        },
+        created_at,
+    )?];
+    let mut next_roster_op_time = created_at;
+    let mut next_member_op_time = created_at;
+    for recipient in participants.recipients_by_app_key.values() {
+        next_roster_op_time += 1;
+        push_initial_share_recipient_facet(
+            owner_keys,
+            share_id,
+            &participants.members,
+            &mut roster_ops,
+            recipient,
+            next_roster_op_time,
+        )?;
+        if !member_ops_grant_profile(&member_ops, recipient.profile_id) {
+            next_member_op_time += 1;
+            push_initial_share_member_grant(
+                &context,
+                &roster_ops,
+                &mut member_ops,
+                recipient,
+                next_member_op_time,
+            )?;
+        }
+    }
+    let members = project_shared_folder_member_roster_from_parts(
+        share_id,
+        owner_profile_id,
+        &participants.participant_profiles,
+        &roster_ops,
+        &member_ops,
+    )
+    .members;
+    Ok(InitialShareRoster {
+        roster_ops,
+        member_ops,
+        members,
+        next_roster_op_time: next_roster_op_time.saturating_add(1),
+    })
+}
+
+struct InitialShareRosterContext<'a> {
+    owner_keys: &'a nostr_sdk::Keys,
+    share_id: IrisProfileId,
+    owner_profile_id: IrisProfileId,
+    participants: &'a ShareParticipants,
+}
+
+fn push_initial_share_recipient_facet(
+    owner_keys: &nostr_sdk::Keys,
+    share_id: IrisProfileId,
+    members: &BTreeMap<String, ShareMember>,
+    roster_ops: &mut Vec<SignedIrisProfileRosterOp>,
+    recipient: &ShareRecipient,
+    created_at: i64,
+) -> Result<(), SharingError> {
+    let member_role = members
+        .get(&recipient.profile_id.to_string())
+        .map_or(recipient.role, |member| member.role);
+    roster_ops.push(sign_share_roster_op_with_parents(
+        owner_keys,
+        share_id,
+        iris_profile_roster_parent_ids(roster_ops),
+        IrisProfileRosterOp::AddFacet {
+            facet: IrisProfileFacet::app_key(
+                recipient.app_pubkey.clone(),
+                created_at,
+                recipient.label.clone(),
+                member_role.capabilities(),
+            )
+            .with_profile_id(recipient.profile_id),
+        },
+        created_at,
+    )?);
+    Ok(())
+}
+
+fn push_initial_share_member_grant(
+    context: &InitialShareRosterContext<'_>,
+    roster_ops: &[SignedIrisProfileRosterOp],
+    member_ops: &mut Vec<SignedShareMemberRosterOp>,
+    recipient: &ShareRecipient,
+    created_at: i64,
+) -> Result<(), SharingError> {
+    let member_key = recipient.profile_id.to_string();
+    let member_role = context
+        .participants
+        .members
+        .get(&member_key)
+        .map_or(recipient.role, |member| member.role);
+    member_ops.push(sign_share_member_roster_op_with_parents(
+        context.owner_keys,
+        context.share_id,
+        share_member_roster_parent_ids_for_parts(
+            context.share_id,
+            context.owner_profile_id,
+            &context.participants.participant_profiles,
+            roster_ops,
+            member_ops,
+        ),
+        ShareMemberRosterOp::GrantMember {
+            member: context
+                .participants
+                .members
+                .get(&member_key)
+                .cloned()
+                .unwrap_or_else(|| {
+                    ShareMember::active(
+                        recipient.profile_id,
+                        member_role,
+                        recipient.representative_npub_hint.clone(),
+                        recipient.display_name.clone(),
+                    )
+                }),
+        },
+        created_at,
+    )?);
+    Ok(())
+}
+
+fn member_ops_grant_profile(
+    member_ops: &[SignedShareMemberRosterOp],
+    profile_id: IrisProfileId,
+) -> bool {
+    member_ops.iter().any(|op| {
+        matches!(
+            &op.content.op,
+            ShareMemberRosterOp::GrantMember { member } if member.profile_id == profile_id
+        )
+    })
+}
+
+fn active_initial_share_key_recipients<'a>(
+    projection: &'a IrisProfileRosterProjection,
+    members: &BTreeMap<String, ShareMember>,
+) -> BTreeSet<&'a str> {
+    projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| {
+            facet.profile_id.is_some_and(|profile_id| {
+                members
+                    .get(&profile_id.to_string())
+                    .is_some_and(ShareMember::is_active)
+            })
+        })
+        .map(|facet| facet.pubkey.as_str())
+        .collect()
 }
 
 fn collect_share_participants(
@@ -1644,18 +2202,40 @@ fn add_invited_share_member(
     PublicKey::from_hex(&recipient.app_pubkey)
         .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
     let member_key = recipient.profile_id.to_string();
-    if folder
-        .members
+    let projection = folder.projection();
+    let mut members = shared_folder_members_with_projection(folder, &projection);
+    if members
         .get(&member_key)
         .is_some_and(|member| member.status == ShareMemberStatus::Revoked)
     {
         return Err(SharingError::ShareMemberRevoked(recipient.profile_id));
     }
-    upsert_share_member(&mut folder.members, &recipient);
+    upsert_share_member(&mut members, &recipient);
+    let member = members.get(&member_key).cloned().unwrap_or_else(|| {
+        ShareMember::active(
+            recipient.profile_id,
+            recipient.role,
+            recipient.representative_npub_hint.clone(),
+            recipient.display_name.clone(),
+        )
+    });
+    let member_op_time = next_share_member_op_time(folder, created_at);
+    folder
+        .member_ops
+        .push(sign_share_member_roster_op_with_parents(
+            signer_keys,
+            folder.share_id,
+            share_member_roster_parent_ids(folder),
+            ShareMemberRosterOp::GrantMember {
+                member: member.clone(),
+            },
+            member_op_time,
+        )?);
     folder
         .participant_profiles
         .insert(recipient.app_pubkey.clone(), recipient.profile_id);
     let member_role = folder
+        .member_projection()
         .members
         .get(&recipient.profile_id.to_string())
         .map_or(recipient.role, |member| member.role);
@@ -1674,6 +2254,7 @@ fn add_invited_share_member(
         },
         created_at,
     )?);
+    materialize_share_members_from_ops(folder);
     Ok(InvitedShareMember {
         profile_id: recipient.profile_id,
         role: member_role,
@@ -1810,7 +2391,8 @@ pub fn revoke_shared_folder_member(
         return Err(SharingError::CannotRevokeCurrentShareMember);
     }
     let member_key = profile_id.to_string();
-    let Some(member) = folder.members.get_mut(&member_key) else {
+    let members = shared_folder_members_with_projection(folder, &projection);
+    let Some(member) = members.get(&member_key) else {
         return Err(SharingError::ShareMemberNotFound(profile_id));
     };
     if member.status == ShareMemberStatus::Revoked {
@@ -1828,7 +2410,20 @@ pub fn revoke_shared_folder_member(
             revoked_app_pubkeys: Vec::new(),
         });
     }
-    member.status = ShareMemberStatus::Revoked;
+    let member_op_time = next_share_member_op_time(folder, created_at);
+    folder
+        .member_ops
+        .push(sign_share_member_roster_op_with_parents(
+            signer_keys,
+            folder.share_id,
+            share_member_roster_parent_ids(folder),
+            ShareMemberRosterOp::RevokeMember {
+                profile_id,
+                reason: reason.map(str::to_string),
+            },
+            member_op_time,
+        )?);
+    materialize_share_members_from_ops(folder);
 
     let mut revoked_app_pubkeys =
         shared_folder_participant_profiles_with_projection(folder, &projection)
@@ -1930,6 +2525,157 @@ fn sign_share_roster_op_with_parents(
     let event =
         build_iris_profile_roster_op_event(signer_keys, share_id, parents, None, op, created_at)?;
     parse_iris_profile_roster_op_event(&event).map_err(SharingError::from)
+}
+
+fn sign_share_member_roster_op(
+    signer_keys: &Keys,
+    share_id: IrisProfileId,
+    op: ShareMemberRosterOp,
+    created_at: i64,
+) -> Result<SignedShareMemberRosterOp, SharingError> {
+    sign_share_member_roster_op_with_parents(signer_keys, share_id, Vec::new(), op, created_at)
+}
+
+fn sign_share_member_roster_op_with_parents(
+    signer_keys: &Keys,
+    share_id: IrisProfileId,
+    parents: Vec<String>,
+    op: ShareMemberRosterOp,
+    created_at: i64,
+) -> Result<SignedShareMemberRosterOp, SharingError> {
+    let event = build_share_member_roster_op_event(signer_keys, share_id, parents, op, created_at)?;
+    parse_share_member_roster_op_event(&event)
+}
+
+pub fn build_share_member_roster_op_event(
+    signer_keys: &Keys,
+    share_id: IrisProfileId,
+    parents: Vec<String>,
+    op: ShareMemberRosterOp,
+    created_at: i64,
+) -> Result<Event, SharingError> {
+    validate_share_member_roster_op(&op)?;
+    let client_nonce = Uuid::new_v4().to_string();
+    let content = ShareMemberRosterOpContent {
+        schema: SHARE_MEMBER_ROSTER_SCHEMA,
+        share_id,
+        actor_pubkey: signer_keys.public_key().to_hex(),
+        parents,
+        client_nonce: client_nonce.clone(),
+        created_at,
+        op,
+    };
+    let content_json = serde_json::to_string(&content)
+        .map_err(|e| SharingError::ShareMemberRoster(e.to_string()))?;
+    let ts = u64::try_from(created_at).unwrap_or(0);
+    EventBuilder::new(
+        Kind::from(KIND_SHARE_MEMBER_ROSTER_OP),
+        content_json,
+        vec![
+            Tag::identifier(share_member_roster_op_d_tag(share_id, &client_nonce)),
+            Tag::custom(iris_profile_tag_kind(), [share_id.to_string()]),
+            Tag::public_key(signer_keys.public_key()),
+        ],
+    )
+    .custom_created_at(nostr_sdk::Timestamp::from(ts))
+    .to_event(signer_keys)
+    .map_err(|e| SharingError::ShareMemberRoster(e.to_string()))
+}
+
+pub fn parse_share_member_roster_op_event(
+    event: &Event,
+) -> Result<SignedShareMemberRosterOp, SharingError> {
+    let kind = event.kind.as_u16();
+    if kind != KIND_SHARE_MEMBER_ROSTER_OP {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "invalid kind: expected {KIND_SHARE_MEMBER_ROSTER_OP}, got {kind}"
+        )));
+    }
+    let d_tag = event
+        .identifier()
+        .ok_or_else(|| SharingError::ShareMemberRoster("missing d tag".to_string()))?;
+    let (d_tag_share_id, d_tag_nonce) = parse_share_member_roster_op_d_tag(d_tag)?;
+    event
+        .verify()
+        .map_err(|error| SharingError::ShareMemberRoster(error.to_string()))?;
+    let content: ShareMemberRosterOpContent = serde_json::from_str(&event.content)
+        .map_err(|error| SharingError::ShareMemberRoster(error.to_string()))?;
+    if content.schema != SHARE_MEMBER_ROSTER_SCHEMA {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "unsupported share member roster schema {}",
+            content.schema
+        )));
+    }
+    if content.share_id != d_tag_share_id {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "d-tag share {} does not match content share {}",
+            d_tag_share_id, content.share_id
+        )));
+    }
+    if content.client_nonce != d_tag_nonce {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "d-tag nonce {} does not match content nonce {}",
+            d_tag_nonce, content.client_nonce
+        )));
+    }
+    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    if content.created_at != event_created_at {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "event created_at {} does not match content created_at {}",
+            event_created_at, content.created_at
+        )));
+    }
+    let signer_pubkey = event.pubkey.to_hex();
+    if signer_pubkey != content.actor_pubkey {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "event signer {} does not match member roster actor {}",
+            signer_pubkey, content.actor_pubkey
+        )));
+    }
+    PublicKey::from_hex(&content.actor_pubkey)
+        .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
+    validate_share_member_roster_op(&content.op)?;
+    Ok(SignedShareMemberRosterOp {
+        op_id: event.id.to_hex(),
+        signer_pubkey,
+        content,
+        event_json: event.as_json(),
+    })
+}
+
+fn validate_share_member_roster_op(op: &ShareMemberRosterOp) -> Result<(), SharingError> {
+    if let ShareMemberRosterOp::GrantMember { member } = op
+        && member.status == ShareMemberStatus::Revoked
+    {
+        return Err(SharingError::ShareMemberRoster(
+            "grant_member cannot grant revoked status".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn share_member_roster_op_d_tag(share_id: IrisProfileId, client_nonce: &str) -> String {
+    format!("iris-drive/share/{share_id}/member-roster-op/{client_nonce}")
+}
+
+fn parse_share_member_roster_op_d_tag(
+    d_tag: &str,
+) -> Result<(IrisProfileId, String), SharingError> {
+    let rest = d_tag
+        .strip_prefix("iris-drive/share/")
+        .ok_or_else(|| SharingError::ShareMemberRoster(format!("missing prefix: {d_tag}")))?;
+    let (share_id, nonce) = rest
+        .split_once("/member-roster-op/")
+        .ok_or_else(|| SharingError::ShareMemberRoster(format!("missing member op: {d_tag}")))?;
+    if nonce.is_empty() || nonce.contains('/') {
+        return Err(SharingError::ShareMemberRoster(format!(
+            "invalid nonce: {d_tag}"
+        )));
+    }
+    let share_id = share_id
+        .parse::<IrisProfileId>()
+        .map_err(|error| SharingError::ShareMemberRoster(format!("invalid share UUID: {error}")))?;
+    Ok((share_id, nonce.to_string()))
 }
 
 fn generate_share_key() -> [u8; 32] {
@@ -2085,6 +2831,7 @@ mod tests {
         );
 
         let mut pending = folder.clone();
+        pending.member_ops.clear();
         pending
             .members
             .get_mut(&reader_profile_id.to_string())
@@ -2096,6 +2843,7 @@ mod tests {
         );
 
         let mut revoked = folder.clone();
+        revoked.member_ops.clear();
         revoked
             .members
             .get_mut(&reader_profile_id.to_string())
@@ -2107,6 +2855,7 @@ mod tests {
         );
 
         let mut promoted_reader = folder.clone();
+        promoted_reader.member_ops.clear();
         promoted_reader
             .members
             .get_mut(&reader_profile_id.to_string())
@@ -2239,6 +2988,7 @@ mod tests {
                     ),
                 ),
             ]),
+            member_ops: Vec::new(),
             participant_profiles: BTreeMap::from([
                 (owner_pubkey.clone(), owner_profile_id),
                 (recipient_pubkey.clone(), recipient_profile_id),
@@ -2324,6 +3074,25 @@ mod tests {
             },
             created_at,
         );
+    }
+
+    fn append_share_member_grant(
+        folder: &mut SharedFolder,
+        signer: &Keys,
+        member: ShareMember,
+        created_at: i64,
+    ) {
+        folder.member_ops.push(
+            sign_share_member_roster_op_with_parents(
+                signer,
+                folder.share_id,
+                share_member_roster_parent_ids(folder),
+                ShareMemberRosterOp::GrantMember { member },
+                created_at,
+            )
+            .unwrap(),
+        );
+        materialize_share_members_from_ops(folder);
     }
 
     struct ShareRecipientResolutionEvidence {
@@ -2563,6 +3332,56 @@ mod tests {
     }
 
     #[test]
+    fn share_member_authority_projects_from_signed_member_ops() {
+        let owner_keys = Keys::generate();
+        let owner_profile_id = IrisProfileId::new_v4();
+        let (recipient_keys, recipient) = recipient(ShareRole::Editor);
+        let mut folder = create_shared_folder(
+            &owner_keys,
+            owner_profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Desktop".to_string()),
+            vec![recipient],
+            10,
+        )
+        .unwrap();
+        assert!(
+            !folder.member_ops.is_empty(),
+            "share membership must have a signed roster log"
+        );
+
+        folder.members.clear();
+        let recipient_pubkey = recipient_keys.public_key().to_hex();
+
+        assert_eq!(
+            shared_folder_app_key_write_authorization(&folder, &recipient_pubkey),
+            ShareRootWriteAuthorization::Authorized
+        );
+        assert_eq!(shared_folder_key_recipient_pubkeys(&folder), {
+            let mut pubkeys = vec![owner_keys.public_key().to_hex(), recipient_pubkey.clone()];
+            pubkeys.sort();
+            pubkeys
+        });
+
+        let view = shared_folder_view(&folder, &[], &recipient_pubkey);
+        assert_eq!(view.local_role, ShareRole::Editor);
+        assert_eq!(view.participant_count, 2);
+        assert!(view.members.iter().any(|member| {
+            member.profile_id != owner_profile_id
+                && member.role == ShareRole::Editor
+                && member.status == ShareMemberStatus::Active
+                && member.display_name == "Recipient"
+        }));
+
+        let checkpoint = sign_share_roster_checkpoint(&owner_keys, &folder, 20).unwrap();
+        assert_eq!(checkpoint.content.accepted_member_op_count, 2);
+        assert_eq!(checkpoint.content.rejected_member_op_count, 0);
+        assert_eq!(checkpoint.content.members.len(), 2);
+        validate_share_roster_checkpoint(&folder, &checkpoint).unwrap();
+    }
+
+    #[test]
     fn shared_folder_members_group_multiple_app_keys_by_profile() {
         let owner_keys = Keys::generate();
         let owner_profile_id = IrisProfileId::new_v4();
@@ -2799,6 +3618,7 @@ mod tests {
                     Some("Desktop".to_string()),
                 ),
             )]),
+            member_ops: Vec::new(),
             participant_profiles: BTreeMap::from([(owner_pubkey.clone(), owner_profile_id)]),
             app_key_roots: BTreeMap::new(),
             roster_ops: vec![
@@ -2892,18 +3712,20 @@ mod tests {
             )
             .unwrap(),
         );
-        folder.members.insert(
-            recipient_profile_id.to_string(),
+        folder
+            .participant_profiles
+            .insert(recipient_pubkey.clone(), recipient_profile_id);
+        append_share_member_grant(
+            &mut folder,
+            &owner_keys,
             ShareMember::active(
                 recipient_profile_id,
                 ShareRole::Editor,
                 None,
                 Some("Phone".to_string()),
             ),
+            12,
         );
-        folder
-            .participant_profiles
-            .insert(recipient_pubkey.clone(), recipient_profile_id);
 
         let unavailable = shared_folder_view(&folder, &[], &recipient_pubkey);
         assert_eq!(
@@ -2975,18 +3797,20 @@ mod tests {
             )
             .unwrap(),
         );
-        folder.members.insert(
-            other_admin_profile_id.to_string(),
+        folder
+            .participant_profiles
+            .insert(other_admin_pubkey.clone(), other_admin_profile_id);
+        append_share_member_grant(
+            &mut folder,
+            &owner_keys,
             ShareMember::active(
                 other_admin_profile_id,
                 ShareRole::Admin,
                 None,
                 Some("Other admin".to_string()),
             ),
+            12,
         );
-        folder
-            .participant_profiles
-            .insert(other_admin_pubkey.clone(), other_admin_profile_id);
 
         match repair_shared_folder_key_epoch_wraps(&mut folder, &other_admin_keys, 13) {
             Err(SharingError::CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey }) => {
@@ -3038,18 +3862,20 @@ mod tests {
             )
             .unwrap(),
         );
-        folder.members.insert(
-            signer_profile_id.to_string(),
+        folder
+            .participant_profiles
+            .insert(signer_pubkey.clone(), signer_profile_id);
+        append_share_member_grant(
+            &mut folder,
+            &owner_keys,
             ShareMember::active(
                 signer_profile_id,
                 ShareRole::Editor,
                 None,
                 Some("Signer".to_string()),
             ),
+            12,
         );
-        folder
-            .participant_profiles
-            .insert(signer_pubkey.clone(), signer_profile_id);
 
         let share_key = current_shared_folder_key(&folder, &owner_keys).unwrap();
         let wrapped_dck = wrap_share_key(
@@ -3089,18 +3915,20 @@ mod tests {
             )
             .unwrap(),
         );
-        folder.members.insert(
-            recipient_profile_id.to_string(),
+        folder
+            .participant_profiles
+            .insert(recipient_pubkey.clone(), recipient_profile_id);
+        append_share_member_grant(
+            &mut folder,
+            &owner_keys,
             ShareMember::active(
                 recipient_profile_id,
                 ShareRole::Reader,
                 None,
                 Some("Recipient".to_string()),
             ),
+            14,
         );
-        folder
-            .participant_profiles
-            .insert(recipient_pubkey.clone(), recipient_profile_id);
 
         assert_eq!(
             active_share_key_recipients_missing_wraps(&folder, &folder.projection(), 2),

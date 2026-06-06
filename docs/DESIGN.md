@@ -198,17 +198,17 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   discovery/display hint; access is granted to the resolved IrisProfile member,
   while concrete AppKeys receive key wraps and scoped signing/decryption
   capabilities. The recipient's IrisProfile roster and self-links prove
-  key-to-UUID identity. The share roster records UUID-to-role membership, and
-  each share AppKey facet carries the member IrisProfile UUID used for
-  share-root authorization; tombstones preserve that UUID so revoked-key status
-  remains explainable after removal. Any separate AppKey-to-IrisProfile map is
-  derived/cache data, not authority. External contact indexes such as
-  `nostr-social-graph` may rank/search representative npubs, but they are not
-  share authority.
+  key-to-UUID identity. The share member roster records signed
+  UUID-to-role/status grants, and each share AppKey facet carries the member
+  IrisProfile UUID used for share-root authorization; tombstones preserve that
+  UUID so revoked-key status remains explainable after removal. Projected member
+  maps and any separate AppKey-to-IrisProfile map are derived/cache data, not
+  authority. External contact indexes such as `nostr-social-graph` may
+  rank/search representative npubs, but they are not share authority.
   Inviting rotates the share epoch and emits a compact invite bundle containing
   a signed roster checkpoint/proof. The checkpoint summarizes entity members,
-  compact roster heads, current key epoch, and missing-wrap state; the
-  append-only roster op log remains authoritative.
+  compact AppKey/key-epoch and member-roster heads, current key epoch, and
+  missing-wrap state; the append-only share roster op logs remain authoritative.
 - **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
   imports the shared folder only if the invite names their IrisProfile.
 - **Receive invite**: app keeps an open Nostr subscription for DMs

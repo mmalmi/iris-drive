@@ -104,11 +104,12 @@ access.
 
 Share invites include a signed roster checkpoint that summarizes the current
 entity members, the materialized AppKey-to-IrisProfile participant mapping,
-compact roster heads, key epoch, and missing-wrap state. IrisProfile roster
-proofs establish which AppKeys belong to a profile; the share roster uses that
-mapping for share-root authorization. The append-only roster op log remains the
-source of truth; the checkpoint is an invite-time proof for recipients and web
-preview surfaces.
+compact AppKey/key-epoch and member-roster heads, key epoch, and missing-wrap
+state. IrisProfile roster proofs establish which AppKeys belong to a profile;
+the share member roster records the IrisProfile UUID-to-role/status grants.
+Projected `members` are cache/display state; the signed append-only share logs
+remain the source of truth. The checkpoint is an invite-time proof for
+recipients and web preview surfaces.
 
 When `idrive daemon` is running it starts a loopback browser gateway on port
 `17321` by default. The current primary drive can be opened at:

@@ -916,39 +916,37 @@ mod tests {
             10,
         )
         .unwrap();
-        let add_recipient_event = iris_drive_core::build_iris_profile_roster_op_event(
+        iris_drive_core::invite_shared_folder_member(
+            &mut folder,
             account.app_key.keys(),
-            folder.share_id,
-            iris_drive_core::iris_profile_roster_parent_ids(&folder.roster_ops),
-            None,
-            iris_drive_core::IrisProfileRosterOp::AddFacet {
-                facet: iris_drive_core::IrisProfileFacet::app_key(
-                    recipient_pubkey.clone(),
-                    12,
-                    Some("Phone".into()),
-                    iris_drive_core::ShareRole::Editor.capabilities(),
-                ),
+            iris_drive_core::ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_pubkey.clone(),
+                role: iris_drive_core::ShareRole::Editor,
+                label: Some("Phone".into()),
+                representative_npub_hint: None,
+                display_name: Some("Phone".into()),
             },
             12,
         )
         .unwrap();
-        folder.roster_ops.push(
-            iris_drive_core::parse_iris_profile_roster_op_event(&add_recipient_event).unwrap(),
-        );
-        folder.members.insert(
-            recipient_profile_id.to_string(),
-            iris_drive_core::ShareMember::active(
-                recipient_profile_id,
-                iris_drive_core::ShareRole::Editor,
-                None,
-                Some("Phone".into()),
-            ),
-        );
-        folder
-            .participant_profiles
-            .insert(recipient_pubkey.clone(), recipient_profile_id);
+        let current_epoch = folder
+            .projection()
+            .key_epochs
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap();
+        for op in &mut folder.roster_ops {
+            if let iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck } =
+                &mut op.content.op
+                && *epoch == current_epoch
+            {
+                wrapped_dck.remove(&recipient_pubkey);
+            }
+        }
         assert_eq!(
-            iris_drive_core::shared_folder_missing_key_wrap_pubkeys(&folder, 1),
+            iris_drive_core::shared_folder_missing_key_wrap_pubkeys(&folder, current_epoch),
             vec![recipient_pubkey.clone()]
         );
         let mut config = AppConfig {
@@ -962,7 +960,10 @@ mod tests {
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let repaired = saved.shared_folder(folder.share_id).unwrap();
-        assert!(iris_drive_core::shared_folder_missing_key_wrap_pubkeys(repaired, 1).is_empty());
+        assert!(
+            iris_drive_core::shared_folder_missing_key_wrap_pubkeys(repaired, current_epoch)
+                .is_empty()
+        );
         assert_eq!(
             iris_drive_core::current_shared_folder_key(repaired, &recipient_keys).unwrap(),
             iris_drive_core::current_shared_folder_key(repaired, account.app_key.keys()).unwrap()
