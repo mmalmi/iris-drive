@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
@@ -233,6 +234,34 @@ class IrisDriveAndroidGuiFlowTest {
             ),
             evidenceInvites,
         )
+    }
+
+    @Test
+    fun shareDialogRequestOpensSharesWithPrefilledCreateForm() {
+        val createdShares = mutableListOf<Pair<String, String>>()
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            shareDialogRequest = ShareDialogRequest(
+                id = 1,
+                sourcePath = "My Drive/Projects",
+                displayName = "Projects",
+            ),
+            onCreateShare = { sourcePath, displayName ->
+                createdShares += sourcePath to displayName
+            },
+        )
+
+        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
+        compose.onNodeWithTag("shareSourceInput").assertTextContains("My Drive/Projects")
+        compose.onNodeWithTag("shareNameInput").assertTextContains("Projects")
+        compose.onNodeWithText("Create share").assertIsEnabled().activate()
+
+        assertEquals(listOf("My Drive/Projects" to "Projects"), createdShares)
     }
 
     @Test
@@ -562,11 +591,14 @@ class IrisDriveAndroidGuiFlowTest {
         onRevokeShareMember: (String, String) -> Unit = { _, _ -> },
         onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
         onRepairShareWraps: (String) -> Unit = {},
+        shareDialogRequest: ShareDialogRequest? = null,
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
+        val shareDialogFlow = MutableStateFlow(shareDialogRequest)
         compose.setContent {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
+                shareDialogFlow = shareDialogFlow,
                 onCreateProfile = onCreateProfile,
                 onRestoreProfile = { _, _ -> },
                 onLinkDevice = onLinkDevice,

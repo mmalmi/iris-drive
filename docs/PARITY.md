@@ -18,6 +18,7 @@ equivalent to desktop.
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
+| Open share dialog for selected folder | Planned | `iris-drive://share` + `drive.iris.to/share` | Planned | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` + `drive.iris.to/share` |
 | Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
 | App installs list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | App install online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
@@ -62,6 +63,12 @@ The minimum parity smoke for native desktop shells is:
 Block replication now tries direct hashtree-over-FIPS transfer between
 authorized Iris Drive instances first. Blossom remains configured as a remote
 cache path, not the primary direct sync transport.
+
+OS share/context integrations should only route into the app. The stable route
+is `iris-drive://share?path=<folder>&name=<optional-name>` or
+`https://drive.iris.to/share?...`; native shells select the **Shares** tab and
+prefill the create-share form, while app-core remains responsible for the actual
+share creation.
 
 ## Mobile test target
 

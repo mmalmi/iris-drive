@@ -45,6 +45,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var backupTargets: [IrisDriveBackupTarget] = []
     @Published var shares: [IrisDriveShareStatus] = []
     @Published var lastShareInviteURL: String?
+    @Published var pendingShareDialog: IrisDriveShareDialogRequest?
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
@@ -58,6 +59,12 @@ final class IrisDriveStatus: ObservableObject {
         return snapshotURL
     }
 
+}
+
+struct IrisDriveShareDialogRequest: Identifiable, Equatable {
+    let id = UUID()
+    let sourcePath: String
+    let displayName: String
 }
 
 struct IrisDriveAppKeyLinkRequestStatus: Identifiable, Equatable {

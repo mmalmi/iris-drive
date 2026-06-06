@@ -135,6 +135,8 @@ pub struct LinkInputClassification {
     pub app_key_pubkey: String,
     pub admin_app_key_pubkey: String,
     pub has_link_secret: bool,
+    pub share_source_path: String,
+    pub share_display_name: String,
     pub error: String,
 }
 
@@ -148,6 +150,8 @@ impl From<iris_drive_core::LinkInputClassification> for LinkInputClassification 
             app_key_pubkey: value.app_key_pubkey,
             admin_app_key_pubkey: value.admin_app_key_pubkey,
             has_link_secret: value.has_link_secret,
+            share_source_path: value.share_source_path,
+            share_display_name: value.share_display_name,
             error: value.error,
         }
     }

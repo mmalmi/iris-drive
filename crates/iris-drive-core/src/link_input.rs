@@ -28,6 +28,8 @@ pub struct LinkInputClassification {
     pub app_key_pubkey: String,
     pub admin_app_key_pubkey: String,
     pub has_link_secret: bool,
+    pub share_source_path: String,
+    pub share_display_name: String,
     pub error: String,
 }
 
@@ -59,6 +61,9 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return result;
     }
     if let Some(result) = classify_invite_link_input(trimmed) {
+        return result;
+    }
+    if let Some(result) = classify_share_dialog_link_input(trimmed) {
         return result;
     }
     if looks_like_app_key_pubkey_input(trimmed) {
@@ -215,6 +220,63 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
     Some(classification)
 }
 
+fn classify_share_dialog_link_input(input: &str) -> Option<LinkInputClassification> {
+    let lower = input.to_ascii_lowercase();
+    let is_share_dialog = link_route_matches(&lower, "iris-drive://share", false)
+        || link_route_matches(&lower, "iris-drive:/share", false)
+        || link_route_matches(&lower, "https://drive.iris.to/share", false);
+    if !is_share_dialog {
+        return None;
+    }
+
+    let query = input.split_once('?').map_or("", |(_, query)| query);
+    let path = match decoded_query_value(query, "path") {
+        Ok(path) => path.unwrap_or_default().trim().to_owned(),
+        Err(error) => {
+            return Some(LinkInputClassification {
+                kind: "share_dialog".to_owned(),
+                normalized_input: input.to_owned(),
+                error: error.to_string(),
+                ..LinkInputClassification::default()
+            });
+        }
+    };
+    let display_name = match decoded_query_value(query, "name").and_then(|name| {
+        if name.is_some() {
+            Ok(name)
+        } else {
+            decoded_query_value(query, "display_name")
+        }
+    }) {
+        Ok(display_name) => display_name.unwrap_or_default().trim().to_owned(),
+        Err(error) => {
+            return Some(LinkInputClassification {
+                kind: "share_dialog".to_owned(),
+                normalized_input: input.to_owned(),
+                error: error.to_string(),
+                ..LinkInputClassification::default()
+            });
+        }
+    };
+
+    let is_complete = !path.is_empty();
+    let error = if is_complete {
+        String::new()
+    } else {
+        "share source path is required".to_owned()
+    };
+    Some(LinkInputClassification {
+        kind: "share_dialog".to_owned(),
+        normalized_input: input.to_owned(),
+        is_complete,
+        is_valid: is_complete,
+        share_source_path: path,
+        share_display_name: display_name,
+        error,
+        ..LinkInputClassification::default()
+    })
+}
+
 fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool {
     let Some(rest) = input.strip_prefix(route) else {
         return false;
@@ -255,6 +317,39 @@ fn raw_query_value(query: &str, name: &str) -> Option<String> {
         let (key, value) = part.split_once('=')?;
         (key == name && !value.is_empty()).then(|| value.to_owned())
     })
+}
+
+fn decoded_query_value(query: &str, name: &str) -> Result<Option<String>> {
+    raw_query_value(query, name)
+        .map(|value| percent_decode_query_component(&value))
+        .transpose()
+}
+
+fn percent_decode_query_component(value: &str) -> Result<String> {
+    let mut out = Vec::with_capacity(value.len());
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            b'%' => {
+                let hex = value
+                    .get(index + 1..index + 3)
+                    .ok_or_else(|| anyhow!("invalid percent escape"))?;
+                let byte = u8::from_str_radix(hex, 16).context("invalid percent escape")?;
+                out.push(byte);
+                index += 3;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).context("invalid utf-8 in percent escape")
 }
 
 #[cfg(test)]
@@ -313,6 +408,29 @@ mod tests {
 
         let unrelated = classify_link_input("https://drive.iris.to/app-key-linker?owner=npub1x");
         assert_eq!(unrelated.kind, "unknown");
+    }
+
+    #[test]
+    fn classify_share_dialog_links_returns_folder_and_name() {
+        let app_link =
+            classify_link_input("iris-drive://share?path=My%20Drive%2FProjects&name=Projects");
+        assert_eq!(app_link.kind, "share_dialog");
+        assert!(app_link.is_complete);
+        assert!(app_link.is_valid);
+        assert_eq!(app_link.share_source_path, "My Drive/Projects");
+        assert_eq!(app_link.share_display_name, "Projects");
+
+        let web_link = classify_link_input("https://drive.iris.to/share?path=%2FShared%20Source");
+        assert_eq!(web_link.kind, "share_dialog");
+        assert!(web_link.is_complete);
+        assert!(web_link.is_valid);
+        assert_eq!(web_link.share_source_path, "/Shared Source");
+        assert!(web_link.share_display_name.is_empty());
+
+        let missing_path = classify_link_input("iris-drive://share?name=Nope");
+        assert_eq!(missing_path.kind, "share_dialog");
+        assert!(!missing_path.is_complete);
+        assert!(!missing_path.is_valid);
     }
 
     #[test]

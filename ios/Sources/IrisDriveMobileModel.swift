@@ -41,6 +41,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var shareSourceInput = ""
     @Published var shareNameInput = ""
     @Published var shareInviteInput = ""
+    @Published var shareDialogRequestId: UInt64 = 0
     @Published var relays = defaultRelays
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var syncOverCellular = false
@@ -780,6 +781,14 @@ final class IrisDriveMobileModel: ObservableObject {
         shareNameInput = ""
     }
 
+    func openShareDialog(sourcePath: String, displayName: String) {
+        let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty else { return }
+        shareSourceInput = sourcePath
+        shareNameInput = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        shareDialogRequestId &+= 1
+    }
+
     func acceptShareInvite() {
         let invite = shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !invite.isEmpty else { return }
@@ -878,6 +887,13 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func handle(url: URL) {
         let linkInput = IrisDriveNativeLinkInput.classify(url.absoluteString)
+        if linkInput.kind == "share_dialog" {
+            openShareDialog(
+                sourcePath: linkInput.shareSourcePath,
+                displayName: linkInput.shareDisplayName
+            )
+            return
+        }
         if linkInput.kind == "invite" {
             profileLinkTarget = url.absoluteString
             linkDevice()

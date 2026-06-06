@@ -36,6 +36,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,6 +112,12 @@ internal data class RecoveryWordsInputResult(
     val index: Int,
 )
 
+internal data class ShareDialogRequest(
+    val id: Long,
+    val sourcePath: String,
+    val displayName: String,
+)
+
 internal fun fillRecoveryWords(
     words: List<String>,
     startIndex: Int,
@@ -163,6 +170,7 @@ internal enum class MainTab(
 @Composable
 internal fun IrisDriveAndroidApp(
     stateFlow: StateFlow<AppState>,
+    shareDialogFlow: StateFlow<ShareDialogRequest?>,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
     onLinkDevice: (String, String) -> Unit,
@@ -198,8 +206,15 @@ internal fun IrisDriveAndroidApp(
     onStopSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsState()
+    val shareDialogRequest by shareDialogFlow.collectAsState()
     val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
+
+    LaunchedEffect(shareDialogRequest?.id, state.isSetupComplete) {
+        if (state.isSetupComplete && shareDialogRequest != null) {
+            selectedTab = MainTab.Shares
+        }
+    }
 
     IrisDriveTheme {
         Scaffold(
@@ -261,6 +276,7 @@ internal fun IrisDriveAndroidApp(
                     padding = padding,
                     selectedTab = selectedTab,
                     onSelectTab = { selectedTab = it },
+                    shareDialogRequest = shareDialogRequest,
                     state = state,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,

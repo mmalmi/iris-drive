@@ -69,6 +69,14 @@ struct IrisDriveRootView: View {
                 }
                 .tag(MainTab.settings)
             }
+            .onAppear {
+                if model.shareDialogRequestId > 0 {
+                    selectedTab = .shares
+                }
+            }
+            .onChange(of: model.shareDialogRequestId) { _, _ in
+                selectedTab = .shares
+            }
         }
     }
 }

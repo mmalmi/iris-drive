@@ -92,6 +92,12 @@ add a shortcut, and repair missing key wraps. The UI shows people/profile
 members first; invite dialogs prefer signed recipient-evidence JSON and keep
 direct AppKey entry as an admin fallback.
 
+OS share/open integrations do not grant access by themselves. They open the app
+share dialog for a selected Iris Drive folder using
+`iris-drive://share?path=<folder>&name=<optional-name>` or the equivalent
+`https://drive.iris.to/share?...` route; the user still confirms through the
+normal Shares tab create flow.
+
 Share invites include a signed roster checkpoint that summarizes the current
 entity members, the materialized AppKey-to-IrisProfile participant mapping,
 compact roster heads, key epoch, and missing-wrap state. IrisProfile roster

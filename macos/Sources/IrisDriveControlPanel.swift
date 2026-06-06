@@ -130,6 +130,10 @@ struct IrisDriveControlPanel: View {
         }
         .onAppear {
             controller.ensureFileProviderDomainIfProfileExists()
+            applyPendingShareDialog()
+        }
+        .onChange(of: status.pendingShareDialog?.id) { _, _ in
+            applyPendingShareDialog()
         }
     }
 
@@ -763,6 +767,13 @@ struct IrisDriveControlPanel: View {
     }
 
     // MARK: Shares
+
+    private func applyPendingShareDialog() {
+        guard let request = status.pendingShareDialog else { return }
+        selectedTab = .shares
+        shareSourceInput = request.sourcePath
+        shareNameInput = request.displayName
+    }
 
     private var shares: some View {
         VStack(alignment: .leading, spacing: 14) {

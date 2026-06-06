@@ -35,8 +35,10 @@ import to.iris.drive.app.sync.IrisDriveSyncService
 
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState())
+    private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null
+    private var nextShareDialogRequestId = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
 
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
+                shareDialogFlow = shareDialogFlow,
                 onCreateProfile = { deviceLabel ->
                     dispatch(NativeActions.createProfile(resolveDeviceLabel(deviceLabel)), ::autoStartSyncIfNeeded)
                 },
@@ -322,7 +325,15 @@ class MainActivity : ComponentActivity() {
     private fun handleDebugIntent(intent: Intent?) {
         val uri = intent?.data
         if (uri != null) {
-            when (NativeCore.classifyLinkInputKind(uri.toString())) {
+            val classification = NativeCore.classifyLinkInput(uri.toString())
+            when (classification.optString("kind")) {
+                "share_dialog" -> {
+                    openShareDialog(
+                        classification.optString("share_source_path"),
+                        classification.optString("share_display_name"),
+                    )
+                }
+
                 "app_key_approval" -> {
                     dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
                 }
@@ -387,6 +398,20 @@ class MainActivity : ComponentActivity() {
             BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY,
             DOCUMENTS_ROOT_DOCUMENT_ID,
         ).toString()
+
+    private fun openShareDialog(sourcePath: String, displayName: String) {
+        val trimmedPath = sourcePath.trim()
+        if (trimmedPath.isBlank()) {
+            Toast.makeText(this, "Share folder path required", Toast.LENGTH_SHORT).show()
+            return
+        }
+        nextShareDialogRequestId += 1
+        shareDialogFlow.value = ShareDialogRequest(
+            id = nextShareDialogRequestId,
+            sourcePath = trimmedPath,
+            displayName = displayName.trim(),
+        )
+    }
 
     companion object {
         const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"

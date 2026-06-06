@@ -379,6 +379,8 @@ struct NativeLinkInputClassification: Codable {
     var appKeyPubkey: String = ""
     var adminAppKeyPubkey: String = ""
     var hasLinkSecret: Bool = false
+    var shareSourcePath: String = ""
+    var shareDisplayName: String = ""
     var error: String = ""
 
     init(error: String = "") {
@@ -393,6 +395,8 @@ struct NativeLinkInputClassification: Codable {
         case appKeyPubkey = "app_key_pubkey"
         case adminAppKeyPubkey = "admin_app_key_pubkey"
         case hasLinkSecret = "has_link_secret"
+        case shareSourcePath = "share_source_path"
+        case shareDisplayName = "share_display_name"
         case error
     }
 }

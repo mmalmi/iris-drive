@@ -21,6 +21,9 @@ private func irisDriveAppDispatchJson(
 @_silgen_name("iris_drive_validate_link_input_json")
 private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_classify_link_input_json")
+private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_export_recovery_secret_json")
 private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -62,6 +65,18 @@ final class IrisDriveDesktopCore {
             return false
         }
         return payload["is_complete"] as? Bool ?? false
+    }
+
+    static func classifyLinkInput(_ text: String) -> [String: Any] {
+        let json = text.withCString { pointer in
+            takeString(irisDriveClassifyLinkInputJson(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return ["error": "native link classifier returned invalid JSON"]
+        }
+        return payload
     }
 
     static func exportRecoverySecret(dataDir: String) -> [String: Any] {

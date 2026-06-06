@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ internal fun AuthenticatedContent(
     padding: PaddingValues,
     selectedTab: MainTab,
     onSelectTab: (MainTab) -> Unit,
+    shareDialogRequest: ShareDialogRequest?,
     state: AppState,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
@@ -121,6 +123,7 @@ internal fun AuthenticatedContent(
         MainTab.Shares -> SharesContent(
             padding = padding,
             state = state,
+            shareDialogRequest = shareDialogRequest,
             onCopyText = onCopyText,
             onCreateShare = onCreateShare,
             onInviteShareMember = onInviteShareMember,
@@ -272,6 +275,7 @@ private fun BackupsContent(
 private fun SharesContent(
     padding: PaddingValues,
     state: AppState,
+    shareDialogRequest: ShareDialogRequest?,
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
@@ -295,6 +299,7 @@ private fun SharesContent(
         item {
             SharesPanel(
                 state = state,
+                shareDialogRequest = shareDialogRequest,
                 onCopyText = onCopyText,
                 onCreateShare = onCreateShare,
                 onInviteShareMember = onInviteShareMember,
@@ -564,6 +569,7 @@ private fun BackupsPanel(
 @Composable
 private fun SharesPanel(
     state: AppState,
+    shareDialogRequest: ShareDialogRequest?,
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
@@ -578,6 +584,12 @@ private fun SharesPanel(
     var inviteInput by remember { mutableStateOf("") }
     var inviteTarget by remember { mutableStateOf<ShareState?>(null) }
     var revokeTarget by remember { mutableStateOf<Pair<ShareState, ShareMemberState>?>(null) }
+
+    LaunchedEffect(shareDialogRequest?.id) {
+        val request = shareDialogRequest ?: return@LaunchedEffect
+        sourceInput = request.sourcePath
+        nameInput = request.displayName
+    }
 
     inviteTarget?.let { share ->
         InviteShareMemberDialog(
@@ -628,14 +640,18 @@ private fun SharesPanel(
             onValueChange = { sourceInput = it },
             label = { Text("Folder path") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("shareSourceInput"),
         )
         OutlinedTextField(
             value = nameInput,
             onValueChange = { nameInput = it },
             label = { Text("Name") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("shareNameInput"),
         )
         Button(
             onClick = {

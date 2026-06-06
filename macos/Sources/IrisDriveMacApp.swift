@@ -248,13 +248,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
     ) -> Bool {
         guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
-              let url = userActivity.webpageURL,
-              isIrisWebURL(url)
+              let url = userActivity.webpageURL
         else {
             return false
         }
-        handleIrisWebURL(url)
-        return true
+        return handleLaunchURL(url)
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            _ = handleLaunchURL(url)
+        }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -322,6 +326,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showControlPanel()
         updateStatus("Iris link opened")
         NSLog("Iris Drive opened universal link: \(url.absoluteString)")
+    }
+
+    private func handleLaunchURL(_ url: URL) -> Bool {
+        let classification = IrisDriveDesktopCore.classifyLinkInput(url.absoluteString)
+        if classification["kind"] as? String == "share_dialog" {
+            openShareDialog(
+                sourcePath: classification["share_source_path"] as? String ?? "",
+                displayName: classification["share_display_name"] as? String ?? ""
+            )
+            return true
+        }
+        guard isIrisWebURL(url) else {
+            return false
+        }
+        handleIrisWebURL(url)
+        return true
+    }
+
+    private func openShareDialog(sourcePath: String, displayName: String) {
+        let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty else {
+            showControlPanel()
+            updateStatus("Share folder path required")
+            return
+        }
+        IrisDriveStatus.shared.pendingShareDialog = IrisDriveShareDialogRequest(
+            sourcePath: sourcePath,
+            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        showControlPanel()
+        updateStatus("Share folder selected")
     }
 
     private func installSingleInstanceNotificationObserver() {

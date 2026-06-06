@@ -616,6 +616,15 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
         "https://drive.iris.to/app-key-linker?owner=npub1example".to_owned(),
     );
     assert_eq!(unrelated.kind, "unknown");
+
+    let share_dialog = super::classify_link_input(
+        "https://drive.iris.to/share?path=My%20Drive%2FPhotos&name=Photos".to_owned(),
+    );
+    assert_eq!(share_dialog.kind, "share_dialog");
+    assert!(share_dialog.is_complete);
+    assert!(share_dialog.is_valid);
+    assert_eq!(share_dialog.share_source_path, "My Drive/Photos");
+    assert_eq!(share_dialog.share_display_name, "Photos");
 }
 
 #[test]

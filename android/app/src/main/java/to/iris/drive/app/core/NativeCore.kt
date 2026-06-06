@@ -39,10 +39,10 @@ internal object NativeCore {
     external fun providerIsChildDocumentJson(parentPath: String, documentPath: String): String
     external fun applyOwnerSnapshotForTest(ownerDataDir: String, linkedDataDir: String): String
 
-    fun classifyLinkInputKind(text: String): String =
+    fun classifyLinkInput(text: String): JSONObject =
         runCatching {
-            JSONObject(classifyLinkInputJson(text)).optString("kind")
-        }.getOrDefault("")
+            JSONObject(classifyLinkInputJson(text))
+        }.getOrDefault(JSONObject().put("kind", "unknown"))
 
     fun isCompleteLinkInput(text: String): Boolean =
         runCatching {
