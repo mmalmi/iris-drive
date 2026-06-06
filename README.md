@@ -83,6 +83,7 @@ just run-cli shares role <share-id> <iris-profile-id> editor
 just run-cli shares revoke <share-id> <iris-profile-id>
 just run-cli shares shortcut <share-id> --parent "Projects"
 just run-cli shares repair-wraps <share-id>
+just run-cli shares list --diagnostics
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
@@ -92,6 +93,12 @@ shared folder, invite an IrisProfile member, accept an invite, change member
 roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
 shows people/profile members first; invite dialogs prefer signed
 recipient-evidence JSON and keep direct AppKey entry as an admin fallback.
+CLI share JSON follows the same shape by default: members are IrisProfile
+entities and repair/revocation output reports counts. Raw AppKey lists are
+available only from explicit diagnostics output such as
+`idrive shares list --diagnostics`,
+`idrive shares revoke <share-id> <iris-profile-id> --diagnostics`, and
+`idrive shares repair-wraps <share-id> --diagnostics`.
 
 OS share/open integrations do not grant access by themselves. They open the app
 share dialog for a selected Iris Drive folder using

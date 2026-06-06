@@ -256,7 +256,11 @@ pub(crate) enum SharesCmd {
         name: Option<String>,
     },
     /// List shared folders visible to this app install.
-    List,
+    List {
+        /// Include raw AppKey diagnostics such as missing wrap recipients.
+        #[arg(long)]
+        diagnostics: bool,
+    },
     /// List members for one share.
     Members {
         /// Share UUID.
@@ -302,6 +306,9 @@ pub(crate) enum SharesCmd {
         /// Optional reason recorded in `AppKey` tombstones.
         #[arg(long)]
         reason: Option<String>,
+        /// Include raw revoked AppKeys in the JSON output.
+        #[arg(long)]
+        diagnostics: bool,
     },
     /// Change one `IrisProfile` member's share role.
     Role {
@@ -331,6 +338,9 @@ pub(crate) enum SharesCmd {
     RepairWraps {
         /// Share UUID.
         share_id: String,
+        /// Include raw repaired/missing AppKeys in the JSON output.
+        #[arg(long)]
+        diagnostics: bool,
     },
 }
 

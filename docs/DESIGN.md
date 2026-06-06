@@ -213,6 +213,11 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   missing-wrap state; the append-only share roster op logs remain authoritative.
 - **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
   imports the shared folder only if the invite names their IrisProfile.
+- **CLI projection**: normal share JSON is entity/count oriented. `list`,
+  `revoke`, and `repair-wraps` report IrisProfile members, roles/status, repair
+  state, and AppKey counts without listing individual AppKeys. Raw missing,
+  repaired, or revoked AppKeys are diagnostics only via explicit
+  `--diagnostics` flags.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
   (no timed fetches — see CLAUDE.md rule), surfaces "X shared 'Photos'."
 - **Receive share**: shared folders appear under `Shared with me/<name>`.

@@ -2,11 +2,11 @@
 use super::*;
 
 pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Result<()> {
-    match command.unwrap_or(SharesCmd::List) {
+    match command.unwrap_or(SharesCmd::List { diagnostics: false }) {
         SharesCmd::Create { source_path, name } => {
             cmd_shares_create(config_dir, &source_path, name.as_deref())
         }
-        SharesCmd::List => cmd_shares_list(config_dir),
+        SharesCmd::List { diagnostics } => cmd_shares_list(config_dir, diagnostics),
         SharesCmd::Members { share_id } => cmd_shares_members(config_dir, &share_id),
         SharesCmd::Invite {
             share_id,
@@ -33,7 +33,14 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
             share_id,
             profile_id,
             reason,
-        } => cmd_shares_revoke(config_dir, &share_id, &profile_id, reason.as_deref()),
+            diagnostics,
+        } => cmd_shares_revoke(
+            config_dir,
+            &share_id,
+            &profile_id,
+            reason.as_deref(),
+            diagnostics,
+        ),
         SharesCmd::Role {
             share_id,
             profile_id,
@@ -51,7 +58,10 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
             parent.as_deref(),
             &target_path,
         ),
-        SharesCmd::RepairWraps { share_id } => cmd_shares_repair_wraps(config_dir, &share_id),
+        SharesCmd::RepairWraps {
+            share_id,
+            diagnostics,
+        } => cmd_shares_repair_wraps(config_dir, &share_id, diagnostics),
     }
 }
 
@@ -82,9 +92,12 @@ fn cmd_shares_create(config_dir: &Path, source_path: &str, name: Option<&str>) -
     Ok(())
 }
 
-fn cmd_shares_list(config_dir: &Path) -> Result<()> {
+fn cmd_shares_list(config_dir: &Path, diagnostics: bool) -> Result<()> {
     let result = iris_drive_core::share_action_state(config_dir).context("reading share state")?;
-    println!("{}", json!({ "shares": share_views_json(&result.shares) }));
+    println!(
+        "{}",
+        json!({ "shares": share_views_json_with_diagnostics(&result.shares, diagnostics) })
+    );
     Ok(())
 }
 
@@ -208,6 +221,7 @@ fn cmd_shares_revoke(
     share_id: &str,
     profile_id: &str,
     reason: Option<&str>,
+    diagnostics: bool,
 ) -> Result<()> {
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
@@ -231,16 +245,7 @@ fn cmd_shares_revoke(
         .ok_or_else(|| anyhow::anyhow!("revoked share was not projected"))?;
     println!(
         "{}",
-        json!({
-            "share_id": result.share_id.unwrap_or(share_id).to_string(),
-            "profile_id": result.profile_id.unwrap_or(profile_id).to_string(),
-            "epoch": result.epoch,
-            "revoked_app_keys": result.revoked_app_pubkeys
-                .iter()
-                .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
-                .collect::<Vec<_>>(),
-            "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
-        })
+        share_revoke_result_json(&result, view, share_id, profile_id, diagnostics)
     );
     Ok(())
 }
@@ -315,7 +320,7 @@ fn cmd_shares_shortcut(
     Ok(())
 }
 
-fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
+fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str, diagnostics: bool) -> Result<()> {
     let share_id = share_id
         .parse::<iris_drive_core::IrisProfileId>()
         .context("parsing share id")?;
@@ -324,35 +329,36 @@ fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str) -> Result<()> {
         iris_drive_core::ShareAction::RepairShareWraps { share_id },
     )
     .context("repairing share key epoch wraps")?;
-    let remaining_missing_key_wraps = result
-        .remaining_missing_key_wrap_pubkeys
-        .iter()
-        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
-        .collect::<Vec<_>>();
-    let repaired_key_wraps = result
-        .repaired_key_wrap_pubkeys
-        .iter()
-        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
-        .collect::<Vec<_>>();
     println!(
         "{}",
-        json!({
-            "share_id": result.share_id.unwrap_or(share_id).to_string(),
-            "epoch": result.epoch,
-            "repaired_key_wrap_count": result.repaired_key_wrap_count.unwrap_or_default(),
-            "repaired_key_wraps": repaired_key_wraps,
-            "remaining_missing_key_wraps": remaining_missing_key_wraps,
-        })
+        share_repair_result_json(&result, share_id, diagnostics)
     );
     Ok(())
 }
 
 fn share_views_json(views: &[iris_drive_core::SharedFolderView]) -> Vec<Value> {
-    views.iter().map(share_view_json).collect()
+    share_views_json_with_diagnostics(views, false)
+}
+
+fn share_views_json_with_diagnostics(
+    views: &[iris_drive_core::SharedFolderView],
+    diagnostics: bool,
+) -> Vec<Value> {
+    views
+        .iter()
+        .map(|view| share_view_json_with_diagnostics(view, diagnostics))
+        .collect()
 }
 
 fn share_view_json(view: &iris_drive_core::SharedFolderView) -> Value {
-    json!({
+    share_view_json_with_diagnostics(view, false)
+}
+
+fn share_view_json_with_diagnostics(
+    view: &iris_drive_core::SharedFolderView,
+    diagnostics: bool,
+) -> Value {
+    let mut value = json!({
         "share_id": view.share_id.to_string(),
         "display_name": view.display_name.clone(),
         "source_path": view.source_path.clone(),
@@ -370,16 +376,18 @@ fn share_view_json(view: &iris_drive_core::SharedFolderView) -> Value {
         "key_unavailable": view.key_unavailable,
         "repair_needed": view.repair_needed,
         "missing_key_wrap_count": view.missing_key_wrap_count,
-        "missing_key_wraps": view
-            .missing_key_wrap_pubkeys
-            .iter()
-            .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
-            .collect::<Vec<_>>(),
         "participant_count": view.participant_count,
         "app_key_count": view.app_key_count,
         "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
         "shortcut_paths": view.shortcut_paths.clone(),
-    })
+    });
+    if diagnostics {
+        value.as_object_mut().unwrap().insert(
+            "missing_key_wraps".to_string(),
+            json!(app_key_npubs(&view.missing_key_wrap_pubkeys)),
+        );
+    }
+    value
 }
 
 fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value {
@@ -395,6 +403,64 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
         "can_revoke": member.can_revoke,
         "can_change_role": member.can_change_role,
     })
+}
+
+fn share_revoke_result_json(
+    result: &iris_drive_core::ShareActionResult,
+    view: &iris_drive_core::SharedFolderView,
+    share_id: iris_drive_core::IrisProfileId,
+    profile_id: iris_drive_core::IrisProfileId,
+    diagnostics: bool,
+) -> Value {
+    let mut value = json!({
+        "share_id": result.share_id.unwrap_or(share_id).to_string(),
+        "profile_id": result.profile_id.unwrap_or(profile_id).to_string(),
+        "epoch": result.epoch,
+        "revoked_app_key_count": result.revoked_app_pubkeys.len(),
+        "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
+    });
+    if diagnostics {
+        value.as_object_mut().unwrap().insert(
+            "revoked_app_keys".to_string(),
+            json!(app_key_npubs(&result.revoked_app_pubkeys)),
+        );
+    }
+    value
+}
+
+fn share_repair_result_json(
+    result: &iris_drive_core::ShareActionResult,
+    share_id: iris_drive_core::IrisProfileId,
+    diagnostics: bool,
+) -> Value {
+    let mut value = json!({
+        "share_id": result.share_id.unwrap_or(share_id).to_string(),
+        "epoch": result.epoch,
+        "repaired_key_wrap_count": result
+            .repaired_key_wrap_count
+            .unwrap_or(result.repaired_key_wrap_pubkeys.len()),
+        "remaining_missing_key_wrap_count": result
+            .remaining_missing_key_wrap_count
+            .unwrap_or(result.remaining_missing_key_wrap_pubkeys.len()),
+    });
+    if diagnostics {
+        value.as_object_mut().unwrap().insert(
+            "repaired_key_wraps".to_string(),
+            json!(app_key_npubs(&result.repaired_key_wrap_pubkeys)),
+        );
+        value.as_object_mut().unwrap().insert(
+            "remaining_missing_key_wraps".to_string(),
+            json!(app_key_npubs(&result.remaining_missing_key_wrap_pubkeys)),
+        );
+    }
+    value
+}
+
+fn app_key_npubs(pubkeys: &[String]) -> Vec<String> {
+    pubkeys
+        .iter()
+        .map(|pubkey| iris_drive_core::app_key_summary::pubkey_npub(pubkey))
+        .collect()
 }
 
 fn parse_share_role(value: &str) -> Result<iris_drive_core::ShareRole> {
@@ -567,6 +633,12 @@ mod tests {
         assert_eq!(share["key_status_label"], "Available");
         assert_eq!(share["write_authorization"], "authorized");
         assert_eq!(share["write_authorization_label"], "Authorized");
+        assert!(share.get("missing_key_wraps").is_none());
+        assert!(
+            share_view_json_with_diagnostics(&view, true)
+                .get("missing_key_wraps")
+                .is_some()
+        );
 
         let member = share["members"]
             .as_array()
@@ -656,6 +728,7 @@ mod tests {
             &folder.share_id.to_string(),
             &recipient_profile_id.to_string(),
             Some("removed"),
+            false,
         )
         .unwrap();
 
@@ -687,6 +760,61 @@ mod tests {
                 .wrapped_dck
                 .contains_key(&recipient_keys.public_key().to_hex())
         );
+    }
+
+    #[test]
+    fn shares_revoke_json_hides_app_keys_without_diagnostics() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let recipient_keys = nostr_sdk::Keys::generate();
+        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let folder = iris_drive_core::create_shared_folder(
+            account.app_key.keys(),
+            account.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Mac".into()),
+            vec![iris_drive_core::ShareRecipient {
+                profile_id: recipient_profile_id,
+                app_pubkey: recipient_keys.public_key().to_hex(),
+                role: iris_drive_core::ShareRole::Editor,
+                label: Some("Phone".into()),
+                representative_npub_hint: None,
+                display_name: Some("Alice".into()),
+            }],
+            10,
+        )
+        .unwrap();
+        let mut config = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.upsert_shared_folder(folder.clone());
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        let result = dispatch_cli_share_action(
+            config_dir.path(),
+            iris_drive_core::ShareAction::RevokeShareMember {
+                share_id: folder.share_id,
+                profile_id: recipient_profile_id,
+                reason: Some("removed".to_string()),
+            },
+        )
+        .unwrap();
+        let view = result
+            .shares
+            .iter()
+            .find(|view| view.share_id == folder.share_id)
+            .unwrap();
+
+        let normal =
+            share_revoke_result_json(&result, view, folder.share_id, recipient_profile_id, false);
+        assert_eq!(normal["revoked_app_key_count"], 1);
+        assert!(normal.get("revoked_app_keys").is_none());
+
+        let diagnostics =
+            share_revoke_result_json(&result, view, folder.share_id, recipient_profile_id, true);
+        assert_eq!(diagnostics["revoked_app_keys"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -951,7 +1079,7 @@ mod tests {
         config.upsert_shared_folder(folder.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
 
-        cmd_shares_repair_wraps(config_dir.path(), &folder.share_id.to_string()).unwrap();
+        cmd_shares_repair_wraps(config_dir.path(), &folder.share_id.to_string(), false).unwrap();
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let repaired = saved.shared_folder(folder.share_id).unwrap();
@@ -962,6 +1090,46 @@ mod tests {
         assert_eq!(
             iris_drive_core::current_shared_folder_key(repaired, &recipient_keys).unwrap(),
             iris_drive_core::current_shared_folder_key(repaired, account.app_key.keys()).unwrap()
+        );
+    }
+
+    #[test]
+    fn shares_repair_json_hides_app_key_wrap_lists_without_diagnostics() {
+        let share_id = iris_drive_core::IrisProfileId::new_v4();
+        let missing_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+        let repaired_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+        let result = iris_drive_core::ShareActionResult {
+            shares: Vec::new(),
+            share_id: Some(share_id),
+            profile_id: None,
+            role: None,
+            epoch: Some(2),
+            last_share_invite: None,
+            shortcut: None,
+            repaired_key_wrap_count: Some(1),
+            remaining_missing_key_wrap_count: Some(1),
+            revoked_app_pubkeys: Vec::new(),
+            repaired_key_wrap_pubkeys: vec![repaired_pubkey],
+            remaining_missing_key_wrap_pubkeys: vec![missing_pubkey],
+        };
+
+        let normal = share_repair_result_json(&result, share_id, false);
+        assert_eq!(normal["repaired_key_wrap_count"], 1);
+        assert_eq!(normal["remaining_missing_key_wrap_count"], 1);
+        assert!(normal.get("repaired_key_wraps").is_none());
+        assert!(normal.get("remaining_missing_key_wraps").is_none());
+
+        let diagnostics = share_repair_result_json(&result, share_id, true);
+        assert_eq!(
+            diagnostics["repaired_key_wraps"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            diagnostics["remaining_missing_key_wraps"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
     }
 }
