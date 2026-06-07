@@ -854,6 +854,23 @@ final class IrisDriveMobileModel: ObservableObject {
         copyLastShareInvite()
     }
 
+    func recordPendingShareInvite(
+        shareId: String,
+        representativeNpubHint: String,
+        role: String,
+        displayName: String
+    ) {
+        let representativeNpubHint = representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !representativeNpubHint.isEmpty else { return }
+        dispatch([
+            "type": "record_pending_share_invite",
+            "share_id": shareId,
+            "representative_npub_hint": representativeNpubHint,
+            "role": role,
+            "display_name": displayName,
+        ])
+    }
+
     func revokeShareMember(shareId: String, profileId: String) {
         dispatch([
             "type": "revoke_share_member",
@@ -1097,6 +1114,16 @@ final class IrisDriveMobileModel: ObservableObject {
                         status: member.status,
                         statusLabel: member.statusLabel,
                         appKeyCount: member.appKeyCount
+                    )
+                },
+                pendingInvites: share.pendingInvites.map { invite in
+                    IrisDrivePendingShareInvite(
+                        representativeNpubHint: invite.representativeNpubHint,
+                        displayName: invite.displayName,
+                        role: invite.role,
+                        roleLabel: invite.roleLabel,
+                        status: invite.status,
+                        statusLabel: invite.statusLabel
                     )
                 },
                 shortcutPaths: share.shortcutPaths

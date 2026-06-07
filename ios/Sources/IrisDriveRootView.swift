@@ -1006,6 +1006,14 @@ private struct ShareRow: View {
                     }
                 }
             }
+            ForEach(share.pendingInvites) { invite in
+                VStack(alignment: .leading) {
+                    Text(pendingInviteDisplayName(invite))
+                    Text(pendingInviteMetadata(invite))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } label: {
             VStack(alignment: .leading) {
                 Text(shareDisplayName(share))
@@ -1113,15 +1121,25 @@ private struct InviteShareMemberSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Invite") {
                         if evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            model.inviteShareMember(
-                                shareId: share.shareId,
-                                profileId: profileId,
-                                appKey: appKey,
-                                role: role,
-                                representativeNpubHint: representativeNpubHint,
-                                displayName: displayName,
-                                label: label
-                            )
+                            if profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                               appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                model.recordPendingShareInvite(
+                                    shareId: share.shareId,
+                                    representativeNpubHint: representativeNpubHint,
+                                    role: role,
+                                    displayName: displayName
+                                )
+                            } else {
+                                model.inviteShareMember(
+                                    shareId: share.shareId,
+                                    profileId: profileId,
+                                    appKey: appKey,
+                                    role: role,
+                                    representativeNpubHint: representativeNpubHint,
+                                    displayName: displayName,
+                                    label: label
+                                )
+                            }
                         } else {
                             model.inviteShareMemberFromEvidence(
                                 shareId: share.shareId,
@@ -1132,16 +1150,20 @@ private struct InviteShareMemberSheet: View {
                         }
                         dismiss()
                     }
-                    .disabled(
-                        evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                            (
-                                profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                    appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            )
-                    )
+                    .disabled(!canSubmitInvite)
                 }
             }
         }
+    }
+
+    private var canSubmitInvite: Bool {
+        if !evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let profilePresent = !profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let appKeyPresent = !appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let npubPresent = !representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return (profilePresent && appKeyPresent) || (!profilePresent && !appKeyPresent && npubPresent)
     }
 }
 
@@ -1471,6 +1493,20 @@ private func memberMetadata(_ member: IrisDriveShareMember) -> String {
         member.roleLabel.isEmpty ? member.role : member.roleLabel,
         member.statusLabel.isEmpty ? member.status : member.statusLabel,
         shortText(member.representativeNpubHint.isEmpty ? member.profileId : member.representativeNpubHint),
+    ].joined(separator: " | ")
+}
+
+private func pendingInviteDisplayName(_ invite: IrisDrivePendingShareInvite) -> String {
+    invite.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "Pending contact"
+        : invite.displayName
+}
+
+private func pendingInviteMetadata(_ invite: IrisDrivePendingShareInvite) -> String {
+    [
+        invite.roleLabel.isEmpty ? invite.role : invite.roleLabel,
+        invite.statusLabel.isEmpty ? invite.status : invite.statusLabel,
+        shortText(invite.representativeNpubHint),
     ].joined(separator: " | ")
 }
 

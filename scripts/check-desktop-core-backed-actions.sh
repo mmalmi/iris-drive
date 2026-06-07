@@ -28,6 +28,8 @@ require_contains linux/src/actions.rs "Reject"
 require_contains linux/src/render.rs "state.ui.app_actors"
 require_contains linux/src/render.rs "share.source_path"
 require_contains linux/src/render.rs "missing access wrap"
+require_contains linux/src/render.rs "pending_invites"
+require_contains linux/src/actions.rs "RecordPendingShareInvite"
 require_contains linux/src/data.rs "authorized_app_key_count"
 require_contains linux/src/main.rs "ApplicationFlags::HANDLES_OPEN"
 require_contains linux/src/main.rs "classify_link_input"
@@ -43,7 +45,9 @@ require_absent linux/src/setup.rs 'run_idrive(["devices", "demote-admin", device
 require_contains macos/Sources/IrisDriveDesktopCore.swift "final class IrisDriveDesktopCore"
 require_contains macos/Sources/IrisDriveMacApp.swift "desktopCore.refreshJson()"
 require_contains macos/Sources/IrisDriveMacApp.swift "applyNativeStatePayload"
+require_contains macos/Sources/IrisDriveMacApp.swift '"record_pending_share_invite"'
 require_contains macos/Sources/IrisDriveControlPanel.swift "Reject"
+require_contains macos/Sources/IrisDriveControlPanel.swift "pendingInvites"
 require_contains scripts/macos-dev-app.sh "cargo build -p iris-drive-app-core"
 require_contains scripts/macos-dev-app.sh "libiris_drive_app_core.a"
 require_contains scripts/local-release.mjs "iris-drive-app-core"
@@ -58,6 +62,7 @@ require_contains windows/IrisDriveNativeCore.cs "iris_drive_app_dispatch_json"
 require_contains windows/IrisDriveService.cs "nativeCore.RefreshJson()"
 require_contains windows/IrisDriveService.cs '["type"] = "create_share"'
 require_contains windows/IrisDriveService.cs '["type"] = "invite_share_member_from_evidence"'
+require_contains windows/IrisDriveService.cs '["type"] = "record_pending_share_invite"'
 require_contains windows/IrisDriveService.cs '["type"] = "add_share_shortcut"'
 require_contains windows/IrisDriveService.cs '["type"] = "repair_share_wraps"'
 require_contains windows/IrisDriveService.cs '["type"] = "revoke_share_member"'
@@ -74,6 +79,7 @@ require_contains windows/App.xaml.cs "SendLaunchArgumentsToPrimary(e.Args)"
 require_contains windows/MainWindow.xaml.cs "ApplyLaunchArguments"
 require_contains windows/MainWindowShares.cs "OpenShareDialogFromLink"
 require_contains windows/MainWindowShares.cs "InviteShareMemberFromEvidenceAsync"
+require_contains windows/MainWindowShares.cs "RecordPendingShareInviteAsync"
 require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"
 require_contains scripts/windows-installer.iss '"URL Protocol"'
 require_contains scripts/windows-installer.iss '"""{app}\IrisDrive.exe"" ""%1"""'

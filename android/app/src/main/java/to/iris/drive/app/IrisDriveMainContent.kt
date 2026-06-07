@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.BackupState
+import to.iris.drive.app.core.PendingShareInviteState
 import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.core.ShareMemberState
 import to.iris.drive.app.core.ShareState
@@ -864,6 +865,9 @@ private fun ShareItem(
                 onRevoke = { onRevoke(member) },
             )
         }
+        share.pendingInvites.forEach { invite ->
+            PendingShareInviteRow(invite)
+        }
     }
 }
 
@@ -893,6 +897,24 @@ private fun ShareMemberRow(
                 Text("Revoke", color = Danger)
             }
         }
+    }
+}
+
+@Composable
+private fun PendingShareInviteRow(invite: PendingShareInviteState) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(displayPendingInviteName(invite), color = Ink)
+        Text(
+            listOf(
+                invite.roleLabel.ifBlank { invite.role },
+                invite.statusLabel.ifBlank { invite.status },
+                shortText(invite.representativeNpubHint),
+            ).joinToString(" - "),
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1185,6 +1207,9 @@ private fun displayShareName(share: ShareState): String =
 
 private fun displayMemberName(member: ShareMemberState): String =
     member.displayName.ifBlank { "IrisProfile" }
+
+private fun displayPendingInviteName(invite: PendingShareInviteState): String =
+    invite.displayName.ifBlank { "Pending contact" }
 
 private fun shortText(value: String): String {
     if (value.length <= 32) return value

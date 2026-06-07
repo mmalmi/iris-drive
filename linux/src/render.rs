@@ -210,6 +210,9 @@ fn share_row(
             share.can_admin,
         ));
     }
+    for invite in &share.pending_invites {
+        body.append(&pending_share_invite_row(invite));
+    }
 
     row.set_child(Some(&body));
     row
@@ -310,6 +313,41 @@ fn share_member_row(
         });
         row.append(&revoke);
     }
+
+    row
+}
+
+fn pending_share_invite_row(invite: &iris_drive_app_core::state::UiPendingShareInvite) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(28);
+    row.set_valign(gtk::Align::Center);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(if invite.display_name.is_empty() {
+        "Pending contact"
+    } else {
+        &invite.display_name
+    }));
+    title.add_css_class("iris-row-title");
+    title.set_xalign(0.0);
+    labels.append(&title);
+
+    let mut metadata = Vec::new();
+    if !invite.role_label.is_empty() {
+        metadata.push(invite.role_label.clone());
+    }
+    if !invite.status_label.is_empty() {
+        metadata.push(invite.status_label.clone());
+    }
+    metadata.push(short_text(&invite.representative_npub_hint));
+    let subtitle = gtk::Label::new(Some(&metadata.join(" | ")));
+    subtitle.add_css_class("iris-row-subtitle");
+    subtitle.set_xalign(0.0);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_max_width_chars(68);
+    labels.append(&subtitle);
+    row.append(&labels);
 
     row
 }

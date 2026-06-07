@@ -227,9 +227,10 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - **Receive share**: shared folders appear under `Shared with me/<name>`.
   Recipients can add shortcuts anywhere in My Drive. Team/shared DriveSpaces can
   come later; the first UX remains one Iris Drive.
-- **GUI parity**: native control panels render app-core `UiShare` and
-  `UiShareMember` state from the **Shares** tab, including source path,
-  role/status, repair-needed/missing-wrap detail, and shortcut state. They
+- **GUI parity**: native control panels render app-core `UiShare`,
+  `UiShareMember`, and `UiPendingShareInvite` state from the **Shares** tab,
+  including source path, role/status, pending contacts,
+  repair-needed/missing-wrap detail, and shortcut state. They
   dispatch app-core actions for create, invite, accept, role changes, revoke,
   shortcut, and repair. Invite dialogs accept signed recipient evidence before
   falling back to direct AppKey entry. They do not reimplement share authority

@@ -56,7 +56,18 @@ struct IrisDriveShare: Identifiable, Equatable {
     var participantCount: UInt64
     var appKeyCount: UInt64
     var members: [IrisDriveShareMember]
+    var pendingInvites: [IrisDrivePendingShareInvite]
     var shortcutPaths: [String]
+}
+
+struct IrisDrivePendingShareInvite: Identifiable, Equatable {
+    var id: String { representativeNpubHint }
+    var representativeNpubHint: String
+    var displayName: String
+    var role: String
+    var roleLabel: String
+    var status: String
+    var statusLabel: String
 }
 
 struct IrisDriveShareMember: Identifiable, Equatable {

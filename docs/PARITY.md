@@ -109,9 +109,10 @@ path, entity members, role/write authorization, repair-needed/key-unavailable
 state, missing-wrap detail, pending representative-npub invite hints, and
 shortcuts.
 Native shells render app-core share records rather than recalculating authority:
-macOS, iOS, Android, and Windows show source path, entity members, roles,
-repair state, and shortcuts, and route share create/invite/accept/revoke/role/
-shortcut/repair controls through Rust app-core actions.
+macOS, iOS, Android, and Windows show source path, entity members, pending
+representative-npub invites, roles, repair state, and shortcuts, and route
+share create/invite/accept/revoke/role/shortcut/repair controls through Rust
+app-core actions.
 
 App-core and CLI status surfaces should expose profile roster actors as
 `app_actors`, `authorized_app_key_count`, `online_app_key_count`,

@@ -202,22 +202,48 @@ pub(crate) fn show_invite_share_member_dialog(
             let result = if evidence_json.is_empty() {
                 let profile_id = profile_id.text().trim().to_string();
                 let app_key = app_key.text().trim().to_string();
-                if profile_id.is_empty() || app_key.is_empty() {
-                    model
-                        .ui
-                        .notice
-                        .set_text("IrisProfile UUID and AppKey are required");
-                    return;
+                let representative_npub_hint = npub_hint.text().trim().to_string();
+                let display_name = display_name.text().trim().to_string();
+                let label = label.text().trim().to_string();
+                if profile_id.is_empty() && app_key.is_empty() {
+                    if representative_npub_hint.is_empty() {
+                        model
+                            .ui
+                            .notice
+                            .set_text("Recipient evidence, IrisProfile/AppKey, or contact npub is required");
+                        return;
+                    }
+                    if !label.is_empty() {
+                        model
+                            .ui
+                            .notice
+                            .set_text("AppKey label requires a concrete AppKey");
+                        return;
+                    }
+                    dispatch_desktop_action(NativeAppAction::RecordPendingShareInvite {
+                        share_id: share_id.clone(),
+                        representative_npub_hint,
+                        role,
+                        display_name,
+                    })
+                } else {
+                    if profile_id.is_empty() || app_key.is_empty() {
+                        model
+                            .ui
+                            .notice
+                            .set_text("Both IrisProfile UUID and AppKey are required");
+                        return;
+                    }
+                    dispatch_desktop_action(NativeAppAction::InviteShareMember {
+                        share_id: share_id.clone(),
+                        profile_id,
+                        app_key,
+                        role,
+                        representative_npub_hint,
+                        display_name,
+                        label,
+                    })
                 }
-                dispatch_desktop_action(NativeAppAction::InviteShareMember {
-                    share_id: share_id.clone(),
-                    profile_id,
-                    app_key,
-                    role,
-                    representative_npub_hint: npub_hint.text().trim().to_string(),
-                    display_name: display_name.text().trim().to_string(),
-                    label: label.text().trim().to_string(),
-                })
             } else {
                 dispatch_desktop_action(NativeAppAction::InviteShareMemberFromEvidence {
                     share_id: share_id.clone(),

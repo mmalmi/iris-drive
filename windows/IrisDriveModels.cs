@@ -285,6 +285,7 @@ public sealed class IrisDriveStatusData
                 Int(share, "participant_count"),
                 Int(share, "app_key_count"),
                 NativeShareMemberRows(share),
+                NativePendingShareInviteRows(share),
                 StringArray(share, "shortcut_paths")));
         }
 
@@ -313,6 +314,29 @@ public sealed class IrisDriveStatusData
                 Int(member, "app_key_count"),
                 Bool(member, "can_revoke"),
                 Bool(member, "can_change_role")));
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<PendingShareInviteRow> NativePendingShareInviteRows(JsonElement share)
+    {
+        if (!share.TryGetProperty("pending_invites", out var invites) ||
+            invites.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<PendingShareInviteRow>();
+        }
+
+        var rows = new List<PendingShareInviteRow>();
+        foreach (var invite in invites.EnumerateArray())
+        {
+            rows.Add(new PendingShareInviteRow(
+                String(invite, "representative_npub_hint") ?? "",
+                String(invite, "display_name") ?? "",
+                String(invite, "role") ?? "",
+                String(invite, "role_label") ?? "",
+                String(invite, "status") ?? "",
+                String(invite, "status_label") ?? ""));
         }
 
         return rows;
@@ -469,7 +493,16 @@ public sealed record ShareRow(
     int ParticipantCount,
     int AppKeyCount,
     IReadOnlyList<ShareMemberRow> Members,
+    IReadOnlyList<PendingShareInviteRow> PendingInvites,
     IReadOnlyList<string> ShortcutPaths);
+
+public sealed record PendingShareInviteRow(
+    string RepresentativeNpubHint,
+    string DisplayName,
+    string Role,
+    string RoleLabel,
+    string Status,
+    string StatusLabel);
 
 public sealed record ShareMemberRow(
     string ProfileId,

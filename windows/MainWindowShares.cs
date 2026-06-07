@@ -62,6 +62,10 @@ public partial class MainWindow
         {
             stack.Children.Add(ShareMemberRow(share.ShareId, member));
         }
+        foreach (var invite in share.PendingInvites)
+        {
+            stack.Children.Add(PendingShareInviteText(invite));
+        }
 
         var actions = new StackPanel
         {
@@ -166,6 +170,17 @@ public partial class MainWindow
         }
 
         return row;
+    }
+
+    private TextBlock PendingShareInviteText(PendingShareInviteRow invite)
+    {
+        var display = string.IsNullOrWhiteSpace(invite.DisplayName)
+            ? "Pending contact"
+            : invite.DisplayName;
+        var role = string.IsNullOrWhiteSpace(invite.RoleLabel) ? invite.Role : invite.RoleLabel;
+        var status = string.IsNullOrWhiteSpace(invite.StatusLabel) ? invite.Status : invite.StatusLabel;
+        return ShareDetail(
+            $"{display} | {role} | {status} | {IrisDriveStatusData.ShortText(invite.RepresentativeNpubHint)}");
     }
 
     private TextBlock ShareDetail(string text) =>
@@ -354,6 +369,13 @@ public partial class MainWindow
             MinWidth = 460,
             Margin = new Thickness(0, 4, 0, 10),
         };
+        var npubHintBox = new WpfTextBox
+        {
+            Tag = "Contact npub",
+            MinHeight = 34,
+            MinWidth = 460,
+            Margin = new Thickness(0, 4, 0, 10),
+        };
         var roleBox = new WpfComboBox
         {
             MinWidth = 140,
@@ -398,6 +420,8 @@ public partial class MainWindow
         body.Children.Add(notice);
         body.Children.Add(new TextBlock { Text = "Recipient identity evidence", Style = (Style)FindResource("FieldName") });
         body.Children.Add(evidenceBox);
+        body.Children.Add(new TextBlock { Text = "Contact npub", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(npubHintBox);
         body.Children.Add(new TextBlock { Text = "Name", Style = (Style)FindResource("FieldName") });
         body.Children.Add(displayNameBox);
         body.Children.Add(new TextBlock { Text = "Role", Style = (Style)FindResource("FieldName") });
@@ -419,12 +443,24 @@ public partial class MainWindow
             invite.IsEnabled = false;
             try
             {
-                await service.InviteShareMemberFromEvidenceAsync(
-                    shareId,
-                    evidenceBox.Text,
-                    roleBox.SelectedItem as string ?? "reader",
-                    displayNameBox.Text);
-                NoticeText.Text = "Share invite created";
+                if (string.IsNullOrWhiteSpace(evidenceBox.Text))
+                {
+                    await service.RecordPendingShareInviteAsync(
+                        shareId,
+                        npubHintBox.Text,
+                        roleBox.SelectedItem as string ?? "reader",
+                        displayNameBox.Text);
+                    NoticeText.Text = "Pending share invite recorded";
+                }
+                else
+                {
+                    await service.InviteShareMemberFromEvidenceAsync(
+                        shareId,
+                        evidenceBox.Text,
+                        roleBox.SelectedItem as string ?? "reader",
+                        displayNameBox.Text);
+                    NoticeText.Text = "Share invite created";
+                }
                 dialog.Close();
                 await RefreshAsync();
             }

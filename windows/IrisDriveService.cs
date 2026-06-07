@@ -328,6 +328,32 @@ public sealed class IrisDriveService
             });
     }
 
+    public Task RecordPendingShareInviteAsync(
+        string shareId,
+        string representativeNpubHint,
+        string role,
+        string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+        if (string.IsNullOrWhiteSpace(representativeNpubHint))
+        {
+            throw new InvalidOperationException("Contact npub is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "record_pending_share_invite",
+                ["share_id"] = shareId.Trim(),
+                ["representative_npub_hint"] = representativeNpubHint.Trim(),
+                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
     public Task AddShareShortcutAsync(string shareId)
     {
         if (string.IsNullOrWhiteSpace(shareId))

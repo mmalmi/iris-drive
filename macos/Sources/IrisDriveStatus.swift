@@ -243,6 +243,7 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
     let participantCount: Int
     let appKeyCount: Int
     let members: [IrisDriveShareMemberStatus]
+    let pendingInvites: [IrisDrivePendingShareInviteStatus]
     let shortcutPaths: [String]
 
     init(json: [String: Any]) {
@@ -269,7 +270,30 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
         members =
             (json["members"] as? [[String: Any]] ?? [])
             .map(IrisDriveShareMemberStatus.init(json:))
+        pendingInvites =
+            (json["pending_invites"] as? [[String: Any]] ?? [])
+            .map(IrisDrivePendingShareInviteStatus.init(json:))
         shortcutPaths = json["shortcut_paths"] as? [String] ?? []
+    }
+}
+
+struct IrisDrivePendingShareInviteStatus: Identifiable, Equatable {
+    let id: String
+    let representativeNpubHint: String
+    let displayName: String
+    let role: String
+    let roleLabel: String
+    let status: String
+    let statusLabel: String
+
+    init(json: [String: Any]) {
+        representativeNpubHint = json["representative_npub_hint"] as? String ?? UUID().uuidString
+        id = representativeNpubHint
+        displayName = json["display_name"] as? String ?? ""
+        role = json["role"] as? String ?? ""
+        roleLabel = json["role_label"] as? String ?? ""
+        status = json["status"] as? String ?? ""
+        statusLabel = json["status_label"] as? String ?? ""
     }
 }
 

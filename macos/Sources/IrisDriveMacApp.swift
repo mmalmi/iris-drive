@@ -828,6 +828,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func recordPendingShareInvite(
+        shareId: String,
+        representativeNpubHint: String,
+        role: String,
+        displayName: String
+    ) {
+        let representativeNpubHint = representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !representativeNpubHint.isEmpty else {
+            updateStatus("Contact npub required")
+            return
+        }
+        dispatchNativeAction(
+            [
+                "type": "record_pending_share_invite",
+                "share_id": shareId,
+                "representative_npub_hint": representativeNpubHint,
+                "role": role,
+                "display_name": displayName,
+            ],
+            progress: "Recording pending invite",
+            success: "Pending share invite recorded"
+        )
+    }
+
     func revokeShareMember(shareId: String, profileId: String) {
         dispatchNativeAction(
             [

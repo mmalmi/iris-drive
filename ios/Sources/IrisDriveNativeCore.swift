@@ -458,6 +458,7 @@ struct NativeShare: Codable {
     var participantCount: UInt64
     var appKeyCount: UInt64
     var members: [NativeShareMember]
+    var pendingInvites: [NativePendingShareInvite]
     var shortcutPaths: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -481,7 +482,26 @@ struct NativeShare: Codable {
         case participantCount = "participant_count"
         case appKeyCount = "app_key_count"
         case members
+        case pendingInvites = "pending_invites"
         case shortcutPaths = "shortcut_paths"
+    }
+}
+
+struct NativePendingShareInvite: Codable {
+    var representativeNpubHint: String
+    var displayName: String
+    var role: String
+    var roleLabel: String
+    var status: String
+    var statusLabel: String
+
+    enum CodingKeys: String, CodingKey {
+        case representativeNpubHint = "representative_npub_hint"
+        case displayName = "display_name"
+        case role
+        case roleLabel = "role_label"
+        case status
+        case statusLabel = "status_label"
     }
 }
 

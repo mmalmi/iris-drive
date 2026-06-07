@@ -143,7 +143,17 @@ internal data class ShareState(
     val participantCount: Int,
     val appKeyCount: Int,
     val members: List<ShareMemberState>,
+    val pendingInvites: List<PendingShareInviteState> = emptyList(),
     val shortcutPaths: List<String>,
+)
+
+internal data class PendingShareInviteState(
+    val representativeNpubHint: String,
+    val displayName: String,
+    val role: String,
+    val roleLabel: String,
+    val status: String,
+    val statusLabel: String,
 )
 
 internal data class ShareMemberState(
@@ -597,6 +607,7 @@ private fun JSONArray?.toShares(): List<ShareState> {
                     participantCount = item.optInt("participant_count"),
                     appKeyCount = item.optInt("app_key_count"),
                     members = item.optJSONArray("members").toShareMembers(),
+                    pendingInvites = item.optJSONArray("pending_invites").toPendingShareInvites(),
                     shortcutPaths = item.optJSONArray("shortcut_paths").toStringList(),
                 ),
             )
@@ -619,6 +630,25 @@ private fun JSONArray?.toShareMembers(): List<ShareMemberState> {
                     status = item.optString("status"),
                     statusLabel = item.optString("status_label"),
                     appKeyCount = item.optInt("app_key_count"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toPendingShareInvites(): List<PendingShareInviteState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                PendingShareInviteState(
+                    representativeNpubHint = item.optString("representative_npub_hint"),
+                    displayName = item.optString("display_name"),
+                    role = item.optString("role"),
+                    roleLabel = item.optString("role_label"),
+                    status = item.optString("status"),
+                    statusLabel = item.optString("status_label"),
                 ),
             )
         }
