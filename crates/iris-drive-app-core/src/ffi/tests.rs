@@ -421,6 +421,41 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
 }
 
 #[test]
+fn app_action_records_pending_share_invite_hint() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner_created = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
+        source_path: "Projects/Alpha".to_owned(),
+        display_name: "Alpha".to_owned(),
+    });
+    assert!(created_share.error.is_empty(), "{}", created_share.error);
+    let share_id = created_share.ui.shares[0].share_id.clone();
+    let representative_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+    let representative_npub = iris_drive_core::app_key_summary::pubkey_npub(&representative_pubkey);
+
+    let pending = owner_app.dispatch(NativeAppAction::RecordPendingShareInvite {
+        share_id,
+        representative_npub_hint: representative_npub.clone(),
+        role: "reader".to_owned(),
+        display_name: "Alice".to_owned(),
+    });
+
+    assert!(pending.error.is_empty(), "{}", pending.error);
+    let share = pending.ui.shares.first().unwrap();
+    assert_eq!(share.members.len(), 1);
+    assert_eq!(share.pending_invites.len(), 1);
+    let invite = &share.pending_invites[0];
+    assert_eq!(invite.representative_npub_hint, representative_npub);
+    assert_eq!(invite.display_name, "Alice");
+    assert_eq!(invite.role, "reader");
+    assert_eq!(invite.status, "pending");
+}
+
+#[test]
 fn app_action_invites_share_member_from_recipient_evidence() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

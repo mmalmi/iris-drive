@@ -12,10 +12,11 @@ use crate::profile::Profile;
 use crate::sharing::{
     ShareRecipient, ShareRecipientProfileEvidence, ShareRole, ShareShortcut, SharedFolderView,
     create_shared_folder, default_share_shortcut_path, invite_shared_folder_member,
-    invite_shared_folder_resolved_recipient, repair_shared_folder_key_epoch_wraps,
-    resolve_share_recipient_from_evidence, revoke_shared_folder_member,
-    set_shared_folder_member_role, shared_folder_from_invite_for_profile,
-    shared_folder_missing_key_wrap_pubkeys, shared_folder_views,
+    invite_shared_folder_resolved_recipient, record_pending_share_invite,
+    repair_shared_folder_key_epoch_wraps, resolve_share_recipient_from_evidence,
+    revoke_shared_folder_member, set_shared_folder_member_role,
+    shared_folder_from_invite_for_profile, shared_folder_missing_key_wrap_pubkeys,
+    shared_folder_views,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -41,6 +42,13 @@ pub enum ShareAction {
     InviteShareMemberFromEvidence {
         share_id: IrisProfileId,
         evidence_json: String,
+        role: ShareRole,
+        #[serde(default)]
+        display_name: Option<String>,
+    },
+    RecordPendingShareInvite {
+        share_id: IrisProfileId,
+        representative_npub_hint: String,
         role: ShareRole,
         #[serde(default)]
         display_name: Option<String>,
@@ -232,6 +240,20 @@ fn apply_share_action(
             trimmed_option(display_name),
             now_seconds,
         ),
+        ShareAction::RecordPendingShareInvite {
+            share_id,
+            representative_npub_hint,
+            role,
+            display_name,
+        } => record_pending_invite(
+            config_dir,
+            config,
+            share_id,
+            &representative_npub_hint,
+            role,
+            trimmed_option(display_name),
+            now_seconds,
+        ),
         ShareAction::AcceptShareInvite { invite } => {
             accept_share_invite(config, &invite, now_seconds)
         }
@@ -357,6 +379,36 @@ fn invite_share_member_from_evidence(
         profile_id: Some(outcome.profile_id),
         epoch: Some(outcome.epoch),
         last_share_invite: Some(outcome.invite_url),
+        ..ShareActionMetadata::default()
+    })
+}
+
+fn record_pending_invite(
+    config_dir: &Path,
+    config: &mut AppConfig,
+    share_id: IrisProfileId,
+    representative_npub_hint: &str,
+    role: ShareRole,
+    display_name: Option<String>,
+    now_seconds: i64,
+) -> Result<ShareActionMetadata> {
+    let account = load_profile(config_dir, config)?;
+    let folder = config
+        .shared_folders
+        .iter_mut()
+        .find(|folder| folder.share_id == share_id)
+        .with_context(|| format!("share not found: {share_id}"))?;
+    let pending = record_pending_share_invite(
+        folder,
+        account.app_key.keys(),
+        representative_npub_hint,
+        role,
+        display_name,
+        now_seconds,
+    )?;
+    Ok(ShareActionMetadata {
+        share_id: Some(share_id),
+        role: Some(pending.role),
         ..ShareActionMetadata::default()
     })
 }
@@ -647,6 +699,89 @@ mod tests {
         assert_eq!(revoked.profile_id, Some(recipient_profile_id));
         assert_eq!(revoked.epoch, Some(3));
         assert_eq!(revoked.revoked_app_pubkeys, vec![recipient_pubkey]);
+    }
+
+    #[test]
+    fn pending_share_invite_action_records_contact_hint_without_authority() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        init_config(owner_dir.path(), &owner);
+        let representative_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+        let representative_npub = crate::app_key_summary::pubkey_npub(&representative_pubkey);
+
+        let created = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: "Projects/Alpha".to_owned(),
+                display_name: Some("Alpha".to_owned()),
+            },
+            10,
+        )
+        .unwrap();
+        let share_id = created.share_id.unwrap();
+        let owner_member_count = created.shares[0].members.len();
+        let owner_participant_count = created.shares[0].participant_count;
+        let owner_epoch = created.shares[0].current_key_epoch;
+
+        let pending = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::RecordPendingShareInvite {
+                share_id,
+                representative_npub_hint: representative_npub.clone(),
+                role: ShareRole::Reader,
+                display_name: Some("Alice".to_owned()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let view = pending
+            .shares
+            .iter()
+            .find(|share| share.share_id == share_id)
+            .unwrap();
+        assert_eq!(view.members.len(), owner_member_count);
+        assert_eq!(view.participant_count, owner_participant_count);
+        assert_eq!(view.current_key_epoch, owner_epoch);
+        assert_eq!(view.pending_invites.len(), 1);
+        assert_eq!(
+            view.pending_invites[0].representative_npub_hint,
+            representative_npub
+        );
+        assert_eq!(view.pending_invites[0].display_name, "Alice");
+        assert_eq!(
+            view.pending_invites[0].status,
+            crate::sharing::ShareMemberStatus::Pending
+        );
+
+        let recipient_keys = nostr_sdk::Keys::generate();
+        let recipient_profile_id = IrisProfileId::new_v4();
+        let invited = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::InviteShareMember {
+                share_id,
+                profile_id: recipient_profile_id,
+                app_key: recipient_keys.public_key().to_hex(),
+                role: ShareRole::Reader,
+                representative_npub_hint: Some(representative_npub),
+                display_name: Some("Alice".to_owned()),
+                label: Some("Phone".to_owned()),
+            },
+            30,
+        )
+        .unwrap();
+        let view = invited
+            .shares
+            .iter()
+            .find(|share| share.share_id == share_id)
+            .unwrap();
+        assert!(view.pending_invites.is_empty());
+        assert!(
+            view.members
+                .iter()
+                .any(|member| member.profile_id == recipient_profile_id
+                    && member.status == crate::sharing::ShareMemberStatus::Active)
+        );
     }
 
     #[test]

@@ -207,6 +207,10 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   derived/cache data, not authority. External contact indexes such as
   `nostr-social-graph` may rank/search representative npubs, but they are not
   share authority.
+  If a share dialog only has a representative npub/contact and no signed
+  IrisProfile evidence yet, Rust core may record a pending invite hint keyed by
+  that npub. Pending hints are display/contact state; they do not add members,
+  AppKey facets, key wraps, or write authority.
   Inviting rotates the share epoch and emits a compact invite bundle containing
   a signed roster checkpoint/proof. The checkpoint summarizes entity members,
   compact AppKey/key-epoch and member-roster heads, current key epoch, and

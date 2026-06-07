@@ -266,7 +266,7 @@ pub(crate) enum SharesCmd {
         /// Share UUID.
         share_id: String,
     },
-    /// Invite an `IrisProfile` member using profile evidence or one direct `AppKey`.
+    /// Invite an `IrisProfile` member, or record an unresolved npub invite hint.
     Invite {
         /// Share UUID.
         share_id: String,
@@ -282,7 +282,7 @@ pub(crate) enum SharesCmd {
         /// Recipient role: reader, editor, or admin.
         #[arg(long, default_value = "reader")]
         role: String,
-        /// Display/contact npub hint.
+        /// Display/contact npub hint. Without profile evidence or an AppKey this records a pending invite.
         #[arg(long)]
         npub: Option<String>,
         /// Display name for this member.

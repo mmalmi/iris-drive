@@ -154,20 +154,39 @@ fn cmd_shares_invite(
             display_name,
         }
     } else {
-        let profile_id = profile_id
-            .ok_or_else(|| anyhow::anyhow!("--profile is required without --recipient-evidence"))?
-            .parse::<iris_drive_core::IrisProfileId>()
-            .context("parsing recipient IrisProfile id")?;
-        let app_key = app_key
-            .ok_or_else(|| anyhow::anyhow!("--app-key is required without --recipient-evidence"))?;
-        iris_drive_core::ShareAction::InviteShareMember {
-            share_id,
-            profile_id,
-            app_key: app_key.to_owned(),
-            role,
-            representative_npub_hint,
-            display_name,
-            label,
+        match (profile_id, app_key, representative_npub_hint) {
+            (None, None, Some(representative_npub_hint)) => {
+                if label.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "--label is only valid when inviting a concrete AppKey"
+                    ));
+                }
+                iris_drive_core::ShareAction::RecordPendingShareInvite {
+                    share_id,
+                    representative_npub_hint,
+                    role,
+                    display_name,
+                }
+            }
+            (Some(profile_id), Some(app_key), representative_npub_hint) => {
+                let profile_id = profile_id
+                    .parse::<iris_drive_core::IrisProfileId>()
+                    .context("parsing recipient IrisProfile id")?;
+                iris_drive_core::ShareAction::InviteShareMember {
+                    share_id,
+                    profile_id,
+                    app_key: app_key.to_owned(),
+                    role,
+                    representative_npub_hint,
+                    display_name,
+                    label,
+                }
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "--profile and --app-key, --recipient-evidence, or --npub is required"
+                ));
+            }
         }
     };
     let result = dispatch_cli_share_action(config_dir, action).context("inviting share member")?;
@@ -185,6 +204,7 @@ fn cmd_shares_invite(
             "epoch": result.epoch,
             "invite": result.last_share_invite.unwrap_or_default(),
             "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
+            "pending_invites": view.pending_invites.iter().map(pending_share_invite_json).collect::<Vec<_>>(),
         })
     );
     Ok(())
@@ -379,6 +399,7 @@ fn share_view_json_with_diagnostics(
         "participant_count": view.participant_count,
         "app_key_count": view.app_key_count,
         "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
+        "pending_invites": view.pending_invites.iter().map(pending_share_invite_json).collect::<Vec<_>>(),
         "shortcut_paths": view.shortcut_paths.clone(),
     });
     if diagnostics {
@@ -388,6 +409,18 @@ fn share_view_json_with_diagnostics(
         );
     }
     value
+}
+
+fn pending_share_invite_json(invite: &iris_drive_core::PendingShareInviteView) -> Value {
+    json!({
+        "representative_npub_hint": invite.representative_npub_hint.clone(),
+        "display_name": invite.display_name.clone(),
+        "role": invite.role.as_str(),
+        "role_label": invite.role.label(),
+        "status": invite.status.as_str(),
+        "status_label": invite.status.label(),
+        "created_at": invite.created_at,
+    })
 }
 
 fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value {
@@ -599,6 +632,54 @@ mod tests {
                 .get(&account.state.app_key_pubkey),
             Some(&account.state.profile_id)
         );
+    }
+
+    #[test]
+    fn shares_invite_command_records_pending_npub_hint_without_authority() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let mut config = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        let folder = iris_drive_core::create_shared_folder(
+            account.app_key.keys(),
+            account.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Mac".into()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let share_id = folder.share_id;
+        config.upsert_shared_folder(folder);
+        config.save(config_path_in(config_dir.path())).unwrap();
+        let representative_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+        let representative_npub =
+            iris_drive_core::app_key_summary::pubkey_npub(&representative_pubkey);
+
+        cmd_shares_invite(
+            config_dir.path(),
+            &share_id.to_string(),
+            None,
+            None,
+            None,
+            "reader",
+            Some(representative_npub.clone()),
+            Some("Alice".into()),
+            None,
+        )
+        .unwrap();
+
+        let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+        let share = saved.shared_folder(share_id).unwrap();
+        assert_eq!(share.pending_invites.len(), 1);
+        assert_eq!(share.members.len(), 1);
+        assert_eq!(share.participant_profiles.len(), 1);
+        let pending = share.pending_invites.get(&representative_npub).unwrap();
+        assert_eq!(pending.display_name.as_deref(), Some("Alice"));
+        assert_eq!(pending.status, iris_drive_core::ShareMemberStatus::Pending);
     }
 
     #[test]

@@ -89,6 +89,10 @@ If contact search supplies signed recipient evidence, `drive.iris.to` may pass
 that opaque evidence JSON to `invite_share_member_from_evidence`; Rust core
 resolves the representative npub to an IrisProfile member and AppKeys before
 granting access.
+If contact search only supplies a representative npub/display hint, the web or
+native shell may dispatch `record_pending_share_invite`. Rust core records that
+as pending share metadata without adding a member, key facet, wrap, or authority
+until signed recipient evidence resolves to an IrisProfile UUID.
 
 Share invite pages may render a static preview from the signed invite bundle.
 When the local gateway/native endpoint is available, accepting an invite and
@@ -102,7 +106,8 @@ shortcut, and repair state transitions stay in Rust core.
 Read-only share state uses the same core projection path through
 `iris_drive_core::share_action_state` / `SharedFolderView`, including source
 path, entity members, role/write authorization, repair-needed/key-unavailable
-state, missing-wrap detail, and shortcuts.
+state, missing-wrap detail, pending representative-npub invite hints, and
+shortcuts.
 Native shells render app-core share records rather than recalculating authority:
 macOS, iOS, Android, and Windows show source path, entity members, roles,
 repair state, and shortcuts, and route share create/invite/accept/revoke/role/

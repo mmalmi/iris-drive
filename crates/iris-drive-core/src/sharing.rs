@@ -243,6 +243,35 @@ pub struct ShareMember {
     pub display_name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingShareInvite {
+    pub representative_npub_hint: String,
+    pub role: ShareRole,
+    pub status: ShareMemberStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub created_at: i64,
+}
+
+impl PendingShareInvite {
+    #[must_use]
+    pub fn new(
+        representative_npub_hint: String,
+        role: ShareRole,
+        display_name: Option<String>,
+        created_at: i64,
+    ) -> Self {
+        Self {
+            representative_npub_hint,
+            role,
+            status: ShareMemberStatus::Pending,
+            display_name,
+            created_at,
+        }
+    }
+}
+
 impl ShareMember {
     #[must_use]
     pub fn active(
@@ -326,6 +355,8 @@ pub struct SharedFolder {
     pub local_role: ShareRole,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, ShareMember>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pending_invites: BTreeMap<String, PendingShareInvite>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub member_ops: Vec<SignedShareMemberRosterOp>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -419,6 +450,7 @@ fn project_shared_folder_member_roster_from_parts(
         display_name: String::new(),
         local_role: ShareRole::Admin,
         members: BTreeMap::new(),
+        pending_invites: BTreeMap::new(),
         member_ops: member_ops.to_vec(),
         participant_profiles: participant_profiles.clone(),
         app_key_roots: BTreeMap::new(),
@@ -827,7 +859,19 @@ pub struct SharedFolderView {
     pub participant_count: usize,
     pub app_key_count: usize,
     pub members: Vec<SharedFolderMemberView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_invites: Vec<PendingShareInviteView>,
     pub shortcut_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingShareInviteView {
+    pub representative_npub_hint: String,
+    pub role: ShareRole,
+    pub status: ShareMemberStatus,
+    pub display_name: String,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1085,8 +1129,34 @@ pub fn shared_folder_view(
         participant_count: active_share_member_count(folder),
         app_key_count: projection.active_facets.len(),
         members: shared_folder_member_views(folder, &projection, current_app_pubkey, can_admin),
+        pending_invites: pending_share_invite_views(folder),
         shortcut_paths,
     }
+}
+
+fn pending_share_invite_views(folder: &SharedFolder) -> Vec<PendingShareInviteView> {
+    let mut invites = folder
+        .pending_invites
+        .values()
+        .map(|invite| PendingShareInviteView {
+            representative_npub_hint: invite.representative_npub_hint.clone(),
+            role: invite.role,
+            status: invite.status,
+            display_name: invite
+                .display_name
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| invite.representative_npub_hint.clone()),
+            created_at: invite.created_at,
+        })
+        .collect::<Vec<_>>();
+    invites.sort_by(|left, right| {
+        left.display_name.cmp(&right.display_name).then_with(|| {
+            left.representative_npub_hint
+                .cmp(&right.representative_npub_hint)
+        })
+    });
+    invites
 }
 
 pub fn default_share_shortcut_path(
@@ -1906,6 +1976,7 @@ pub fn create_shared_folder(
         local_role: ShareRole::Admin,
         members,
         member_ops,
+        pending_invites: BTreeMap::new(),
         participant_profiles: participants.participant_profiles,
         app_key_roots: BTreeMap::new(),
         roster_ops,
@@ -2231,6 +2302,44 @@ pub fn invite_shared_folder_member(
     invite_shared_folder_recipients(folder, signer_keys, vec![recipient], created_at)
 }
 
+pub fn record_pending_share_invite(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    representative_npub_hint: &str,
+    role: ShareRole,
+    display_name: Option<String>,
+    created_at: i64,
+) -> Result<PendingShareInvite, SharingError> {
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if !shared_folder_app_key_can_admin(folder, &signer_pubkey) {
+        return Err(SharingError::CurrentAppKeyCannotAdminShare);
+    }
+    let representative_npub_hint = normalize_representative_npub_hint(representative_npub_hint)?;
+    let display_name = display_name
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let invite = PendingShareInvite::new(
+        representative_npub_hint.clone(),
+        role,
+        display_name,
+        created_at,
+    );
+    let stored = folder
+        .pending_invites
+        .entry(representative_npub_hint)
+        .and_modify(|existing| {
+            existing.role = ShareRole::strongest(existing.role, invite.role);
+            existing.status = ShareMemberStatus::Pending;
+            if invite.display_name.is_some() {
+                existing.display_name.clone_from(&invite.display_name);
+            }
+            existing.created_at = invite.created_at;
+        })
+        .or_insert_with(|| invite.clone())
+        .clone();
+    Ok(stored)
+}
+
 pub fn invite_shared_folder_resolved_recipient(
     folder: &mut SharedFolder,
     signer_keys: &Keys,
@@ -2368,6 +2477,11 @@ fn add_invited_share_member(
     folder
         .participant_profiles
         .insert(recipient.app_pubkey.clone(), recipient.profile_id);
+    if let Some(hint) = &recipient.representative_npub_hint
+        && let Ok(normalized_hint) = normalize_representative_npub_hint(hint)
+    {
+        folder.pending_invites.remove(&normalized_hint);
+    }
     let member_role = folder
         .member_projection()
         .members
@@ -2395,6 +2509,19 @@ fn add_invited_share_member(
         role: member_role,
         representative_npub_hint: recipient.representative_npub_hint,
     })
+}
+
+fn normalize_representative_npub_hint(input: &str) -> Result<String, SharingError> {
+    let trimmed = input.trim();
+    if trimmed.starts_with("npub1") {
+        let pubkey = PublicKey::from_bech32(trimmed)
+            .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
+        return Ok(pubkey_npub(&pubkey.to_hex()));
+    }
+    if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(pubkey_npub(&trimmed.to_ascii_lowercase()));
+    }
+    Err(SharingError::InvalidPubkey(trimmed.to_string()))
 }
 
 pub fn encode_share_invite(bundle: &ShareInviteBundle) -> Result<String, SharingError> {
@@ -3215,6 +3342,7 @@ mod tests {
                     ),
                 ),
             ]),
+            pending_invites: BTreeMap::new(),
             member_ops: Vec::new(),
             participant_profiles: BTreeMap::from([
                 (owner_pubkey.clone(), owner_profile_id),
@@ -4005,6 +4133,7 @@ mod tests {
                     Some("Desktop".to_string()),
                 ),
             )]),
+            pending_invites: BTreeMap::new(),
             member_ops: Vec::new(),
             participant_profiles: BTreeMap::from([(owner_pubkey.clone(), owner_profile_id)]),
             app_key_roots: BTreeMap::new(),

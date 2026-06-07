@@ -93,6 +93,12 @@ pub enum NativeAppAction {
         role: String,
         display_name: String,
     },
+    RecordPendingShareInvite {
+        share_id: String,
+        representative_npub_hint: String,
+        role: String,
+        display_name: String,
+    },
     AcceptShareInvite {
         invite: String,
     },

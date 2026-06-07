@@ -64,7 +64,8 @@ pub(crate) use crate::native_provider::{
 };
 use crate::state::{
     NativeAppState, UiAppActor, UiAppKeyLinkRequest, UiBackup, UiFipsPeerStatus, UiFipsStatus,
-    UiPaths, UiProfile, UiRelayStatus, UiShare, UiShareMember, UiState, UiSyncRoot, UiSyncStatus,
+    UiPaths, UiPendingShareInvite, UiProfile, UiRelayStatus, UiShare, UiShareMember, UiState,
+    UiSyncRoot, UiSyncStatus,
 };
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -339,6 +340,7 @@ impl NativeAppRuntime {
             share_action @ (NativeAppAction::CreateShare { .. }
             | NativeAppAction::InviteShareMember { .. }
             | NativeAppAction::InviteShareMemberFromEvidence { .. }
+            | NativeAppAction::RecordPendingShareInvite { .. }
             | NativeAppAction::AcceptShareInvite { .. }
             | NativeAppAction::RevokeShareMember { .. }
             | NativeAppAction::SetShareMemberRole { .. }
@@ -405,6 +407,17 @@ impl NativeAppRuntime {
             } => iris_drive_core::ShareAction::InviteShareMemberFromEvidence {
                 share_id: share_id.parse()?,
                 evidence_json,
+                role: parse_share_role(&role)?,
+                display_name: optional_trimmed(&display_name),
+            },
+            NativeAppAction::RecordPendingShareInvite {
+                share_id,
+                representative_npub_hint,
+                role,
+                display_name,
+            } => iris_drive_core::ShareAction::RecordPendingShareInvite {
+                share_id: share_id.parse()?,
+                representative_npub_hint,
                 role: parse_share_role(&role)?,
                 display_name: optional_trimmed(&display_name),
             },
@@ -2303,6 +2316,19 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
                 app_key_count: member.app_key_count as u64,
                 can_revoke: member.can_revoke,
                 can_change_role: member.can_change_role,
+            })
+            .collect(),
+        pending_invites: share
+            .pending_invites
+            .into_iter()
+            .map(|invite| UiPendingShareInvite {
+                representative_npub_hint: invite.representative_npub_hint,
+                display_name: invite.display_name,
+                role: invite.role.as_str().to_owned(),
+                role_label: invite.role.label().to_owned(),
+                status: invite.status.as_str().to_owned(),
+                status_label: invite.status.label().to_owned(),
+                created_at: invite.created_at,
             })
             .collect(),
         shortcut_paths: share.shortcut_paths,

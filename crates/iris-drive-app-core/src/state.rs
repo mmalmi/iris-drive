@@ -60,7 +60,19 @@ pub struct UiShare {
     pub participant_count: u64,
     pub app_key_count: u64,
     pub members: Vec<UiShareMember>,
+    pub pending_invites: Vec<UiPendingShareInvite>,
     pub shortcut_paths: Vec<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiPendingShareInvite {
+    pub representative_npub_hint: String,
+    pub display_name: String,
+    pub role: String,
+    pub role_label: String,
+    pub status: String,
+    pub status_label: String,
+    pub created_at: i64,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
