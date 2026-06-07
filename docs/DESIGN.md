@@ -236,8 +236,10 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   repair-needed/missing-wrap detail, and shortcut state. They
   dispatch app-core actions for create, invite, accept, role changes, revoke,
   shortcut, and repair. Invite dialogs accept signed recipient evidence before
-  falling back to direct AppKey entry. They do not reimplement share authority
-  or key-wrap validation.
+  falling back to direct AppKey entry. Native shells can dispatch
+  `export_share_recipient_evidence` and copy app-core
+  `last_share_recipient_evidence` instead of building identity proofs
+  themselves. They do not reimplement share authority or key-wrap validation.
 - **Revoke / leave**: share admins revoke an IrisProfile member, tombstone all
   known AppKeys for that profile in the share roster, rotate the share epoch,
   and publish the new key only to remaining active members. Prior content can't

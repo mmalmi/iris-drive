@@ -127,6 +127,10 @@ final class IrisDriveMobileModel: ObservableObject {
         lastState?.ui.lastShareInvite ?? ""
     }
 
+    var lastShareRecipientEvidence: String {
+        lastState?.ui.lastShareRecipientEvidence ?? ""
+    }
+
     var localProfileId: String {
         lastState?.ui.profile?.profileId ?? ""
     }
@@ -852,6 +856,13 @@ final class IrisDriveMobileModel: ObservableObject {
             "display_name": displayName,
         ])
         copyLastShareInvite()
+    }
+
+    func exportShareRecipientEvidence(displayName: String) {
+        dispatch([
+            "type": "export_share_recipient_evidence",
+            "display_name": displayName,
+        ])
     }
 
     func recordPendingShareInvite(

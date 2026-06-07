@@ -99,6 +99,9 @@ pub enum NativeAppAction {
         role: String,
         display_name: String,
     },
+    ExportShareRecipientEvidence {
+        display_name: String,
+    },
     AcceptShareInvite {
         invite: String,
     },

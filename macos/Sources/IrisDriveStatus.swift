@@ -45,6 +45,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var backupTargets: [IrisDriveBackupTarget] = []
     @Published var shares: [IrisDriveShareStatus] = []
     @Published var lastShareInviteURL: String?
+    @Published var lastShareRecipientEvidence: String?
     @Published var pendingShareDialog: IrisDriveShareDialogRequest?
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []

@@ -89,8 +89,10 @@ If contact search supplies signed recipient evidence, `drive.iris.to` may pass
 that opaque evidence JSON to `invite_share_member_from_evidence`; Rust core
 resolves the representative npub to an IrisProfile member and AppKeys before
 granting access. CLI users can produce the same opaque evidence with
-`idrive shares recipient-evidence --display-name <name>`; the exported JSON is
-not authority until Rust core validates it during invite.
+`idrive shares recipient-evidence --display-name <name>`, and native shells can
+dispatch `export_share_recipient_evidence` and read
+`last_share_recipient_evidence` from app-core state. The exported JSON is not
+authority until Rust core validates it during invite.
 If contact search only supplies a representative npub/display hint, the web or
 native shell may dispatch `record_pending_share_invite`. Rust core records that
 as pending share metadata without adding a member, key facet, wrap, or authority

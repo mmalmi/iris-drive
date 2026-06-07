@@ -454,12 +454,12 @@ public partial class MainWindow
                 }
                 else
                 {
-                    await service.InviteShareMemberFromEvidenceAsync(
+                    var invited = await service.InviteShareMemberFromEvidenceAsync(
                         shareId,
                         evidenceBox.Text,
                         roleBox.SelectedItem as string ?? "reader",
                         displayNameBox.Text);
-                    NoticeText.Text = "Share invite created";
+                    CopyText(invited.LastShareInviteUrl, "Share invite copied");
                 }
                 dialog.Close();
                 await RefreshAsync();

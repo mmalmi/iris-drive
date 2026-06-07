@@ -346,6 +346,9 @@ impl NativeAppRuntime {
             | NativeAppAction::SetShareMemberRole { .. }
             | NativeAppAction::AddShareShortcut { .. }
             | NativeAppAction::RepairShareWraps { .. }) => self.dispatch_share_action(share_action),
+            NativeAppAction::ExportShareRecipientEvidence { display_name } => {
+                self.export_share_recipient_evidence(&display_name);
+            }
             NativeAppAction::ImportFile {
                 display_name,
                 source_path,
@@ -368,6 +371,36 @@ impl NativeAppRuntime {
                 self.state.error = format!("running share action: {error:#}");
             }
         }
+    }
+
+    fn export_share_recipient_evidence(&mut self, display_name: &str) {
+        self.state.ui.last_share_recipient_evidence.clear();
+        match self.try_export_share_recipient_evidence(display_name) {
+            Ok(evidence_json) => {
+                self.state.ui.last_share_recipient_evidence = evidence_json;
+            }
+            Err(error) => {
+                self.state.error = format!("exporting share recipient evidence: {error:#}");
+            }
+        }
+    }
+
+    fn try_export_share_recipient_evidence(&self, display_name: &str) -> anyhow::Result<String> {
+        let config_dir = Path::new(&self.data_dir);
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let state = config
+            .profile
+            .context("profile is required before exporting recipient evidence")?;
+        let profile = Profile::load(state, config_dir)?;
+        let evidence = iris_drive_core::share_recipient_profile_evidence_for_app_key(
+            profile.state.profile_id,
+            &profile.state.profile_roster_ops,
+            profile.app_key.keys(),
+            optional_trimmed(display_name),
+            share_now_seconds(),
+        )
+        .context("exporting share recipient evidence")?;
+        serde_json::to_string(&evidence).context("encoding recipient evidence")
     }
 
     fn try_dispatch_share_action(
@@ -1034,9 +1067,11 @@ impl NativeAppRuntime {
     fn reload_from_disk_preserving_error(&mut self) {
         let error = self.state.error.clone();
         let last_share_invite = self.state.ui.last_share_invite.clone();
+        let last_share_recipient_evidence = self.state.ui.last_share_recipient_evidence.clone();
         self.reload_from_disk();
         self.state.error = error;
         self.state.ui.last_share_invite = last_share_invite;
+        self.state.ui.last_share_recipient_evidence = last_share_recipient_evidence;
     }
 
     fn reload_from_disk(&mut self) {

@@ -828,6 +828,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func exportShareRecipientEvidence(displayName: String) {
+        dispatchNativeAction(
+            [
+                "type": "export_share_recipient_evidence",
+                "display_name": displayName,
+            ],
+            progress: "Exporting share identity",
+            success: "Share identity exported"
+        ) {
+            if let evidence = IrisDriveStatus.shared.lastShareRecipientEvidence,
+               !evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(evidence, forType: .string)
+            }
+        }
+    }
+
     func recordPendingShareInvite(
         shareId: String,
         representativeNpubHint: String,
@@ -1753,6 +1770,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
             let lastShareInvite = ui["last_share_invite"] as? String ?? ""
             status.lastShareInviteURL = lastShareInvite.isEmpty ? nil : lastShareInvite
+            let lastShareRecipientEvidence = ui["last_share_recipient_evidence"] as? String ?? ""
+            status.lastShareRecipientEvidence =
+                lastShareRecipientEvidence.isEmpty ? nil : lastShareRecipientEvidence
             status.fips = IrisDriveFipsStatus(json: ui["fips"] as? [String: Any] ?? [:])
             status.peers =
                 (ui["app_actors"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)

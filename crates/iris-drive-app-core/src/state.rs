@@ -27,6 +27,7 @@ pub struct UiState {
     pub provider_directory_paths: Vec<String>,
     pub snapshot_link: String,
     pub last_share_invite: String,
+    pub last_share_recipient_evidence: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

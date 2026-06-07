@@ -1574,9 +1574,9 @@ fn active_app_key_add_facet_op_id(
     roster_ops
         .iter()
         .filter(|signed| signed.content.profile_id == profile_id)
-        .filter_map(|signed| match &signed.content.op {
-            IrisProfileRosterOp::AddFacet { facet } if facet.pubkey == app_pubkey => Some(signed),
-            _ => None,
+        .filter(|signed| match &signed.content.op {
+            IrisProfileRosterOp::AddFacet { facet } => facet.pubkey == app_pubkey,
+            _ => false,
         })
         .max_by(|left, right| {
             left.content

@@ -25,6 +25,16 @@ class AppStateTest {
     }
 
     @Test
+    fun exportShareRecipientEvidenceActionSerializesForAppCore() {
+        val action = JSONObject(
+            NativeActions.exportShareRecipientEvidence(displayName = "Alice"),
+        )
+
+        assertEquals("export_share_recipient_evidence", action.getString("type"))
+        assertEquals("Alice", action.getString("display_name"))
+    }
+
+    @Test
     fun pendingShareInviteActionSerializesForAppCore() {
         val action = JSONObject(
             NativeActions.recordPendingShareInvite(
@@ -55,6 +65,7 @@ class AppStateTest {
                 "setup_label": "Linked",
                 "primary_status": "ready",
                 "primary_status_label": "Ready",
+                "last_share_recipient_evidence": "{\"profile_id\":\"profile-a\"}",
                 "sync": {
                   "running": true,
                   "status": "up to date",
@@ -116,6 +127,7 @@ class AppStateTest {
         assertEquals("Linked", state.devices.single().stateLabel)
         assertEquals("local", state.devices.single().connectionState)
         assertEquals("This AppKey", state.devices.single().connectionLabel)
+        assertEquals("{\"profile_id\":\"profile-a\"}", state.lastShareRecipientEvidence)
     }
 
     @Test

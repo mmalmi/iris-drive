@@ -30,6 +30,8 @@ public sealed class IrisDriveStatusData
     public string? CurrentRootCid { get; init; }
     public string ProviderRefreshKey { get; init; } = "";
     public string? SnapshotUrl { get; init; }
+    public string? LastShareInviteUrl { get; init; }
+    public string? LastShareRecipientEvidence { get; init; }
     public int FileCount { get; init; }
     public long VisibleFileBytes { get; init; }
     public bool LocalNhashResolverEnabled { get; init; } = true;
@@ -94,6 +96,8 @@ public sealed class IrisDriveStatusData
             ConfigDirectory = paths.HasValue ? String(paths.Value, "data_dir") : null,
             ProviderRefreshKey = String(ui, "provider_change_key") ?? "",
             SnapshotUrl = EmptyToNull(String(ui, "snapshot_link")),
+            LastShareInviteUrl = EmptyToNull(String(ui, "last_share_invite")),
+            LastShareRecipientEvidence = EmptyToNull(String(ui, "last_share_recipient_evidence")),
             FileCount = Int(ui, "file_count"),
             VisibleFileBytes = Long(ui, "visible_file_bytes"),
             LocalNhashResolverEnabled = true,

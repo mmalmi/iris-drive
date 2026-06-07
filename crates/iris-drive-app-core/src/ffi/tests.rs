@@ -510,6 +510,64 @@ fn app_action_invites_share_member_from_recipient_evidence() {
 }
 
 #[test]
+fn app_action_exports_share_recipient_evidence_for_core_invites() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner_created = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
+        source_path: "Projects/Alpha".to_owned(),
+        display_name: "Alpha".to_owned(),
+    });
+    assert!(created_share.error.is_empty(), "{}", created_share.error);
+    let share_id = created_share.ui.shares[0].share_id.clone();
+
+    let recipient_dir = tempfile::tempdir().unwrap();
+    let recipient_app = FfiApp::new(
+        recipient_dir.path().display().to_string(),
+        "test".to_owned(),
+    );
+    let recipient_created = recipient_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Recipient phone".to_owned(),
+    });
+    assert!(
+        recipient_created.error.is_empty(),
+        "{}",
+        recipient_created.error
+    );
+    let recipient_profile = recipient_created.ui.profile.clone().unwrap();
+
+    let exported = recipient_app.dispatch(NativeAppAction::ExportShareRecipientEvidence {
+        display_name: "Alice".to_owned(),
+    });
+    assert!(exported.error.is_empty(), "{}", exported.error);
+    assert!(!exported.ui.last_share_recipient_evidence.is_empty());
+    let evidence: iris_drive_core::ShareRecipientProfileEvidence =
+        serde_json::from_str(&exported.ui.last_share_recipient_evidence).unwrap();
+    let resolved = iris_drive_core::resolve_share_recipient_from_evidence(&evidence, None).unwrap();
+    assert_eq!(
+        resolved.profile_id.to_string(),
+        recipient_profile.profile_id
+    );
+    assert_eq!(resolved.display_name.as_deref(), Some("Alice"));
+    assert_eq!(resolved.app_pubkeys.len(), 1);
+
+    let invited = owner_app.dispatch(NativeAppAction::InviteShareMemberFromEvidence {
+        share_id,
+        evidence_json: exported.ui.last_share_recipient_evidence,
+        role: "reader".to_owned(),
+        display_name: String::new(),
+    });
+    assert!(invited.error.is_empty(), "{}", invited.error);
+    let share = invited.ui.shares.first().unwrap();
+    let alice = ui_share_member(share, &recipient_profile.profile_id);
+    assert_eq!(alice.display_name, "Alice");
+    assert_eq!(alice.role, "reader");
+}
+
+#[test]
 fn recovery_phrase_export_restores_fresh_profile_without_roster_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

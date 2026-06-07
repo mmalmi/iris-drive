@@ -16,6 +16,7 @@ internal data class AppState(
     val fips: FipsState = FipsState(),
     val snapshotLink: String = "",
     val lastShareInvite: String = "",
+    val lastShareRecipientEvidence: String = "",
     val error: String = "",
     val setupState: String = "not_configured",
     val setupLabel: String = "Not linked",
@@ -48,6 +49,7 @@ internal data class AppState(
                 fips = ui.optJSONObject("fips")?.toFips() ?: FipsState(),
                 snapshotLink = ui.optString("snapshot_link"),
                 lastShareInvite = ui.optString("last_share_invite"),
+                lastShareRecipientEvidence = ui.optString("last_share_recipient_evidence"),
                 error = json.optString("error"),
                 setupState = ui.optString("setup_state", "not_configured"),
                 setupLabel = ui.optString("setup_label", "Not linked"),
@@ -391,6 +393,12 @@ internal object NativeActions {
             .put("share_id", shareId)
             .put("evidence_json", evidenceJson)
             .put("role", role)
+            .put("display_name", displayName)
+            .toString()
+
+    fun exportShareRecipientEvidence(displayName: String): String =
+        JSONObject()
+            .put("type", "export_share_recipient_evidence")
             .put("display_name", displayName)
             .toString()
 

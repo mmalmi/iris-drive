@@ -302,7 +302,7 @@ public sealed class IrisDriveService
             });
     }
 
-    public Task InviteShareMemberFromEvidenceAsync(
+    public Task<IrisDriveStatusData> InviteShareMemberFromEvidenceAsync(
         string shareId,
         string evidenceJson,
         string role,
@@ -324,6 +324,16 @@ public sealed class IrisDriveService
                 ["share_id"] = shareId.Trim(),
                 ["evidence_json"] = evidenceJson.Trim(),
                 ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task<IrisDriveStatusData> ExportShareRecipientEvidenceAsync(string displayName)
+    {
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "export_share_recipient_evidence",
                 ["display_name"] = displayName.Trim(),
             });
     }

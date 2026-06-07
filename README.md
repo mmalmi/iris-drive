@@ -93,10 +93,12 @@ Native apps expose the same share operations from the **Shares** tab: create a
 shared folder, invite an IrisProfile member, accept an invite, change member
 roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
 shows people/profile members first; invite dialogs prefer signed
-recipient-evidence JSON. `idrive shares recipient-evidence` exports the local
-IrisProfile/AppKey proof bundle another user can pass to
-`idrive shares invite --recipient-evidence`; direct AppKey entry remains an
-admin fallback.
+recipient-evidence JSON. `idrive shares recipient-evidence` or the app-core
+`export_share_recipient_evidence` action exports the local IrisProfile/AppKey
+proof bundle another user can pass to `idrive shares invite
+--recipient-evidence` or `invite_share_member_from_evidence`; direct AppKey
+entry remains an admin fallback.
+
 CLI share JSON follows the same shape by default: members are IrisProfile
 entities and repair/revocation output reports counts. Raw AppKey lists are
 available only from explicit diagnostics output such as

@@ -341,6 +341,7 @@ struct NativeUiState: Codable {
     var providerDirectoryPaths: [String]
     var snapshotLink: String
     var lastShareInvite: String
+    var lastShareRecipientEvidence: String
 
     enum CodingKeys: String, CodingKey {
         case roots
@@ -368,6 +369,7 @@ struct NativeUiState: Codable {
         case providerDirectoryPaths = "provider_directory_paths"
         case snapshotLink = "snapshot_link"
         case lastShareInvite = "last_share_invite"
+        case lastShareRecipientEvidence = "last_share_recipient_evidence"
     }
 }
 
