@@ -794,6 +794,12 @@ struct IrisDriveControlPanel: View {
                         Label("Copy Invite", systemImage: "doc.on.doc")
                     }
                 }
+                Button {
+                    controller.exportShareRecipientEvidence(displayName: "")
+                } label: {
+                    Label("Copy Share Identity", systemImage: "person.crop.circle.badge.checkmark")
+                }
+                .disabled(status.currentAppKeyNpub == nil)
             }
 
             VStack(alignment: .leading, spacing: 10) {

@@ -90,6 +90,7 @@ internal fun AuthenticatedContent(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onExportShareRecipientEvidence: (String) -> Unit,
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
@@ -136,6 +137,7 @@ internal fun AuthenticatedContent(
             onCreateShare = onCreateShare,
             onInviteShareMember = onInviteShareMember,
             onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+            onExportShareRecipientEvidence = onExportShareRecipientEvidence,
             onRecordPendingShareInvite = onRecordPendingShareInvite,
             onAcceptShareInvite = onAcceptShareInvite,
             onRevokeShareMember = onRevokeShareMember,
@@ -289,6 +291,7 @@ private fun SharesContent(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onExportShareRecipientEvidence: (String) -> Unit,
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
@@ -314,6 +317,7 @@ private fun SharesContent(
                 onCreateShare = onCreateShare,
                 onInviteShareMember = onInviteShareMember,
                 onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+                onExportShareRecipientEvidence = onExportShareRecipientEvidence,
                 onRecordPendingShareInvite = onRecordPendingShareInvite,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
@@ -585,6 +589,7 @@ private fun SharesPanel(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onExportShareRecipientEvidence: (String) -> Unit,
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
@@ -708,6 +713,15 @@ private fun SharesPanel(
             ) {
                 Text("Copy invite")
             }
+        }
+        OutlinedButton(
+            onClick = {
+                onExportShareRecipientEvidence(state.profile?.appKeyLabel.orEmpty())
+            },
+            enabled = state.profile != null,
+            modifier = Modifier.testTag("copyShareIdentityButton"),
+        ) {
+            Text("Copy my share identity")
         }
 
         if (state.shares.isEmpty()) {

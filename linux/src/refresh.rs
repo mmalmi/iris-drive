@@ -72,6 +72,10 @@ pub(crate) fn refresh(model: &AppRef) {
             let has_snapshot = snapshot_link(&state).is_some();
             model.ui.copy_snapshot_button.set_sensitive(has_snapshot);
             model.ui.open_snapshot_button.set_sensitive(has_snapshot);
+            model
+                .ui
+                .copy_share_identity_button
+                .set_sensitive(state.ui.profile.is_some());
             if state.ui.last_share_invite.is_empty() {
                 model.ui.last_share_invite.set_text("-");
                 model.ui.copy_last_share_invite_button.set_sensitive(false);

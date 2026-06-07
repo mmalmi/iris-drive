@@ -122,6 +122,22 @@ pub(crate) fn copy_last_share_invite(model: &AppRef) {
     }
 }
 
+pub(crate) fn copy_share_identity(model: &AppRef) {
+    let display_name = desktop_state()
+        .ok()
+        .and_then(|state| state.ui.profile.map(|profile| profile.app_key_label))
+        .unwrap_or_default();
+    match dispatch_desktop_action(NativeAppAction::ExportShareRecipientEvidence { display_name }) {
+        Ok(state) if !state.ui.last_share_recipient_evidence.is_empty() => copy_text(
+            model,
+            &state.ui.last_share_recipient_evidence,
+            "Share identity copied",
+        ),
+        Ok(_) => model.ui.notice.set_text("Share identity unavailable"),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn show_invite_share_member_dialog(
     model: &AppRef,
     share_id: String,

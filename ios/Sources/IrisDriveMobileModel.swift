@@ -687,6 +687,12 @@ final class IrisDriveMobileModel: ObservableObject {
         UIPasteboard.general.string = lastShareInvite
     }
 
+    func copyShareRecipientEvidence() {
+        exportShareRecipientEvidence(displayName: deviceLabel)
+        guard !lastShareRecipientEvidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        UIPasteboard.general.string = lastShareRecipientEvidence
+    }
+
     func openSnapshotLink() {
         guard let url = URL(string: snapshotLink) else { return }
         UIApplication.shared.open(url)

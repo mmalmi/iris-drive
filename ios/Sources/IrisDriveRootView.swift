@@ -928,6 +928,15 @@ private struct SharesView: View {
                 .disabled(model.lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
+            Section("Share Identity") {
+                Button {
+                    model.copyShareRecipientEvidence()
+                } label: {
+                    Label("Copy my share identity", systemImage: "person.crop.circle.badge.checkmark")
+                }
+                .disabled(!model.hasLocalProfile)
+            }
+
             Section("Shared Folders") {
                 if model.shares.isEmpty {
                     Text("No shared folders")

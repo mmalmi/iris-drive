@@ -91,6 +91,7 @@ struct Ui {
     accept_share_invite_button: gtk::Button,
     last_share_invite: gtk::Label,
     copy_last_share_invite_button: gtk::Button,
+    copy_share_identity_button: gtk::Button,
     init_button: gtk::Button,
     folder_button: gtk::Button,
     copy_snapshot_button: gtk::Button,

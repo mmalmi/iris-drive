@@ -239,6 +239,30 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun sharesPanelExportsRecipientEvidenceFromAppCore() {
+        val exportedDisplayNames = mutableListOf<String>()
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onExportShareRecipientEvidence = { displayName ->
+                exportedDisplayNames += displayName
+            },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithTag("copyShareIdentityButton")
+            .performScrollTo()
+            .assertIsEnabled()
+            .activate()
+
+        assertEquals(listOf("Pixel"), exportedDisplayNames)
+    }
+
+    @Test
     fun shareInviteDialogDispatchesPendingNpubHintWithoutAuthority() {
         val pendingInvites = mutableListOf<List<String>>()
         var directInviteCount = 0
@@ -703,6 +727,7 @@ class IrisDriveAndroidGuiFlowTest {
             { _, _, _, _, _, _, _ -> },
         onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit =
             { _, _, _, _ -> },
+        onExportShareRecipientEvidence: (String) -> Unit = {},
         onRecordPendingShareInvite: (String, String, String, String) -> Unit =
             { _, _, _, _ -> },
         onAcceptShareInvite: (String) -> Unit = {},
@@ -744,6 +769,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onCreateShare = onCreateShare,
                 onInviteShareMember = onInviteShareMember,
                 onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+                onExportShareRecipientEvidence = onExportShareRecipientEvidence,
                 onRecordPendingShareInvite = onRecordPendingShareInvite,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,

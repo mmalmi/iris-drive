@@ -241,12 +241,23 @@ pub(crate) fn build_ui(app: &adw::Application) {
     last_invite_grid.set_hexpand(true);
     let last_share_invite = value_label();
     let copy_last_share_invite_button = icon_button("edit-copy-symbolic", "Copy invite");
+    let share_identity_placeholder = value_label();
+    share_identity_placeholder.set_text("Signed IrisProfile proof");
+    let copy_share_identity_button =
+        icon_button("edit-copy-symbolic", "Copy my share identity");
     add_copy_field(
         &last_invite_grid,
         0,
         "Last invite",
         &last_share_invite,
         &copy_last_share_invite_button,
+    );
+    add_copy_field(
+        &last_invite_grid,
+        1,
+        "My share identity",
+        &share_identity_placeholder,
+        &copy_share_identity_button,
     );
     shares_page.append(&last_invite_grid);
 
@@ -413,6 +424,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             accept_share_invite_button,
             last_share_invite,
             copy_last_share_invite_button,
+            copy_share_identity_button,
             init_button,
             folder_button,
             copy_snapshot_button,
@@ -521,6 +533,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
         let button = model.ui.copy_last_share_invite_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| copy_last_share_invite(&model));
+    }
+    {
+        let button = model.ui.copy_share_identity_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| copy_share_identity(&model));
     }
     model.ui.tray_on_close.connect_toggled(|button| {
         write_close_to_tray_on_close(button.is_active());

@@ -96,8 +96,9 @@ shows people/profile members first; invite dialogs prefer signed
 recipient-evidence JSON. `idrive shares recipient-evidence` or the app-core
 `export_share_recipient_evidence` action exports the local IrisProfile/AppKey
 proof bundle another user can pass to `idrive shares invite
---recipient-evidence` or `invite_share_member_from_evidence`; direct AppKey
-entry remains an admin fallback.
+--recipient-evidence` or `invite_share_member_from_evidence`; native share
+screens expose this as **Copy my share identity**. Direct AppKey entry remains
+an admin fallback.
 
 CLI share JSON follows the same shape by default: members are IrisProfile
 entities and repair/revocation output reports counts. Raw AppKey lists are

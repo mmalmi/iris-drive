@@ -167,6 +167,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onExportShareRecipientEvidence = { displayName ->
+                    dispatch(NativeActions.exportShareRecipientEvidence(displayName)) { state ->
+                        if (state.lastShareRecipientEvidence.isNotBlank()) {
+                            copyToClipboard("Share identity", state.lastShareRecipientEvidence)
+                        }
+                    }
+                },
                 onRecordPendingShareInvite = { shareId, representativeNpubHint, role, displayName ->
                     dispatch(
                         NativeActions.recordPendingShareInvite(

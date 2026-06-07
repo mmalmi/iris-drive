@@ -422,7 +422,15 @@
             </StackPanel>
 
             <StackPanel x:Name="SharesPage" Visibility="Collapsed">
-              <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <DockPanel Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Click="CopyShareIdentity_Click">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE77B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Copy share identity" />
+                  </StackPanel>
+                </Button>
+                <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" />
+              </DockPanel>
               <TextBlock Text="Create share" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <DockPanel LastChildFill="True" Margin="0,0,0,12">
                 <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="CreateShare_Click" Margin="8,0,0,0">

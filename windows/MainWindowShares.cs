@@ -327,6 +327,20 @@ public partial class MainWindow
         }
     }
 
+    private async void CopyShareIdentity_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var status = await service.ExportShareRecipientEvidenceAsync("");
+            CopyText(status.LastShareRecipientEvidence, "Share identity copied");
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
     private async void RepairShare_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: string shareId })
