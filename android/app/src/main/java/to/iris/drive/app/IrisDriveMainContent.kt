@@ -90,6 +90,7 @@ internal fun AuthenticatedContent(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -135,6 +136,7 @@ internal fun AuthenticatedContent(
             onCreateShare = onCreateShare,
             onInviteShareMember = onInviteShareMember,
             onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+            onRecordPendingShareInvite = onRecordPendingShareInvite,
             onAcceptShareInvite = onAcceptShareInvite,
             onRevokeShareMember = onRevokeShareMember,
             onAddShareShortcut = onAddShareShortcut,
@@ -287,6 +289,7 @@ private fun SharesContent(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -311,6 +314,7 @@ private fun SharesContent(
                 onCreateShare = onCreateShare,
                 onInviteShareMember = onInviteShareMember,
                 onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+                onRecordPendingShareInvite = onRecordPendingShareInvite,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
                 onAddShareShortcut = onAddShareShortcut,
@@ -581,6 +585,7 @@ private fun SharesPanel(
     onCreateShare: (String, String) -> Unit,
     onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
     onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
+    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
@@ -612,6 +617,8 @@ private fun SharesPanel(
             onInvite = { evidenceJson, profileId, appKey, role, npubHint, displayName, label ->
                 if (evidenceJson.isNotBlank()) {
                     onInviteShareMemberFromEvidence(share.shareId, evidenceJson, role, displayName)
+                } else if (profileId.isBlank() && appKey.isBlank()) {
+                    onRecordPendingShareInvite(share.shareId, npubHint, role, displayName)
                 } else {
                     onInviteShareMember(share.shareId, profileId, appKey, role, npubHint, displayName, label)
                 }
@@ -806,7 +813,9 @@ private fun InviteShareMemberDialog(
                         label,
                     )
                 },
-                enabled = evidenceJson.isNotBlank() || (profileId.isNotBlank() && appKey.isNotBlank()),
+                enabled = evidenceJson.isNotBlank() ||
+                    (profileId.isNotBlank() && appKey.isNotBlank()) ||
+                    (profileId.isBlank() && appKey.isBlank() && npubHint.isNotBlank()),
             ) {
                 Text("Invite")
             }

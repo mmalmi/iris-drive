@@ -167,6 +167,16 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onRecordPendingShareInvite = { shareId, representativeNpubHint, role, displayName ->
+                    dispatch(
+                        NativeActions.recordPendingShareInvite(
+                            shareId = shareId,
+                            representativeNpubHint = representativeNpubHint,
+                            role = role,
+                            displayName = displayName,
+                        ),
+                    )
+                },
                 onAcceptShareInvite = { invite ->
                     dispatch(NativeActions.acceptShareInvite(invite))
                 },

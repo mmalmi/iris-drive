@@ -394,6 +394,20 @@ internal object NativeActions {
             .put("display_name", displayName)
             .toString()
 
+    fun recordPendingShareInvite(
+        shareId: String,
+        representativeNpubHint: String,
+        role: String,
+        displayName: String,
+    ): String =
+        JSONObject()
+            .put("type", "record_pending_share_invite")
+            .put("share_id", shareId)
+            .put("representative_npub_hint", representativeNpubHint)
+            .put("role", role)
+            .put("display_name", displayName)
+            .toString()
+
     fun acceptShareInvite(invite: String): String =
         JSONObject()
             .put("type", "accept_share_invite")

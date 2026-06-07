@@ -25,6 +25,24 @@ class AppStateTest {
     }
 
     @Test
+    fun pendingShareInviteActionSerializesForAppCore() {
+        val action = JSONObject(
+            NativeActions.recordPendingShareInvite(
+                shareId = "share-1",
+                representativeNpubHint = "npub1alice",
+                role = "reader",
+                displayName = "Alice",
+            ),
+        )
+
+        assertEquals("record_pending_share_invite", action.getString("type"))
+        assertEquals("share-1", action.getString("share_id"))
+        assertEquals("npub1alice", action.getString("representative_npub_hint"))
+        assertEquals("reader", action.getString("role"))
+        assertEquals("Alice", action.getString("display_name"))
+    }
+
+    @Test
     fun appCoreLabelsAreParsedFromNativeState() {
         val state = AppState.fromJson(
             """
