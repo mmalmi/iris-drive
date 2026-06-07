@@ -8,6 +8,9 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
         }
         SharesCmd::List { diagnostics } => cmd_shares_list(config_dir, diagnostics),
         SharesCmd::Members { share_id } => cmd_shares_members(config_dir, &share_id),
+        SharesCmd::RecipientEvidence { display_name } => {
+            cmd_shares_recipient_evidence(config_dir, display_name.as_deref())
+        }
         SharesCmd::Invite {
             share_id,
             profile,
@@ -117,6 +120,14 @@ fn cmd_shares_members(config_dir: &Path, share_id: &str) -> Result<()> {
             "share_id": share_id.to_string(),
             "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
         })
+    );
+    Ok(())
+}
+
+fn cmd_shares_recipient_evidence(config_dir: &Path, display_name: Option<&str>) -> Result<()> {
+    println!(
+        "{}",
+        share_recipient_evidence_json(config_dir, display_name, share_timestamp())?
     );
     Ok(())
 }
@@ -510,6 +521,30 @@ fn load_share_recipient_evidence_json(path: &Path) -> Result<String> {
         .with_context(|| format!("reading recipient evidence {}", path.display()))
 }
 
+fn share_recipient_evidence_json(
+    config_dir: &Path,
+    display_name: Option<&str>,
+    accepted_at: i64,
+) -> Result<String> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .profile
+        .context("profile is required before exporting recipient evidence")?;
+    let profile = Profile::load(state, config_dir)?;
+    let evidence = iris_drive_core::share_recipient_profile_evidence_for_app_key(
+        profile.state.profile_id,
+        &profile.state.profile_roster_ops,
+        profile.app_key.keys(),
+        display_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        accepted_at,
+    )
+    .context("exporting share recipient evidence")?;
+    serde_json::to_string(&evidence).context("encoding recipient evidence")
+}
+
 fn dispatch_cli_share_action(
     config_dir: &Path,
     action: iris_drive_core::ShareAction,
@@ -680,6 +715,29 @@ mod tests {
         let pending = share.pending_invites.get(&representative_npub).unwrap();
         assert_eq!(pending.display_name.as_deref(), Some("Alice"));
         assert_eq!(pending.status, iris_drive_core::ShareMemberStatus::Pending);
+    }
+
+    #[test]
+    fn shares_recipient_evidence_command_exports_resolvable_profile_bundle() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Phone".into())).unwrap();
+        let config = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        let evidence_json = share_recipient_evidence_json(config_dir.path(), Some("Alice"), 30)
+            .expect("recipient evidence export succeeds");
+        let evidence: iris_drive_core::ShareRecipientProfileEvidence =
+            serde_json::from_str(&evidence_json).unwrap();
+        let resolved = iris_drive_core::resolve_share_recipient_from_evidence(&evidence, None)
+            .expect("exported evidence resolves");
+
+        assert_eq!(resolved.profile_id, account.state.profile_id);
+        assert_eq!(resolved.representative_pubkey, account.state.app_key_pubkey);
+        assert_eq!(resolved.display_name.as_deref(), Some("Alice"));
+        assert_eq!(resolved.app_pubkeys, vec![account.state.app_key_pubkey]);
     }
 
     #[test]

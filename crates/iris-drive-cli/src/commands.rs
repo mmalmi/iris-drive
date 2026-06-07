@@ -266,6 +266,13 @@ pub(crate) enum SharesCmd {
         /// Share UUID.
         share_id: String,
     },
+    /// Export signed recipient evidence for this IrisProfile/AppKey.
+    #[command(name = "recipient-evidence")]
+    RecipientEvidence {
+        /// Display name to show when another user invites this IrisProfile.
+        #[arg(long)]
+        display_name: Option<String>,
+    },
     /// Invite an `IrisProfile` member, or record an unresolved npub invite hint.
     Invite {
         /// Share UUID.

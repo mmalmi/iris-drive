@@ -74,6 +74,7 @@ just run-cli app-keys approve <app-key-request-url-or-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
 just run-cli shares create "Projects/Alpha" --name "Alpha"
+just run-cli shares recipient-evidence --display-name "Alice" > recipient-profile.json
 just run-cli shares invite <share-id> --recipient-evidence recipient-profile.json --role reader
 just run-cli shares invite <share-id> --profile <iris-profile-id> --app-key <recipient-appkey-npub> --role reader
 just run-cli shares accept <share-invite-url>
@@ -92,7 +93,10 @@ Native apps expose the same share operations from the **Shares** tab: create a
 shared folder, invite an IrisProfile member, accept an invite, change member
 roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
 shows people/profile members first; invite dialogs prefer signed
-recipient-evidence JSON and keep direct AppKey entry as an admin fallback.
+recipient-evidence JSON. `idrive shares recipient-evidence` exports the local
+IrisProfile/AppKey proof bundle another user can pass to
+`idrive shares invite --recipient-evidence`; direct AppKey entry remains an
+admin fallback.
 CLI share JSON follows the same shape by default: members are IrisProfile
 entities and repair/revocation output reports counts. Raw AppKey lists are
 available only from explicit diagnostics output such as

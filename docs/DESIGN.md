@@ -193,8 +193,11 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 - **Send invite**: `idrive shares invite <share-id> --recipient-evidence
   recipient-profile.json --role reader`. The evidence bundle contains the
   selected representative npub/pubkey, signed IrisProfile roster ops, and
-  self-signed facet acceptances. Direct `--profile --app-key` remains a
-  diagnostic/admin path. The selected representative npub/contact is only a
+  self-signed facet acceptances. A recipient can export the local current
+  AppKey proof bundle with `idrive shares recipient-evidence --display-name
+  <name> > recipient-profile.json`; this does not grant authority by itself.
+  Direct `--profile --app-key` remains a diagnostic/admin path. The selected
+  representative npub/contact is only a
   discovery/display hint; access is granted to the resolved IrisProfile member,
   while concrete AppKeys receive key wraps and scoped signing/decryption
   capabilities. The recipient's IrisProfile roster and self-links prove

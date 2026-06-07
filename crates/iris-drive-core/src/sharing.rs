@@ -15,9 +15,10 @@ use crate::iris_profile::{
     IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
     IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
     SignedIrisProfileFacetAcceptance, SignedIrisProfileRosterOp,
-    build_iris_profile_roster_op_event, iris_profile_roster_parent_ids, iris_profile_tag_kind,
-    parse_iris_profile_roster_op_event, project_iris_profile_roster,
-    validate_signed_iris_profile_roster_op,
+    build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
+    iris_profile_roster_parent_ids, iris_profile_tag_kind,
+    parse_iris_profile_facet_acceptance_event, parse_iris_profile_roster_op_event,
+    project_iris_profile_roster, validate_signed_iris_profile_roster_op,
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
@@ -1334,6 +1335,51 @@ pub fn resolve_share_recipient_from_evidence(
     )
 }
 
+pub fn share_recipient_profile_evidence_for_app_key(
+    profile_id: IrisProfileId,
+    roster_ops: &[SignedIrisProfileRosterOp],
+    app_key_keys: &Keys,
+    display_name: Option<String>,
+    accepted_at: i64,
+) -> Result<ShareRecipientProfileEvidence, SharingError> {
+    let app_pubkey = app_key_keys.public_key().to_hex();
+    let projection = project_iris_profile_roster(profile_id, roster_ops.to_vec());
+    let facet = projection.active_facets.get(&app_pubkey).ok_or_else(|| {
+        SharingError::RecipientResolution(format!(
+            "current AppKey is not active in IrisProfile {profile_id}"
+        ))
+    })?;
+    if !facet.has_purpose(IrisProfileKeyPurpose::AppKey) {
+        return Err(SharingError::RecipientResolution(
+            "current key is not an AppKey facet".to_string(),
+        ));
+    }
+    if !facet.capabilities.can_receive_key_wraps {
+        return Err(SharingError::RecipientResolution(
+            "current AppKey cannot receive share key wraps".to_string(),
+        ));
+    }
+
+    let roster_op_id = active_app_key_add_facet_op_id(roster_ops, profile_id, &app_pubkey);
+    let acceptance_event = build_iris_profile_facet_acceptance_event(
+        app_key_keys,
+        profile_id,
+        [IrisProfileKeyPurpose::AppKey],
+        roster_op_id,
+        accepted_at,
+    )?;
+    let acceptance = parse_iris_profile_facet_acceptance_event(&acceptance_event)?;
+
+    Ok(ShareRecipientProfileEvidence {
+        profile_id,
+        representative_pubkey: Some(app_pubkey.clone()),
+        representative_npub: Some(pubkey_npub(&app_pubkey)),
+        display_name: display_name.or_else(|| facet.label.clone()),
+        roster_ops: roster_ops.to_vec(),
+        acceptances: vec![acceptance],
+    })
+}
+
 pub fn sign_share_roster_checkpoint(
     signer_keys: &Keys,
     folder: &SharedFolder,
@@ -1518,6 +1564,27 @@ fn evidence_representative_pubkey(
     Err(SharingError::RecipientResolution(
         "recipient evidence is missing representative pubkey".to_string(),
     ))
+}
+
+fn active_app_key_add_facet_op_id(
+    roster_ops: &[SignedIrisProfileRosterOp],
+    profile_id: IrisProfileId,
+    app_pubkey: &str,
+) -> Option<String> {
+    roster_ops
+        .iter()
+        .filter(|signed| signed.content.profile_id == profile_id)
+        .filter_map(|signed| match &signed.content.op {
+            IrisProfileRosterOp::AddFacet { facet } if facet.pubkey == app_pubkey => Some(signed),
+            _ => None,
+        })
+        .max_by(|left, right| {
+            left.content
+                .created_at
+                .cmp(&right.content.created_at)
+                .then_with(|| left.op_id.cmp(&right.op_id))
+        })
+        .map(|signed| signed.op_id.clone())
 }
 
 fn shared_folder_app_key_write_authorization_with_projection(
@@ -4045,6 +4112,52 @@ mod tests {
             ),
             Err(SharingError::RecipientResolution(_))
         ));
+    }
+
+    #[test]
+    fn share_recipient_evidence_export_resolves_current_appkey_identity() {
+        let profile_id = IrisProfileId::new_v4();
+        let phone = Keys::generate();
+        let phone_pubkey = phone.public_key().to_hex();
+        let mut ops = Vec::new();
+        append_profile_facet(
+            &mut ops,
+            &phone,
+            profile_id,
+            IrisProfileFacet::app_key(
+                phone_pubkey.clone(),
+                10,
+                Some("Phone".to_string()),
+                IrisProfileCapabilities::app_admin(),
+            ),
+            10,
+        );
+
+        let evidence = share_recipient_profile_evidence_for_app_key(
+            profile_id,
+            &ops,
+            &phone,
+            Some("Alice".to_string()),
+            20,
+        )
+        .unwrap();
+        let resolved = resolve_share_recipient_from_evidence(&evidence, None).unwrap();
+
+        assert_eq!(evidence.profile_id, profile_id);
+        assert_eq!(
+            evidence.representative_pubkey.as_deref(),
+            Some(phone_pubkey.as_str())
+        );
+        assert_eq!(
+            evidence.representative_npub.as_deref(),
+            Some(pubkey_npub(&phone_pubkey).as_str())
+        );
+        assert_eq!(evidence.roster_ops, ops);
+        assert_eq!(evidence.acceptances.len(), 1);
+        assert_eq!(resolved.profile_id, profile_id);
+        assert_eq!(resolved.representative_pubkey, phone_pubkey);
+        assert_eq!(resolved.display_name.as_deref(), Some("Alice"));
+        assert_eq!(resolved.app_pubkeys, vec![phone_pubkey]);
     }
 
     #[test]
