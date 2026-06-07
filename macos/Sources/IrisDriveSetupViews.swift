@@ -7,20 +7,20 @@ struct RevokedDeviceSetupView: View {
     var body: some View {
         let target = status.currentAppKeyNpub ?? ""
         VStack(alignment: .leading, spacing: 12) {
-            Text("AppKey removed")
+            Text("Device removed")
                 .font(.title2.weight(.semibold))
-            Text("This app install no longer has access to Iris Drive.")
+            Text("This device no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
             if !target.isEmpty {
-                keyedValue("AppKey", target)
+                keyedValue("Device", target)
             }
             if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("Current AppKey", device)
+                keyedValue("Current Device Key", device)
             }
             Button {
                 controller.linkDevice(target: target)
             } label: {
-                buttonLabel("Link this app install again", systemImage: "link")
+                buttonLabel("Link this device again", systemImage: "link")
             }
             .buttonStyle(.borderedProminent)
             .disabled(target.isEmpty)
@@ -28,7 +28,7 @@ struct RevokedDeviceSetupView: View {
                 Button {
                     controller.copyDeviceKey()
                 } label: {
-                    buttonLabel("Copy AppKey", systemImage: "doc.on.doc")
+                    buttonLabel("Copy Device Key", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }
@@ -73,14 +73,14 @@ struct AwaitingApprovalSetupView: View {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
             if let appKey = status.currentAppKeyNpub, !appKey.isEmpty {
-                keyedValue("AppKey", appKey)
+                keyedValue("Device", appKey)
             }
             if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("Current AppKey", device)
+                keyedValue("Current Device Key", device)
                 Button {
                     controller.copyDeviceKey()
                 } label: {
-                    buttonLabel("Copy AppKey", systemImage: "doc.on.doc")
+                    buttonLabel("Copy Device Key", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }

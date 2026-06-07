@@ -10,6 +10,7 @@ let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
+private let irisDriveDefaultUpdatePollInterval: TimeInterval = 6 * 60 * 60
 let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
@@ -80,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusFileDescriptor: CInt = -1
     private var externalStatusDirectoryDescriptor: CInt = -1
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
+    private var updatePollTimer: Timer?
+    private var startupUpdateCheckDone = false
     private lazy var desktopCore = IrisDriveDesktopCore(
         dataDir: runtimePaths().configDirectory.path,
         appVersion: appVersion
@@ -116,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "team=\(currentProcessTeamIdentifier() ?? "nil")"
         )
         ensureFileProviderDomainIfProfileExists()
+        startAutomaticUpdateChecks()
     }
 
     func ensureFileProviderDomain() {
@@ -197,6 +201,256 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ensureFileProviderDomain()
     }
 
+    func setAutoCheckUpdates(_ enabled: Bool) {
+        let status = IrisDriveStatus.shared
+        status.autoCheckUpdates = enabled
+        UserDefaults.standard.set(enabled, forKey: IrisDriveStatus.autoCheckUpdatesKey)
+        if enabled {
+            startAutomaticUpdateChecks()
+        } else {
+            stopAutomaticUpdateChecks()
+        }
+    }
+
+    func setAutoInstallUpdates(_ enabled: Bool) {
+        let status = IrisDriveStatus.shared
+        status.autoInstallUpdates = enabled
+        UserDefaults.standard.set(enabled, forKey: IrisDriveStatus.autoInstallUpdatesKey)
+        if enabled, status.updateAvailable, status.updateCanInstall {
+            installUpdate()
+        }
+    }
+
+    func checkForUpdates(manual: Bool = true) {
+        if screenshotFixtureMode {
+            if manual {
+                IrisDriveStatus.shared.updateStatus = "Fixture mode"
+            }
+            return
+        }
+        let status = IrisDriveStatus.shared
+        guard !status.updateChecking, !status.updateInstalling else {
+            return
+        }
+        status.updateChecking = true
+        if manual {
+            status.updateStatus = "Checking for updates"
+        }
+        let dataDir = (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
+        let version = appVersion
+        DispatchQueue.global(qos: .utility).async {
+            let result = IrisDriveDesktopCore.updateCheck(
+                dataDir: dataDir,
+                currentVersion: version,
+                mode: "app"
+            )
+            DispatchQueue.main.async {
+                self.applyUpdateCheck(result, manual: manual)
+            }
+        }
+    }
+
+    private func startAutomaticUpdateChecks() {
+        let status = IrisDriveStatus.shared
+        guard !screenshotFixtureMode, status.autoCheckUpdates else {
+            stopAutomaticUpdateChecks()
+            return
+        }
+        if !startupUpdateCheckDone {
+            startupUpdateCheckDone = true
+            checkForUpdates(manual: false)
+        }
+        guard updatePollTimer == nil else {
+            return
+        }
+        updatePollTimer = Timer.scheduledTimer(
+            withTimeInterval: updatePollInterval,
+            repeats: true
+        ) { [weak self] _ in
+            guard let self else { return }
+            guard IrisDriveStatus.shared.autoCheckUpdates else {
+                self.stopAutomaticUpdateChecks()
+                return
+            }
+            self.checkForUpdates(manual: false)
+        }
+    }
+
+    private func stopAutomaticUpdateChecks() {
+        updatePollTimer?.invalidate()
+        updatePollTimer = nil
+    }
+
+    private var updatePollInterval: TimeInterval {
+        let raw = ProcessInfo.processInfo.environment["IRIS_DRIVE_UPDATE_POLL_SECONDS"] ?? ""
+        if let seconds = TimeInterval(raw), seconds > 0 {
+            return seconds
+        }
+        return irisDriveDefaultUpdatePollInterval
+    }
+
+    private func applyUpdateCheck(_ result: [String: Any], manual: Bool) {
+        let status = IrisDriveStatus.shared
+        status.updateChecking = false
+        if let error = result["error"] as? String,
+           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.updateAvailable = false
+            status.updateCanInstall = false
+            status.updateAsset = ""
+            status.updateStatus = manual ? error : ""
+            return
+        }
+        let available = result["available"] as? Bool ?? false
+        let asset = result["asset"] as? String ?? ""
+        let tag = result["tag"] as? String ?? ""
+        status.updateAvailable = available
+        status.updateVersion = tag
+        status.updateAsset = asset
+        status.updateCanInstall = available && !asset.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if available {
+            if status.updateCanInstall {
+                status.updateStatus = "Update \(tag) available"
+                if status.autoInstallUpdates && asset.lowercased().hasSuffix(".app.tar.gz") {
+                    installUpdate()
+                }
+            } else {
+                status.updateStatus = "Update \(tag) found without a macOS asset"
+            }
+        } else {
+            status.updateStatus = manual ? "Up to date" : ""
+        }
+    }
+
+    func installUpdate() {
+        let status = IrisDriveStatus.shared
+        guard status.updateCanInstall, !status.updateInstalling else {
+            if status.updateAsset.isEmpty {
+                status.updateStatus = "No macOS update asset found"
+            }
+            return
+        }
+        status.updateInstalling = true
+        status.updateStatus = "Downloading \(status.updateVersion)"
+        let dataDir = (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
+        let version = appVersion
+        let downloadDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IrisDriveDownloads", isDirectory: true)
+            .path
+        DispatchQueue.global(qos: .utility).async {
+            let result = IrisDriveDesktopCore.updateDownload(
+                dataDir: dataDir,
+                currentVersion: version,
+                mode: "app",
+                downloadDir: downloadDir
+            )
+            DispatchQueue.main.async {
+                self.finishUpdateDownload(result)
+            }
+        }
+    }
+
+    private func finishUpdateDownload(_ result: [String: Any]) {
+        let status = IrisDriveStatus.shared
+        if let error = result["error"] as? String,
+           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.updateInstalling = false
+            status.updateStatus = error
+            return
+        }
+        guard let path = result["path"] as? String, !path.isEmpty else {
+            status.updateInstalling = false
+            status.updateStatus = "Updater did not return a downloaded file"
+            return
+        }
+        do {
+            try installDownloadedUpdate(URL(fileURLWithPath: path))
+        } catch {
+            status.updateInstalling = false
+            status.updateStatus = error.localizedDescription
+        }
+    }
+
+    private func installDownloadedUpdate(_ archiveURL: URL) throws {
+        let status = IrisDriveStatus.shared
+        if archiveURL.lastPathComponent.lowercased().hasSuffix(".app.tar.gz") {
+            status.updateStatus = "Installing \(status.updateVersion)"
+            let unpackDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("IrisDriveUpdate-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
+            try runUpdateProcess(
+                "/usr/bin/tar",
+                arguments: ["-xzf", archiveURL.path, "-C", unpackDir.path]
+            )
+            guard let newApp = findIrisDriveApp(in: unpackDir) else {
+                throw NSError(
+                    domain: "IrisDriveUpdate",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Downloaded update did not contain Iris Drive.app"]
+                )
+            }
+            let script = try updateInstallScript()
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = [script.path, Bundle.main.bundleURL.path, newApp.path]
+            try process.run()
+            NSApp.terminate(nil)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
+            status.updateInstalling = false
+            status.updateStatus = "Downloaded \(archiveURL.lastPathComponent)"
+        }
+    }
+
+    private func findIrisDriveApp(in root: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+        for case let url as URL in enumerator {
+            if url.pathExtension == "app",
+               (url.lastPathComponent == "Iris Drive.app" || url.lastPathComponent == "IrisDriveMac.app") {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private func updateInstallScript() throws -> URL {
+        let script = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-install-update-\(UUID().uuidString).sh")
+        let contents = """
+        #!/bin/sh
+        set -eu
+        current_app="$1"
+        new_app="$2"
+        sleep 1
+        rm -rf "$current_app"
+        ditto "$new_app" "$current_app"
+        open "$current_app"
+        """
+        try contents.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        return script
+    }
+
+    private func runUpdateProcess(_ executable: String, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw NSError(
+                domain: "IrisDriveUpdate",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "\(URL(fileURLWithPath: executable).lastPathComponent) failed"]
+            )
+        }
+    }
+
     private func ensureFileProviderDomainAfterStatusIfNeeded() {
         guard fileProviderIntegrationEnabled else { return }
         guard IrisDriveStatus.shared.setupComplete else { return }
@@ -213,6 +467,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stopSync()
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
+        updatePollTimer?.invalidate()
+        updatePollTimer = nil
         stopExternalDaemonStatusWatcher()
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
@@ -435,6 +691,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showMountedDriveFolder()
     }
 
+    func openShareFolder(path: String) {
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            updateStatus("Share folder path missing")
+            return
+        }
+        guard fileProviderIntegrationEnabled else {
+            handleFileProviderOpenFailure("FileProvider disabled")
+            return
+        }
+        showFileProviderItem(path: path)
+    }
+
     @objc func copyDriveLink() {
         guard let link = currentSnapshotLink(), !link.isEmpty else {
             NSSound.beep()
@@ -446,11 +715,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func copyAppKey() {
-        copyText(IrisDriveStatus.shared.currentAppKeyNpub, statusMessage: "AppKey copied")
+        copyText(IrisDriveStatus.shared.currentAppKeyNpub, statusMessage: "Device key copied")
     }
 
     @objc func copyDeviceKey() {
-        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "AppKey copied")
+        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
     }
 
     private func copyText(_ value: String?, statusMessage: String) {
@@ -482,7 +751,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func startSync() {
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("AppKey removed")
+            updateStatus("Device removed")
             setDaemonRunning(false)
             return
         }
@@ -629,7 +898,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func linkDevice(target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else {
-            updateStatus("IrisProfile invite or admin AppKey required")
+            updateStatus("IrisProfile invite or admin device key required")
             return
         }
         let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
@@ -667,14 +936,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func approveDevice(_ device: String, label: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("AppKey required")
+            updateStatus("Device key required")
             return
         }
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatchNativeAction(
             ["type": "approve_device", "request": device, "label": label],
-            progress: "Approving AppKey",
-            success: "AppKey approved",
+            progress: "Approving device",
+            success: "Device approved",
+            restartSyncAfterSuccess: true
+        )
+    }
+
+    func addRecoveryDevice(_ recoveryPubkey: String) {
+        let recoveryPubkey = recoveryPubkey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !recoveryPubkey.isEmpty else {
+            updateStatus("Recovery key required")
+            return
+        }
+        dispatchNativeAction(
+            ["type": "add_recovery_device", "recovery_pubkey": recoveryPubkey],
+            progress: "Adding recovery key",
+            success: "Recovery key added",
             restartSyncAfterSuccess: true
         )
     }
@@ -682,13 +965,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func rejectDevice(_ request: String) {
         let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty else {
-            updateStatus("AppKey request required")
+            updateStatus("Device request required")
             return
         }
         dispatchNativeAction(
             ["type": "reject_device", "request": request],
-            progress: "Rejecting AppKey",
-            success: "AppKey request rejected"
+            progress: "Rejecting device",
+            success: "Device request rejected"
         )
     }
 
@@ -703,14 +986,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func deleteDevice(_ device: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("AppKey required")
+            updateStatus("Device key required")
             return
         }
 
         dispatchNativeAction(
             ["type": "revoke_device", "app_key_pubkey": device],
-            progress: "Removing AppKey",
-            success: "AppKey removed",
+            progress: "Removing device",
+            success: "Device removed",
             restartSyncAfterSuccess: true
         )
     }
@@ -718,7 +1001,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("AppKey required")
+            updateStatus("Device key required")
             return
         }
 
@@ -728,32 +1011,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "app_key_pubkey": device,
             ],
             progress: makeAdmin ? "Making admin" : "Removing admin",
-            success: makeAdmin ? "AppKey made admin" : "Admin removed",
+            success: makeAdmin ? "Device made admin" : "Admin removed",
             restartSyncAfterSuccess: true
         )
     }
 
-    func createShare(sourcePath: String, displayName: String) {
-        let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    func createShare(sourcePath: String, completion: (() -> Void)? = nil) {
+        let sourcePath = normalizedShareSourceInput(sourcePath)
         guard !sourcePath.isEmpty else {
             updateStatus("Folder path required")
+            return
+        }
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        runtimePathsForMenu = paths
+        guard let resolvedSourcePath = shareSourcePathForCreate(sourcePath, paths: paths) else {
             return
         }
         dispatchNativeAction(
             [
                 "type": "create_share",
-                "source_path": sourcePath,
-                "display_name": displayName,
+                "source_path": resolvedSourcePath,
+                "display_name": "",
             ],
             progress: "Creating share",
-            success: "Share created"
+            success: "Share created",
+            completion: { [weak self] in
+                self?.signalFileProviderDomain(directoryPaths: [resolvedSourcePath])
+                completion?()
+            }
         )
+    }
+
+    private func shareSourcePathForCreate(_ sourcePath: String, paths: IrisDriveRuntimePaths) -> String? {
+        let payload = IrisDriveDesktopCore.providerList(dataDir: paths.configDirectory.path)
+        if let error = payload["error"] as? String, !error.isEmpty {
+            updateStatus("Drive unavailable")
+            NSLog("Iris Drive share source validation failed: \(error)")
+            return nil
+        }
+        let entries = payload["entries"] as? [[String: Any]] ?? []
+        if let entry = providerEntry(sourcePath, entries: entries) {
+            guard entry["kind"] as? String == "directory" else {
+                updateStatus("Share source must be a folder")
+                return nil
+            }
+            return sourcePath
+        }
+
+        let createdPath = defaultCreatedShareSourcePath(sourcePath)
+        if let entry = providerEntry(createdPath, entries: entries) {
+            guard entry["kind"] as? String == "directory" else {
+                updateStatus("\(createdPath) is not a folder")
+                return nil
+            }
+            return createdPath
+        }
+
+        let mkdir = IrisDriveDesktopCore.providerMkdir(
+            dataDir: paths.configDirectory.path,
+            path: createdPath
+        )
+        if let error = mkdir["error"] as? String, !error.isEmpty {
+            updateStatus("Could not create share folder")
+            NSLog("Iris Drive share source folder creation failed for \(createdPath): \(error)")
+            return nil
+        }
+        return mkdir["path"] as? String ?? createdPath
+    }
+
+    private func providerEntry(_ path: String, entries: [[String: Any]]) -> [String: Any]? {
+        entries.first { $0["path"] as? String == path }
+    }
+
+    private func defaultCreatedShareSourcePath(_ sourcePath: String) -> String {
+        if sourcePath == "Shared" || sourcePath.hasPrefix("Shared/") {
+            return sourcePath
+        }
+        return "Shared/\(sourcePath)"
+    }
+
+    private func normalizedShareSourceInput(_ sourcePath: String) -> String {
+        sourcePath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     func acceptShareInvite(_ invite: String) {
         let invite = invite.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !invite.isEmpty else {
-            updateStatus("Share invite required")
+            updateStatus("Invite link required")
             return
         }
         dispatchNativeAction(
@@ -775,7 +1121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let profileId = profileId.trimmingCharacters(in: .whitespacesAndNewlines)
         let appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !profileId.isEmpty, !appKey.isEmpty else {
-            updateStatus("Member profile UUID and AppActor required")
+            updateStatus("Recipient details required")
             return
         }
         dispatchNativeAction(
@@ -789,8 +1135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "display_name": displayName,
                 "label": label,
             ],
-            progress: "Creating share invite",
-            success: "Share invite created"
+            progress: "Creating invite link",
+            success: "Invite link created"
         ) {
             if let invite = IrisDriveStatus.shared.lastShareInviteURL {
                 NSPasteboard.general.clearContents()
@@ -818,8 +1164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "role": role,
                 "display_name": displayName,
             ],
-            progress: "Creating share invite",
-            success: "Share invite created"
+            progress: "Creating invite link",
+            success: "Invite link created"
         ) {
             if let invite = IrisDriveStatus.shared.lastShareInviteURL {
                 NSPasteboard.general.clearContents()
@@ -853,7 +1199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) {
         let representativeNpubHint = representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !representativeNpubHint.isEmpty else {
-            updateStatus("Contact npub required")
+            updateStatus("User ID required")
             return
         }
         dispatchNativeAction(
@@ -864,8 +1210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "role": role,
                 "display_name": displayName,
             ],
-            progress: "Recording pending invite",
-            success: "Pending share invite recorded"
+            progress: "Saving invite",
+            success: "Invite saved"
         )
     }
 
@@ -882,20 +1228,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    func addShareShortcut(shareId: String, displayName: String) {
-        let path = displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Shared folder"
-            : displayName
+    func deleteShare(shareId: String, providerPaths: [String] = []) {
+        dispatchNativeAction(
+            [
+                "type": "delete_share",
+                "share_id": shareId,
+            ],
+            progress: "Deleting share",
+            success: "Share deleted",
+            completion: { [weak self] in
+                self?.signalFileProviderDomain(directoryPaths: providerPaths)
+            }
+        )
+    }
+
+    func addShareShortcut(shareId: String) {
         dispatchNativeAction(
             [
                 "type": "add_share_shortcut",
                 "share_id": shareId,
-                "path": path,
+                "path": "",
                 "parent": "",
                 "target_path": "",
             ],
-            progress: "Adding shortcut",
-            success: "Shortcut added"
+            progress: "Adding to My Drive",
+            success: "Added to My Drive",
+            completion: { [weak self] in
+                self?.signalFileProviderDomain()
+            }
         )
     }
 
@@ -1186,15 +1546,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showMountedDriveFolder() {
+        guard fileProviderIntegrationEnabled else {
+            handleFileProviderOpenFailure("FileProvider disabled")
+            return
+        }
+        showFileProviderItem(path: nil)
+    }
+
+    private func showFileProviderItem(path targetPath: String?) {
         let paths = runtimePathsForMenu ?? runtimePaths()
         let status = IrisDriveStatus.shared
         guard localProfileExists(paths: paths), status.setupComplete else {
-            updateStatus(status.revoked ? "AppKey removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
+            updateStatus(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
             return
         }
         guard fileProviderIntegrationEnabled else {
             handleFileProviderOpenFailure("disabled for this signing mode")
             return
+        }
+        if !status.daemonRunning {
+            startSync()
         }
         prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
         let runtime = FileProviderRuntimeConfig(
@@ -1206,19 +1577,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self else { return }
                 self.fileProviderDomainState = state
                 if state == .disabled {
-                    self.resetDisabledFileProviderDomainForOpen(runtime: runtime)
+                    self.resetDisabledFileProviderDomainForOpen(runtime: runtime, targetPath: targetPath)
                     return
                 }
                 guard state == .registered else {
                     self.handleFileProviderOpenFailure("domain unavailable")
                     return
                 }
-                self.openFileProviderDriveFolder()
+                self.openFileProviderItem(path: targetPath)
             }
         }
     }
 
-    private func openFileProviderDriveFolder() {
+    private func openFileProviderItem(path targetPath: String?) {
         let domain = NSFileProviderDomain(
             identifier: irisDriveDomainIdentifier,
             displayName: irisDriveFileProviderDomainDisplayName
@@ -1229,7 +1600,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
+        let identifier = targetPath.map { Self.fileProviderIdentifier(for: $0) } ?? .rootContainer
+        manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let url {
@@ -1238,9 +1610,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
 
                 if let error {
-                    NSLog("Iris Drive mounted folder unavailable: \(error)")
+                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
                 } else {
-                    NSLog("Iris Drive mounted folder unavailable")
+                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
                 }
                 self.handleFileProviderOpenFailure("user-visible URL unavailable")
             }
@@ -1262,7 +1634,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSSound.beep()
     }
 
-    private func resetDisabledFileProviderDomainForOpen(runtime: FileProviderRuntimeConfig) {
+    private func resetDisabledFileProviderDomainForOpen(
+        runtime: FileProviderRuntimeConfig,
+        targetPath: String?
+    ) {
         updateStatus("Repairing FileProvider")
         NSLog("Iris Drive FileProvider domain disabled; resetting before open")
         resetFileProviderDomain(reason: "open requested while disabled", runtime: runtime) { [weak self] state in
@@ -1273,7 +1648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.handleFileProviderOpenFailure("domain disabled")
                     return
                 }
-                self.openFileProviderDriveFolder()
+                self.openFileProviderItem(path: targetPath)
             }
         }
     }
@@ -1281,7 +1656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
         guard daemon == nil else { return }
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("AppKey removed")
+            updateStatus("Device removed")
             setDaemonRunning(false)
             return
         }
@@ -1307,7 +1682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configure(
             process,
             executable: idrive,
-            arguments: ["daemon", "--watch-interval", "0"],
+            arguments: ["daemon", "--watch-interval", "0", "--no-gateway"],
             paths: paths
         )
         pipeLogs(from: process, label: "idrive")
@@ -1434,7 +1809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
         guard !userRequestedSyncStop, !externalDaemonMode else { return }
         guard !IrisDriveStatus.shared.revoked else {
-            updateStatus("AppKey removed")
+            updateStatus("Device removed")
             setDaemonRunning(false)
             return
         }
@@ -1791,7 +2166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     self.setDaemonRunning(false)
                 }
-                self.updateStatus("AppKey removed")
+                self.updateStatus("Device removed")
             }
 
             self.updateLinkMenuState()
@@ -1837,7 +2212,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.updateStatus("\(success) failed")
                 DispatchQueue.main.async {
                     NSSound.beep()
-                    completion?()
                 }
             }
         }
@@ -1893,6 +2267,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     hashtree["snapshot_url"] as? String
                     ?? hashtree["permalink_url"] as? String
                     ?? status.snapshotURL
+                if let gateway = hashtree["local_gateway"] as? [String: Any] {
+                    Self.applyGatewayStatus(gateway, to: status)
+                }
+            }
+
+            if let daemon = json["daemon"] as? [String: Any],
+               let gateway = daemon["browser_gateway"] as? [String: Any] {
+                Self.applyGatewayStatus(gateway, to: status)
             }
 
             if let network = json["network"] as? [String: Any] {
@@ -1941,7 +2323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     self.setDaemonRunning(false)
                 }
-                self.updateStatus("AppKey removed")
+                self.updateStatus("Device removed")
             }
 
             self.updateLinkMenuState()
@@ -2024,9 +2406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let uploadStatus = IrisDriveUploadStatus(json: upload)
                 status.lastUpload = uploadStatus.isInProgress ? uploadStatus : nil
             }
-            if let gateway = json["browser_gateway"] as? [String: Any],
-               let enabled = gateway["enabled"] as? Bool {
-                status.localNhashResolverEnabled = enabled
+            if let gateway = json["browser_gateway"] as? [String: Any] {
+                Self.applyGatewayStatus(gateway, to: status)
             }
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)
@@ -2073,6 +2454,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         status.fileCount = Self.intValue(summary["file_count"]) ?? 0
         status.visibleFileBytes =
             Self.int64Value(summary["visible_file_bytes"]) ?? 0
+    }
+
+    private static func applyGatewayStatus(_ gateway: [String: Any], to status: IrisDriveStatus) {
+        if let enabled = gateway["enabled"] as? Bool {
+            status.localNhashResolverEnabled = enabled
+            if !enabled {
+                status.primaryDriveGatewayURL = nil
+            }
+        }
+        if let primaryDriveURL = gateway["primary_drive_url"] as? String,
+           !primaryDriveURL.isEmpty {
+            status.primaryDriveGatewayURL = primaryDriveURL
+        }
     }
 
     private static func applyDaemonSyncStatus(_ sync: [String: Any], to status: IrisDriveStatus) {
@@ -2149,9 +2543,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let relayStatuses = json["relay_statuses"] as? [[String: Any]] {
                 status.relayStatuses = relayStatuses.map(IrisDriveRelayStatus.init)
             }
-            if let gateway = json["browser_gateway"] as? [String: Any],
-               let enabled = gateway["enabled"] as? Bool {
-                status.localNhashResolverEnabled = enabled
+            if let gateway = json["browser_gateway"] as? [String: Any] {
+                Self.applyGatewayStatus(gateway, to: status)
             }
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)

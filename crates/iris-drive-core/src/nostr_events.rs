@@ -49,6 +49,7 @@ pub fn is_drive_root_event_kind(kind: u16) -> bool {
 pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
     is_drive_root_event_kind(event.kind.as_u16())
         && event
+            .tags
             .identifier()
             .is_some_and(|d_tag| parse_drive_root_d_tag(d_tag).is_ok())
 }
@@ -57,6 +58,7 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
 pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_APP_KEY_LINK_REQUEST
         && event
+            .tags
             .identifier()
             .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok())
 }
@@ -136,15 +138,11 @@ pub fn build_app_key_link_request_event(
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     let content_json =
         serde_json::to_string(frame).map_err(|e| WireError::BadContent(e.to_string()))?;
-    let builder = EventBuilder::new(
-        Kind::from(KIND_APP_KEY_LINK_REQUEST),
-        content_json,
-        [Tag::identifier(app_key_link_request_d_tag(
-            frame.profile_id,
-        ))],
+    let builder = EventBuilder::new(Kind::from(KIND_APP_KEY_LINK_REQUEST), content_json).tag(
+        Tag::identifier(app_key_link_request_d_tag(frame.profile_id)),
     );
     builder
-        .to_event(device_keys)
+        .sign_with_keys(device_keys)
         .map_err(|e| WireError::Event(e.to_string()))
 }
 
@@ -159,7 +157,7 @@ pub fn parse_app_key_link_request_event(
             got: kind,
         });
     }
-    let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
+    let d_tag = event.tags.identifier().ok_or(WireError::MissingDTag)?;
     let d_tag_profile = parse_app_key_link_request_d_tag(d_tag)?;
     event
         .verify()
@@ -320,14 +318,11 @@ fn build_drive_root_event_at(
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let d_tag = drive_root_d_tag(root_scope_id, drive_id);
-    let builder = EventBuilder::new(
-        Kind::from(KIND_DRIVE_ROOT),
-        content_json,
-        [Tag::identifier(d_tag)],
-    )
-    .custom_created_at(nostr_sdk::Timestamp::from(created_at));
+    let builder = EventBuilder::new(Kind::from(KIND_DRIVE_ROOT), content_json)
+        .tag(Tag::identifier(d_tag))
+        .custom_created_at(nostr_sdk::Timestamp::from(created_at));
     let event = builder
-        .to_event(device_keys)
+        .sign_with_keys(device_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
     Ok(event)
 }
@@ -418,7 +413,7 @@ fn parse_drive_root_event_parts(
             got: kind,
         });
     }
-    let d_tag = event.identifier().ok_or(WireError::MissingDTag)?;
+    let d_tag = event.tags.identifier().ok_or(WireError::MissingDTag)?;
     let (root_scope_id, drive_id) = parse_drive_root_d_tag(d_tag)?;
     event
         .verify()
@@ -426,7 +421,7 @@ fn parse_drive_root_event_parts(
     let content: DriveRootWireContent =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let app_key_pubkey_hex = event.pubkey.to_hex();
-    let published_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    let published_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     Ok((
         app_key_pubkey_hex,
         root_scope_id,

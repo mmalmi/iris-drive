@@ -20,6 +20,7 @@ fn init_creates_key_and_config() {
         .stdout(contains("main"));
     assert!(dir.path().join("key").exists());
     assert!(!dir.path().join("owner_key").exists());
+    assert!(!dir.path().join("recovery_phrase").exists());
     assert!(dir.path().join("config.toml").exists());
 }
 
@@ -44,7 +45,7 @@ fn init_yields_authorized_owner_capable_account() {
     assert_eq!(v["profile"]["can_write_roots"], true);
     assert_eq!(v["profile"]["active_app_key_count"], 1);
     assert_eq!(v["profile"]["current_key_epoch"], 1);
-    assert_eq!(v["profile"]["recovery_phrase_facet_count"], 1);
+    assert_eq!(v["profile"]["recovery_phrase_facet_count"], 0);
 }
 
 #[test]
@@ -79,11 +80,11 @@ fn logout_removes_local_account_and_key_material() {
 #[test]
 fn recovery_phrase_restore_creates_fresh_profile_and_uses_fresh_app_key() {
     let dir_a = tempdir().unwrap();
-    idrive(dir_a.path()).arg("init").assert().success();
-    let recovery_phrase = std::fs::read_to_string(dir_a.path().join("recovery_phrase"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    idrive(dir_a.path())
+        .args(["restore", &recovery_phrase])
+        .assert()
+        .success();
     let original_owner =
         String::from_utf8(idrive(dir_a.path()).arg("whoami").output().unwrap().stdout).unwrap();
     let original_v: serde_json::Value = serde_json::from_str(&original_owner).unwrap();
@@ -135,11 +136,11 @@ fn raw_nsec_restore_creates_fresh_profile_and_uses_fresh_app_key() {
 #[test]
 fn macos_login_restore_can_replace_existing_local_setup_with_force() {
     let original_dir = tempdir().unwrap();
-    idrive(original_dir.path()).arg("init").assert().success();
-    let recovery_phrase = std::fs::read_to_string(original_dir.path().join("recovery_phrase"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    idrive(original_dir.path())
+        .args(["restore", &recovery_phrase])
+        .assert()
+        .success();
     let original = run_json(original_dir.path(), &["whoami"]);
     let original_app_key = current_app_key_npub(&original);
 

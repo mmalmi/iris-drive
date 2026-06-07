@@ -14,6 +14,8 @@ val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank
 val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
 val irisDriveVersionName = providers.gradleProperty("irisDriveVersionName").orElse("0.1.0")
 val irisDriveVersionCode = providers.gradleProperty("irisDriveVersionCode").orElse("1")
+val updatePollSeconds =
+    providers.environmentVariable("IRIS_DRIVE_UPDATE_POLL_SECONDS").orNull?.toLongOrNull() ?: 0L
 val hasReleaseSigning =
     releaseKeystorePath != null &&
         releaseKeystorePassword != null &&
@@ -55,6 +57,8 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
         }
         create("uiTest") {
             initWith(getByName("debug"))
@@ -67,6 +71,8 @@ android {
                 "DOCUMENTS_PROVIDER_AUTHORITY",
                 "\"to.iris.drive.uitest.documents\"",
             )
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
         }
         release {
             isMinifyEnabled = false
@@ -77,6 +83,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "true")
         }
     }
 

@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.RecoverySecretExport
+import to.iris.drive.app.update.AndroidSelfUpdateState
+import to.iris.drive.app.update.SelfUpdateActions
 
 private val ProviderRoot: String
     get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
@@ -164,7 +166,7 @@ internal enum class MainTab(
     val iconRes: Int,
 ) {
     MyDrive("My Drive", "tabMyDrive", R.drawable.ic_drive),
-    Devices("AppKeys", "tabDevices", R.drawable.ic_devices),
+    Devices("Devices", "tabDevices", R.drawable.ic_devices),
     Shares("Shares", "tabShares", R.drawable.ic_drive),
     Backups("Backups", "tabBackups", R.drawable.ic_backup),
     Settings("Settings", "tabSettings", R.drawable.ic_settings),
@@ -174,6 +176,8 @@ internal enum class MainTab(
 internal fun IrisDriveAndroidApp(
     stateFlow: StateFlow<AppState>,
     shareDialogFlow: StateFlow<ShareDialogRequest?>,
+    selfUpdateStateFlow: StateFlow<AndroidSelfUpdateState>,
+    selfUpdateActions: SelfUpdateActions,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
     onLinkDevice: (String, String) -> Unit,
@@ -184,6 +188,7 @@ internal fun IrisDriveAndroidApp(
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onResetInvite: () -> Unit,
+    onAddRecoveryKey: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -204,6 +209,8 @@ internal fun IrisDriveAndroidApp(
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
+    onOpenSharePath: (String) -> Unit,
+    onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
     onAddRoot: (String, String) -> Unit,
@@ -212,6 +219,7 @@ internal fun IrisDriveAndroidApp(
 ) {
     val state by stateFlow.collectAsState()
     val shareDialogRequest by shareDialogFlow.collectAsState()
+    val selfUpdateState by selfUpdateStateFlow.collectAsState()
     val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
 
@@ -283,10 +291,12 @@ internal fun IrisDriveAndroidApp(
                     onSelectTab = { selectedTab = it },
                     shareDialogRequest = shareDialogRequest,
                     state = state,
+                    selfUpdateState = selfUpdateState,
+                    selfUpdateActions = selfUpdateActions,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyAppKey = { onCopyText("AppKey", activeProfile.currentAppKeyNpub) },
-                    onCopyDeviceKey = { onCopyText("AppKey", activeProfile.devicePubkey) },
+                    onCopyAppKey = { onCopyText("Device", activeProfile.currentAppKeyNpub) },
+                    onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
                     onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
@@ -296,6 +306,7 @@ internal fun IrisDriveAndroidApp(
                     onApproveDevice = onApproveDevice,
                     onRejectDevice = onRejectDevice,
                     onResetInvite = onResetInvite,
+                    onAddRecoveryKey = onAddRecoveryKey,
                     onDeleteDevice = onDeleteDevice,
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
@@ -316,6 +327,8 @@ internal fun IrisDriveAndroidApp(
                     onRecordPendingShareInvite = onRecordPendingShareInvite,
                     onAcceptShareInvite = onAcceptShareInvite,
                     onRevokeShareMember = onRevokeShareMember,
+                    onOpenSharePath = onOpenSharePath,
+                    onDeleteShare = onDeleteShare,
                     onAddShareShortcut = onAddShareShortcut,
                     onRepairShareWraps = onRepairShareWraps,
                 )
@@ -343,18 +356,18 @@ private fun RevokedDeviceContent(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             SetupBrand()
-            Text("AppKey removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            Text("This app install no longer has access to Iris Drive.", color = Muted)
+            Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            Text("This device no longer has access to Iris Drive.", color = Muted)
             Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupPrimaryButton(
-                text = "Link this app install again",
+                text = "Link this device again",
                 onClick = onRelink,
                 testTag = "relinkRevokedDevice",
             )
             SetupSecondaryButton(
-                text = "Copy AppKey",
-                onClick = { onCopyText("AppKey", profile.devicePubkey) },
+                text = "Copy Device Key",
+                onClick = { onCopyText("Device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -389,8 +402,8 @@ private fun AwaitingApprovalContent(
             Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
-                text = "Copy AppKey",
-                onClick = { onCopyText("AppKey", profile.devicePubkey) },
+                text = "Copy Device Key",
+                onClick = { onCopyText("Device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -625,7 +638,7 @@ private fun SetupContent(
                 SetupRoute.RestoreOptions -> {
                     SetupFormHeader(title = "Restore", onBack = { route = SetupRoute.Welcome })
                     SetupSecondaryButton(
-                        text = "Link app install",
+                        text = "Link device",
                         onClick = { route = SetupRoute.LinkDevice },
                         testTag = "openLinkDevice",
                     )
@@ -755,7 +768,7 @@ private fun SetupContent(
                     )
                 }
                 SetupRoute.LinkDevice -> {
-                    SetupFormHeader(title = "Link app install", onBack = { route = SetupRoute.RestoreOptions })
+                    SetupFormHeader(title = "Link device", onBack = { route = SetupRoute.RestoreOptions })
                     OutlinedTextField(
                         value = linkOwner,
                         onValueChange = {
@@ -764,14 +777,14 @@ private fun SetupContent(
                         },
                         modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
                         singleLine = true,
-                        label = { Text("IrisProfile invite link or admin AppKey") },
+                        label = { Text("IrisProfile invite link or admin device key") },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = { submitLinkOwner(linkOwner, force = true) },
                         ),
                     )
                     SetupPrimaryButton(
-                        text = "Link app install",
+                        text = "Link device",
                         onClick = { submitLinkOwner(linkOwner, force = true) },
                         enabled = linkOwnerIsComplete,
                         testTag = "linkDeviceSubmit",

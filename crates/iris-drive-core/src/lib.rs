@@ -56,6 +56,7 @@ pub mod share_actions;
 pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
+pub mod updater;
 
 pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
 pub use config::{
@@ -118,7 +119,8 @@ pub use projection::{
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use share_actions::{
-    ShareAction, ShareActionResult, dispatch_share_action, share_action_state,
+    ShareAction, ShareActionResult, dispatch_share_action, repair_missing_share_shortcuts,
+    share_action_state,
 };
 pub use sharing::{
     KIND_SHARE_ROSTER_CHECKPOINT, PendingShareInvite, PendingShareInviteView,

@@ -4,7 +4,7 @@ use super::*;
 pub(crate) fn start_daemon(model: &AppRef) {
     if desktop_state().is_ok_and(|state| is_revoked(&state)) {
         stop_daemon(model);
-        model.ui.notice.set_text("AppKey removed");
+        model.ui.notice.set_text("Device removed");
         return;
     }
     if ensure_daemon_running(model) {
@@ -290,6 +290,18 @@ pub(crate) fn run_idrive<const N: usize>(args: [&str; N]) -> Result<(), String> 
         .map_err(|error| format!("idrive failed to start: {error}"))?;
     if output.status.success() {
         Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+pub(crate) fn run_idrive_output<const N: usize>(args: [&str; N]) -> Result<String, String> {
+    let output = Command::new(idrive_path())
+        .args(args)
+        .output()
+        .map_err(|error| format!("idrive failed to start: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }

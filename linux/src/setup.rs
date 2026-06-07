@@ -33,7 +33,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
             .map(|account| account.current_app_key_npub.as_str())
             .unwrap_or("-"),
     );
-    container.append(&field_title("AppKey"));
+    container.append(&field_title("Device"));
     container.append(&link_target);
 
     let device = readonly_entry(
@@ -41,7 +41,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
             .map(|account| account.current_app_key_npub.as_str())
             .unwrap_or("-"),
     );
-    container.append(&field_title("Current AppKey"));
+    container.append(&field_title("Current Device Key"));
     container.append(&device);
 
     let notice = setup_notice();
@@ -51,7 +51,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         "Sync paused"
     });
 
-    let copy = primary_button("Copy AppKey");
+    let copy = primary_button("Copy Device Key");
     {
         let device = account
             .map(|account| account.current_app_key_npub.clone())
@@ -62,7 +62,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
                 notice.set_text("Nothing to copy");
             } else if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&device);
-                notice.set_text("AppKey copied");
+                notice.set_text("Device key copied");
             } else {
                 notice.set_text("Clipboard unavailable");
             }
@@ -90,12 +90,12 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     container.set_valign(gtk::Align::Center);
     container.set_width_request(420);
 
-    let header = gtk::Label::new(Some("AppKey removed"));
+    let header = gtk::Label::new(Some("Device removed"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let detail = gtk::Label::new(Some("This app install no longer has access to Iris Drive."));
+    let detail = gtk::Label::new(Some("This device no longer has access to Iris Drive."));
     detail.add_css_class("iris-muted");
     detail.set_wrap(true);
     detail.set_xalign(0.0);
@@ -105,26 +105,26 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     let app_key_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
-    container.append(&field_title("AppKey"));
+    container.append(&field_title("Device"));
     container.append(&readonly_entry(app_key_npub));
 
     let device_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
-    container.append(&field_title("Current AppKey"));
+    container.append(&field_title("Current Device Key"));
     container.append(&readonly_entry(device_npub));
 
     let notice = setup_notice();
-    notice.set_text("AppKey removed");
+    notice.set_text("Device removed");
 
-    let relink = primary_button("Link this app install again");
+    let relink = primary_button("Link this device again");
     {
         let model = Rc::clone(model);
         let link_target = app_key_npub.to_string();
         let notice = notice.clone();
         relink.connect_clicked(move |button| {
             if link_target.trim().is_empty() || link_target == "-" {
-                notice.set_text("AppKey unavailable");
+                notice.set_text("Device key unavailable");
                 return;
             }
             button.set_sensitive(false);
@@ -139,7 +139,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     }
     container.append(&relink);
 
-    let copy = pill_button("Copy AppKey");
+    let copy = pill_button("Copy Device Key");
     {
         let device = device_npub.to_string();
         let notice = notice.clone();
@@ -148,7 +148,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
                 notice.set_text("Nothing to copy");
             } else if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&device);
-                notice.set_text("AppKey copied");
+                notice.set_text("Device key copied");
             } else {
                 notice.set_text("Clipboard unavailable");
             }
@@ -369,7 +369,7 @@ pub(crate) fn render_create_profile_photo(model: &AppRef) {
 pub(crate) fn render_restore_options(model: &AppRef) {
     let container = setup_container(model, "Restore");
 
-    let link = welcome_button("Link app install", "computer-symbolic", false);
+    let link = welcome_button("Link device", "computer-symbolic", false);
     {
         let model = Rc::clone(model);
         link.connect_clicked(move |_| {
@@ -524,12 +524,12 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
 }
 
 pub(crate) fn render_link_device(model: &AppRef) {
-    let container = setup_container(model, "Link app install");
-    let link_target = setup_entry("IrisProfile invite link or admin AppKey");
+    let container = setup_container(model, "Link device");
+    let link_target = setup_entry("IrisProfile invite link or admin device key");
     container.append(&link_target);
 
     let notice = setup_notice();
-    let submit = primary_button("Link app install");
+    let submit = primary_button("Link device");
     let submitted_link_target = Rc::new(RefCell::new(String::new()));
     {
         let model = Rc::clone(model);
@@ -574,7 +574,7 @@ fn submit_link_device(
 ) {
     let link_target_value = link_target.text().trim().to_string();
     if link_target_value.is_empty() {
-        notice.set_text("IrisProfile invite link or admin AppKey is required.");
+        notice.set_text("IrisProfile invite link or admin device key is required.");
         return;
     }
     button.set_sensitive(false);

@@ -40,7 +40,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
-nostr-sdk = { version = "0.35", default-features = false, features = ["nip06", "nip44"] }
+nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
 # In-flight hashtree path deps — hashtree-provider and FIPS-backed embedded
 # daemon support have not shipped to crates.io yet. Keep all hashtree crates
 # pinned to the same checkout so the Store trait and transport stack line up.
@@ -56,7 +56,7 @@ hashtree-nostr = { path = "../hashtree/rust/crates/hashtree-nostr" }
 hashtree-resolver = { path = "../hashtree/rust/crates/hashtree-resolver", features = ["nostr"] }
 hashtree-updater = { path = "../hashtree/rust/crates/hashtree-updater" }
 hashtree-provider = { path = "crates/hashtree-provider" }
-nostr = { version = "0.35", features = ["nip06", "nip44"] }
+nostr = { version = "0.44", features = ["nip44"] }
 tempfile = "3"
 notify = "6"
 notify-debouncer-mini = "0.4"

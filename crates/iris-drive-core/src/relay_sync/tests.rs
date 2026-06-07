@@ -15,6 +15,7 @@ use crate::sharing::{
     parse_share_member_roster_op_event,
 };
 use hashtree_core::Cid;
+use nostr_sdk::filter::MatchEventOptions;
 use tempfile::tempdir;
 
 fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
@@ -29,6 +30,10 @@ fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
 
 fn profile_event(op: &crate::SignedIrisProfileRosterOp) -> Event {
     Event::from_json(&op.event_json).unwrap()
+}
+
+fn filter_matches(filter: &Filter, event: &Event) -> bool {
+    filter.match_event(event, MatchEventOptions::default())
 }
 
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {
@@ -278,7 +283,7 @@ fn subscription_filters_match_app_key_link_requests_for_profile() {
     let event = build_app_key_link_request_event(&device, &frame).unwrap();
 
     assert_eq!(
-        event.identifier(),
+        event.tags.identifier(),
         Some(app_key_link_request_d_tag(profile_id).as_str())
     );
     assert!(
@@ -288,7 +293,7 @@ fn subscription_filters_match_app_key_link_requests_for_profile() {
             "main"
         )
         .iter()
-        .any(|filter| filter.match_event(&event))
+        .any(|filter| filter_matches(filter, &event))
     );
 }
 
@@ -305,11 +310,14 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
             crate::PRIMARY_DRIVE_ID,
         )
         .iter()
-        .any(|filter| filter.match_event(&profile_op))
+        .any(|filter| filter_matches(filter, &profile_op))
     );
     let profile_id = cfg.profile.as_ref().unwrap().profile_id.to_string();
     assert_eq!(
-        profile_op.get_tag_content(nostr_sdk::TagKind::from("i")),
+        profile_op
+            .tags
+            .find(nostr_sdk::TagKind::from("i"))
+            .and_then(|tag| tag.content()),
         Some(profile_id.as_str())
     );
 }
@@ -346,9 +354,13 @@ fn restore_candidate_filters_match_roster_mentions_and_acceptance_events() {
     assert!(
         filters
             .iter()
-            .any(|filter| filter.match_event(&recovery_add_event))
+            .any(|filter| filter_matches(filter, &recovery_add_event))
     );
-    assert!(filters.iter().any(|filter| filter.match_event(&acceptance)));
+    assert!(
+        filters
+            .iter()
+            .any(|filter| filter_matches(filter, &acceptance))
+    );
 }
 
 #[test]
@@ -474,8 +486,16 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
         &[folder.share_id],
     );
 
-    assert!(filters.iter().any(|filter| filter.match_event(&share_op)));
-    assert!(filters.iter().any(|filter| filter.match_event(&root_event)));
+    assert!(
+        filters
+            .iter()
+            .any(|filter| filter_matches(filter, &share_op))
+    );
+    assert!(
+        filters
+            .iter()
+            .any(|filter| filter_matches(filter, &root_event))
+    );
 }
 
 #[test]

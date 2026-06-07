@@ -13,6 +13,7 @@ use hashtree_updater::{
     UpdateTarget,
 };
 use iris_drive_core::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+use iris_drive_core::updater::preferred_app_asset;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -76,14 +77,23 @@ async fn run_update(
         })
         .await
         .context("resolving signed hashtree release")?;
-    let asset =
-        preferred_cli_asset_for_target(&check.manifest, current_target()).ok_or_else(|| {
-            anyhow!(
-                "release {} has no idrive CLI asset for {}",
-                display_manifest_tag(&check.manifest),
-                current_target()
-            )
-        })?;
+    let noun = if args.app {
+        "Iris Drive app"
+    } else {
+        "idrive CLI"
+    };
+    let asset = if args.app {
+        preferred_app_asset(&check.manifest)
+    } else {
+        preferred_cli_asset_for_target(&check.manifest, current_target())
+    }
+    .ok_or_else(|| {
+        anyhow!(
+            "release {} has no {noun} asset for {}",
+            display_manifest_tag(&check.manifest),
+            current_target()
+        )
+    })?;
     check.asset = Some(asset.clone());
     let tag = display_manifest_tag(&check.manifest);
     let available = check.update_available;
@@ -106,7 +116,7 @@ async fn run_update(
         .with_context(|| format!("downloading verified hashtree asset {}", asset.name))?;
     write_downloaded_asset(&destination, &downloaded.bytes)?;
 
-    if args.download_only {
+    if args.download_only || args.app {
         print_downloaded(&check, &asset, available, &tag, &destination, args.json)?;
         return Ok(());
     }

@@ -178,6 +178,14 @@ impl AppConfig {
         }
     }
 
+    pub fn remove_shared_folder(&mut self, share_id: IrisProfileId) -> Option<SharedFolder> {
+        let pos = self
+            .shared_folders
+            .iter()
+            .position(|share| share.share_id == share_id)?;
+        Some(self.shared_folders.remove(pos))
+    }
+
     pub fn upsert_share_shortcut(&mut self, shortcut: ShareShortcut) -> bool {
         if let Some(existing) = self
             .share_shortcuts
@@ -190,6 +198,22 @@ impl AppConfig {
             self.share_shortcuts.push(shortcut);
             true
         }
+    }
+
+    pub fn remove_share_shortcuts_for_share(
+        &mut self,
+        share_id: IrisProfileId,
+    ) -> Vec<ShareShortcut> {
+        let mut removed = Vec::new();
+        self.share_shortcuts.retain(|shortcut| {
+            if shortcut.share_id == share_id {
+                removed.push(shortcut.clone());
+                false
+            } else {
+                true
+            }
+        });
+        removed
     }
 
     pub fn upsert_backup_target(&mut self, target: BackupTarget) -> bool {

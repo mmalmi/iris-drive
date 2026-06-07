@@ -1,5 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use std::path::Path;
+
 use crate::config::Drive;
 use crate::paths::config_path_in;
 use crate::profile::Profile;
@@ -118,6 +120,44 @@ async fn gateway_serves_current_primary_drive_root() {
     let response = http_get(server.local_addr(), "main.drive.iris.localhost", "/").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("hello gateway"), "{response}");
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn gateway_serves_primary_share_shortcut_projection() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let work = tempdir().unwrap();
+    std::fs::create_dir_all(work.path().join("Shared").join("keke")).unwrap();
+    std::fs::write(
+        work.path().join("Shared").join("keke").join("note.txt"),
+        b"shared through gateway",
+    )
+    .unwrap();
+
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    daemon.import_source_dir(work.path()).await.unwrap();
+    crate::dispatch_share_action(
+        cfg_dir.path(),
+        crate::ShareAction::CreateShare {
+            source_path: "Shared/keke".to_owned(),
+            display_name: Some("keke".to_owned()),
+        },
+        2,
+    )
+    .unwrap();
+
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let host = format!("main{}", DRIVE_HOST_SUFFIX);
+    let response = http_get(server.local_addr(), &host, "/keke/note.txt").await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("shared through gateway"), "{response}");
     server.shutdown().await.unwrap();
 }
 

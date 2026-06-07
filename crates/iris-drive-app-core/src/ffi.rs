@@ -77,11 +77,44 @@ pub struct RecoverySecretExport {
     pub error: String,
 }
 
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GeneratedRecoveryKey {
+    pub words: Vec<String>,
+    pub recovery_pubkey: String,
+    pub error: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DriveLinkForCid {
+    pub url: String,
+    pub error: String,
+}
+
 #[uniffi::export]
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
 pub fn export_recovery_secret(data_dir: String) -> RecoverySecretExport {
     export_recovery_secret_value(&data_dir)
+}
+
+#[uniffi::export]
+#[must_use]
+pub fn generate_recovery_key() -> GeneratedRecoveryKey {
+    generate_recovery_key_value()
+}
+
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn recovery_pubkey_for_phrase(recovery_phrase: String) -> GeneratedRecoveryKey {
+    recovery_pubkey_for_phrase_value(&recovery_phrase)
+}
+
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn drive_link_for_cid(root_cid: String) -> DriveLinkForCid {
+    drive_link_for_cid_value(&root_cid)
 }
 
 #[cfg(target_os = "android")]
@@ -289,6 +322,9 @@ impl NativeAppRuntime {
             } => {
                 self.admit_app_key_with_recovery_phrase(&recovery_phrase, &label);
             }
+            NativeAppAction::AddRecoveryDevice { recovery_pubkey } => {
+                self.add_recovery_device(&recovery_pubkey);
+            }
             NativeAppAction::LinkDevice {
                 link_target,
                 app_key_label,
@@ -338,6 +374,7 @@ impl NativeAppRuntime {
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
             share_action @ (NativeAppAction::CreateShare { .. }
+            | NativeAppAction::DeleteShare { .. }
             | NativeAppAction::InviteShareMember { .. }
             | NativeAppAction::InviteShareMemberFromEvidence { .. }
             | NativeAppAction::RecordPendingShareInvite { .. }
@@ -415,6 +452,11 @@ impl NativeAppRuntime {
                 source_path,
                 display_name: optional_trimmed(&display_name),
             },
+            NativeAppAction::DeleteShare { share_id } => {
+                iris_drive_core::ShareAction::DeleteShare {
+                    share_id: share_id.parse()?,
+                }
+            }
             NativeAppAction::InviteShareMember {
                 share_id,
                 profile_id,
@@ -582,7 +624,7 @@ impl NativeAppRuntime {
         if let Err(error) =
             account.admit_current_app_key_with_recovery_phrase(&phrase, label_option(label))
         {
-            self.state.error = format!("recovering app key: {error}");
+            self.state.error = format!("recovering device key: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -590,6 +632,46 @@ impl NativeAppRuntime {
             self.state.error = format!("saving config: {error}");
         } else {
             self.set_sync_running(true);
+        }
+    }
+
+    fn add_recovery_device(&mut self, recovery_pubkey: &str) {
+        let recovery_pubkey = match normalize_pubkey(recovery_pubkey) {
+            Ok(pubkey) => pubkey,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        let Some(state) = config.profile.clone() else {
+            "profile admin is required to add recovery keys".clone_into(&mut self.state.error);
+            return;
+        };
+        if !state.can_admin_profile() {
+            "profile admin is required to add recovery keys".clone_into(&mut self.state.error);
+            return;
+        }
+        let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
+            Ok(account) => account,
+            Err(error) => {
+                self.state.error = format!("loading profile: {error}");
+                return;
+            }
+        };
+        if let Err(error) = account.add_recovery_pubkey(&recovery_pubkey) {
+            self.state.error = format!("adding recovery key: {error}");
+            return;
+        }
+        config.profile = Some(account.state);
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
         }
     }
 
@@ -614,7 +696,7 @@ impl NativeAppRuntime {
         let mut account = match link_result {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("linking AppKey: {error}");
+                self.state.error = format!("linking device key: {error}");
                 return;
             }
         };
@@ -655,7 +737,7 @@ impl NativeAppRuntime {
     fn approve_app_key(&mut self, request: &str, label: &str) {
         let request = request.trim();
         if request.is_empty() {
-            "AppKey request is required".clone_into(&mut self.state.error);
+            "device request is required".clone_into(&mut self.state.error);
             return;
         }
         let request = match decode_app_key_approval_request(request) {
@@ -673,18 +755,18 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.clone() else {
-            "profile admin is required to approve AppKeys".clone_into(&mut self.state.error);
+            "profile admin is required to approve devices".clone_into(&mut self.state.error);
             return;
         };
         if !state.can_admin_profile() {
-            "profile admin is required to approve AppKeys".clone_into(&mut self.state.error);
+            "profile admin is required to approve devices".clone_into(&mut self.state.error);
             return;
         }
         if request
             .profile_id
             .is_some_and(|profile_id| profile_id != state.profile_id)
         {
-            "AppKey request is for a different profile".clone_into(&mut self.state.error);
+            "device request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
         let label = label_option(label).or(request.label);
@@ -696,7 +778,7 @@ impl NativeAppRuntime {
             }
         };
         if let Err(error) = account.approve_app_key(&request.app_key_hex, label) {
-            self.state.error = format!("approving AppKey: {error}");
+            self.state.error = format!("approving device: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -730,7 +812,7 @@ impl NativeAppRuntime {
     fn reject_device(&mut self, request: &str) {
         let request = request.trim();
         if request.is_empty() {
-            "AppKey request is required".clone_into(&mut self.state.error);
+            "device request is required".clone_into(&mut self.state.error);
             return;
         }
         let request = match decode_app_key_approval_request(request) {
@@ -748,22 +830,22 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.as_mut() else {
-            "profile admin is required to reject AppKeys".clone_into(&mut self.state.error);
+            "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         };
         if !state.can_admin_profile() {
-            "profile admin is required to reject AppKeys".clone_into(&mut self.state.error);
+            "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         }
         if request
             .profile_id
             .is_some_and(|profile_id| profile_id != state.profile_id)
         {
-            "AppKey request is for a different profile".clone_into(&mut self.state.error);
+            "device request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
         if let Err(error) = state.reject_inbound_app_key_link_request(&request.app_key_hex) {
-            self.state.error = format!("rejecting AppKey: {error}");
+            self.state.error = format!("rejecting device: {error}");
             return;
         }
         if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
@@ -787,11 +869,11 @@ impl NativeAppRuntime {
             }
         };
         let Some(state) = config.profile.clone() else {
-            "profile admin is required to revoke AppKeys".clone_into(&mut self.state.error);
+            "profile admin is required to remove devices".clone_into(&mut self.state.error);
             return;
         };
         if state.app_key_pubkey == app_key_pubkey {
-            "cannot revoke this AppKey from itself".clone_into(&mut self.state.error);
+            "cannot remove this device from itself".clone_into(&mut self.state.error);
             return;
         }
         let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
@@ -802,7 +884,7 @@ impl NativeAppRuntime {
             }
         };
         if let Err(error) = account.revoke_app_key(&app_key_pubkey) {
-            self.state.error = format!("revoking AppKey: {error}");
+            self.state.error = format!("removing device: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -1092,10 +1174,21 @@ impl NativeAppRuntime {
             ..UiState::default()
         };
 
-        let Ok(config) = self.load_config() else {
+        let Ok(mut config) = self.load_config() else {
             self.refresh_ui_summary(None);
             return;
         };
+        match iris_drive_core::repair_missing_share_shortcuts(&mut config) {
+            Ok(true) => {
+                if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+                    self.state.error = format!("saving repaired share shortcuts: {error}");
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.state.error = format!("repairing share shortcuts: {error:#}");
+            }
+        }
         self.state.ui.relays = if config.relays.is_empty() {
             default_relays()
         } else {
@@ -1364,10 +1457,12 @@ async fn run_app_key_link_exchange_async(
     let relay_client = iris_drive_core::relay_sync::connect(&relays)
         .await
         .map_err(|error| format!("connecting app-key-link relays: {error}"))?;
-    relay_client
-        .subscribe(relay_filters, None)
-        .await
-        .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
+    for relay_filter in relay_filters {
+        relay_client
+            .subscribe(relay_filter, None)
+            .await
+            .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
+    }
     let mut relay_notifications = relay_client.notifications();
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
@@ -2171,6 +2266,80 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
     }
 }
 
+fn generate_recovery_key_value() -> GeneratedRecoveryKey {
+    let phrase = match iris_drive_core::recovery_phrase::generate_recovery_phrase() {
+        Ok(phrase) => phrase,
+        Err(error) => {
+            return GeneratedRecoveryKey {
+                error: format!("generating recovery phrase: {error}"),
+                ..GeneratedRecoveryKey::default()
+            };
+        }
+    };
+    let keys = match iris_drive_core::recovery_phrase::recovery_phrase_to_keys(&phrase) {
+        Ok(keys) => keys,
+        Err(error) => {
+            return GeneratedRecoveryKey {
+                error: format!("deriving recovery key: {error}"),
+                ..GeneratedRecoveryKey::default()
+            };
+        }
+    };
+    let recovery_pubkey = match keys.public_key().to_bech32() {
+        Ok(npub) => npub,
+        Err(error) => {
+            return GeneratedRecoveryKey {
+                error: format!("encoding recovery key: {error}"),
+                ..GeneratedRecoveryKey::default()
+            };
+        }
+    };
+    GeneratedRecoveryKey {
+        words: phrase.split_whitespace().map(ToOwned::to_owned).collect(),
+        recovery_pubkey,
+        error: String::new(),
+    }
+}
+
+fn recovery_pubkey_for_phrase_value(recovery_phrase: &str) -> GeneratedRecoveryKey {
+    let keys = match iris_drive_core::recovery_phrase::recovery_phrase_to_keys(recovery_phrase) {
+        Ok(keys) => keys,
+        Err(error) => {
+            return GeneratedRecoveryKey {
+                error: error.to_string(),
+                ..GeneratedRecoveryKey::default()
+            };
+        }
+    };
+    let recovery_pubkey = match keys.public_key().to_bech32() {
+        Ok(npub) => npub,
+        Err(error) => {
+            return GeneratedRecoveryKey {
+                error: format!("encoding recovery key: {error}"),
+                ..GeneratedRecoveryKey::default()
+            };
+        }
+    };
+    GeneratedRecoveryKey {
+        recovery_pubkey,
+        error: String::new(),
+        ..GeneratedRecoveryKey::default()
+    }
+}
+
+fn drive_link_for_cid_value(root_cid: &str) -> DriveLinkForCid {
+    match drive_iris_to_nhash_url_for_root(root_cid) {
+        Some(url) => DriveLinkForCid {
+            url,
+            error: String::new(),
+        },
+        None => DriveLinkForCid {
+            error: "invalid content id".to_owned(),
+            ..DriveLinkForCid::default()
+        },
+    }
+}
+
 fn path_join(data_dir: &str, child: &str) -> String {
     if data_dir.is_empty() {
         child.to_owned()
@@ -2268,41 +2437,95 @@ fn app_actors_from_account(
     state: &iris_drive_core::ProfileState,
     fips_status: &UiFipsStatus,
 ) -> Vec<UiAppActor> {
-    let Some(app_keys) = state.app_keys.as_ref() else {
-        return Vec::new();
-    };
-    let current_app_key_npub = pubkey_npub(&state.app_key_pubkey);
-    let current_app_key_online = fips_status.fresh
-        && (fips_status.endpoint_npub.is_empty()
-            || fips_status.endpoint_npub == current_app_key_npub);
-    let connectivity = app_key_connectivity_from_fips_status(fips_status);
+    let mut rows = Vec::new();
+    if let Some(app_keys) = state.app_keys.as_ref() {
+        let current_app_key_npub = pubkey_npub(&state.app_key_pubkey);
+        let current_app_key_online = fips_status.fresh
+            && (fips_status.endpoint_npub.is_empty()
+                || fips_status.endpoint_npub == current_app_key_npub);
+        let connectivity = app_key_connectivity_from_fips_status(fips_status);
 
-    app_key_roster_rows(
-        &app_keys.app_actors,
-        &state.app_key_pubkey,
-        state.can_admin_profile(),
-        current_app_key_online,
-        &connectivity,
-    )
-    .iter()
-    .map(|app_key| UiAppActor {
-        pubkey: app_key.npub.clone(),
-        label: app_key.label.clone().unwrap_or_default(),
-        display_label: app_key.display_label.clone(),
-        state: app_key.state.clone(),
-        state_label: app_key.state_label.clone(),
-        connection_label: app_key.connection_label.clone(),
-        connection_state: app_key.connection_state.clone(),
-        role: app_key.role.clone(),
-        role_label: app_key.role_label.clone(),
-        detail: app_key.npub.clone(),
-        is_current_app_key: app_key.is_current_app_key,
-        is_online: app_key.is_online,
-        can_revoke: app_key.can_revoke,
-        can_appoint_admin: app_key.can_appoint_admin,
-        can_demote_admin: app_key.can_demote_admin,
-    })
-    .collect()
+        rows.extend(
+            app_key_roster_rows(
+                &app_keys.app_actors,
+                &state.app_key_pubkey,
+                state.can_admin_profile(),
+                current_app_key_online,
+                &connectivity,
+            )
+            .iter()
+            .map(|app_key| UiAppActor {
+                pubkey: app_key.npub.clone(),
+                label: app_key.label.clone().unwrap_or_default(),
+                display_label: app_key.display_label.clone(),
+                state: app_key.state.clone(),
+                state_label: app_key.state_label.clone(),
+                connection_label: app_key.connection_label.clone(),
+                connection_state: app_key.connection_state.clone(),
+                role: app_key.role.clone(),
+                role_label: app_key.role_label.clone(),
+                detail: app_key.npub.clone(),
+                is_current_app_key: app_key.is_current_app_key,
+                is_online: app_key.is_online,
+                can_revoke: app_key.can_revoke,
+                can_appoint_admin: app_key.can_appoint_admin,
+                can_demote_admin: app_key.can_demote_admin,
+            }),
+        );
+    }
+    rows.extend(recovery_devices_from_account(state));
+    rows
+}
+
+fn recovery_devices_from_account(state: &iris_drive_core::ProfileState) -> Vec<UiAppActor> {
+    let projection = state.profile_projection();
+    let current_epoch = projection.key_epochs.keys().next_back().copied();
+    projection
+        .active_facets
+        .values()
+        .filter(|facet| facet.has_purpose(iris_drive_core::IrisProfileKeyPurpose::RecoveryPhrase))
+        .map(|facet| {
+            let npub = pubkey_npub(&facet.pubkey);
+            let has_current_wrap = current_epoch.is_some_and(|epoch| {
+                projection.key_wrap_status(&facet.pubkey, epoch)
+                    == iris_drive_core::KeyWrapStatus::Available
+            });
+            let label = facet
+                .label
+                .as_deref()
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .unwrap_or("Recovery key")
+                .to_owned();
+            UiAppActor {
+                pubkey: npub.clone(),
+                label: label.clone(),
+                display_label: label,
+                state: if has_current_wrap {
+                    "linked"
+                } else {
+                    "repair_needed"
+                }
+                .to_owned(),
+                state_label: if has_current_wrap {
+                    "Linked"
+                } else {
+                    "Needs key wrap"
+                }
+                .to_owned(),
+                connection_label: "Recovery key".to_owned(),
+                connection_state: "recovery".to_owned(),
+                role: "recovery".to_owned(),
+                role_label: "Recovery".to_owned(),
+                detail: npub,
+                is_current_app_key: false,
+                is_online: false,
+                can_revoke: false,
+                can_appoint_admin: false,
+                can_demote_admin: false,
+            }
+        })
+        .collect()
 }
 
 fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiShare> {
@@ -2453,7 +2676,7 @@ fn inbound_app_key_link_requests(
 fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
     iris_drive_core::resolve_app_key_link_target(input, None).map_err(|error| {
         if error.to_string().contains("IrisProfile UUID") {
-            "paste an IrisProfile invite URL to link this AppKey".to_owned()
+            "paste an IrisProfile invite URL to link this device".to_owned()
         } else {
             error.to_string()
         }

@@ -97,13 +97,13 @@ class AppStateTest {
                 "app_actors": [{
                   "pubkey": "device-a",
                   "label": "Pixel",
-                  "display_label": "This AppKey",
+                  "display_label": "This Device",
                   "role": "admin",
                   "role_label": "Admin",
                   "state": "linked",
                   "state_label": "Linked",
                   "connection_state": "local",
-                  "connection_label": "This AppKey",
+                  "connection_label": "This Device",
                   "detail": "device-a",
                   "is_current_app_key": true,
                   "is_online": true
@@ -122,11 +122,11 @@ class AppStateTest {
         assertEquals("1/1 online", state.fips.rosterLabel)
         assertEquals(1, state.fips.rosterOnlineDeviceCount)
         assertEquals("TCP, 12 ms", state.fips.peerStatuses.single().connectionLabel)
-        assertEquals("This AppKey", state.devices.single().displayLabel)
+        assertEquals("This Device", state.devices.single().displayLabel)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)
         assertEquals("local", state.devices.single().connectionState)
-        assertEquals("This AppKey", state.devices.single().connectionLabel)
+        assertEquals("This Device", state.devices.single().connectionLabel)
         assertEquals("{\"profile_id\":\"profile-a\"}", state.lastShareRecipientEvidence)
     }
 
@@ -256,7 +256,7 @@ class AppStateTest {
                 DeviceState(
                     pubkey = "device-a",
                     label = "Pixel",
-                    displayLabel = "This AppKey",
+                    displayLabel = "This Device",
                     role = "admin",
                     roleLabel = "Admin",
                     state = "Admin",
@@ -265,7 +265,7 @@ class AppStateTest {
                     isCurrentDevice = true,
                     isOnline = true,
                     connectionState = "local",
-                    connectionLabel = "This AppKey",
+                    connectionLabel = "This Device",
                     canRevoke = false,
                     canAppointAdmin = false,
                     canDemoteAdmin = false,

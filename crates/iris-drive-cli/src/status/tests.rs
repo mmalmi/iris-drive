@@ -304,11 +304,11 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
         .find(|peer| peer["is_current_app_key"] == true)
         .expect("current AppKey peer");
     assert!(current.get("is_current_device").is_none());
-    assert_eq!(current["display_label"], "This AppKey");
+    assert_eq!(current["display_label"], "This Device");
     assert_eq!(current["role_label"], "Admin");
     assert_eq!(current["connection_state"], "local");
-    assert_eq!(current["connection_label"], "This AppKey");
-    assert_eq!(current["detail"], "This AppKey | Admin | not imported");
+    assert_eq!(current["connection_label"], "This Device");
+    assert_eq!(current["detail"], "This Device | Admin | not imported");
     assert_eq!(current["can_revoke"], false);
     assert_eq!(current["can_appoint_admin"], false);
     assert_eq!(current["can_demote_admin"], false);

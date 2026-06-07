@@ -15,6 +15,9 @@ pub enum NativeAppAction {
         recovery_phrase: String,
         label: String,
     },
+    AddRecoveryDevice {
+        recovery_pubkey: String,
+    },
     LinkDevice {
         link_target: String,
         app_key_label: String,
@@ -77,6 +80,9 @@ pub enum NativeAppAction {
     CreateShare {
         source_path: String,
         display_name: String,
+    },
+    DeleteShare {
+        share_id: String,
     },
     InviteShareMember {
         share_id: String,

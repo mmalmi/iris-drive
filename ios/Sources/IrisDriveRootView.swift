@@ -41,7 +41,7 @@ struct IrisDriveRootView: View {
                     DevicesView(model: model)
                 }
                 .tabItem {
-                    Label("AppKeys", systemImage: "person.2.fill")
+                    Label("Devices", systemImage: "person.2.fill")
                 }
                 .tag(MainTab.devices)
 
@@ -100,19 +100,19 @@ private struct RevokedDeviceSetupView: View {
                     .padding(.vertical, 24)
                 }
 
-                Section("AppKey removed") {
-                    Text("This app install no longer has access to Iris Drive.")
-                    LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                    LabeledContent("Current AppKey", value: model.devicePublicKey)
+                Section("Device removed") {
+                    Text("This device no longer has access to Iris Drive.")
+                    LabeledContent("Device", value: model.currentAppKeyNpub)
+                    LabeledContent("Current Device Key", value: model.devicePublicKey)
                     Button {
                         model.relinkDevice()
                     } label: {
-                        Label("Link this app install again", systemImage: "link")
+                        Label("Link this device again", systemImage: "link")
                     }
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy AppKey", systemImage: "doc.on.doc")
+                        Label("Copy Device Key", systemImage: "doc.on.doc")
                     }
                 }
 
@@ -156,12 +156,12 @@ private struct AwaitingApprovalSetupView: View {
                 }
 
                 Section("Waiting for approval") {
-                    LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                    LabeledContent("Current AppKey", value: model.devicePublicKey)
+                    LabeledContent("Device", value: model.currentAppKeyNpub)
+                    LabeledContent("Current Device Key", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy AppKey", systemImage: "doc.on.doc")
+                        Label("Copy Device Key", systemImage: "doc.on.doc")
                     }
                 }
 
@@ -338,7 +338,7 @@ private struct RestoreOptionsSetupView: View {
         Form {
             Section {
                 Button(action: openLinkDevice) {
-                    Label("Link app install", systemImage: "link")
+                    Label("Link device", systemImage: "link")
                 }
                 .accessibilityIdentifier("openLinkDevice")
                 Button(action: openRecoveryPhrase) {
@@ -497,7 +497,7 @@ private struct LinkDeviceSetupView: View {
     var body: some View {
         Form {
             Section {
-                TextField("IrisProfile invite link or admin AppKey", text: $linkTarget)
+                TextField("IrisProfile invite link or admin device key", text: $linkTarget)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("linkTargetInput")
@@ -510,7 +510,7 @@ private struct LinkDeviceSetupView: View {
                 Button {
                     submitLinkDevice(linkTarget, force: true)
                 } label: {
-                    Label("Link app install", systemImage: "link")
+                    Label("Link device", systemImage: "link")
                 }
                 .accessibilityIdentifier("linkDeviceSubmit")
                 .disabled(!IrisDriveNativeLinkInput.isComplete(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -521,7 +521,7 @@ private struct LinkDeviceSetupView: View {
                 }
             }
         }
-        .navigationTitle("Link app install")
+        .navigationTitle("Link device")
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
             submitLinkDevice(linkTarget, force: false)
@@ -590,10 +590,10 @@ private struct DriveHomeView: View {
                     .accessibilityValue("\(model.fileCount)")
                 LabeledContent("Storage", value: byteString(model.visibleFileBytes))
                 Button(action: showDevices) {
-                    LabeledContent("AppKeys", value: deviceSummaryText)
+                    LabeledContent("Devices", value: deviceSummaryText)
                 }
                 .accessibilityIdentifier("devicesSummaryButton")
-                .accessibilityLabel("AppKeys")
+                .accessibilityLabel("Devices")
                 .accessibilityValue(deviceSummaryText)
             }
 
@@ -648,6 +648,7 @@ private struct DriveHomeView: View {
 private struct DevicesView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var showingAddDevice = false
+    @State private var showingAddRecoveryKey = false
     @State private var devicePendingDelete: IrisDriveDevice?
 
     var body: some View {
@@ -656,7 +657,7 @@ private struct DevicesView: View {
                 ForEach(model.devices) { device in
                     DisclosureGroup {
                         if device.detail == model.devicePublicKey {
-                            LabeledContent("AppKey", value: model.devicePublicKey)
+                            LabeledContent("Device Key", value: model.devicePublicKey)
                         }
                         Text(device.detail)
                             .font(.footnote)
@@ -726,22 +727,33 @@ private struct DevicesView: View {
                 }
             }
         }
-        .navigationTitle("AppKeys")
+        .navigationTitle("Devices")
         .toolbar {
             if model.canAdminProfile {
-                Button {
-                    showingAddDevice = true
-                } label: {
-                    Label("Add AppKey", systemImage: "plus")
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        showingAddDevice = true
+                    } label: {
+                        Label("Add Device", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("addDeviceButton")
+                    Button {
+                        showingAddRecoveryKey = true
+                    } label: {
+                        Label("Add Recovery Key", systemImage: "key.horizontal")
+                    }
+                    .accessibilityIdentifier("addRecoveryKeyButton")
                 }
-                .accessibilityIdentifier("addDeviceButton")
             }
         }
         .sheet(isPresented: $showingAddDevice) {
             AddDeviceSheet(model: model, isPresented: $showingAddDevice)
         }
+        .sheet(isPresented: $showingAddRecoveryKey) {
+            AddRecoveryKeySheet(model: model, isPresented: $showingAddRecoveryKey)
+        }
         .alert(
-            "Remove AppKey?",
+            "Remove Device?",
             isPresented: Binding(
                 get: { devicePendingDelete != nil },
                 set: { presented in
@@ -783,7 +795,7 @@ private struct AddDeviceSheet: View {
         NavigationStack {
             Form {
                 if !model.appKeyLinkInvite.isEmpty {
-                    Section("Invite app install") {
+                    Section("Invite device") {
                         QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
                             .frame(width: 260, height: 260)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -805,10 +817,10 @@ private struct AddDeviceSheet: View {
                 }
 
                 if !model.inboundAppKeyLinkRequests.isEmpty {
-                    Section("AppKeys asking to join") {
+                    Section("Device requests") {
                         ForEach(model.inboundAppKeyLinkRequests) { request in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(request.label.isEmpty ? "New AppKey" : request.label)
+                                Text(request.label.isEmpty ? "New device" : request.label)
                                     .font(.headline)
                                 Text(request.devicePubkey)
                                     .font(.footnote)
@@ -830,10 +842,10 @@ private struct AddDeviceSheet: View {
                 }
 
                 Section("Link manually") {
-                    Text("Paste the AppKey shown by the app install you want to approve.")
+                    Text("Paste the device key or request link.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    TextField("AppKey", text: $model.approveDeviceKey)
+                    TextField("Device key", text: $model.approveDeviceKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("manualDeviceId")
@@ -854,7 +866,7 @@ private struct AddDeviceSheet: View {
                     .disabled(!canAddManualDevice)
                 }
             }
-            .navigationTitle("Add an AppKey")
+            .navigationTitle("Add a Device")
             .toolbar {
                 Button("Cancel") {
                     isPresented = false
@@ -881,6 +893,160 @@ private struct AddDeviceSheet: View {
     }
 }
 
+private struct AddRecoveryKeySheet: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @Binding var isPresented: Bool
+    @State private var mode = "choose"
+    @State private var error = ""
+    @State private var generatedWords: [String] = []
+    @State private var generatedPubkey = ""
+    @State private var generatedWordIndex = 0
+    @State private var importedWords = Array(repeating: "", count: recoveryPhraseWordCount)
+    @State private var importedWordIndex = 0
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !error.isEmpty {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                    }
+                }
+                switch mode {
+                case "generate":
+                    Section("Generate New") {
+                        Text("Write down each word. Iris Drive will only save the public recovery key.")
+                            .foregroundStyle(.secondary)
+                        Text("Word \(generatedWordIndex + 1) of \(recoveryPhraseWordCount)")
+                            .font(.headline)
+                        Text(generatedWords.indices.contains(generatedWordIndex) ? generatedWords[generatedWordIndex] : "")
+                            .font(.largeTitle.bold())
+                            .textSelection(.enabled)
+                    }
+                    Section {
+                        Button("Back") {
+                            mode = "choose"
+                            error = ""
+                        }
+                    }
+                case "import":
+                    Section("Import Existing") {
+                        Text("Enter the recovery phrase one word at a time.")
+                            .foregroundStyle(.secondary)
+                        TextField(
+                            "Word \(importedWordIndex + 1) of \(recoveryPhraseWordCount)",
+                            text: Binding(
+                                get: { importedWords[importedWordIndex] },
+                                set: {
+                                    importedWords[importedWordIndex] = $0
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                        .lowercased()
+                                }
+                            )
+                        )
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    }
+                    Section {
+                        Button("Back") {
+                            mode = "choose"
+                            error = ""
+                        }
+                    }
+                default:
+                    Section {
+                        Button("Generate New") {
+                            startGenerate()
+                        }
+                        Button("Import Existing") {
+                            startImport()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add Recovery Key")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    confirmationButton
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var confirmationButton: some View {
+        switch mode {
+        case "generate":
+            Button(generatedWordIndex >= recoveryPhraseWordCount - 1 ? "Add Recovery Key" : "Next") {
+                if generatedWordIndex >= recoveryPhraseWordCount - 1 {
+                    model.addRecoveryKey(pubkey: generatedPubkey)
+                    isPresented = false
+                } else {
+                    generatedWordIndex += 1
+                }
+            }
+            .disabled(
+                !error.isEmpty ||
+                    generatedWords.count != recoveryPhraseWordCount ||
+                    generatedPubkey.isEmpty
+            )
+        case "import":
+            Button(importedWordIndex >= recoveryPhraseWordCount - 1 ? "Add Recovery Key" : "Next") {
+                if importedWordIndex >= recoveryPhraseWordCount - 1 {
+                    addImportedRecoveryKey()
+                } else {
+                    importedWordIndex += 1
+                }
+            }
+            .disabled(
+                importedWords[importedWordIndex].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    (importedWordIndex >= recoveryPhraseWordCount - 1 &&
+                        importedWords.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            )
+        default:
+            EmptyView()
+        }
+    }
+
+    private func startGenerate() {
+        let generated = model.generateRecoveryKey()
+        error = generated.error
+        generatedWords = generated.words
+        generatedPubkey = generated.recoveryPubkey
+        generatedWordIndex = 0
+        if error.isEmpty, (generatedWords.count != recoveryPhraseWordCount || generatedPubkey.isEmpty) {
+            error = "Recovery key generation failed"
+        }
+        mode = "generate"
+    }
+
+    private func startImport() {
+        importedWords = Array(repeating: "", count: recoveryPhraseWordCount)
+        importedWordIndex = 0
+        error = ""
+        mode = "import"
+    }
+
+    private func addImportedRecoveryKey() {
+        let phrase = importedWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .joined(separator: " ")
+        let derived = model.recoveryPubkey(forPhrase: phrase)
+        if !derived.error.isEmpty || derived.recoveryPubkey.isEmpty {
+            error = derived.error.isEmpty ? "Recovery key import failed" : derived.error
+            return
+        }
+        model.addRecoveryKey(pubkey: derived.recoveryPubkey)
+        isPresented = false
+    }
+}
+
 private func iosUiTestValue(_ name: String) -> String {
     #if DEBUG
     ProcessInfo.processInfo.environment[name] ?? ""
@@ -894,17 +1060,15 @@ private struct SharesView: View {
 
     var body: some View {
         Form {
-            Section("Create Share") {
+            Section("Create Shared Folder") {
                 TextField("Folder path", text: $model.shareSourceInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.createShare() }
-                TextField("Name", text: $model.shareNameInput)
-                    .onSubmit { model.createShare() }
                 Button {
                     model.createShare()
                 } label: {
-                    Label("Create share", systemImage: "plus")
+                    Label("Create Shared Folder", systemImage: "plus")
                 }
                 .disabled(model.shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -956,6 +1120,7 @@ private struct ShareRow: View {
     let share: IrisDriveShare
     @State private var showingInvite = false
     @State private var revokeTarget: IrisDriveShareMember?
+    @State private var showingDeleteShare = false
 
     var body: some View {
         DisclosureGroup {
@@ -968,9 +1133,16 @@ private struct ShareRow: View {
                 LabeledContent("Epoch", value: "\(epoch)")
             }
             if let shortcut = share.shortcutPaths.first {
-                LabeledContent("Shortcut", value: shortText(shortcut))
+                LabeledContent("My Drive", value: shortText(shortcut))
             }
             HStack {
+                if !shareOpenPath(share).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        model.openShareFolder(share)
+                    } label: {
+                        Label("Open", systemImage: "folder")
+                    }
+                }
                 if share.canAdmin {
                     Button {
                         showingInvite = true
@@ -989,8 +1161,13 @@ private struct ShareRow: View {
                     Button {
                         model.addShareShortcut(shareId: share.shareId, displayName: shareDisplayName(share))
                     } label: {
-                        Label("Shortcut", systemImage: "link")
+                        Label("Add to My Drive", systemImage: "link")
                     }
+                }
+                Button(role: .destructive) {
+                    showingDeleteShare = true
+                } label: {
+                    Label("Delete", systemImage: "trash")
                 }
             }
             .buttonStyle(.bordered)
@@ -1062,6 +1239,14 @@ private struct ShareRow: View {
         } message: { member in
             Text("Revoke \(memberDisplayName(member)) from \(shareDisplayName(share))?")
         }
+        .alert("Delete share?", isPresented: $showingDeleteShare) {
+            Button("Delete", role: .destructive) {
+                model.deleteShare(shareId: share.shareId)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Delete \(shareDisplayName(share)) from this device? Folder contents stay in My Drive.")
+        }
     }
 }
 
@@ -1101,11 +1286,11 @@ private struct InviteShareMemberSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                Section("Advanced AppActor") {
+                Section("Advanced Device") {
                     TextField("Member profile UUID", text: $profileId)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Recipient AppActor pubkey", text: $appKey)
+                    TextField("Recipient device key", text: $appKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Picker("Role", selection: $role) {
@@ -1115,11 +1300,11 @@ private struct InviteShareMemberSheet: View {
                     }
                 }
                 Section("Contact") {
-                    TextField("Contact npub", text: $representativeNpubHint)
+                    TextField("User ID", text: $representativeNpubHint)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField("Name", text: $displayName)
-                    TextField("AppActor label", text: $label)
+                    TextField("Device label", text: $label)
                 }
             }
             .navigationTitle("Invite")
@@ -1336,20 +1521,20 @@ private struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Account") {
-                TextField("App install label", text: $model.deviceLabel)
+            Section("Device") {
+                TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
-                LabeledContent("AppKey", value: model.currentAppKeyNpub)
-                LabeledContent("Current AppKey", value: model.devicePublicKey)
+                LabeledContent("Device", value: model.currentAppKeyNpub)
+                LabeledContent("Current Device Key", value: model.devicePublicKey)
                 Button {
                     model.copyAppKey()
                 } label: {
-                    Label("Copy AppKey", systemImage: "doc.on.doc")
+                    Label("Copy Device", systemImage: "doc.on.doc")
                 }
                 Button {
                     model.copyDeviceKey()
                 } label: {
-                    Label("Copy AppKey", systemImage: "doc.on.doc")
+                    Label("Copy Device Key", systemImage: "doc.on.doc")
                 }
                 if model.canExportRecoveryPhrase {
                     NavigationLink {
@@ -1420,7 +1605,7 @@ private struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .confirmationDialog(
-            "Log out of Iris Drive on this app install?",
+            "Log out of Iris Drive on this device?",
             isPresented: $showingLogoutConfirmation,
             titleVisibility: .visible
         ) {
@@ -1489,6 +1674,17 @@ private func shareDisplayName(_ share: IrisDriveShare) -> String {
     share.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "Shared folder"
         : share.displayName
+}
+
+private func shareOpenPath(_ share: IrisDriveShare) -> String {
+    if let shortcut = share.shortcutPaths.first,
+       !shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return shortcut
+    }
+    if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return share.sourcePath
+    }
+    return share.sharedWithMePath
 }
 
 private func memberDisplayName(_ member: IrisDriveShareMember) -> String {

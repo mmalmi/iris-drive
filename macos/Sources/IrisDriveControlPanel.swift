@@ -1,6 +1,8 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+import UniformTypeIdentifiers
+import Vision
 
 private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
@@ -16,7 +18,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         case .drive:
             return "My Drive"
         case .peers:
-            return "AppKeys"
+            return "Devices"
         case .shares:
             return "Shares"
         case .backups:
@@ -70,6 +72,12 @@ private enum IrisDriveSetupMode {
     case link
 }
 
+private enum RecoveryKeyFlowMode {
+    case choose
+    case generateNew
+    case importExisting
+}
+
 private enum IrisDriveSyncState {
     case upToDate
     case syncing(Int, Int)
@@ -95,7 +103,6 @@ struct IrisDriveControlPanel: View {
     @State private var backupInput = ""
     @State private var backupLabel = ""
     @State private var shareSourceInput = ""
-    @State private var shareNameInput = ""
     @State private var shareInviteInput = ""
     @State private var shareRecipientNpubHint = ""
     @State private var shareRecipientDisplayName = ""
@@ -114,9 +121,20 @@ struct IrisDriveControlPanel: View {
     @State private var approveDeviceKey = ""
     @State private var approveDeviceKeyIsComplete = false
     @State private var approveDeviceLabel = ""
+    @State private var generatedRecoveryWords: [String] = []
+    @State private var generatedRecoveryPubkey = ""
+    @State private var generatedRecoveryWordIndex = 0
+    @State private var generatedRecoveryWrittenDown = false
+    @State private var generatedRecoveryError = ""
+    @State private var recoveryKeyFlowMode = RecoveryKeyFlowMode.choose
+    @State private var importedRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
+    @State private var importedRecoveryWordIndex = 0
     @State private var showAddDevice = false
+    @State private var showAddRecoveryKey = false
     @State private var showAddBackup = false
     @State private var inviteShare: IrisDriveShareStatus?
+    @State private var deleteShare: IrisDriveShareStatus?
+    @State private var showMyNpub = false
     @State private var revokeShareMember: ShareMemberRevokeTarget?
     @State private var checkingAllBackups = false
     @State private var showLogoutConfirmation = false
@@ -144,7 +162,40 @@ struct IrisDriveControlPanel: View {
         HStack(spacing: 0) {
             sidebar
             Divider()
-            content
+            VStack(spacing: 0) {
+                updateStripe
+                content
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var updateStripe: some View {
+        if status.updateAvailable {
+            HStack(spacing: 12) {
+                Label(status.updateStripeText, systemImage: "arrow.down.circle")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Toggle(
+                    "Install automatically",
+                    isOn: Binding(
+                        get: { status.autoInstallUpdates },
+                        set: { controller.setAutoInstallUpdates($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                Button(status.updateAsset.lowercased().hasSuffix(".app.tar.gz") ? "Install" : "Download") {
+                    controller.installUpdate()
+                }
+                .disabled(!status.updateCanInstall || status.updateChecking || status.updateInstalling)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+            Divider()
         }
     }
 
@@ -317,9 +368,9 @@ struct IrisDriveControlPanel: View {
                 Button {
                     setupMode = .link
                 } label: {
-                    setupButtonLabel("Link app install", systemImage: "desktopcomputer")
+                    setupButtonLabel("Link device", systemImage: "desktopcomputer")
                 }
-                .accessibilityLabel("Link app install")
+                .accessibilityLabel("Link device")
                 .buttonStyle(.bordered)
                 Button {
                     setupMode = .restorePhrase
@@ -374,9 +425,9 @@ struct IrisDriveControlPanel: View {
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         case .link:
-            setupForm(title: "Link app install", backTarget: .restoreOptions) {
-                TextField("IrisProfile invite link or admin AppKey", text: $setupLinkTarget)
-                    .accessibilityLabel("IrisProfile invite link or admin AppKey")
+            setupForm(title: "Link device", backTarget: .restoreOptions) {
+                TextField("IrisProfile invite link or admin device key", text: $setupLinkTarget)
+                    .accessibilityLabel("IrisProfile invite link or admin device key")
                     .onSubmit {
                         submitSetupLinkTarget(
                             setupLinkTarget,
@@ -390,7 +441,7 @@ struct IrisDriveControlPanel: View {
                     .onAppear {
                         refreshSetupLinkTargetInput(setupLinkTarget)
                     }
-                setupSubmit("Link app install") {
+                setupSubmit("Link device") {
                     submitSetupLinkTarget(
                         setupLinkTarget,
                         force: true,
@@ -663,23 +714,30 @@ struct IrisDriveControlPanel: View {
         ].joined(separator: "  ·  ")
     }
 
-    // MARK: AppKeys
+    // MARK: Devices
 
     private var peers: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionTitle("AppKeys")
+                SectionTitle("Devices")
                 Spacer()
                 if status.canAdminProfile {
-                    Button {
-                        showAddDevice = true
-                    } label: {
-                        Label("Add AppKey", systemImage: "plus")
+                    HStack(spacing: 8) {
+                        Button {
+                            showAddDevice = true
+                        } label: {
+                            Label("Add Device", systemImage: "plus")
+                        }
+                        Button {
+                            openRecoveryKeyFlow()
+                        } label: {
+                            Label("Add Recovery Key", systemImage: "key.fill")
+                        }
                     }
                 }
             }
             if status.peers.isEmpty {
-                emptyState("No AppKeys yet")
+                emptyState("No devices yet")
             } else {
                 let adminCount = status.peers.filter { $0.role == "admin" }.count
                 ForEach(status.peers) { peer in
@@ -705,14 +763,17 @@ struct IrisDriveControlPanel: View {
         .sheet(isPresented: $showAddDevice) {
             addDeviceSheet
         }
+        .sheet(isPresented: $showAddRecoveryKey, onDismiss: resetRecoveryKeyFlow) {
+            addRecoveryKeySheet
+        }
     }
 
     private var addDeviceSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add an AppKey")
+            Text("Add a Device")
                 .font(.title3.weight(.semibold))
             if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
-                Text("Invite app install")
+                Text("Invite device")
                     .font(.headline)
                 IrisDriveQRCodeView(value: invite)
                     .frame(width: 220, height: 220)
@@ -729,16 +790,16 @@ struct IrisDriveControlPanel: View {
                 }
             }
             if !status.inboundAppKeyLinkRequests.isEmpty {
-                Text("AppKey requests")
+                Text("Device requests")
                     .font(.headline)
                 ForEach(status.inboundAppKeyLinkRequests) { request in
                     AppKeyLinkRequestRow(request: request, controller: controller)
                 }
             }
-            Text("Paste the AppKey shown by the app install you want to approve.")
+            Text("Paste the device key or request link.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("AppKey", text: $approveDeviceKey)
+            TextField("Device key", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
@@ -769,13 +830,281 @@ struct IrisDriveControlPanel: View {
         .frame(width: 420)
     }
 
+    private var addRecoveryKeySheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Add Recovery Key")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button {
+                    showAddRecoveryKey = false
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Close")
+            }
+            recoveryKeySheetContent
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    @ViewBuilder
+    private var recoveryKeySheetContent: some View {
+        switch recoveryKeyFlowMode {
+        case .choose:
+            Button {
+                startRecoveryKeyFlow()
+            } label: {
+                Label("Generate New", systemImage: "sparkles")
+                    .frame(maxWidth: .infinity, minHeight: setupButtonMinHeight)
+            }
+            .buttonStyle(.borderedProminent)
+            Button {
+                startRecoveryImportFlow()
+            } label: {
+                Label("Import Existing", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: setupButtonMinHeight)
+            }
+            .buttonStyle(.bordered)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    showAddRecoveryKey = false
+                }
+            }
+        case .generateNew:
+            generatedRecoveryKeySheetContent
+        case .importExisting:
+            importRecoveryKeySheetContent
+        }
+    }
+
+    @ViewBuilder
+    private var generatedRecoveryKeySheetContent: some View {
+        if !generatedRecoveryError.isEmpty {
+            Text(generatedRecoveryError)
+                .foregroundStyle(.red)
+            HStack {
+                Button {
+                    recoveryKeyFlowMode = .choose
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                Spacer()
+                Button("Generate Again") {
+                    startRecoveryKeyFlow()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } else if generatedRecoveryWords.indices.contains(generatedRecoveryWordIndex) {
+            Text("Word \(generatedRecoveryWordIndex + 1) of \(generatedRecoveryWords.count)")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text(generatedRecoveryWords[generatedRecoveryWordIndex])
+                .font(.system(size: 34, weight: .semibold, design: .serif))
+                .frame(maxWidth: .infinity, minHeight: 84)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .textSelection(.enabled)
+            HStack {
+                Button {
+                    generatedRecoveryWordIndex = max(0, generatedRecoveryWordIndex - 1)
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .disabled(generatedRecoveryWordIndex == 0)
+                Spacer()
+                if generatedRecoveryWordIndex + 1 < generatedRecoveryWords.count {
+                    Button {
+                        generatedRecoveryWordIndex += 1
+                    } label: {
+                        Label("Next", systemImage: "chevron.right")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            if generatedRecoveryWordIndex + 1 == generatedRecoveryWords.count {
+                Toggle("I wrote down all 12 words", isOn: $generatedRecoveryWrittenDown)
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        showAddRecoveryKey = false
+                    }
+                    Button("Add Recovery Key") {
+                        controller.addRecoveryDevice(generatedRecoveryPubkey)
+                        resetRecoveryKeyFlow()
+                        showAddRecoveryKey = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!generatedRecoveryWrittenDown || generatedRecoveryPubkey.isEmpty)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var importRecoveryKeySheetContent: some View {
+        if !generatedRecoveryError.isEmpty {
+            Text(generatedRecoveryError)
+                .foregroundStyle(.red)
+        }
+        Text("Word \(importedRecoveryWordIndex + 1) of \(recoveryPhraseWordCount)")
+            .font(.headline)
+            .foregroundStyle(.secondary)
+        SecureField(
+            "Word \(importedRecoveryWordIndex + 1)",
+            text: importedRecoveryWordBinding
+        )
+        .textFieldStyle(.roundedBorder)
+        .disableAutocorrection(true)
+        .onSubmit {
+            advanceRecoveryImportWord()
+        }
+        HStack {
+            Button {
+                if importedRecoveryWordIndex == 0 {
+                    recoveryKeyFlowMode = .choose
+                    generatedRecoveryError = ""
+                } else {
+                    importedRecoveryWordIndex -= 1
+                    generatedRecoveryError = ""
+                }
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+            }
+            Spacer()
+            if importedRecoveryWordIndex + 1 < recoveryPhraseWordCount {
+                Button {
+                    advanceRecoveryImportWord()
+                } label: {
+                    Label("Next", systemImage: "chevron.right")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(currentImportedRecoveryWord.isEmpty)
+            } else {
+                Button("Add Recovery Key") {
+                    saveImportedRecoveryKey()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!allImportedRecoveryWordsFilled)
+            }
+        }
+    }
+
+    private var importedRecoveryWordBinding: Binding<String> {
+        Binding(
+            get: {
+                guard importedRecoveryWords.indices.contains(importedRecoveryWordIndex) else {
+                    return ""
+                }
+                return importedRecoveryWords[importedRecoveryWordIndex]
+            },
+            set: { value in
+                guard importedRecoveryWords.indices.contains(importedRecoveryWordIndex) else {
+                    return
+                }
+                importedRecoveryWords[importedRecoveryWordIndex] = value
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+            }
+        )
+    }
+
+    private var currentImportedRecoveryWord: String {
+        guard importedRecoveryWords.indices.contains(importedRecoveryWordIndex) else {
+            return ""
+        }
+        return importedRecoveryWords[importedRecoveryWordIndex]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var allImportedRecoveryWordsFilled: Bool {
+        importedRecoveryWords.allSatisfy {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func advanceRecoveryImportWord() {
+        guard !currentImportedRecoveryWord.isEmpty else { return }
+        generatedRecoveryError = ""
+        importedRecoveryWordIndex = min(recoveryPhraseWordCount - 1, importedRecoveryWordIndex + 1)
+    }
+
+    private func saveImportedRecoveryKey() {
+        let phrase = importedRecoveryWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .joined(separator: " ")
+        let payload = IrisDriveDesktopCore.recoveryPubkeyForPhrase(phrase)
+        let error = payload["error"] as? String ?? ""
+        guard error.isEmpty else {
+            generatedRecoveryError = error
+            return
+        }
+        let recoveryPubkey = payload["recovery_pubkey"] as? String ?? ""
+        guard !recoveryPubkey.isEmpty else {
+            generatedRecoveryError = "Recovery key import failed"
+            return
+        }
+        controller.addRecoveryDevice(recoveryPubkey)
+        resetRecoveryKeyFlow()
+        showAddRecoveryKey = false
+    }
+
+    private func openRecoveryKeyFlow() {
+        resetRecoveryKeyFlow()
+        showAddRecoveryKey = true
+    }
+
+    private func startRecoveryKeyFlow() {
+        generatedRecoveryWords = []
+        generatedRecoveryPubkey = ""
+        generatedRecoveryWordIndex = 0
+        generatedRecoveryWrittenDown = false
+        generatedRecoveryError = ""
+        importedRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
+        importedRecoveryWordIndex = 0
+        recoveryKeyFlowMode = .generateNew
+        let payload = IrisDriveDesktopCore.generateRecoveryKey()
+        generatedRecoveryError = payload["error"] as? String ?? ""
+        generatedRecoveryWords = payload["words"] as? [String] ?? []
+        generatedRecoveryPubkey = payload["recovery_pubkey"] as? String ?? ""
+        if generatedRecoveryError.isEmpty,
+           (generatedRecoveryWords.count != recoveryPhraseWordCount || generatedRecoveryPubkey.isEmpty)
+        {
+            generatedRecoveryError = "Recovery key generation failed"
+        }
+    }
+
+    private func startRecoveryImportFlow() {
+        generatedRecoveryWords = []
+        generatedRecoveryPubkey = ""
+        generatedRecoveryWordIndex = 0
+        generatedRecoveryWrittenDown = false
+        generatedRecoveryError = ""
+        importedRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
+        importedRecoveryWordIndex = 0
+        recoveryKeyFlowMode = .importExisting
+    }
+
+    private func resetRecoveryKeyFlow() {
+        recoveryKeyFlowMode = .choose
+        generatedRecoveryWords = []
+        generatedRecoveryPubkey = ""
+        generatedRecoveryWordIndex = 0
+        generatedRecoveryWrittenDown = false
+        generatedRecoveryError = ""
+        importedRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
+        importedRecoveryWordIndex = 0
+    }
+
     // MARK: Shares
 
     private func applyPendingShareDialog() {
         guard let request = status.pendingShareDialog else { return }
         selectedTab = .shares
         shareSourceInput = request.sourcePath
-        shareNameInput = request.displayName
         shareRecipientNpubHint = request.recipientNpubHint
         shareRecipientDisplayName = request.recipientDisplayName
         shareRecipientProfileId = request.recipientProfileId
@@ -786,57 +1115,63 @@ struct IrisDriveControlPanel: View {
             HStack {
                 SectionTitle("Shares")
                 Spacer()
-                if let invite = status.lastShareInviteURL {
+                if myShareNpub != nil {
                     Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(invite, forType: .string)
+                        showMyNpub = true
                     } label: {
-                        Label("Copy Invite", systemImage: "doc.on.doc")
+                        Label("My User ID", systemImage: "qrcode")
                     }
                 }
-                Button {
-                    controller.exportShareRecipientEvidence(displayName: "")
-                } label: {
-                    Label("Copy Share Identity", systemImage: "person.crop.circle.badge.checkmark")
-                }
-                .disabled(status.currentAppKeyNpub == nil)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Create Share")
+                Text("Create Shared Folder")
                     .font(.headline)
                 TextField("Folder path", text: $shareSourceInput)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
-                TextField("Name (optional)", text: $shareNameInput)
-                    .textFieldStyle(.roundedBorder)
                 Button {
-                    controller.createShare(
-                        sourcePath: shareSourceInput,
-                        displayName: shareNameInput
-                    )
-                    shareSourceInput = ""
-                    shareNameInput = ""
+                    controller.createShare(sourcePath: shareSourceInput) {
+                        shareSourceInput = ""
+                    }
                 } label: {
-                    Label("Create Share", systemImage: "plus")
+                    Label("Create Shared Folder", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Accept Invite")
+                Text("Join Shared Folder")
                     .font(.headline)
-                TextField("Share invite", text: $shareInviteInput)
+                TextField("Paste invite link", text: $shareInviteInput)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
-                Button {
-                    controller.acceptShareInvite(shareInviteInput)
-                    shareInviteInput = ""
-                } label: {
-                    Label("Accept Invite", systemImage: "tray.and.arrow.down.fill")
+                HStack(spacing: 8) {
+                    Button {
+                        shareInviteInput = NSPasteboard.general
+                            .string(forType: .string)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    } label: {
+                        Label("Paste Invite", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        scanQRCodeFromImage { code in
+                            shareInviteInput = code
+                        }
+                    } label: {
+                        Label("Scan QR", systemImage: "qrcode.viewfinder")
+                    }
+                    Spacer()
+                    Button {
+                        controller.acceptShareInvite(shareInviteInput)
+                        shareInviteInput = ""
+                    } label: {
+                        Label("Join", systemImage: "tray.and.arrow.down.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .disabled(shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             if status.shares.isEmpty {
@@ -846,14 +1181,16 @@ struct IrisDriveControlPanel: View {
                     ShareStatusRow(
                         share: share,
                         localProfileId: status.profileId,
-                        onInvite: { inviteShare = share },
-                        onRepair: { controller.repairShareWraps(shareId: share.shareId) },
-                        onShortcut: {
-                            controller.addShareShortcut(
-                                shareId: share.shareId,
-                                displayName: shareDisplayName(share)
-                            )
+                        driveLink: shareDriveLink(share, status: status),
+                        onOpen: {
+                            controller.openShareFolder(path: shareOpenPath(share))
                         },
+                        onOpenDriveLink: { link in
+                            openDriveIrisLink(link)
+                        },
+                        onInvite: { inviteShare = share },
+                        onDelete: { deleteShare = share },
+                        onRepair: { controller.repairShareWraps(shareId: share.shareId) },
                         onRevoke: { member in
                             revokeShareMember = ShareMemberRevokeTarget(
                                 share: share,
@@ -867,11 +1204,40 @@ struct IrisDriveControlPanel: View {
         .sheet(item: $inviteShare) { share in
             InviteShareMemberSheet(
                 controller: controller,
+                status: status,
                 share: share,
                 profileId: shareRecipientProfileId,
                 representativeNpubHint: shareRecipientNpubHint,
                 displayName: shareRecipientDisplayName
             )
+        }
+        .sheet(isPresented: $showMyNpub) {
+            MyShareNpubSheet(npub: myShareNpub ?? "")
+        }
+        .alert(
+            "Delete share?",
+            isPresented: Binding(
+                get: { deleteShare != nil },
+                set: { presented in
+                    if !presented {
+                        deleteShare = nil
+                    }
+                }
+            ),
+            presenting: deleteShare
+        ) { share in
+            Button("Delete", role: .destructive) {
+                controller.deleteShare(
+                    shareId: share.shareId,
+                    providerPaths: shareProviderSignalPaths(share)
+                )
+                deleteShare = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deleteShare = nil
+            }
+        } message: { share in
+            Text("Delete \(shareDisplayName(share)) from this device? Folder contents stay in My Drive.")
         }
         .alert(
             "Revoke access?",
@@ -898,6 +1264,12 @@ struct IrisDriveControlPanel: View {
         } message: { target in
             Text("Revoke \(shareMemberDisplayName(target.member)) from \(shareDisplayName(target.share))?")
         }
+    }
+
+    private var myShareNpub: String? {
+        let value = (status.currentAppKeyNpub ?? status.deviceNpub ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 
     // MARK: Backups
@@ -959,7 +1331,7 @@ struct IrisDriveControlPanel: View {
                 .disableAutocorrection(true)
             TextField("Name (optional)", text: $backupLabel)
                 .textFieldStyle(.roundedBorder)
-            Text("A web address, another AppKey (npub…), or a local path (fs:/…, lmdb:/…).")
+            Text("A web address, another user's ID, or a local path (fs:/…, lmdb:/…).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -1000,11 +1372,48 @@ struct IrisDriveControlPanel: View {
                 )
             }
 
+            Section("Updates") {
+                Toggle(
+                    "Check automatically",
+                    isOn: Binding(
+                        get: { status.autoCheckUpdates },
+                        set: { controller.setAutoCheckUpdates($0) }
+                    )
+                )
+                Toggle(
+                    "Install automatically",
+                    isOn: Binding(
+                        get: { status.autoInstallUpdates },
+                        set: { controller.setAutoInstallUpdates($0) }
+                    )
+                )
+                HStack {
+                    Button {
+                        controller.checkForUpdates()
+                    } label: {
+                        Label(status.updateChecking ? "Checking..." : "Check for Updates", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(status.updateChecking || status.updateInstalling)
+                    Button {
+                        controller.installUpdate()
+                    } label: {
+                        Label(
+                            status.updateAsset.lowercased().hasSuffix(".app.tar.gz") ? "Install Update" : "Download Update",
+                            systemImage: "arrow.down.circle"
+                        )
+                    }
+                    .disabled(!status.updateCanInstall || status.updateChecking || status.updateInstalling)
+                }
+                if !status.updateStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    LabeledContent("Status", value: status.updateStatus)
+                }
+            }
+
             Section("Account") {
-                AccountKeyRow(title: "AppKey", value: status.currentAppKeyNpub) {
+                AccountKeyRow(title: "Device", value: status.currentAppKeyNpub) {
                     controller.copyAppKey()
                 }
-                AccountKeyRow(title: "Current AppKey", value: status.deviceNpub) {
+                AccountKeyRow(title: "Current Device Key", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
                 if status.canExportRecoveryPhrase {
@@ -1226,6 +1635,39 @@ func irisDriveCopyToPasteboard(_ value: String) {
     NSPasteboard.general.setString(value, forType: .string)
 }
 
+func scanQRCodeFromImage(_ completion: @escaping (String) -> Void) {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.image]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.begin { response in
+        guard response == .OK,
+              let url = panel.url,
+              let code = irisDriveQRCodePayload(from: url)
+        else {
+            return
+        }
+        completion(code)
+    }
+}
+
+private func irisDriveQRCodePayload(from url: URL) -> String? {
+    guard let image = CIImage(contentsOf: url) else {
+        return nil
+    }
+    let request = VNDetectBarcodesRequest()
+    request.symbologies = [.qr]
+    let handler = VNImageRequestHandler(ciImage: image)
+    do {
+        try handler.perform([request])
+    } catch {
+        return nil
+    }
+    return request.results?
+        .compactMap { $0.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
+}
+
 private struct IrisDriveQRCodeView: View {
     let value: String
 
@@ -1307,14 +1749,6 @@ private struct MacRecoveryPhraseView: View {
         payload["words"] as? [String] ?? []
     }
 
-    private var phrase: String {
-        payload["recovery_phrase"] as? String ?? ""
-    }
-
-    private var secretKey: String {
-        payload["secret_key"] as? String ?? ""
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -1355,37 +1789,22 @@ private struct MacRecoveryPhraseView: View {
                     }
                     .disabled(wordIndex == recoveryPhraseWordCount - 1)
                 }
-                HStack {
-                    Button {
-                        copy(phrase)
-                    } label: {
-                        Label("Copy recovery phrase", systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        copy(secretKey)
-                    } label: {
-                        Label("Copy secret key", systemImage: "key")
-                    }
-                }
             }
         }
         .padding(24)
         .frame(width: 420)
-    }
-
-    private func copy(_ value: String) {
-        guard !value.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
     }
 }
 
 private struct ShareStatusRow: View {
     let share: IrisDriveShareStatus
     let localProfileId: String?
+    let driveLink: String?
+    let onOpen: () -> Void
+    let onOpenDriveLink: (String) -> Void
     let onInvite: () -> Void
+    let onDelete: () -> Void
     let onRepair: () -> Void
-    let onShortcut: () -> Void
     let onRevoke: (IrisDriveShareMemberStatus) -> Void
 
     var body: some View {
@@ -1399,6 +1818,19 @@ private struct ShareStatusRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    onOpen()
+                } label: {
+                    Label("Open", systemImage: "folder")
+                }
+                if let driveLink = driveLink?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !driveLink.isEmpty {
+                    Button {
+                        onOpenDriveLink(driveLink)
+                    } label: {
+                        Label("Open on drive.iris.to", systemImage: "safari")
+                    }
+                }
                 if share.canAdmin {
                     Button {
                         onInvite()
@@ -1413,12 +1845,10 @@ private struct ShareStatusRow: View {
                         Label("Repair", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
-                if share.shortcutPaths.isEmpty {
-                    Button {
-                        onShortcut()
-                    } label: {
-                        Label("Shortcut", systemImage: "link")
-                    }
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete", systemImage: "trash")
                 }
             }
             ForEach(share.members) { member in
@@ -1459,26 +1889,25 @@ private struct ShareStatusRow: View {
 
 private struct InviteShareMemberSheet: View {
     let controller: AppDelegate
+    @ObservedObject var status: IrisDriveStatus
     let share: IrisDriveShareStatus
     @Environment(\.dismiss) private var dismiss
-    @State private var evidenceJson = ""
-    @State private var profileId = ""
-    @State private var appKey = ""
     @State private var role = "reader"
     @State private var representativeNpubHint = ""
     @State private var displayName = ""
-    @State private var label = ""
+    @State private var showManualInvite = false
 
     init(
         controller: AppDelegate,
+        status: IrisDriveStatus,
         share: IrisDriveShareStatus,
         profileId: String = "",
         representativeNpubHint: String = "",
         displayName: String = ""
     ) {
         self.controller = controller
+        self.status = status
         self.share = share
-        _profileId = State(initialValue: profileId)
         _representativeNpubHint = State(initialValue: representativeNpubHint)
         _displayName = State(initialValue: displayName)
     }
@@ -1487,68 +1916,64 @@ private struct InviteShareMemberSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Invite to \(shareDisplayName(share))")
                 .font(.title3.weight(.semibold))
-            Text("Recipient identity evidence")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $evidenceJson)
-                .font(.system(.body, design: .monospaced))
-                .frame(height: 120)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor))
-                )
-            Text("Advanced AppActor")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Member profile UUID", text: $profileId)
-                .textFieldStyle(.roundedBorder)
-                .disableAutocorrection(true)
-            TextField("Recipient AppActor pubkey", text: $appKey)
-                .textFieldStyle(.roundedBorder)
-                .disableAutocorrection(true)
-            Picker("Role", selection: $role) {
-                Text("Reader").tag("reader")
-                Text("Editor").tag("editor")
-                Text("Admin").tag("admin")
+            if !viewLink.isEmpty {
+                Text("Anyone with link")
+                    .font(.headline)
+                IrisDriveQRCodeView(value: viewLink)
+                    .frame(width: 200, height: 200)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Button {
+                    irisDriveCopyToPasteboard(viewLink)
+                } label: {
+                    Label("Copy view link", systemImage: "link")
+                }
             }
-            .pickerStyle(.segmented)
-            TextField("Contact npub", text: $representativeNpubHint)
-                .textFieldStyle(.roundedBorder)
-                .disableAutocorrection(true)
-            TextField("Name", text: $displayName)
-                .textFieldStyle(.roundedBorder)
-            TextField("AppActor label", text: $label)
-                .textFieldStyle(.roundedBorder)
+            Divider()
+            Button {
+                showManualInvite.toggle()
+            } label: {
+                Label("Invite specific user", systemImage: "person.badge.plus")
+            }
+            .buttonStyle(.bordered)
+            if showManualInvite {
+                TextField("Paste their User ID", text: $representativeNpubHint)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                HStack(spacing: 8) {
+                    Button {
+                        representativeNpubHint = NSPasteboard.general
+                            .string(forType: .string)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    } label: {
+                        Label("Paste User ID", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        scanQRCodeFromImage { code in
+                            representativeNpubHint = code
+                        }
+                    } label: {
+                        Label("Scan QR", systemImage: "qrcode.viewfinder")
+                    }
+                }
+                TextField("Name (optional)", text: $displayName)
+                    .textFieldStyle(.roundedBorder)
+                Picker("Access", selection: $role) {
+                    Text("View").tag("reader")
+                    Text("Edit").tag("editor")
+                    Text("Manage").tag("admin")
+                }
+                .pickerStyle(.segmented)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") {
                     dismiss()
                 }
-                Button("Invite") {
-                    if evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        if profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                           appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            controller.recordPendingShareInvite(
-                                shareId: share.shareId,
-                                representativeNpubHint: representativeNpubHint,
-                                role: role,
-                                displayName: displayName
-                            )
-                        } else {
-                            controller.inviteShareMember(
-                                shareId: share.shareId,
-                                profileId: profileId,
-                                appKey: appKey,
-                                role: role,
-                                representativeNpubHint: representativeNpubHint,
-                                displayName: displayName,
-                                label: label
-                            )
-                        }
-                    } else {
-                        controller.inviteShareMemberFromEvidence(
+                Button(showManualInvite ? "Add User" : "Done") {
+                    if showManualInvite {
+                        controller.recordPendingShareInvite(
                             shareId: share.shareId,
-                            evidenceJson: evidenceJson,
+                            representativeNpubHint: representativeNpubHint,
                             role: role,
                             displayName: displayName
                         )
@@ -1556,21 +1981,50 @@ private struct InviteShareMemberSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!canSubmitInvite)
+                .disabled(showManualInvite && !canSubmitInvite)
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 420)
+    }
+
+    private var viewLink: String {
+        shareDriveLink(share, status: status) ?? ""
     }
 
     private var canSubmitInvite: Bool {
-        if !evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return true
+        !representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private struct MyShareNpubSheet: View {
+    let npub: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("My User ID")
+                .font(.title3.weight(.semibold))
+            IrisDriveQRCodeView(value: npub)
+                .frame(width: 220, height: 220)
+                .frame(maxWidth: .infinity, alignment: .center)
+            Text(npub)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(4)
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    irisDriveCopyToPasteboard(npub)
+                }
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
-        let profilePresent = !profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let appKeyPresent = !appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let npubPresent = !representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (profilePresent && appKeyPresent) || (!profilePresent && !appKeyPresent && npubPresent)
+        .padding(20)
+        .frame(width: 420)
     }
 }
 
@@ -1581,15 +2035,68 @@ private func shareDisplayName(_ share: IrisDriveShareStatus) -> String {
 }
 
 private func shareSummary(_ share: IrisDriveShareStatus) -> String {
-    [
+    let displayPath = share.sourcePath
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return [
         share.roleLabel.isEmpty ? share.role : share.roleLabel,
-        share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel,
-        share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        sharePeopleCount(share.participantCount),
+        displayPath.isEmpty
             ? nil
-            : shortValue(share.sourcePath),
-        "\(share.participantCount) people",
-        share.shortcutPaths.first.map { "shortcut \(shortValue($0))" },
+            : shortValue(displayPath),
     ].compactMap { $0 }.joined(separator: " | ")
+}
+
+private func shareOpenPath(_ share: IrisDriveShareStatus) -> String {
+    share.sourcePath
+}
+
+private func sharePeopleCount(_ count: Int) -> String {
+    "\(count) \(count == 1 ? "person" : "people")"
+}
+
+private func shareProviderSignalPaths(_ share: IrisDriveShareStatus) -> [String] {
+    ([share.sourcePath] + share.shortcutPaths)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+}
+
+private func shareDriveLink(_ share: IrisDriveShareStatus, status: IrisDriveStatus) -> String? {
+    guard let configDirectory = status.configDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !configDirectory.isEmpty
+    else {
+        return nil
+    }
+    let provider = IrisDriveDesktopCore.providerList(dataDir: configDirectory)
+    let entries = provider["entries"] as? [[String: Any]] ?? []
+    let paths = shareLinkCandidatePaths(share)
+    for path in paths {
+        guard let entry = entries.first(where: { $0["path"] as? String == path }),
+              let version = entry["version"] as? String,
+              !version.isEmpty
+        else {
+            continue
+        }
+        let payload = IrisDriveDesktopCore.driveLinkForCid(version)
+        let url = payload["url"] as? String ?? ""
+        if !url.isEmpty {
+            return url
+        }
+    }
+    return nil
+}
+
+private func shareLinkCandidatePaths(_ share: IrisDriveShareStatus) -> [String] {
+    ([share.sourcePath, share.sharedWithMePath] + share.shortcutPaths)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+}
+
+private func openDriveIrisLink(_ link: String) {
+    guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        NSSound.beep()
+        return
+    }
+    NSWorkspace.shared.open(url)
 }
 
 private func shareMemberDisplayName(_ member: IrisDriveShareMemberStatus) -> String {
@@ -1738,7 +2245,11 @@ private struct PeerRow: View {
                             peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5)
                         )
                         .frame(width: 8, height: 8)
-                    Image(systemName: peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
+                    Image(
+                        systemName: peer.role == "recovery"
+                            ? "key.fill"
+                            : (peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
+                    )
                         .frame(width: 24)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
@@ -1772,7 +2283,6 @@ private struct PeerRow: View {
                     if let published = peer.publishedAt {
                         DetailRow(label: "Updated", value: irisDriveDateString(published))
                     }
-                    DetailRow(label: "Visibility", value: privacy)
                     if canManagePeer {
                         HStack(spacing: 8) {
                             if peer.role == "admin" {
@@ -1815,7 +2325,7 @@ private struct PeerRow: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the AppKey from Iris Drive and rotates access keys.")
+            Text("This removes the device from Iris Drive and rotates access keys.")
         }
     }
 
@@ -1830,18 +2340,8 @@ private struct PeerRow: View {
         return [peer.roleLabel, peer.connectionLabel].joined(separator: " | ")
     }
 
-    private var privacy: String {
-        guard peer.hasRoot else {
-            if peer.isCurrentDevice {
-                return "Local"
-            }
-            return "Pending"
-        }
-        return peer.rootIsPrivate == false ? "Public" : "Private"
-    }
-
     private var canManagePeer: Bool {
-        canManageDevices && !peer.isCurrentDevice
+        canManageDevices && !peer.isCurrentDevice && peer.role != "recovery"
     }
 
 }
@@ -1856,7 +2356,7 @@ private struct AppKeyLinkRequestRow: View {
                 .frame(width: 24)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
-                Text(request.label?.isEmpty == false ? request.label! : "New AppKey")
+                Text(request.label?.isEmpty == false ? request.label! : "New Device")
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Text(request.deviceNpub)

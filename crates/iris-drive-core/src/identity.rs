@@ -9,8 +9,9 @@
 //!   nsec/hex secret or 12-word phrase. It can admit a fresh `AppKey` when that
 //!   authority is present in a roster, but it is not the stable `IrisProfile` id.
 //!
-//! Create, restore, and link all generate a fresh `AppKey`. Create/restore may
-//! also keep recovery material for later admission of more `AppKeys`.
+//! Create, restore, and link all generate a fresh `AppKey`. Restore from a
+//! recovery phrase may keep that user-supplied phrase for later admission of
+//! more `AppKeys`; normal create/link flows do not mint recovery material.
 
 use std::fs;
 use std::io::Write;

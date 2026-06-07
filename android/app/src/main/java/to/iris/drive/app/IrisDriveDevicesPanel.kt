@@ -58,6 +58,7 @@ internal fun DevicesPanel(
     onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
+    onAddRecoveryKey: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -65,18 +66,27 @@ internal fun DevicesPanel(
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
+    var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
     val manualRequestIsComplete = remember(request) {
         NativeCore.isCompleteLinkInput(request)
     }
 
-    CardSection(title = "AppKeys", trailing = "${devices.size}") {
+    CardSection(title = "Devices", trailing = "${devices.size}") {
         if (canApprove) {
-            OutlinedButton(
-                onClick = { showAddDevice = true },
-                modifier = Modifier.testTag("addDeviceButton"),
-            ) {
-                Text("Add AppKey")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { showAddDevice = true },
+                    modifier = Modifier.testTag("addDeviceButton"),
+                ) {
+                    Text("Add Device")
+                }
+                OutlinedButton(
+                    onClick = { showAddRecoveryKey = true },
+                    modifier = Modifier.testTag("addRecoveryKeyButton"),
+                ) {
+                    Text("Add Recovery Key")
+                }
             }
         }
         devices.forEach { device ->
@@ -92,7 +102,7 @@ internal fun DevicesPanel(
                     )
                     if (device.isCurrentDevice) {
                         Text(
-                            "AppKey: ${device.pubkey}",
+                            "Device key: ${device.pubkey}",
                             color = Muted,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -156,6 +166,16 @@ internal fun DevicesPanel(
             },
         )
     }
+
+    if (showAddRecoveryKey) {
+        AddRecoveryKeyDialog(
+            onDismiss = { showAddRecoveryKey = false },
+            onAddRecoveryKey = { recoveryPubkey ->
+                onAddRecoveryKey(recoveryPubkey)
+                showAddRecoveryKey = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -176,7 +196,7 @@ private val OnlineGreen = Color(0xFF16A34A)
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {
-        val title = displayLabel.ifBlank { "AppKey" }
+        val title = displayLabel.ifBlank { "Device" }
         return "$title ${if (isOnline) "online" else "offline"}"
     }
 
@@ -188,7 +208,7 @@ private fun DeleteDeviceDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Remove AppKey?") },
+        title = { Text("Remove Device?") },
         text = {
             Text("Remove ${device.label} from Iris Drive? This removes its access to future syncs.")
         },
@@ -233,14 +253,14 @@ private fun AddDeviceDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add an AppKey") },
+        title = { Text("Add a Device") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (linkInvite.isNotBlank()) {
-                    Text("Invite app install", fontWeight = FontWeight.SemiBold)
+                    Text("Invite device", fontWeight = FontWeight.SemiBold)
                     QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
                     Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     OutlinedButton(onClick = onCopyLinkInvite) {
@@ -251,11 +271,11 @@ private fun AddDeviceDialog(
                     }
                 }
                 if (inboundRequests.isNotEmpty()) {
-                    Text("AppKeys asking to join", fontWeight = FontWeight.SemiBold)
+                    Text("Device requests", fontWeight = FontWeight.SemiBold)
                     inboundRequests.forEach { inbound ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.weight(1f)) {
-                                Text(inbound.label.ifBlank { "New AppKey" }, fontWeight = FontWeight.SemiBold)
+                                Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
                                 Text(
                                     inbound.devicePubkey,
                                     color = Muted,
@@ -281,7 +301,7 @@ private fun AddDeviceDialog(
                     }
                 }
                 Text(
-                    "Paste the AppKey shown by the app install you want to approve.",
+                    "Paste the device key or request link.",
                     color = Muted,
                 )
                 OutlinedTextField(
@@ -289,7 +309,7 @@ private fun AddDeviceDialog(
                     onValueChange = onRequestChange,
                     modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
                     singleLine = true,
-                    label = { Text("AppKey") },
+                    label = { Text("Device key") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
                 OutlinedTextField(
@@ -318,6 +338,157 @@ private fun AddDeviceDialog(
             }
         },
     )
+}
+
+@Composable
+private fun AddRecoveryKeyDialog(
+    onDismiss: () -> Unit,
+    onAddRecoveryKey: (String) -> Unit,
+) {
+    var mode by remember { mutableStateOf("choose") }
+    var error by remember { mutableStateOf("") }
+    var generatedWords by remember { mutableStateOf<List<String>>(emptyList()) }
+    var generatedPubkey by remember { mutableStateOf("") }
+    var generatedWordIndex by remember { mutableStateOf(0) }
+    var importedWords by remember { mutableStateOf(List(12) { "" }) }
+    var importedWordIndex by remember { mutableStateOf(0) }
+
+    fun startGenerate() {
+        val payload = runCatching { JSONObject(NativeCore.generateRecoveryKeyJson()) }
+            .getOrElse { JSONObject().put("error", it.message ?: "Recovery key generation failed") }
+        error = payload.optString("error")
+        generatedWords = payload.optJSONArray("words").toStringList()
+        generatedPubkey = payload.optString("recovery_pubkey")
+        generatedWordIndex = 0
+        if (error.isBlank() && (generatedWords.size != 12 || generatedPubkey.isBlank())) {
+            error = "Recovery key generation failed"
+        }
+        mode = "generate"
+    }
+
+    fun startImport() {
+        error = ""
+        importedWords = List(12) { "" }
+        importedWordIndex = 0
+        mode = "import"
+    }
+
+    fun addImportedRecoveryKey() {
+        val phrase = importedWords.joinToString(" ") { it.trim().lowercase() }
+        val payload = runCatching { JSONObject(NativeCore.recoveryPubkeyForPhraseJson(phrase)) }
+            .getOrElse { JSONObject().put("error", it.message ?: "Recovery key import failed") }
+        val importError = payload.optString("error")
+        val recoveryPubkey = payload.optString("recovery_pubkey")
+        if (importError.isNotBlank() || recoveryPubkey.isBlank()) {
+            error = importError.ifBlank { "Recovery key import failed" }
+            return
+        }
+        onAddRecoveryKey(recoveryPubkey)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Recovery Key") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (error.isNotBlank()) {
+                    Text(error, color = Danger)
+                }
+                when (mode) {
+                    "choose" -> {
+                        OutlinedButton(onClick = { startGenerate() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Generate New")
+                        }
+                        OutlinedButton(onClick = { startImport() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Import Existing")
+                        }
+                    }
+                    "generate" -> {
+                        if (error.isBlank()) {
+                            Text("Write down each word. Iris Drive will only save the public recovery key.", color = Muted)
+                            Text("Word ${generatedWordIndex + 1} of 12", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                generatedWords.getOrNull(generatedWordIndex).orEmpty(),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    "import" -> {
+                        Text("Enter the recovery phrase one word at a time.", color = Muted)
+                        OutlinedTextField(
+                            value = importedWords[importedWordIndex],
+                            onValueChange = { value ->
+                                importedWords = importedWords.toMutableList().also {
+                                    it[importedWordIndex] = value.trim().lowercase()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Word ${importedWordIndex + 1} of 12") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (mode) {
+                "choose" -> {}
+                "generate" -> {
+                    Button(
+                        onClick = {
+                            if (generatedWordIndex < 11) {
+                                generatedWordIndex += 1
+                            } else {
+                                onAddRecoveryKey(generatedPubkey)
+                            }
+                        },
+                        enabled = error.isBlank() && generatedWords.size == 12 && generatedPubkey.isNotBlank(),
+                    ) {
+                        Text(if (generatedWordIndex == 11) "Add Recovery Key" else "Next")
+                    }
+                }
+                "import" -> {
+                    Button(
+                        onClick = {
+                            if (importedWordIndex < 11) {
+                                importedWordIndex += 1
+                            } else {
+                                addImportedRecoveryKey()
+                            }
+                        },
+                        enabled = importedWords[importedWordIndex].isNotBlank() &&
+                            (importedWordIndex < 11 || importedWords.all { it.isNotBlank() }),
+                    ) {
+                        Text(if (importedWordIndex == 11) "Add Recovery Key" else "Next")
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    if (mode == "choose") {
+                        onDismiss()
+                    } else {
+                        mode = "choose"
+                        error = ""
+                    }
+                },
+            ) {
+                Text(if (mode == "choose") "Cancel" else "Back")
+            }
+        },
+    )
+}
+
+private fun org.json.JSONArray?.toStringList(): List<String> {
+    if (this == null) return emptyList()
+    return List(length()) { index -> optString(index) }
 }
 
 @Composable

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use nostr_sdk::{Client, Event, Filter, JsonUtil, Keys, Options, PublicKey, SingleLetterTag};
+use nostr_sdk::{Client, ClientOptions, Event, Filter, JsonUtil, Keys, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
@@ -557,9 +557,7 @@ fn incoming_root_is_stale(
 /// Connect a fresh client to the given relays. Caller manages the
 /// client's lifecycle (disconnect when done).
 pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
-    let client = Client::builder()
-        .opts(Options::new().wait_for_send(false))
-        .build();
+    let client = Client::builder().opts(ClientOptions::new()).build();
     for url in relay_urls {
         client
             .add_relay(url)
@@ -578,7 +576,7 @@ pub async fn publish_app_key_link_request(
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_app_key_link_request_event(device_keys, frame)?;
     let output = client
-        .send_event(event)
+        .send_event(&event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     Ok(*output.id())
@@ -601,7 +599,7 @@ pub async fn publish_iris_profile_roster_ops(
             )));
         }
         let output = client
-            .send_event(event)
+            .send_event(&event)
             .await
             .map_err(|e| RelayError::Client(e.to_string()))?;
         event_ids.push(*output.id());
@@ -626,7 +624,7 @@ pub async fn publish_drive_root(
         authorized_app_key_pubkeys,
     )?;
     let output = client
-        .send_event(event)
+        .send_event(&event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     Ok(*output.id())
@@ -641,10 +639,27 @@ pub async fn publish_files_root(
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_private_hashtree_root_event(app_key, tree_name, root)?;
     let output = client
-        .send_event(event)
+        .send_event(&event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
     Ok(*output.id())
+}
+
+async fn fetch_events(
+    client: &Client,
+    filters: Vec<Filter>,
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    let mut events = Vec::new();
+    for filter in filters {
+        events.extend(
+            client
+                .fetch_events(filter, timeout)
+                .await
+                .map_err(|e| RelayError::Client(e.to_string()))?,
+        );
+    }
+    Ok(events)
 }
 
 /// Fetch the latest standard hashtree root for `app_key_pubkey_hex/tree_name`.
@@ -662,13 +677,10 @@ pub async fn fetch_latest_files_root(
         .identifier(tree_name)
         .custom_tag(
             SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-            [hashtree_nostr::HASHTREE_LABEL],
+            hashtree_nostr::HASHTREE_LABEL,
         );
-    let events = client
-        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
-    let latest = events.into_iter().max_by_key(|e| e.created_at.as_u64());
+    let events = fetch_events(client, vec![filter], timeout).await?;
+    let latest = events.into_iter().max_by_key(|e| e.created_at.as_secs());
     Ok(latest)
 }
 
@@ -678,13 +690,12 @@ pub async fn fetch_iris_profile_roster_ops(
     profile_id: IrisProfileId,
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
-    let events = client
-        .get_events_of(
-            vec![iris_profile_roster_op_filter(profile_id)],
-            nostr_sdk::EventSource::relays(Some(timeout)),
-        )
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
+    let events = fetch_events(
+        client,
+        vec![iris_profile_roster_op_filter(profile_id)],
+        timeout,
+    )
+    .await?;
     Ok(events
         .into_iter()
         .filter(|event| {
@@ -800,28 +811,26 @@ pub async fn fetch_iris_profile_restore_candidates(
     recovery_pubkey_hex: &str,
     timeout: Duration,
 ) -> Result<Vec<IrisProfileRestoreCandidate>, RelayError> {
-    let discovery_events = client
-        .get_events_of(
-            iris_profile_restore_candidate_filters(recovery_pubkey_hex)?,
-            nostr_sdk::EventSource::relays(Some(timeout)),
-        )
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
+    let discovery_events = fetch_events(
+        client,
+        iris_profile_restore_candidate_filters(recovery_pubkey_hex)?,
+        timeout,
+    )
+    .await?;
     let candidate_ids =
         iris_profile_candidate_ids_for_pubkey_from_events(recovery_pubkey_hex, &discovery_events)?;
     if candidate_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let roster_events = client
-        .get_events_of(
-            candidate_ids
-                .into_iter()
-                .map(iris_profile_roster_op_filter)
-                .collect::<Vec<_>>(),
-            nostr_sdk::EventSource::relays(Some(timeout)),
-        )
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
+    let roster_events = fetch_events(
+        client,
+        candidate_ids
+            .into_iter()
+            .map(iris_profile_roster_op_filter)
+            .collect::<Vec<_>>(),
+        timeout,
+    )
+    .await?;
     let mut events = discovery_events;
     events.extend(roster_events);
     iris_profile_restore_candidates_from_events(recovery_pubkey_hex, &events)
@@ -862,7 +871,7 @@ pub fn subscription_filters_for_shared_roots(
                 .kind(nostr_sdk::Kind::from(KIND_APP_KEY_LINK_REQUEST))
                 .custom_tag(
                     SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                    [app_key_link_request_d_tag(profile_id)],
+                    app_key_link_request_d_tag(profile_id),
                 ),
         );
     }
@@ -883,7 +892,7 @@ pub fn subscription_filters_for_shared_roots(
                 .identifier(drive_id)
                 .custom_tag(
                     SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-                    [hashtree_nostr::HASHTREE_LABEL],
+                    hashtree_nostr::HASHTREE_LABEL,
                 ),
         );
     }
@@ -895,7 +904,7 @@ fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive
     filters.push(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-            .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]),
+            .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), d_tag),
     );
 }
 
@@ -904,7 +913,7 @@ fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
         .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
         .custom_tag(
             SingleLetterTag::lowercase(nostr_sdk::Alphabet::I),
-            [profile_id.to_string()],
+            profile_id.to_string(),
         )
 }
 
@@ -930,11 +939,8 @@ pub async fn fetch_drive_roots(
     let filter = Filter::new()
         .authors(authors)
         .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-        .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), [d_tag]);
-    let events = client
-        .get_events_of(vec![filter], nostr_sdk::EventSource::relays(Some(timeout)))
-        .await
-        .map_err(|e| RelayError::Client(e.to_string()))?;
+        .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), d_tag);
+    let events = fetch_events(client, vec![filter], timeout).await?;
     // Pick the latest root per author. Device roots carry a monotonic
     // per-device sequence; use it before wall-clock timestamps so two publishes
     // in the same second cannot make us fetch an older snapshot.
@@ -964,7 +970,7 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
             .then_with(|| candidate.published_at.cmp(&current.published_at))
             .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
             .is_gt(),
-        _ => candidate.created_at.as_u64() > current.created_at.as_u64(),
+        _ => candidate.created_at.as_secs() > current.created_at.as_secs(),
     }
 }
 

@@ -695,6 +695,117 @@ public sealed record RecoverySecretExport(
     }
 }
 
+public sealed record GeneratedRecoveryKey(
+    IReadOnlyList<string> Words,
+    string RecoveryPubkey,
+    string Error)
+{
+    public static GeneratedRecoveryKey FromJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new GeneratedRecoveryKey(
+            StringArray(root, "words"),
+            String(root, "recovery_pubkey") ?? "",
+            String(root, "error") ?? "");
+    }
+
+    private static string? String(JsonElement root, string name)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+    }
+
+    private static IReadOnlyList<string> StringArray(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        var items = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                items.Add(item.GetString() ?? "");
+            }
+        }
+
+        return items;
+    }
+}
+
+public sealed record IrisDriveUpdateResult(
+    bool Available,
+    string CurrentVersion,
+    string LatestVersion,
+    string Tag,
+    string Asset,
+    string Source,
+    bool Verified,
+    string? Path,
+    string? RootCid,
+    string? ReleaseCid,
+    string Error)
+{
+    public static IrisDriveUpdateResult ErrorResult(string error)
+    {
+        return new IrisDriveUpdateResult(
+            false,
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            null,
+            null,
+            null,
+            error);
+    }
+
+    public static IrisDriveUpdateResult FromJson(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        var root = document.RootElement;
+        return new IrisDriveUpdateResult(
+            Bool(root, "available"),
+            String(root, "current_version") ?? "",
+            String(root, "latest_version") ?? "",
+            String(root, "tag") ?? "",
+            String(root, "asset") ?? "",
+            String(root, "source") ?? "",
+            Bool(root, "verified"),
+            String(root, "path"),
+            String(root, "root_cid"),
+            String(root, "release_cid"),
+            String(root, "error") ?? "");
+    }
+
+    private static string? String(JsonElement root, string name)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+    }
+
+    private static bool Bool(JsonElement root, string name)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var value) &&
+            value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+            value.GetBoolean();
+    }
+}
+
 public sealed record AppKeyLinkRequestRow(
     string DeviceNpub,
     string Label,

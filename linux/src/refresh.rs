@@ -91,6 +91,7 @@ pub(crate) fn refresh(model: &AppRef) {
             render_backups(model, &state);
             render_shares(model, &state);
             render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &state);
+            render_update_state(model);
         }
         Err(error) => {
             set_view_mode(model, true, daemon_is_running(model));
@@ -125,6 +126,7 @@ pub(crate) fn refresh(model: &AppRef) {
             clear_list(&model.ui.shares);
             clear_list(&model.ui.relays);
             clear_list(&model.ui.blossom);
+            render_update_state(model);
         }
     }
 }

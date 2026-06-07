@@ -74,25 +74,107 @@ pub(crate) fn check_backups(model: &AppRef) {
 }
 
 pub(crate) fn create_share(model: &AppRef) {
-    let source_path = model.ui.share_source_entry.text().trim().to_string();
+    let source_path = normalized_share_source_input(model.ui.share_source_entry.text().as_str());
     if source_path.is_empty() {
         model.ui.notice.set_text("Folder path is required");
         return;
     }
-    let display_name = model.ui.share_name_entry.text().trim().to_string();
+    let Some(source_path) = share_source_path_for_create(model, &source_path) else {
+        return;
+    };
 
     match dispatch_desktop_action(NativeAppAction::CreateShare {
         source_path,
-        display_name,
+        display_name: String::new(),
     }) {
         Ok(_) => {
             model.ui.share_source_entry.set_text("");
-            model.ui.share_name_entry.set_text("");
             model.ui.notice.set_text("Share created");
             refresh(model);
         }
         Err(error) => model.ui.notice.set_text(&error),
     }
+}
+
+fn share_source_path_for_create(model: &AppRef, source_path: &str) -> Option<String> {
+    match provider_entry_kind(source_path) {
+        Ok(Some(kind)) if kind == "directory" => return Some(source_path.to_string()),
+        Ok(Some(_)) => {
+            model.ui.notice.set_text("Share source must be a folder");
+            return None;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            model.ui.notice.set_text(&error);
+            return None;
+        }
+    }
+
+    let created_path = default_created_share_source_path(source_path);
+    match provider_entry_kind(&created_path) {
+        Ok(Some(kind)) if kind == "directory" => Some(created_path),
+        Ok(Some(_)) => {
+            model
+                .ui
+                .notice
+                .set_text(&format!("{created_path} is not a folder"));
+            None
+        }
+        Ok(None) => {
+            let args = vec![
+                "provider".to_string(),
+                "mkdir".to_string(),
+                created_path.clone(),
+            ];
+            match run_idrive_owned(&args) {
+                Ok(()) => Some(created_path),
+                Err(error) => {
+                    model.ui.notice.set_text(&error);
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            model.ui.notice.set_text(&error);
+            None
+        }
+    }
+}
+
+fn provider_entry_kind(path: &str) -> Result<Option<String>, String> {
+    let output = run_idrive_output(["provider", "list"])?;
+    let payload: serde_json::Value = serde_json::from_str(&output)
+        .map_err(|error| format!("provider list returned invalid JSON: {error}"))?;
+    let Some(entries) = payload.get("entries").and_then(serde_json::Value::as_array) else {
+        return Ok(None);
+    };
+    Ok(entries.iter().find_map(|entry| {
+        let entry_path = entry.get("path").and_then(serde_json::Value::as_str)?;
+        if entry_path == path {
+            entry
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        } else {
+            None
+        }
+    }))
+}
+
+fn default_created_share_source_path(source_path: &str) -> String {
+    if source_path == "Shared" || source_path.starts_with("Shared/") {
+        source_path.to_string()
+    } else {
+        format!("Shared/{source_path}")
+    }
+}
+
+fn normalized_share_source_input(source_path: &str) -> String {
+    source_path
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string()
 }
 
 pub(crate) fn accept_share_invite(model: &AppRef) {
@@ -175,10 +257,10 @@ pub(crate) fn show_invite_share_member_dialog(
     body.append(&evidence);
 
     let profile_id = setup_entry("IrisProfile UUID");
-    let app_key = setup_entry("Recipient AppKey");
-    let npub_hint = setup_entry("Representative npub");
+    let app_key = setup_entry("Recipient device key");
+    let npub_hint = setup_entry("User ID");
     let display_name = setup_entry("Name");
-    let label = setup_entry("AppKey label");
+    let label = setup_entry("Device label");
     body.append(&profile_id);
     body.append(&app_key);
     body.append(&npub_hint);
@@ -223,17 +305,16 @@ pub(crate) fn show_invite_share_member_dialog(
                 let label = label.text().trim().to_string();
                 if profile_id.is_empty() && app_key.is_empty() {
                     if representative_npub_hint.is_empty() {
-                        model
-                            .ui
-                            .notice
-                            .set_text("Recipient evidence, IrisProfile/AppKey, or contact npub is required");
+                        model.ui.notice.set_text(
+                            "Recipient evidence, IrisProfile/device key, or User ID is required",
+                        );
                         return;
                     }
                     if !label.is_empty() {
                         model
                             .ui
                             .notice
-                            .set_text("AppKey label requires a concrete AppKey");
+                            .set_text("Device label requires a concrete device key");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::RecordPendingShareInvite {
@@ -247,7 +328,7 @@ pub(crate) fn show_invite_share_member_dialog(
                         model
                             .ui
                             .notice
-                            .set_text("Both IrisProfile UUID and AppKey are required");
+                            .set_text("Both IrisProfile UUID and device key are required");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::InviteShareMember {
@@ -297,24 +378,100 @@ pub(crate) fn repair_share_wraps(model: &AppRef, share_id: String) {
     }
 }
 
-pub(crate) fn add_share_shortcut(model: &AppRef, share_id: String, display_name: String) {
-    let path = if display_name.trim().is_empty() {
-        "Shared folder".to_string()
-    } else {
-        display_name.trim().to_string()
-    };
+pub(crate) fn add_share_shortcut(model: &AppRef, share_id: String) {
     match dispatch_desktop_action(NativeAppAction::AddShareShortcut {
         share_id,
-        path,
+        path: String::new(),
         parent: String::new(),
         target_path: String::new(),
     }) {
         Ok(_) => {
-            model.ui.notice.set_text("Shortcut added");
+            model.ui.notice.set_text("Added to My Drive");
             refresh(model);
         }
         Err(error) => model.ui.notice.set_text(&error),
     }
+}
+
+pub(crate) fn open_share_folder(model: &AppRef, provider_path: String) {
+    if !ensure_daemon_running(model) {
+        model.ui.notice.set_text("Could not start sync");
+        return;
+    }
+
+    let Some(folder) = wait_for_mounted_dir(Duration::from_secs(3)) else {
+        model.ui.notice.set_text("Drive mount unavailable");
+        return;
+    };
+    let local_path = provider_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .fold(folder, |path, segment| path.join(segment));
+    open_path(&local_path);
+}
+
+pub(crate) fn show_delete_share_dialog(model: &AppRef, share_id: String, display_name: String) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Delete share")
+        .modal(true)
+        .default_width(380)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Delete share?"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let message = gtk::Label::new(Some(&format!(
+        "Delete {display_name} from this device? Folder contents stay in My Drive."
+    )));
+    message.add_css_class("iris-muted");
+    message.set_xalign(0.0);
+    message.set_wrap(true);
+    body.append(&message);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let delete = pill_button("Delete");
+    delete.add_css_class("destructive-action");
+    buttons.append(&cancel);
+    buttons.append(&delete);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        delete.connect_clicked(move |_| {
+            match dispatch_desktop_action(NativeAppAction::DeleteShare {
+                share_id: share_id.clone(),
+            }) {
+                Ok(_) => {
+                    model.ui.notice.set_text("Share deleted");
+                    refresh(&model);
+                    dialog.close();
+                }
+                Err(error) => model.ui.notice.set_text(&error),
+            }
+        });
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
 }
 
 pub(crate) fn show_revoke_share_member_dialog(
@@ -435,7 +592,7 @@ pub(crate) fn logout(model: &AppRef) {
 pub(crate) fn show_add_device_dialog(model: &AppRef) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Add an AppKey")
+        .title("Add a Device")
         .modal(true)
         .default_width(420)
         .build();
@@ -449,7 +606,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Add an AppKey"));
+    let title = gtk::Label::new(Some("Add a Device"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
@@ -459,14 +616,14 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
             .map(|account| account.inbound_app_key_link_requests.as_slice())
             .filter(|requests| !requests.is_empty())
         {
-            let heading = gtk::Label::new(Some("AppKeys asking to join"));
+            let heading = gtk::Label::new(Some("Device requests"));
             heading.add_css_class("iris-row-title");
             heading.set_xalign(0.0);
             body.append(&heading);
             for request in requests {
                 let request_url = request.request_link.clone();
                 let request_label = if request.label.is_empty() {
-                    "New AppKey".to_string()
+                    "New device".to_string()
                 } else {
                     request.label.clone()
                 };
@@ -494,7 +651,7 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
                     let dialog = dialog.clone();
                     reject.connect_clicked(move |_| match reject_device(&request_url) {
                         Ok(()) => {
-                            model.ui.notice.set_text("AppKey request rejected");
+                            model.ui.notice.set_text("Device request rejected");
                             refresh(&model);
                             dialog.close();
                         }
@@ -520,15 +677,13 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
         }
     }
 
-    let help = gtk::Label::new(Some(
-        "Paste the AppKey shown by the app install you want to approve.",
-    ));
+    let help = gtk::Label::new(Some("Paste the device key or request link."));
     help.add_css_class("iris-muted");
     help.set_xalign(0.0);
     help.set_wrap(true);
     body.append(&help);
 
-    let device = setup_entry("AppKey");
+    let device = setup_entry("Device key");
     let label = setup_entry("Name (optional)");
     body.append(&device);
     body.append(&label);
@@ -573,9 +728,409 @@ pub(crate) fn show_add_device_dialog(model: &AppRef) {
     dialog.present();
 }
 
+pub(crate) fn show_add_recovery_key_dialog(model: &AppRef) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Add Recovery Key")
+        .modal(true)
+        .default_width(420)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let notice = gtk::Label::new(None);
+    notice.add_css_class("iris-muted");
+    notice.set_xalign(0.0);
+    notice.set_wrap(true);
+
+    render_recovery_key_choices(model, &dialog, &body, &notice);
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+fn reset_recovery_key_dialog_body(body: &gtk::Box, notice: &gtk::Label, title: &str) {
+    clear_box(body);
+    let header = gtk::Label::new(Some(title));
+    header.add_css_class("title-2");
+    header.set_xalign(0.0);
+    body.append(&header);
+    body.append(notice);
+}
+
+fn dialog_button_row(buttons: &[gtk::Button]) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_halign(gtk::Align::End);
+    for button in buttons {
+        row.append(button);
+    }
+    row
+}
+
+fn render_recovery_key_choices(
+    model: &AppRef,
+    dialog: &gtk::Window,
+    body: &gtk::Box,
+    notice: &gtk::Label,
+) {
+    reset_recovery_key_dialog_body(body, notice, "Add Recovery Key");
+    notice.set_text("");
+
+    let generate = primary_button("Generate New");
+    let import = pill_button("Import Existing");
+    let cancel = pill_button("Cancel");
+
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let body = body.clone();
+        let notice = notice.clone();
+        generate.connect_clicked(move |_| {
+            render_generated_recovery_key(&model, &dialog, &body, &notice);
+        });
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let body = body.clone();
+        let notice = notice.clone();
+        import.connect_clicked(move |_| {
+            render_import_recovery_key(&model, &dialog, &body, &notice);
+        });
+    }
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+
+    body.append(&generate);
+    body.append(&import);
+    body.append(&dialog_button_row(&[cancel]));
+}
+
+fn render_generated_recovery_key(
+    model: &AppRef,
+    dialog: &gtk::Window,
+    body: &gtk::Box,
+    notice: &gtk::Label,
+) {
+    let generated = Rc::new(iris_drive_app_core::generate_recovery_key());
+    if !generated.error.trim().is_empty()
+        || generated.words.len() != RECOVERY_PHRASE_WORD_COUNT
+        || generated.recovery_pubkey.trim().is_empty()
+    {
+        reset_recovery_key_dialog_body(body, notice, "Generate Recovery Key");
+        notice.set_text(if generated.error.trim().is_empty() {
+            "Recovery key generation failed"
+        } else {
+            generated.error.trim()
+        });
+        let back = pill_button("Back");
+        let close = pill_button("Close");
+        {
+            let model = Rc::clone(model);
+            let dialog = dialog.clone();
+            let body = body.clone();
+            let notice = notice.clone();
+            back.connect_clicked(move |_| {
+                render_recovery_key_choices(&model, &dialog, &body, &notice);
+            });
+        }
+        {
+            let dialog = dialog.clone();
+            close.connect_clicked(move |_| dialog.close());
+        }
+        body.append(&dialog_button_row(&[back, close]));
+        return;
+    }
+
+    reset_recovery_key_dialog_body(body, notice, "Generate Recovery Key");
+    notice.set_text("Write down each word. Iris Drive will only save the public recovery key.");
+
+    let word_index = Rc::new(Cell::new(0_usize));
+    let word_label = gtk::Label::new(None);
+    word_label.add_css_class("iris-field-name");
+    word_label.set_xalign(0.0);
+    body.append(&word_label);
+
+    let word_value = gtk::Label::new(None);
+    word_value.add_css_class("title-1");
+    word_value.set_halign(gtk::Align::Center);
+    word_value.set_margin_top(4);
+    word_value.set_margin_bottom(10);
+    body.append(&word_value);
+
+    let cancel = pill_button("Cancel");
+    let back = pill_button("Back");
+    let next = primary_button("Next");
+    body.append(&dialog_button_row(&[
+        cancel.clone(),
+        back.clone(),
+        next.clone(),
+    ]));
+
+    let update = {
+        let generated = Rc::clone(&generated);
+        let word_index = Rc::clone(&word_index);
+        let word_label = word_label.clone();
+        let word_value = word_value.clone();
+        let back = back.clone();
+        let next = next.clone();
+        move || {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            word_label.set_text(&format!(
+                "Word {} of {}",
+                index + 1,
+                RECOVERY_PHRASE_WORD_COUNT
+            ));
+            word_value.set_text(generated.words.get(index).map_or("", String::as_str));
+            back.set_sensitive(index > 0);
+            next.set_label(if index == RECOVERY_PHRASE_WORD_COUNT - 1 {
+                "Add Recovery Key"
+            } else {
+                "Next"
+            });
+        }
+    };
+    update();
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let word_index = Rc::clone(&word_index);
+        let update = update.clone();
+        back.connect_clicked(move |_| {
+            word_index.set(word_index.get().saturating_sub(1));
+            update();
+        });
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let notice = notice.clone();
+        let generated = Rc::clone(&generated);
+        let word_index = Rc::clone(&word_index);
+        next.connect_clicked(move |button| {
+            if word_index.get() >= RECOVERY_PHRASE_WORD_COUNT - 1 {
+                button.set_sensitive(false);
+                match add_recovery_device_pubkey(&model, &generated.recovery_pubkey) {
+                    Ok(()) => {
+                        model.ui.notice.set_text("Recovery key added");
+                        refresh(&model);
+                        dialog.close();
+                    }
+                    Err(error) => {
+                        notice.set_text(&error);
+                        button.set_sensitive(true);
+                    }
+                }
+            } else {
+                word_index.set((word_index.get() + 1).min(RECOVERY_PHRASE_WORD_COUNT - 1));
+                update();
+            }
+        });
+    }
+}
+
+fn render_import_recovery_key(
+    model: &AppRef,
+    dialog: &gtk::Window,
+    body: &gtk::Box,
+    notice: &gtk::Label,
+) {
+    reset_recovery_key_dialog_body(body, notice, "Import Recovery Key");
+    notice.set_text("Enter the recovery phrase one word at a time.");
+
+    let words = Rc::new(RefCell::new(vec![
+        String::new();
+        RECOVERY_PHRASE_WORD_COUNT
+    ]));
+    let word_index = Rc::new(Cell::new(0_usize));
+    let word_label = gtk::Label::new(None);
+    word_label.add_css_class("iris-field-name");
+    word_label.set_xalign(0.0);
+    body.append(&word_label);
+
+    let word_entry = setup_entry("Word");
+    body.append(&word_entry);
+
+    let cancel = pill_button("Cancel");
+    let back = pill_button("Back");
+    let next = primary_button("Next");
+    body.append(&dialog_button_row(&[
+        cancel.clone(),
+        back.clone(),
+        next.clone(),
+    ]));
+
+    let update_buttons = {
+        let words = Rc::clone(&words);
+        let word_index = Rc::clone(&word_index);
+        let word_label = word_label.clone();
+        let word_entry = word_entry.clone();
+        let back = back.clone();
+        let next = next.clone();
+        move || {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            word_label.set_text(&format!(
+                "Word {} of {}",
+                index + 1,
+                RECOVERY_PHRASE_WORD_COUNT
+            ));
+            back.set_sensitive(index > 0);
+            next.set_label(if index == RECOVERY_PHRASE_WORD_COUNT - 1 {
+                "Add Recovery Key"
+            } else {
+                "Next"
+            });
+            let current = word_entry.text().trim().to_string();
+            let complete = if index < RECOVERY_PHRASE_WORD_COUNT - 1 {
+                !current.is_empty()
+            } else {
+                let words = words.borrow();
+                words.iter().enumerate().all(|(word_i, word)| {
+                    if word_i == index {
+                        !current.is_empty()
+                    } else {
+                        !word.trim().is_empty()
+                    }
+                })
+            };
+            next.set_sensitive(complete);
+        }
+    };
+
+    let render_word = {
+        let words = Rc::clone(&words);
+        let word_index = Rc::clone(&word_index);
+        let word_entry = word_entry.clone();
+        let update_buttons = update_buttons.clone();
+        move || {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            let word = words.borrow().get(index).cloned().unwrap_or_default();
+            word_entry.set_text(&word);
+            update_buttons();
+        }
+    };
+    render_word();
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+    {
+        let words = Rc::clone(&words);
+        let word_index = Rc::clone(&word_index);
+        let word_entry = word_entry.clone();
+        let render_word = render_word.clone();
+        back.connect_clicked(move |_| {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            words.borrow_mut()[index] = word_entry.text().trim().to_lowercase();
+            word_index.set(index.saturating_sub(1));
+            render_word();
+            word_entry.grab_focus();
+        });
+    }
+    {
+        let words = Rc::clone(&words);
+        let word_index = Rc::clone(&word_index);
+        let word_entry = word_entry.clone();
+        let update_buttons = update_buttons.clone();
+        word_entry.connect_changed(move |entry| {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            words.borrow_mut()[index] = entry.text().trim().to_lowercase();
+            update_buttons();
+        });
+    }
+    {
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let notice = notice.clone();
+        let words = Rc::clone(&words);
+        let word_index = Rc::clone(&word_index);
+        let word_entry = word_entry.clone();
+        let word_entry_for_submit = word_entry.clone();
+        let render_word = render_word.clone();
+        let submit = move |button: &gtk::Button| {
+            let index = word_index.get().min(RECOVERY_PHRASE_WORD_COUNT - 1);
+            words.borrow_mut()[index] = word_entry_for_submit.text().trim().to_lowercase();
+            if words.borrow()[index].trim().is_empty() {
+                render_word();
+                return;
+            }
+            if index < RECOVERY_PHRASE_WORD_COUNT - 1 {
+                word_index.set((index + 1).min(RECOVERY_PHRASE_WORD_COUNT - 1));
+                render_word();
+                word_entry_for_submit.grab_focus();
+                return;
+            }
+
+            let phrase = words
+                .borrow()
+                .iter()
+                .map(|word| word.trim().to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let recovery = iris_drive_app_core::recovery_pubkey_for_phrase(phrase);
+            if !recovery.error.trim().is_empty() || recovery.recovery_pubkey.trim().is_empty() {
+                notice.set_text(if recovery.error.trim().is_empty() {
+                    "Recovery key import failed"
+                } else {
+                    recovery.error.trim()
+                });
+                return;
+            }
+
+            button.set_sensitive(false);
+            match add_recovery_device_pubkey(&model, &recovery.recovery_pubkey) {
+                Ok(()) => {
+                    model.ui.notice.set_text("Recovery key added");
+                    refresh(&model);
+                    dialog.close();
+                }
+                Err(error) => {
+                    notice.set_text(&error);
+                    button.set_sensitive(true);
+                }
+            }
+        };
+        let submit = Rc::new(submit);
+        {
+            let submit = Rc::clone(&submit);
+            next.connect_clicked(move |button| submit(button));
+        }
+        {
+            let submit = Rc::clone(&submit);
+            let next = next.clone();
+            word_entry.connect_activate(move |_| submit(&next));
+        }
+    }
+
+    word_entry.grab_focus();
+}
+
+fn add_recovery_device_pubkey(model: &AppRef, recovery_pubkey: &str) -> Result<(), String> {
+    if recovery_pubkey.trim().is_empty() {
+        return Err("Recovery key is required".to_string());
+    }
+    dispatch_desktop_action(NativeAppAction::AddRecoveryDevice {
+        recovery_pubkey: recovery_pubkey.trim().to_string(),
+    })?;
+    restart_daemon(model);
+    Ok(())
+}
+
 pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
     if device.trim().is_empty() {
-        model.ui.notice.set_text("AppKey is required");
+        model.ui.notice.set_text("Device key is required");
         return false;
     }
 
@@ -587,7 +1142,7 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
     }) {
         Ok(_) => {
             restart_daemon(model);
-            model.ui.notice.set_text("AppKey approved");
+            model.ui.notice.set_text("Device approved");
             refresh(model);
             true
         }
@@ -601,7 +1156,7 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Remove AppKey")
+        .title("Remove Device")
         .modal(true)
         .default_width(360)
         .build();
@@ -615,7 +1170,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Remove AppKey?"));
+    let title = gtk::Label::new(Some("Remove Device?"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
@@ -647,7 +1202,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
         delete.connect_clicked(move |_| match delete_device(&device_npub) {
             Ok(()) => {
                 restart_daemon(&model);
-                model.ui.notice.set_text("AppKey removed");
+                model.ui.notice.set_text("Device removed");
                 refresh(&model);
                 dialog.close();
             }
@@ -713,9 +1268,9 @@ pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
             let message = if key == "app_key_npub" || key == "current_app_key_npub" {
-                "AppKey copied"
+                "Device key copied"
             } else {
-                "AppKey copied"
+                "Device key copied"
             };
             copy_text(model, &value, message);
         }

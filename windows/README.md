@@ -4,10 +4,10 @@ WPF shell for Iris Drive. It mirrors the Linux GTK control panel over the
 shared `idrive` CLI:
 
 - first-run create/restore/link flows
-- AppKey copy and owner-side approval
+- Device key copy and owner-side approval
 - sync start/stop/restart
 - drive folder and snapshot link actions
-- AppKeys, shares, network, and settings pages
+- Devices, shares, network, and settings pages
 - shared-folder create, invite-by-evidence, accept invite, shortcut, repair,
   member role, and revoke actions through Rust app-core
 - local profile logout

@@ -34,9 +34,7 @@ use crate::iris_profile::{
     parse_iris_profile_roster_op_event, project_iris_profile_roster,
 };
 use crate::paths::{config_path_in, key_path_in, recovery_phrase_path_in, sync_cache_path_in};
-use crate::recovery_phrase::{
-    RecoveryPhraseError, generate_recovery_phrase, save_recovery_phrase, validate_recovery_phrase,
-};
+use crate::recovery_phrase::{RecoveryPhraseError, save_recovery_phrase, validate_recovery_phrase};
 
 #[derive(Debug, Error)]
 pub enum ProfileError {
@@ -430,12 +428,9 @@ impl Profile {
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `IrisProfile` roster op log.
     pub fn create(config_dir: &Path, app_key_label: Option<String>) -> Result<Self, ProfileError> {
-        let recovery_phrase = generate_recovery_phrase()?;
         let profile_id = IrisProfileId::new_v4();
-        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
-        save_recovery_phrase(recovery_phrase_path_in(config_dir), &recovery_phrase)?;
         let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
 
         let mut state = ProfileState {
@@ -453,15 +448,8 @@ impl Profile {
         let now = current_unix_seconds();
         let app_actor = AppActorEntry::admin(state.app_key_pubkey.clone(), now, app_key_label);
         let dck = generate_dck();
-        let recovery_pubkey = recovery_key.pubkey_hex();
-        state.profile_roster_ops = initial_profile_roster_ops(
-            device.keys(),
-            profile_id,
-            &app_actor,
-            Some(&recovery_pubkey),
-            &dck,
-            now,
-        )?;
+        state.profile_roster_ops =
+            initial_profile_roster_ops(device.keys(), profile_id, &app_actor, None, &dck, now)?;
         state.sync_app_keys_from_profile();
 
         let profile = Self {
@@ -864,6 +852,50 @@ impl Profile {
         }
         self.state.sync_app_keys_from_profile();
         Ok(())
+    }
+
+    /// Add a recovery phrase as an `IrisProfile` recovery authority by
+    /// deriving its public key. This does not save the phrase.
+    pub fn add_recovery_phrase(&mut self, recovery_phrase: &str) -> Result<String, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
+        self.add_recovery_pubkey(&recovery_key.pubkey_hex())
+    }
+
+    /// Add an already-generated recovery public key. The seed/private material
+    /// never needs to be stored by Iris Drive after the user writes it down.
+    pub fn add_recovery_pubkey(
+        &mut self,
+        recovery_pubkey_hex: &str,
+    ) -> Result<String, ProfileError> {
+        if !self.state.can_admin_profile() {
+            return Err(ProfileError::NoAdminAuthority);
+        }
+        let recovery_pubkey = PublicKey::from_hex(recovery_pubkey_hex)
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?
+            .to_hex();
+        let projection = self.state.profile_projection();
+        if let Some(facet) = projection.active_facets.get(&recovery_pubkey) {
+            if facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase) {
+                return Ok(recovery_pubkey);
+            }
+            return Err(ProfileError::AppKeyAlreadyAuthorized);
+        }
+        if projection.tombstones.contains_key(&recovery_pubkey) {
+            return Err(ProfileError::CurrentAppKeyTombstoned);
+        }
+
+        let now = next_profile_timestamp(&self.state);
+        self.append_profile_roster_op(
+            IrisProfileRosterOp::AddFacet {
+                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), now),
+            },
+            now,
+        )?;
+        let dck = generate_dck();
+        self.rotate_profile_dck_epoch(&dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
+        Ok(recovery_pubkey)
     }
 
     /// Use the profile's recovery phrase authority to admit this install's

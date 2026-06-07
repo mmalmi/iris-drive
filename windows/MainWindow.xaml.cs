@@ -29,12 +29,18 @@ public partial class MainWindow : Window
     private static readonly TimeSpan DriveFolderReconciliationInterval = TimeSpan.FromSeconds(2);
     private readonly IrisDriveService service = new();
     private readonly DispatcherTimer refreshTimer;
+    private readonly DispatcherTimer updateTimer;
     private Process? daemon;
     private IrisDriveStatusData? currentStatus;
+    private IrisDriveUpdateResult? latestUpdate;
     private bool preparingDriveFolder;
     private string? preparedDriveRefreshKey;
     private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
+    private bool updateChecking;
+    private bool updateInstalling;
+    private bool updateAvailable;
+    private string updateStatus = "";
     private bool quitRequested;
     private string submittedLinkTarget = "";
     private const int RecoveryPhraseWordCount = 12;
@@ -52,14 +58,26 @@ public partial class MainWindow : Window
             .ToArray() ?? Array.Empty<string>();
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
-        CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
         settingsUpdating = true;
+        CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
         LocalNhashResolverCheckBox.IsChecked = true;
+        AutoCheckUpdatesCheckBox.IsChecked = ReadAutoCheckUpdates();
+        AutoInstallUpdatesCheckBox.IsChecked = ReadAutoInstallUpdates();
+        UpdateBannerAutoInstallCheckBox.IsChecked = AutoInstallUpdatesCheckBox.IsChecked;
         settingsUpdating = false;
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         refreshTimer.Tick += async (_, _) => await RefreshAsync();
+        updateTimer = new DispatcherTimer { Interval = LoadUpdatePollInterval() };
+        updateTimer.Tick += async (_, _) =>
+        {
+            if (AutoCheckUpdatesCheckBox.IsChecked == true)
+            {
+                await CheckUpdatesAsync(manual: false);
+            }
+        };
         SelectPage("Drive");
         RenderLoading();
+        RenderUpdateState();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -69,6 +87,11 @@ public partial class MainWindow : Window
         refreshTimer.Start();
         await RefreshAsync();
         ApplyLaunchArguments(pendingLaunchArguments);
+        if (AutoCheckUpdatesCheckBox.IsChecked == true)
+        {
+            _ = CheckUpdatesAsync(manual: false);
+        }
+        updateTimer.Start();
     }
 
     internal void ApplyLaunchArguments(string[] launchArguments)
@@ -90,6 +113,7 @@ public partial class MainWindow : Window
         }
 
         refreshTimer.Stop();
+        updateTimer.Stop();
         trayIcon?.Dispose();
         StopDaemon();
         WpfApplication.Current.Shutdown();
@@ -189,7 +213,7 @@ public partial class MainWindow : Window
         RevokedAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         RevokedDeviceBox.Text = status.DeviceNpub ?? "";
         RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.CurrentAppKeyNpub);
-        SetupNotice.Text = notice ?? "AppKey removed";
+        SetupNotice.Text = notice ?? "Device removed";
         UpdateTrayText(false);
     }
 
@@ -275,7 +299,7 @@ public partial class MainWindow : Window
         PeersList.Items.Clear();
         if (status.Peers.Count == 0)
         {
-            PeersList.Items.Add(Row("No AppKeys", "", ""));
+            PeersList.Items.Add(Row("No devices yet", "", ""));
             return;
         }
 
@@ -380,7 +404,7 @@ public partial class MainWindow : Window
         {
             stack.Children.Add(new TextBlock
             {
-                Text = $"AppKey: {peer.DeviceNpub}",
+                Text = $"Device key: {peer.DeviceNpub}",
                 Foreground = (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 FontSize = 12,
@@ -427,7 +451,7 @@ public partial class MainWindow : Window
 
         if (peer.CanRevoke)
         {
-            var delete = PeerActionButton("\uE74D", "Remove AppKey", peer.DeviceNpub);
+            var delete = PeerActionButton("\uE74D", "Remove Device", peer.DeviceNpub);
             delete.Click += DeleteDevice_Click;
             actions.Children.Add(delete);
         }
@@ -571,7 +595,7 @@ public partial class MainWindow : Window
         if (status.IsRevoked)
         {
             StopDaemon();
-            NoticeText.Text = "AppKey removed";
+            NoticeText.Text = "Device removed";
             return false;
         }
 
@@ -786,12 +810,12 @@ public partial class MainWindow : Window
 
     private void CopyAppKey_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.CurrentAppKeyNpub, "AppKey copied");
+        CopyText(currentStatus?.CurrentAppKeyNpub, "Device key copied");
     }
 
     private void CopyDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.DeviceNpub, "AppKey copied");
+        CopyText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
     private void RecoveryPhrase_Click(object sender, RoutedEventArgs e)
@@ -900,12 +924,12 @@ public partial class MainWindow : Window
 
     private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceNpub, "AppKey copied");
+        CopySetupText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
     private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceNpub, "AppKey copied");
+        CopySetupText(currentStatus?.DeviceNpub, "Device key copied");
     }
 
     private async void RelinkRevokedDevice_Click(object sender, RoutedEventArgs e)
@@ -913,14 +937,14 @@ public partial class MainWindow : Window
         var target = currentStatus?.CurrentAppKeyNpub;
         if (string.IsNullOrWhiteSpace(target))
         {
-            SetupNotice.Text = "AppKey unavailable";
+            SetupNotice.Text = "Device key unavailable";
             return;
         }
 
         try
         {
             RevokedRelinkButton.IsEnabled = false;
-            SetupNotice.Text = "Linking app install";
+            SetupNotice.Text = "Linking device";
             await service.RelinkDeviceAsync(target);
             await RefreshAsync();
         }
@@ -1458,6 +1482,182 @@ public partial class MainWindow : Window
         WriteCloseToTrayOnClose(CloseToTrayCheckBox.IsChecked == true);
     }
 
+    private void AutoCheckUpdates_Changed(object sender, RoutedEventArgs e)
+    {
+        if (settingsUpdating)
+        {
+            return;
+        }
+
+        WriteAutoCheckUpdates(AutoCheckUpdatesCheckBox.IsChecked == true);
+        if (AutoCheckUpdatesCheckBox.IsChecked == true)
+        {
+            _ = CheckUpdatesAsync(manual: false);
+        }
+    }
+
+    private void AutoInstallUpdates_Changed(object sender, RoutedEventArgs e)
+    {
+        if (settingsUpdating)
+        {
+            return;
+        }
+
+        var enabled = sender == UpdateBannerAutoInstallCheckBox
+            ? UpdateBannerAutoInstallCheckBox.IsChecked == true
+            : AutoInstallUpdatesCheckBox.IsChecked == true;
+        settingsUpdating = true;
+        AutoInstallUpdatesCheckBox.IsChecked = enabled;
+        UpdateBannerAutoInstallCheckBox.IsChecked = enabled;
+        settingsUpdating = false;
+        WriteAutoInstallUpdates(enabled);
+        if (enabled && CanInstallUpdate)
+        {
+            _ = InstallUpdateAsync();
+        }
+    }
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckUpdatesAsync();
+    }
+
+    private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        await InstallUpdateAsync();
+    }
+
+    private async Task CheckUpdatesAsync(bool manual = true)
+    {
+        if (updateChecking || updateInstalling)
+        {
+            return;
+        }
+
+        var shouldInstall = false;
+        updateChecking = true;
+        if (manual)
+        {
+            updateStatus = "Checking for updates";
+        }
+        RenderUpdateState();
+
+        try
+        {
+            var result = await service.CheckUpdateAsync();
+            if (!string.IsNullOrWhiteSpace(result.Error))
+            {
+                throw new InvalidOperationException(result.Error);
+            }
+
+            latestUpdate = result;
+            updateAvailable = result.Available;
+            if (result.Available)
+            {
+                updateStatus = string.IsNullOrWhiteSpace(result.Asset)
+                    ? $"Update {result.Tag} found without a Windows asset"
+                    : $"Update {result.Tag} available";
+                shouldInstall =
+                    AutoInstallUpdatesCheckBox.IsChecked == true &&
+                    !string.IsNullOrWhiteSpace(result.Asset);
+            }
+            else
+            {
+                updateStatus = manual ? "Up to date" : "";
+            }
+        }
+        catch (Exception error)
+        {
+            if (manual)
+            {
+                updateStatus = error.Message;
+            }
+        }
+        finally
+        {
+            updateChecking = false;
+            RenderUpdateState();
+        }
+        if (shouldInstall)
+        {
+            await InstallUpdateAsync();
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (!CanInstallUpdate || updateInstalling)
+        {
+            return;
+        }
+
+        updateInstalling = true;
+        updateStatus = $"Downloading {UpdateVersionText}";
+        RenderUpdateState();
+        try
+        {
+            var downloadDir = UpdateDownloadDirectory();
+            Directory.CreateDirectory(downloadDir);
+            var result = await service.DownloadUpdateAsync(downloadDir);
+            if (!string.IsNullOrWhiteSpace(result.Error))
+            {
+                throw new InvalidOperationException(result.Error);
+            }
+            if (string.IsNullOrWhiteSpace(result.Path))
+            {
+                throw new InvalidOperationException("Updater did not return a downloaded file.");
+            }
+
+            updateStatus = $"Downloaded {IOPath.GetFileName(result.Path)}";
+            if (!IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_SKIP_OPEN")))
+            {
+                _ = Process.Start(new ProcessStartInfo(result.Path) { UseShellExecute = true });
+            }
+        }
+        catch (Exception error)
+        {
+            updateStatus = error.Message;
+        }
+        finally
+        {
+            updateInstalling = false;
+            RenderUpdateState();
+        }
+    }
+
+    private void RenderUpdateState()
+    {
+        UpdateBanner.Visibility = updateAvailable ? Visibility.Visible : Visibility.Collapsed;
+        UpdateBannerText.Text = UpdateStripeText();
+        UpdateStatusText.Text = updateStatus;
+        CheckUpdatesButton.IsEnabled = !updateChecking && !updateInstalling;
+        InstallUpdateButton.IsEnabled = CanInstallUpdate;
+        UpdateBannerInstallButton.IsEnabled = CanInstallUpdate;
+        settingsUpdating = true;
+        UpdateBannerAutoInstallCheckBox.IsChecked = AutoInstallUpdatesCheckBox.IsChecked;
+        settingsUpdating = false;
+    }
+
+    private bool CanInstallUpdate =>
+        updateAvailable &&
+        latestUpdate is not null &&
+        !string.IsNullOrWhiteSpace(latestUpdate.Asset) &&
+        !updateChecking &&
+        !updateInstalling;
+
+    private string UpdateVersionText =>
+        latestUpdate is null || string.IsNullOrWhiteSpace(latestUpdate.Tag)
+            ? "update"
+            : latestUpdate.Tag;
+
+    private string UpdateStripeText()
+    {
+        var current = service.AppVersion;
+        return string.IsNullOrWhiteSpace(current)
+            ? $"Update available: {UpdateVersionText}"
+            : $"Update available: {UpdateVersionText} (you're on {current})";
+    }
+
     private async void LocalNhashResolver_Changed(object sender, RoutedEventArgs e)
     {
         if (settingsUpdating)
@@ -1500,6 +1700,46 @@ public partial class MainWindow : Window
     private string CloseToTrayConfigPath()
     {
         return IOPath.Combine(service.DefaultConfigDirectory, "windows-close-to-tray-on-close");
+    }
+
+    private static bool ReadAutoCheckUpdates()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Iris Drive");
+        return key?.GetValue("AutoCheckUpdates") is not int value || value != 0;
+    }
+
+    private static void WriteAutoCheckUpdates(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Iris Drive");
+        key?.SetValue("AutoCheckUpdates", enabled ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static bool ReadAutoInstallUpdates()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Iris Drive");
+        return key?.GetValue("AutoInstallUpdates") is int value && value != 0;
+    }
+
+    private static void WriteAutoInstallUpdates(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Iris Drive");
+        key?.SetValue("AutoInstallUpdates", enabled ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static TimeSpan LoadUpdatePollInterval()
+    {
+        var raw = Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_POLL_SECONDS");
+        return double.TryParse(raw, out var seconds) && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : TimeSpan.FromHours(6);
+    }
+
+    private static string UpdateDownloadDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_DOWNLOAD_DIR");
+        return string.IsNullOrWhiteSpace(configured)
+            ? IOPath.Combine(IOPath.GetTempPath(), "IrisDriveDownloads")
+            : configured;
     }
 
     private static string FormatBytes(long bytes)

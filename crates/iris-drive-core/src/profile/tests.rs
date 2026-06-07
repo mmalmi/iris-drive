@@ -6,24 +6,14 @@ use tempfile::tempdir;
 fn create_yields_admin_authorized_account() {
     let dir = tempdir().unwrap();
     let acct = Profile::create(dir.path(), Some("my-laptop".into())).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(dir.path()),
-    )
-    .unwrap();
-    let recovery_keys =
-        RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery")).unwrap();
     assert!(acct.state.can_admin_profile());
     assert!(acct.state.is_authorized());
     assert!(acct.state.can_write_roots());
-    assert_ne!(
-        acct.state.app_key_pubkey,
-        recovery_keys.pubkey_hex(),
-        "the 12-word recovery phrase must not be the app key"
-    );
     assert_eq!(acct.state.profile_id.as_uuid().get_version_num(), 4);
-    // Roster admin authority is not a second key.
+    // Default setup creates only this install's AppKey. Recovery material is
+    // added by explicit recovery setup flows, not by normal profile creation.
     assert!(dir.path().join("key").exists());
-    assert!(dir.path().join("recovery_phrase").exists());
+    assert!(!dir.path().join("recovery_phrase").exists());
     // AppKeys lists one app install — this one.
     let snap = acct.state.app_keys.as_ref().unwrap();
     assert_eq!(snap.profile_id, acct.state.profile_id.to_string());
@@ -35,21 +25,25 @@ fn create_yields_admin_authorized_account() {
         Some(acct.state.app_key_pubkey.as_str())
     );
     assert!(!acct.state.profile_roster_ops.is_empty());
-    assert!(acct.state.profile_roster_ops.iter().all(|op| {
-        op.signer_pubkey == acct.state.app_key_pubkey
-            || op.signer_pubkey == recovery_keys.pubkey_hex()
-    }));
+    assert!(
+        acct.state
+            .profile_roster_ops
+            .iter()
+            .all(|op| op.signer_pubkey == acct.state.app_key_pubkey)
+    );
 
     let projection = acct.state.profile_projection();
     assert!(projection.can_write_roots(&acct.state.app_key_pubkey));
     assert!(projection.can_admin_profile(&acct.state.app_key_pubkey));
-    assert!(!projection.can_write_roots(&recovery_keys.pubkey_hex()));
-    assert!(!projection.can_admin_profile(&recovery_keys.pubkey_hex()));
-    assert_eq!(projection.key_epochs.len(), 1);
     assert_eq!(
-        acct.current_dck_from_recovery_phrase(&phrase).unwrap(),
-        acct.current_dck().unwrap()
+        projection
+            .active_facets
+            .values()
+            .filter(|facet| facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase))
+            .count(),
+        0
     );
+    assert_eq!(projection.key_epochs.len(), 1);
 }
 
 #[test]
@@ -103,11 +97,8 @@ fn restore_from_raw_secret_creates_fresh_profile_with_fresh_app_key() {
 #[test]
 fn offline_restore_from_recovery_phrase_creates_fresh_profile_and_export_phrase() {
     let dir_a = tempdir().unwrap();
-    let original = Profile::create(dir_a.path(), None).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(dir_a.path()),
-    )
-    .unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let original = Profile::restore(dir_a.path(), &phrase, None).unwrap();
     assert_eq!(phrase.split_whitespace().count(), 12);
 
     let dir_b = tempdir().unwrap();
@@ -129,11 +120,8 @@ fn offline_restore_from_recovery_phrase_creates_fresh_profile_and_export_phrase(
 #[test]
 fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_derivation() {
     let owner_dir = tempdir().unwrap();
-    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(owner_dir.path()),
-    )
-    .unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let owner = Profile::restore(owner_dir.path(), &phrase, Some("native".into())).unwrap();
 
     let restored_dir = tempdir().unwrap();
     let restored = Profile::restore_with_profile_roster_ops(
@@ -169,11 +157,8 @@ fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_deriva
 #[test]
 fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears() {
     let owner_dir = tempdir().unwrap();
-    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(owner_dir.path()),
-    )
-    .unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let owner = Profile::restore(owner_dir.path(), &phrase, Some("native".into())).unwrap();
     let fallback_dir = tempdir().unwrap();
     let mut fallback = Profile::restore(fallback_dir.path(), &phrase, Some("fallback".into()))
         .expect("fallback restore");
@@ -202,11 +187,8 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
 #[test]
 fn fallback_nsec_restore_can_reconcile_with_recovery_roster_evidence() {
     let owner_dir = tempdir().unwrap();
-    let owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(owner_dir.path()),
-    )
-    .unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let owner = Profile::restore(owner_dir.path(), &phrase, Some("native".into())).unwrap();
     let recovery_nsec = crate::recovery_phrase::recovery_phrase_to_nsec(&phrase).unwrap();
     let fallback_dir = tempdir().unwrap();
     let mut fallback = Profile::restore(fallback_dir.path(), &recovery_nsec, None).unwrap();
@@ -272,11 +254,8 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
 #[test]
 fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(owner_dir.path()),
-    )
-    .unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let mut owner = Profile::restore(owner_dir.path(), &phrase, Some("native".into())).unwrap();
     let recovery_key =
         RecoveryKey::from_recovery_phrase(&phrase, owner_dir.path().join("recovery")).unwrap();
     let old_owner_dck = owner.current_dck().unwrap();
@@ -350,6 +329,44 @@ fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
         acct.current_dck_from_nip46_keys(&nip46).unwrap(),
         acct.current_dck().unwrap()
     );
+}
+
+#[test]
+fn admin_can_add_generated_recovery_pubkey_after_create() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), Some("native".into())).unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let recovery_pubkey = crate::recovery_phrase::recovery_phrase_to_keys(&phrase)
+        .unwrap()
+        .public_key()
+        .to_hex();
+    assert_eq!(
+        acct.add_recovery_pubkey(&recovery_pubkey).unwrap(),
+        recovery_pubkey
+    );
+
+    let projection = acct.state.profile_projection();
+    let facet = projection.active_facets.get(&recovery_pubkey).unwrap();
+    assert!(facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase));
+    assert!(!projection.can_write_roots(&recovery_pubkey));
+    assert!(!projection.can_admin_profile(&recovery_pubkey));
+    let latest_epoch = projection.key_epochs.keys().next_back().copied().unwrap();
+    assert_eq!(
+        projection.key_wrap_status(&recovery_pubkey, latest_epoch),
+        KeyWrapStatus::Available
+    );
+    assert_eq!(
+        acct.current_dck_from_recovery_phrase(&phrase).unwrap(),
+        acct.current_dck().unwrap()
+    );
+    assert!(!dir.path().join("recovery_phrase").exists());
+
+    let op_count = acct.state.profile_roster_ops.len();
+    assert_eq!(
+        acct.add_recovery_pubkey(&recovery_pubkey).unwrap(),
+        recovery_pubkey
+    );
+    assert_eq!(acct.state.profile_roster_ops.len(), op_count);
 }
 
 #[test]

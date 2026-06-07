@@ -292,12 +292,12 @@ pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serd
     let relays = client.relays().await;
     let mut payload = Vec::with_capacity(relays.len());
     for (url, relay) in relays {
-        let Ok(url) = normalize_relay_url(url.as_ref()) else {
+        let Ok(url) = normalize_relay_url(url.as_str()) else {
             continue;
         };
         payload.push(json!({
             "url": url,
-            "status": relay_status_label(relay.status().await),
+            "status": relay_status_label(relay.status()),
         }));
     }
     payload
@@ -349,6 +349,8 @@ pub(crate) fn relay_status_label(status: RelayStatus) -> &'static str {
         RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting => "connecting",
         RelayStatus::Connected => "connected",
         RelayStatus::Disconnected => "offline",
+        RelayStatus::Banned => "banned",
+        RelayStatus::Sleeping => "sleeping",
         RelayStatus::Terminated => "terminated",
     }
 }

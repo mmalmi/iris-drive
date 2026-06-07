@@ -6,6 +6,7 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
         SharesCmd::Create { source_path, name } => {
             cmd_shares_create(config_dir, &source_path, name.as_deref())
         }
+        SharesCmd::Delete { share_id } => cmd_shares_delete(config_dir, &share_id),
         SharesCmd::List { diagnostics } => cmd_shares_list(config_dir, diagnostics),
         SharesCmd::Members { share_id } => cmd_shares_members(config_dir, &share_id),
         SharesCmd::RecipientEvidence { display_name } => {
@@ -89,6 +90,25 @@ fn cmd_shares_create(config_dir: &Path, source_path: &str, name: Option<&str>) -
         "{}",
         json!({
             "share": share_view_json(created),
+            "shares": share_views_json(&result.shares),
+        })
+    );
+    Ok(())
+}
+
+fn cmd_shares_delete(config_dir: &Path, share_id: &str) -> Result<()> {
+    let share_id = share_id
+        .parse::<iris_drive_core::IrisProfileId>()
+        .context("parsing share id")?;
+    let result = dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::DeleteShare { share_id },
+    )
+    .context("deleting shared folder")?;
+    println!(
+        "{}",
+        json!({
+            "share_id": share_id.to_string(),
             "shares": share_views_json(&result.shares),
         })
     );
@@ -667,6 +687,39 @@ mod tests {
                 .get(&account.state.app_key_pubkey),
             Some(&account.state.profile_id)
         );
+        assert!(saved.share_shortcuts.is_empty());
+    }
+
+    #[test]
+    fn shares_delete_command_removes_share_and_shortcuts() {
+        let config_dir = tempdir().unwrap();
+        let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
+        let folder = iris_drive_core::create_shared_folder(
+            account.app_key.keys(),
+            account.state.profile_id,
+            "Projects/Alpha",
+            "Alpha",
+            Some("Mac".into()),
+            Vec::new(),
+            10,
+        )
+        .unwrap();
+        let share_id = folder.share_id;
+        let mut config = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        config.upsert_shared_folder(folder);
+        config.upsert_share_shortcut(
+            iris_drive_core::ShareShortcut::new(share_id, "Projects/Alpha", "").unwrap(),
+        );
+        config.save(config_path_in(config_dir.path())).unwrap();
+
+        cmd_shares_delete(config_dir.path(), &share_id.to_string()).unwrap();
+
+        let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+        assert!(saved.shared_folders.is_empty());
+        assert!(saved.share_shortcuts.is_empty());
     }
 
     #[test]

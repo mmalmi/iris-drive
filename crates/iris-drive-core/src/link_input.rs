@@ -17,7 +17,7 @@ use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approv
 use crate::app_key_summary::pubkey_npub;
 
 const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
-const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual AppKey linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
+const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LinkInputClassification {
@@ -90,7 +90,7 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
     }
 
     "unknown".clone_into(&mut classification.kind);
-    "expected AppKey pubkey or IrisProfile invite link".clone_into(&mut classification.error);
+    "expected device key or IrisProfile invite link".clone_into(&mut classification.error);
     classification
 }
 
@@ -106,7 +106,7 @@ pub fn resolve_app_key_link_target(
         }
         let profile_id = invite
             .profile_id
-            .ok_or_else(|| anyhow!("AppKey invite is missing IrisProfile id"))?;
+            .ok_or_else(|| anyhow!("device invite is missing IrisProfile id"))?;
         return Ok(AppKeyLinkTarget {
             profile_id,
             admin_app_key_hex: invite.admin_app_key_hex,
@@ -126,7 +126,7 @@ pub fn resolve_app_key_link_target(
             .parse::<IrisProfileId>()
             .context("parsing IrisProfile UUID")?,
         admin_app_key_hex: normalize_app_key_pubkey(manual_admin_app_key)
-            .context("parsing admin AppKey pubkey")?,
+            .context("parsing admin device key")?,
         link_secret: String::new(),
     })
 }
@@ -172,7 +172,7 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
                 classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
             }
             Ok(None) => {
-                "AppKey-link request was not recognized".clone_into(&mut classification.error);
+                "device request was not recognized".clone_into(&mut classification.error);
             }
             Err(error) => classification.error = error.to_string(),
         }
@@ -214,7 +214,7 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
             classification.admin_app_key_pubkey = pubkey_npub(&invite.admin_app_key_hex);
             classification.has_link_secret = !invite.link_secret.trim().is_empty();
         }
-        Ok(None) => "AppKey invite was not recognized".clone_into(&mut classification.error),
+        Ok(None) => "device invite was not recognized".clone_into(&mut classification.error),
         Err(error) if classification.is_complete => {
             classification.error = error.to_string();
         }

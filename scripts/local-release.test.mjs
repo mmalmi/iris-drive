@@ -9,6 +9,10 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import {
+  buildNumberFromVersion,
+  bumpCargoPackageVersion,
+  bumpPbxprojReleaseVersions,
+  bumpXcodegenProjectVersions,
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
@@ -28,6 +32,31 @@ version = "0.2.27"
 `)
 
   assert.equal(tag, 'v0.2.27')
+})
+
+test('release version helpers sync native platform metadata', () => {
+  assert.equal(buildNumberFromVersion('v0.1.5'), '1005')
+
+  assert.equal(
+    bumpCargoPackageVersion('[package]\nname = "iris-drive-linux"\nversion = "0.1.4"\n\n[dependencies]\n', 'v0.1.5'),
+    '[package]\nname = "iris-drive-linux"\nversion = "0.1.5"\n\n[dependencies]\n',
+  )
+
+  assert.equal(
+    bumpXcodegenProjectVersions(
+      'settings:\n  base:\n    MARKETING_VERSION: "0.1.4"\n    CURRENT_PROJECT_VERSION: "1004"\n',
+      'v0.1.5',
+    ),
+    'settings:\n  base:\n    MARKETING_VERSION: "0.1.5"\n    CURRENT_PROJECT_VERSION: "1005"\n',
+  )
+
+  assert.equal(
+    bumpPbxprojReleaseVersions(
+      'MARKETING_VERSION = 0.1.4;\nCURRENT_PROJECT_VERSION = 1004;\n',
+      'v0.1.5',
+    ),
+    'MARKETING_VERSION = 0.1.5;\nCURRENT_PROJECT_VERSION = 1005;\n',
+  )
 })
 
 test('buildReleaseManifest marks idrive archives as binary archives', () => {
@@ -136,7 +165,14 @@ test('validateReleaseAssetSet requires complete public app artifacts for final r
     () => validateReleaseAssetSet(['idrive-v0.2.27-aarch64-apple-darwin.tar.gz'], {
       requireCompleteAppRelease: true,
     }),
-    /macOS DMG.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+  )
+})
+
+test('validateReleaseAssetSet requires a macOS updater archive beside the DMG', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['iris-drive-v0.2.27-macos-arm64.dmg']),
+    /macOS \.app\.tar\.gz updater archive/,
   )
 })
 
@@ -151,6 +187,7 @@ test('plannedReleaseAssetNames names the public release artifacts', () => {
   assert.deepEqual(plannedReleaseAssetNames('0.2.27', ['macos', 'linux', 'windows', 'android']), [
     'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
     'iris-drive-v0.2.27-macos-arm64.dmg',
+    'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
     'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
     'iris-drive-v0.2.27-linux-x64.deb',
     'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
@@ -205,7 +242,7 @@ test('local-release dry-run validates planned build assets over partial existing
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /Would stage 8 planned asset\(s\)/)
+  assert.match(result.stdout, /Would stage 9 planned asset\(s\)/)
 })
 
 test('local-release final dry-run rejects a missing Android keystore file', () => {
@@ -390,6 +427,7 @@ test('local-release dry-run passes release versions to macOS and Android builder
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
   assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
   assert.match(result.stdout, /--timestamp/)
+  assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
   assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
   assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)

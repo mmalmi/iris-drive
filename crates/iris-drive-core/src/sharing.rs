@@ -1395,21 +1395,18 @@ pub fn sign_share_roster_checkpoint(
     let content_json =
         serde_json::to_string(&content).map_err(|error| SharingError::Invite(error.to_string()))?;
     let ts = u64::try_from(created_at).unwrap_or(0);
-    let event = EventBuilder::new(
-        Kind::from(KIND_SHARE_ROSTER_CHECKPOINT),
-        content_json,
-        vec![
+    let event = EventBuilder::new(Kind::from(KIND_SHARE_ROSTER_CHECKPOINT), content_json)
+        .tags(vec![
             Tag::identifier(share_roster_checkpoint_d_tag(
                 folder.share_id,
                 &client_nonce,
             )),
             Tag::custom(iris_profile_tag_kind(), [folder.share_id.to_string()]),
             Tag::public_key(signer_keys.public_key()),
-        ],
-    )
-    .custom_created_at(nostr_sdk::Timestamp::from(ts))
-    .to_event(signer_keys)
-    .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
+        ])
+        .custom_created_at(nostr_sdk::Timestamp::from(ts))
+        .sign_with_keys(signer_keys)
+        .map_err(|error| SharingError::RosterCheckpoint(error.to_string()))?;
     parse_share_roster_checkpoint_event(&event)
 }
 
@@ -1423,6 +1420,7 @@ pub fn parse_share_roster_checkpoint_event(
         )));
     }
     let d_tag = event
+        .tags
         .identifier()
         .ok_or_else(|| SharingError::RosterCheckpoint("missing d tag".to_string()))?;
     let (d_tag_share_id, d_tag_nonce) = parse_share_roster_checkpoint_d_tag(d_tag)?;
@@ -1449,7 +1447,7 @@ pub fn parse_share_roster_checkpoint_event(
             d_tag_nonce, content.client_nonce
         )));
     }
-    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.created_at != event_created_at {
         return Err(SharingError::RosterCheckpoint(format!(
             "event created_at {} does not match content created_at {}",
@@ -2986,18 +2984,15 @@ pub fn build_share_member_roster_op_event(
     let content_json = serde_json::to_string(&content)
         .map_err(|e| SharingError::ShareMemberRoster(e.to_string()))?;
     let ts = u64::try_from(created_at).unwrap_or(0);
-    EventBuilder::new(
-        Kind::from(KIND_SHARE_MEMBER_ROSTER_OP),
-        content_json,
-        vec![
+    EventBuilder::new(Kind::from(KIND_SHARE_MEMBER_ROSTER_OP), content_json)
+        .tags(vec![
             Tag::identifier(share_member_roster_op_d_tag(share_id, &client_nonce)),
             Tag::custom(iris_profile_tag_kind(), [share_id.to_string()]),
             Tag::public_key(signer_keys.public_key()),
-        ],
-    )
-    .custom_created_at(nostr_sdk::Timestamp::from(ts))
-    .to_event(signer_keys)
-    .map_err(|e| SharingError::ShareMemberRoster(e.to_string()))
+        ])
+        .custom_created_at(nostr_sdk::Timestamp::from(ts))
+        .sign_with_keys(signer_keys)
+        .map_err(|e| SharingError::ShareMemberRoster(e.to_string()))
 }
 
 pub fn parse_share_member_roster_op_event(
@@ -3010,6 +3005,7 @@ pub fn parse_share_member_roster_op_event(
         )));
     }
     let d_tag = event
+        .tags
         .identifier()
         .ok_or_else(|| SharingError::ShareMemberRoster("missing d tag".to_string()))?;
     let (d_tag_share_id, d_tag_nonce) = parse_share_member_roster_op_d_tag(d_tag)?;
@@ -3036,7 +3032,7 @@ pub fn parse_share_member_roster_op_event(
             d_tag_nonce, content.client_nonce
         )));
     }
-    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.created_at != event_created_at {
         return Err(SharingError::ShareMemberRoster(format!(
             "event created_at {} does not match content created_at {}",

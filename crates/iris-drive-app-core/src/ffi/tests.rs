@@ -133,10 +133,11 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(account.current_app_key_label, "Pixel");
     assert!(account.can_admin_profile);
     assert!(account.can_write_roots);
+    assert!(!account.can_export_recovery_phrase);
     assert_eq!(account.active_app_key_count, 1);
-    assert_eq!(account.profile_roster_op_count, 3);
+    assert_eq!(account.profile_roster_op_count, 2);
     assert_eq!(account.current_key_epoch, Some(1));
-    assert_eq!(account.recovery_phrase_facet_count, 1);
+    assert_eq!(account.recovery_phrase_facet_count, 0);
     assert_eq!(account.nip46_facet_count, 0);
     assert_eq!(account.social_profile_facet_count, 0);
     assert!(account.missing_key_wraps.is_empty());
@@ -150,12 +151,12 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!account.app_key_link_invite.contains("device-"));
     assert_eq!(state.ui.app_actors.len(), 1);
     assert_eq!(state.ui.app_actors[0].label, "Pixel");
-    assert_eq!(state.ui.app_actors[0].display_label, "This AppKey");
+    assert_eq!(state.ui.app_actors[0].display_label, "This Device");
     assert_eq!(state.ui.app_actors[0].role, "admin");
     assert_eq!(state.ui.app_actors[0].role_label, "Admin");
     assert_eq!(state.ui.app_actors[0].state_label, "Linked");
     assert_eq!(state.ui.app_actors[0].connection_state, "local");
-    assert_eq!(state.ui.app_actors[0].connection_label, "This AppKey");
+    assert_eq!(state.ui.app_actors[0].connection_label, "This Device");
     assert!(state.ui.snapshot_link.is_empty());
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
@@ -177,6 +178,15 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.authorized_app_key_count, 1);
     assert_eq!(state.ui.online_app_key_count, 0);
     assert!(state.ui.shares.is_empty());
+    let export = super::export_recovery_secret(dir.path().display().to_string());
+    assert!(!export.can_export);
+    assert!(export.words.is_empty());
+    assert!(export.recovery_phrase.is_empty());
+    assert!(
+        export.error.contains("loading recovery phrase"),
+        "{}",
+        export.error
+    );
 
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
@@ -187,6 +197,79 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
     assert_eq!(state.ui.sync.status_label, "Sync paused");
+}
+
+#[test]
+fn add_recovery_key_saves_only_generated_public_key_to_devices_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let generated = super::generate_recovery_key();
+    assert!(generated.error.is_empty(), "{}", generated.error);
+    assert_eq!(generated.words.len(), 12);
+    assert!(generated.recovery_pubkey.starts_with("npub1"));
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Pixel".to_owned(),
+    });
+    assert!(created.error.is_empty(), "{}", created.error);
+    let created_account = created.ui.profile.as_ref().expect("profile exists");
+    assert_eq!(created_account.recovery_phrase_facet_count, 0);
+    assert!(!created_account.can_export_recovery_phrase);
+    assert_eq!(created.ui.app_actors.len(), 1);
+
+    let updated = app.dispatch(NativeAppAction::AddRecoveryDevice {
+        recovery_pubkey: generated.recovery_pubkey.clone(),
+    });
+    assert!(updated.error.is_empty(), "{}", updated.error);
+    let account = updated.ui.profile.as_ref().expect("profile exists");
+    assert_eq!(account.active_app_key_count, 1);
+    assert_eq!(account.recovery_phrase_facet_count, 1);
+    assert!(!account.can_export_recovery_phrase);
+    assert_eq!(account.profile_roster_op_count, 4);
+    assert!(!dir.path().join("recovery_phrase").exists());
+
+    let recovery_devices = updated
+        .ui
+        .app_actors
+        .iter()
+        .filter(|device| device.role == "recovery")
+        .collect::<Vec<_>>();
+    assert_eq!(recovery_devices.len(), 1);
+    assert_eq!(recovery_devices[0].display_label, "Recovery key");
+    assert_eq!(recovery_devices[0].connection_label, "Recovery key");
+    assert!(!recovery_devices[0].is_online);
+    assert!(!recovery_devices[0].can_revoke);
+
+    let export = super::export_recovery_secret(dir.path().display().to_string());
+    assert!(!export.can_export);
+    assert!(export.recovery_phrase.is_empty());
+    assert!(
+        export.error.contains("loading recovery phrase"),
+        "{}",
+        export.error
+    );
+
+    let repeated = app.dispatch(NativeAppAction::AddRecoveryDevice {
+        recovery_pubkey: generated.recovery_pubkey,
+    });
+    assert!(repeated.error.is_empty(), "{}", repeated.error);
+    let repeated_account = repeated.ui.profile.as_ref().expect("profile exists");
+    assert_eq!(repeated_account.recovery_phrase_facet_count, 1);
+    assert_eq!(repeated_account.profile_roster_op_count, 4);
+}
+
+#[test]
+fn import_recovery_key_derives_public_key_without_returning_words() {
+    let phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    let imported = super::recovery_pubkey_for_phrase(phrase);
+
+    assert!(imported.error.is_empty(), "{}", imported.error);
+    assert!(imported.recovery_pubkey.starts_with("npub1"));
+    assert!(imported.words.is_empty());
+
+    let invalid = super::recovery_pubkey_for_phrase("not enough words".to_owned());
+    assert!(!invalid.error.is_empty());
+    assert!(invalid.recovery_pubkey.is_empty());
+    assert!(invalid.words.is_empty());
 }
 
 #[test]
@@ -333,6 +416,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     });
     assert!(created_share.error.is_empty(), "{}", created_share.error);
     assert_eq!(created_share.ui.shares.len(), 1);
+    assert_eq!(created_share.ui.shares[0].shortcut_paths, vec!["Alpha"]);
     let share_id = created_share.ui.shares[0].share_id.clone();
 
     let recipient_dir = tempfile::tempdir().unwrap();
@@ -382,6 +466,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     assert_eq!(accepted.ui.shares[0].share_id, share_id);
     assert_eq!(accepted.ui.shares[0].role, "reader");
     assert_eq!(accepted.ui.shares[0].members.len(), 2);
+    assert_eq!(accepted.ui.shares[0].shortcut_paths, vec!["Alpha"]);
 
     let promoted = owner_app.dispatch(NativeAppAction::SetShareMemberRole {
         share_id: share_id.clone(),
@@ -405,7 +490,10 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
         target_path: String::new(),
     });
     assert!(shortcut.error.is_empty(), "{}", shortcut.error);
-    assert_eq!(shortcut.ui.shares[0].shortcut_paths, vec!["Projects/Alpha"]);
+    assert_eq!(
+        shortcut.ui.shares[0].shortcut_paths,
+        vec!["Alpha", "Projects/Alpha"]
+    );
 
     let revoked = owner_app.dispatch(NativeAppAction::RevokeShareMember {
         share_id,
@@ -418,6 +506,43 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
         ui_share_member(owner_share, &recipient_profile.profile_id).status,
         "revoked"
     );
+}
+
+#[test]
+fn app_action_delete_share_removes_share_and_shortcuts() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    assert!(created.error.is_empty(), "{}", created.error);
+
+    let shared = app.dispatch(NativeAppAction::CreateShare {
+        source_path: "Projects/Alpha".to_owned(),
+        display_name: "Alpha".to_owned(),
+    });
+    assert!(shared.error.is_empty(), "{}", shared.error);
+    let share_id = shared.ui.shares[0].share_id.clone();
+
+    let shortcut = app.dispatch(NativeAppAction::AddShareShortcut {
+        share_id: share_id.clone(),
+        path: "Projects/Alpha shared".to_owned(),
+        parent: String::new(),
+        target_path: String::new(),
+    });
+    assert!(shortcut.error.is_empty(), "{}", shortcut.error);
+    assert_eq!(
+        shortcut.ui.shares[0].shortcut_paths,
+        vec!["Alpha", "Projects/Alpha shared"]
+    );
+
+    let deleted = app.dispatch(NativeAppAction::DeleteShare { share_id });
+    assert!(deleted.error.is_empty(), "{}", deleted.error);
+    assert!(deleted.ui.shares.is_empty());
+
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(saved.shared_folders.is_empty());
+    assert!(saved.share_shortcuts.is_empty());
 }
 
 #[test]
@@ -570,8 +695,10 @@ fn app_action_exports_share_recipient_evidence_for_core_invites() {
 #[test]
 fn recovery_phrase_export_restores_fresh_profile_without_roster_evidence() {
     let dir = tempfile::tempdir().unwrap();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
-    let created = app.dispatch(NativeAppAction::CreateProfile {
+    let created = app.dispatch(NativeAppAction::RestoreProfile {
+        recovery_secret: recovery_phrase.clone(),
         app_key_label: "Pixel".to_owned(),
     });
     let created_account = created.ui.profile.as_ref().expect("account exists");
@@ -582,8 +709,8 @@ fn recovery_phrase_export_restores_fresh_profile_without_roster_evidence() {
     assert!(export.can_export);
     assert_eq!(export.words.len(), 12);
     assert_eq!(export.recovery_phrase.split_whitespace().count(), 12);
+    assert_eq!(export.recovery_phrase, recovery_phrase);
     assert!(export.secret_key.starts_with("nsec1"));
-    let recovery_phrase = export.recovery_phrase.clone();
     let secret_key = export.secret_key.clone();
 
     let restored_dir = tempfile::tempdir().unwrap();
@@ -616,8 +743,10 @@ fn recovery_phrase_export_restores_fresh_profile_without_roster_evidence() {
 #[test]
 fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
     let owner_dir = tempfile::tempdir().unwrap();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
-    let created = owner_app.dispatch(NativeAppAction::CreateProfile {
+    let created = owner_app.dispatch(NativeAppAction::RestoreProfile {
+        recovery_secret: recovery_phrase.clone(),
         app_key_label: "Native".to_owned(),
     });
     let created_account = created.ui.profile.expect("created account exists");
@@ -674,19 +803,21 @@ fn saved_recovery_phrase_admits_restored_app_key_after_profile_log_sync() {
 #[test]
 fn raw_secret_key_restore_uses_fresh_app_key_without_phrase_export() {
     let dir = tempfile::tempdir().unwrap();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
-    let created = app.dispatch(NativeAppAction::CreateProfile {
+    let created = app.dispatch(NativeAppAction::RestoreProfile {
+        recovery_secret: recovery_phrase.clone(),
         app_key_label: "Pixel".to_owned(),
     });
     assert!(created.error.is_empty(), "{}", created.error);
     let created_account = created.ui.profile.as_ref().expect("profile exists");
-    let export = super::export_recovery_secret(dir.path().display().to_string());
-    assert!(export.error.is_empty(), "{}", export.error);
+    let secret_key = iris_drive_core::recovery_phrase::recovery_phrase_to_nsec(&recovery_phrase)
+        .expect("recovery phrase derives secret");
 
     let restored_dir = tempfile::tempdir().unwrap();
     let restored_app = FfiApp::new(restored_dir.path().display().to_string(), "test".to_owned());
     let restored = restored_app.dispatch(NativeAppAction::RestoreProfile {
-        recovery_secret: export.secret_key,
+        recovery_secret: secret_key,
         app_key_label: "Restored".to_owned(),
     });
 
@@ -871,7 +1002,7 @@ fn link_device_rejects_bare_app_key_without_profile_target() {
     assert!(
         state
             .error
-            .contains("paste an IrisProfile invite URL to link this AppKey")
+            .contains("paste an IrisProfile invite URL to link this device")
     );
 }
 
@@ -908,6 +1039,18 @@ fn snapshot_link_uses_drive_iris_nhash_route() {
             .starts_with("https://drive.iris.to/#/nhash1")
     );
     assert!(!refreshed.ui.snapshot_link.contains("/snapshot/"));
+}
+
+#[test]
+fn drive_link_for_cid_uses_drive_iris_nhash_route() {
+    let root_cid = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
+                    :1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+        .replace(char::is_whitespace, "");
+
+    let link = super::drive_link_for_cid_value(&root_cid);
+
+    assert!(link.error.is_empty());
+    assert!(link.url.starts_with("https://drive.iris.to/#/nhash1"));
 }
 
 #[test]
@@ -971,7 +1114,7 @@ fn link_action_tracks_pending_approval() {
     assert!(!account.app_key_link_request.contains("app_key=device-"));
     assert!(
         state.ui.app_actors.is_empty(),
-        "pending AppKeys should not appear in the authorized AppKey roster"
+        "pending devices should not appear in the authorized device roster"
     );
     assert_eq!(state.ui.setup_state, "awaiting_approval");
     assert!(!state.ui.setup_complete);
@@ -1213,7 +1356,7 @@ fn native_fips_status_drives_device_online_presence() {
     assert!(current.is_online);
     assert_eq!(current.state, "Linked");
     assert_eq!(current.connection_state, "local");
-    assert_eq!(current.connection_label, "This AppKey");
+    assert_eq!(current.connection_label, "This Device");
     assert_eq!(refreshed.ui.fips.state, "running");
     assert_eq!(refreshed.ui.fips.state_label, "Running");
     assert_eq!(refreshed.ui.fips.roster_label, "1/1 online");

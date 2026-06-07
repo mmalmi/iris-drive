@@ -27,6 +27,9 @@ pub enum ShareAction {
         #[serde(default)]
         display_name: Option<String>,
     },
+    DeleteShare {
+        share_id: IrisProfileId,
+    },
     InviteShareMember {
         share_id: IrisProfileId,
         profile_id: IrisProfileId,
@@ -130,6 +133,7 @@ pub fn dispatch_share_action(
 ) -> Result<ShareActionResult> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let metadata = apply_share_action(config_dir, &mut config, action, now_seconds)?;
+    repair_missing_share_shortcuts(&mut config)?;
     let current_app_pubkey = config
         .profile
         .as_ref()
@@ -159,7 +163,8 @@ pub fn dispatch_share_action(
 }
 
 pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let shortcuts_repaired = repair_missing_share_shortcuts(&mut config)?;
     let current_app_pubkey = config
         .profile
         .as_ref()
@@ -171,6 +176,9 @@ pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
         &config.share_shortcuts,
         &current_app_pubkey,
     );
+    if shortcuts_repaired {
+        config.save(config_path_in(config_dir))?;
+    }
     Ok(ShareActionResult {
         shares,
         share_id: None,
@@ -204,6 +212,7 @@ fn apply_share_action(
             display_name.as_deref(),
             now_seconds,
         ),
+        ShareAction::DeleteShare { share_id } => delete_share(config, share_id),
         ShareAction::InviteShareMember {
             share_id,
             profile_id,
@@ -317,7 +326,20 @@ fn create_share(
         now_seconds,
     )?;
     let share_id = folder.share_id;
+    let shortcut = ensure_default_share_shortcut(config, share_id, &display_name)?;
     config.upsert_shared_folder(folder);
+    Ok(ShareActionMetadata {
+        share_id: Some(share_id),
+        shortcut,
+        ..ShareActionMetadata::default()
+    })
+}
+
+fn delete_share(config: &mut AppConfig, share_id: IrisProfileId) -> Result<ShareActionMetadata> {
+    config
+        .remove_shared_folder(share_id)
+        .with_context(|| format!("share not found: {share_id}"))?;
+    config.remove_share_shortcuts_for_share(share_id);
     Ok(ShareActionMetadata {
         share_id: Some(share_id),
         ..ShareActionMetadata::default()
@@ -425,9 +447,12 @@ fn accept_share_invite(
         .profile_id;
     let folder = shared_folder_from_invite_for_profile(invite, local_profile_id)?;
     let share_id = folder.share_id;
+    let display_name = folder.display_name.clone();
     config.upsert_shared_folder(folder);
+    let shortcut = ensure_default_share_shortcut(config, share_id, &display_name)?;
     Ok(ShareActionMetadata {
         share_id: Some(share_id),
+        shortcut,
         ..ShareActionMetadata::default()
     })
 }
@@ -524,6 +549,37 @@ fn add_share_shortcut(
     })
 }
 
+fn ensure_default_share_shortcut(
+    config: &mut AppConfig,
+    share_id: IrisProfileId,
+    display_name: &str,
+) -> Result<Option<ShareShortcut>> {
+    if config
+        .share_shortcuts
+        .iter()
+        .any(|shortcut| shortcut.share_id == share_id)
+    {
+        return Ok(None);
+    }
+    let shortcut_path = default_share_shortcut_path(&config.share_shortcuts, display_name, "")?;
+    let shortcut = ShareShortcut::new(share_id, &shortcut_path, "")?;
+    config.upsert_share_shortcut(shortcut.clone());
+    Ok(Some(shortcut))
+}
+
+pub fn repair_missing_share_shortcuts(config: &mut AppConfig) -> Result<bool> {
+    let shares = config
+        .shared_folders
+        .iter()
+        .map(|folder| (folder.share_id, folder.display_name.clone()))
+        .collect::<Vec<_>>();
+    let mut changed = false;
+    for (share_id, display_name) in shares {
+        changed |= ensure_default_share_shortcut(config, share_id, &display_name)?.is_some();
+    }
+    Ok(changed)
+}
+
 fn repair_share_wraps(
     config_dir: &Path,
     config: &mut AppConfig,
@@ -608,6 +664,146 @@ mod tests {
             ..AppConfig::default()
         };
         config.save(config_path_in(dir)).unwrap();
+    }
+
+    #[test]
+    fn create_share_defaults_display_name_to_source_dirname() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        init_config(owner_dir.path(), &owner);
+
+        let created = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: "Shared/tst".to_owned(),
+                display_name: None,
+            },
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(created.shares.len(), 1);
+        assert_eq!(created.shares[0].display_name, "tst");
+        assert_eq!(created.shares[0].shortcut_paths, vec!["tst"]);
+
+        let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        assert_eq!(saved.shared_folders.len(), 1);
+        assert_eq!(saved.shared_folders[0].display_name, "tst");
+        assert_eq!(saved.share_shortcuts.len(), 1);
+        assert_eq!(saved.share_shortcuts[0].path, "tst");
+    }
+
+    #[test]
+    fn accept_share_invite_adds_share_to_my_drive() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        init_config(owner_dir.path(), &owner);
+        let recipient_dir = tempdir().unwrap();
+        let recipient = Profile::create(recipient_dir.path(), Some("Recipient".into())).unwrap();
+        init_config(recipient_dir.path(), &recipient);
+
+        let created = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: "Projects/Alpha".to_owned(),
+                display_name: Some("Alpha".to_owned()),
+            },
+            10,
+        )
+        .unwrap();
+        let share_id = created.share_id.unwrap();
+        let invited = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::InviteShareMember {
+                share_id,
+                profile_id: recipient.state.profile_id,
+                app_key: recipient.app_key.pubkey_hex(),
+                role: ShareRole::Reader,
+                representative_npub_hint: None,
+                display_name: Some("Recipient".to_owned()),
+                label: Some("Laptop".to_owned()),
+            },
+            20,
+        )
+        .unwrap();
+
+        let accepted = dispatch_share_action(
+            recipient_dir.path(),
+            ShareAction::AcceptShareInvite {
+                invite: invited.last_share_invite.unwrap(),
+            },
+            30,
+        )
+        .unwrap();
+
+        assert_eq!(accepted.shares.len(), 1);
+        assert_eq!(accepted.shares[0].display_name, "Alpha");
+        assert_eq!(accepted.shares[0].shortcut_paths, vec!["Alpha"]);
+        let saved = AppConfig::load_or_default(config_path_in(recipient_dir.path())).unwrap();
+        assert_eq!(saved.share_shortcuts.len(), 1);
+        assert_eq!(saved.share_shortcuts[0].path, "Alpha");
+    }
+
+    #[test]
+    fn share_state_repairs_legacy_share_without_my_drive_shortcut() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        init_config(owner_dir.path(), &owner);
+
+        dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: "Shared/Legacy".to_owned(),
+                display_name: Some("Legacy".to_owned()),
+            },
+            10,
+        )
+        .unwrap();
+        let mut saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        saved.share_shortcuts.clear();
+        saved.save(config_path_in(owner_dir.path())).unwrap();
+
+        let repaired = share_action_state(owner_dir.path()).unwrap();
+
+        assert_eq!(repaired.shares.len(), 1);
+        assert_eq!(repaired.shares[0].shortcut_paths, vec!["Legacy"]);
+        let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        assert_eq!(saved.share_shortcuts.len(), 1);
+        assert_eq!(saved.share_shortcuts[0].path, "Legacy");
+    }
+
+    #[test]
+    fn delete_share_removes_share_and_shortcuts_from_config_and_result() {
+        let owner_dir = tempdir().unwrap();
+        let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        init_config(owner_dir.path(), &owner);
+
+        let created = dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: "Shared/tst".to_owned(),
+                display_name: None,
+            },
+            10,
+        )
+        .unwrap();
+        let share_id = created.share_id.unwrap();
+
+        let mut config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        assert!(
+            config
+                .upsert_share_shortcut(ShareShortcut::new(share_id, "best", "").expect("shortcut"))
+        );
+        config.save(config_path_in(owner_dir.path())).unwrap();
+
+        let deleted =
+            dispatch_share_action(owner_dir.path(), ShareAction::DeleteShare { share_id }, 20)
+                .unwrap();
+
+        assert!(deleted.shares.is_empty());
+        let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+        assert!(saved.shared_folders.is_empty());
+        assert!(saved.share_shortcuts.is_empty());
     }
 
     #[test]

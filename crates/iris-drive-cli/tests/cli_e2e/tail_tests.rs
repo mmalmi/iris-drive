@@ -500,10 +500,7 @@ fn restore_after_init_errors_without_force_path() {
     // For now restore refuses to overwrite an existing install.
     let dir = tempdir().unwrap();
     idrive(dir.path()).arg("init").assert().success();
-    let recovery_phrase = std::fs::read_to_string(dir.path().join("recovery_phrase"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
     idrive(dir.path())
         .args(["restore", &recovery_phrase])
         .assert()

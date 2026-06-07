@@ -18,6 +18,15 @@ internal object NativeCore {
     external fun classifyLinkInputJson(text: String): String
     external fun validateLinkInputJson(text: String): String
     external fun exportRecoverySecretJson(dataDir: String): String
+    external fun generateRecoveryKeyJson(): String
+    external fun recoveryPubkeyForPhraseJson(recoveryPhrase: String): String
+    external fun updateCheckJson(dataDir: String, currentVersion: String, mode: String): String
+    external fun updateDownloadJson(
+        dataDir: String,
+        currentVersion: String,
+        mode: String,
+        downloadDir: String,
+    ): String
     external fun providerListJson(dataDir: String): String
     external fun providerReadJson(dataDir: String, path: String, outputPath: String): String
     external fun providerWriteJson(dataDir: String, path: String, sourcePath: String): String

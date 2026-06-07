@@ -25,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,6 +48,9 @@ import to.iris.drive.app.core.PendingShareInviteState
 import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.core.ShareMemberState
 import to.iris.drive.app.core.ShareState
+import to.iris.drive.app.update.AndroidSelfUpdateState
+import to.iris.drive.app.update.SelfUpdateActions
+import to.iris.drive.app.update.buttonText
 
 private data class ShareInvitePrefill(
     val profileId: String = "",
@@ -61,6 +65,8 @@ internal fun AuthenticatedContent(
     onSelectTab: (MainTab) -> Unit,
     shareDialogRequest: ShareDialogRequest?,
     state: AppState,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
     onCopyAppKey: () -> Unit,
@@ -71,6 +77,7 @@ internal fun AuthenticatedContent(
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
     onOpenDriveFolder: () -> Unit,
+    onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onResetInvite: () -> Unit,
@@ -94,6 +101,8 @@ internal fun AuthenticatedContent(
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
+    onOpenSharePath: (String) -> Unit,
+    onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
@@ -101,6 +110,8 @@ internal fun AuthenticatedContent(
         MainTab.MyDrive -> DriveContent(
             padding = padding,
             state = state,
+            selfUpdateState = selfUpdateState,
+            selfUpdateActions = selfUpdateActions,
             onShowDevices = { onSelectTab(MainTab.Devices) },
             onStartSync = onStartSync,
             onStopSync = onStopSync,
@@ -112,6 +123,7 @@ internal fun AuthenticatedContent(
             padding = padding,
             state = state,
             onCopyLinkInvite = onCopyLinkInvite,
+            onAddRecoveryKey = onAddRecoveryKey,
             onApproveDevice = onApproveDevice,
             onRejectDevice = onRejectDevice,
             onResetInvite = onResetInvite,
@@ -141,12 +153,16 @@ internal fun AuthenticatedContent(
             onRecordPendingShareInvite = onRecordPendingShareInvite,
             onAcceptShareInvite = onAcceptShareInvite,
             onRevokeShareMember = onRevokeShareMember,
+            onOpenSharePath = onOpenSharePath,
+            onDeleteShare = onDeleteShare,
             onAddShareShortcut = onAddShareShortcut,
             onRepairShareWraps = onRepairShareWraps,
         )
         MainTab.Settings -> SettingsContent(
             padding = padding,
             state = state,
+            selfUpdateState = selfUpdateState,
+            selfUpdateActions = selfUpdateActions,
             onCopyAppKey = onCopyAppKey,
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
@@ -163,6 +179,8 @@ internal fun AuthenticatedContent(
 private fun DriveContent(
     padding: PaddingValues,
     state: AppState,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
     onShowDevices: () -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
@@ -180,6 +198,9 @@ private fun DriveContent(
     ) {
         if (state.error.isNotBlank()) {
             item { Notice(state.error) }
+        }
+        if (selfUpdateState.supported && (selfUpdateState.available || selfUpdateState.downloaded)) {
+            item { SelfUpdateBanner(state = selfUpdateState, actions = selfUpdateActions) }
         }
         item {
             StatusPanel(state = state)
@@ -210,6 +231,7 @@ private fun DevicesContent(
     padding: PaddingValues,
     state: AppState,
     onCopyLinkInvite: () -> Unit,
+    onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onResetInvite: () -> Unit,
@@ -235,6 +257,7 @@ private fun DevicesContent(
                 inboundRequests = state.profile?.inboundAppKeyLinkRequests.orEmpty(),
                 canApprove = state.profile?.canAdminProfile == true,
                 onCopyLinkInvite = onCopyLinkInvite,
+                onAddRecoveryKey = onAddRecoveryKey,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
                 onResetInvite = onResetInvite,
@@ -295,6 +318,8 @@ private fun SharesContent(
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
+    onOpenSharePath: (String) -> Unit,
+    onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
@@ -321,6 +346,8 @@ private fun SharesContent(
                 onRecordPendingShareInvite = onRecordPendingShareInvite,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
+                onOpenSharePath = onOpenSharePath,
+                onDeleteShare = onDeleteShare,
                 onAddShareShortcut = onAddShareShortcut,
                 onRepairShareWraps = onRepairShareWraps,
             )
@@ -332,6 +359,8 @@ private fun SharesContent(
 private fun SettingsContent(
     padding: PaddingValues,
     state: AppState,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
     onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
@@ -355,6 +384,8 @@ private fun SettingsContent(
         item {
             SettingsPanel(
                 state = state,
+                selfUpdateState = selfUpdateState,
+                selfUpdateActions = selfUpdateActions,
                 onCopyAppKey = onCopyAppKey,
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
@@ -385,7 +416,7 @@ private fun StatusPanel(state: AppState) {
             }
         }
         Text(
-            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} AppKeys",
+            "${state.fileCount} files - ${byteString(state.visibleFileBytes)} - ${state.onlineDeviceCount}/${state.authorizedDeviceCount} devices",
             color = Muted,
         )
     }
@@ -407,7 +438,7 @@ private fun SummaryPanel(state: AppState, onShowDevices: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("AppKeys", color = Muted)
+                Text("Devices", color = Muted)
                 Text(
                     "${state.onlineDeviceCount}/${state.authorizedDeviceCount} online",
                     color = Ink,
@@ -593,20 +624,21 @@ private fun SharesPanel(
     onRecordPendingShareInvite: (String, String, String, String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
+    onOpenSharePath: (String) -> Unit,
+    onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
     var sourceInput by remember { mutableStateOf("") }
-    var nameInput by remember { mutableStateOf("") }
     var inviteInput by remember { mutableStateOf("") }
     var inviteTarget by remember { mutableStateOf<ShareState?>(null) }
     var revokeTarget by remember { mutableStateOf<Pair<ShareState, ShareMemberState>?>(null) }
+    var deleteTarget by remember { mutableStateOf<ShareState?>(null) }
     var invitePrefill by remember { mutableStateOf(ShareInvitePrefill()) }
 
     LaunchedEffect(shareDialogRequest?.id) {
         val request = shareDialogRequest ?: return@LaunchedEffect
         sourceInput = request.sourcePath
-        nameInput = request.displayName
         invitePrefill = ShareInvitePrefill(
             profileId = request.recipientProfileId,
             npubHint = request.recipientNpubHint,
@@ -660,7 +692,36 @@ private fun SharesPanel(
         )
     }
 
+    deleteTarget?.let { share ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete share?") },
+            text = {
+                Text(
+                    "Delete ${displayShareName(share)} from this device? Folder contents stay in My Drive.",
+                    color = Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteShare(share.shareId)
+                        deleteTarget = null
+                    },
+                ) {
+                    Text("Delete", color = Danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     CardSection(title = "Shares", trailing = "${state.shares.size}") {
+        Text("Create Shared Folder", fontWeight = FontWeight.SemiBold)
         OutlinedTextField(
             value = sourceInput,
             onValueChange = { sourceInput = it },
@@ -670,24 +731,14 @@ private fun SharesPanel(
                 .fillMaxWidth()
                 .testTag("shareSourceInput"),
         )
-        OutlinedTextField(
-            value = nameInput,
-            onValueChange = { nameInput = it },
-            label = { Text("Name") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("shareNameInput"),
-        )
         Button(
             onClick = {
-                onCreateShare(sourceInput, nameInput)
+                onCreateShare(sourceInput, "")
                 sourceInput = ""
-                nameInput = ""
             },
             enabled = sourceInput.isNotBlank(),
         ) {
-            Text("Create share")
+            Text("Create shared folder")
         }
 
         OutlinedTextField(
@@ -731,9 +782,11 @@ private fun SharesPanel(
             ShareItem(
                 share = share,
                 localProfileId = state.profile?.profileId.orEmpty(),
+                onOpen = { onOpenSharePath(shareOpenPath(share)) },
                 onInvite = { inviteTarget = share },
                 onRepair = { onRepairShareWraps(share.shareId) },
                 onShortcut = { onAddShareShortcut(share.shareId, displayShareName(share)) },
+                onDelete = { deleteTarget = share },
                 onRevoke = { member -> revokeTarget = share to member },
             )
         }
@@ -781,7 +834,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = appKey,
                     onValueChange = { appKey = it },
-                    label = { Text("Recipient AppActor pubkey") },
+                    label = { Text("Recipient device key") },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -794,7 +847,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = npubHint,
                     onValueChange = { npubHint = it },
-                    label = { Text("Contact npub") },
+                    label = { Text("User ID") },
                     singleLine = true,
                     modifier = Modifier.testTag("shareRecipientNpubInput"),
                 )
@@ -808,7 +861,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("AppActor label") },
+                    label = { Text("Device label") },
                     singleLine = true,
                 )
             }
@@ -846,9 +899,11 @@ private fun InviteShareMemberDialog(
 private fun ShareItem(
     share: ShareState,
     localProfileId: String,
+    onOpen: () -> Unit,
     onInvite: () -> Unit,
     onRepair: () -> Unit,
     onShortcut: () -> Unit,
+    onDelete: () -> Unit,
     onRevoke: (ShareMemberState) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -859,12 +914,17 @@ private fun ShareItem(
                 share.keyStatusLabel.ifBlank { share.keyStatus },
                 share.sourcePath.takeIf { it.isNotBlank() }?.let(::shortText),
                 "${share.participantCount} people",
-                share.shortcutPaths.firstOrNull()?.let { "shortcut ${shortText(it)}" },
+                share.shortcutPaths.firstOrNull()?.let { "My Drive ${shortText(it)}" },
             ).joinToString(" - "),
             color = Muted,
             style = MaterialTheme.typography.bodySmall,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (shareOpenPath(share).isNotBlank()) {
+                TextButton(onClick = onOpen) {
+                    Text("Open")
+                }
+            }
             if (share.canAdmin) {
                 TextButton(onClick = onInvite) {
                     Text("Invite")
@@ -877,8 +937,11 @@ private fun ShareItem(
             }
             if (share.shortcutPaths.isEmpty()) {
                 TextButton(onClick = onShortcut) {
-                    Text("Shortcut")
+                    Text("Add to My Drive")
                 }
+            }
+            TextButton(onClick = onDelete) {
+                Text("Delete", color = Danger)
             }
         }
         share.members.forEach { member ->
@@ -944,6 +1007,8 @@ private fun PendingShareInviteRow(invite: PendingShareInviteState) {
 @Composable
 private fun SettingsPanel(
     state: AppState,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
     onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
@@ -1032,16 +1097,16 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("AppKey", fontWeight = FontWeight.SemiBold)
+        Text("Device", fontWeight = FontWeight.SemiBold)
         Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Current AppKey", fontWeight = FontWeight.SemiBold)
+        Text("Current Device Key", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopyAppKey) {
-                Text("Copy AppKey")
+                Text("Copy Device")
             }
             OutlinedButton(onClick = onCopyDeviceKey) {
-                Text("Copy AppKey")
+                Text("Copy Device Key")
             }
         }
         if (profile?.canExportRecoveryPhrase == true) {
@@ -1061,7 +1126,79 @@ private fun SettingsPanel(
             Text("Log out", color = Danger)
         }
     }
+
+    if (selfUpdateState.supported) {
+        Spacer(Modifier.height(12.dp))
+        SelfUpdateCard(state = selfUpdateState, actions = selfUpdateActions)
+    }
 }
+
+@Composable
+private fun SelfUpdateBanner(
+    state: AndroidSelfUpdateState,
+    actions: SelfUpdateActions,
+) {
+    CardSection(title = "Update available", trailing = state.version.ifBlank { "ready" }) {
+        if (state.status.isNotBlank()) {
+            Text(state.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Button(
+            enabled = !state.busy,
+            onClick = {
+                when {
+                    state.downloaded -> actions.install()
+                    state.available -> actions.download()
+                    else -> actions.check()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(state.buttonText())
+        }
+    }
+}
+
+@Composable
+private fun SelfUpdateCard(
+    state: AndroidSelfUpdateState,
+    actions: SelfUpdateActions,
+) {
+    CardSection(title = "Updates", trailing = selfUpdateTrailing(state)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Switch(
+                checked = state.autoCheckEnabled,
+                onCheckedChange = actions.setAutoCheck,
+            )
+            Spacer(Modifier.size(8.dp))
+            Text("Check automatically")
+        }
+        if (state.status.isNotBlank()) {
+            Text(state.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Button(
+            enabled = !state.busy,
+            onClick = {
+                when {
+                    state.downloaded -> actions.install()
+                    state.available -> actions.download()
+                    else -> actions.check()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(state.buttonText())
+        }
+    }
+}
+
+private fun selfUpdateTrailing(state: AndroidSelfUpdateState): String =
+    when {
+        state.downloaded -> "ready"
+        state.available -> state.version.ifBlank { "available" }
+        state.checking -> "checking"
+        state.downloading -> "downloading"
+        else -> "current"
+    }
 
 @Composable
 private fun RecoveryPhraseDialog(
@@ -1233,6 +1370,12 @@ private fun displayMemberName(member: ShareMemberState): String =
 
 private fun displayPendingInviteName(invite: PendingShareInviteState): String =
     invite.displayName.ifBlank { "Pending contact" }
+
+private fun shareOpenPath(share: ShareState): String =
+    share.shortcutPaths.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: share.sourcePath.takeIf { it.isNotBlank() }
+        ?: share.sharedWithMePath.takeIf { it.isNotBlank() }
+        ?: ""
 
 private fun shortText(value: String): String {
     if (value.length <= 32) return value

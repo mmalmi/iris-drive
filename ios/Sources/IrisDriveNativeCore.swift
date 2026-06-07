@@ -33,6 +33,14 @@ private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> Uns
 @_silgen_name("iris_drive_export_recovery_secret_json")
 private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_generate_recovery_key_json")
+private func irisDriveGenerateRecoveryKeyJson() -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_recovery_pubkey_for_phrase_json")
+private func irisDriveRecoveryPubkeyForPhraseJson(
+    _ recoveryPhrase: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_list_json")
 private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -141,6 +149,35 @@ final class IrisDriveNativeCore {
               let value = try? JSONDecoder().decode(NativeRecoverySecretExport.self, from: data)
         else {
             return NativeRecoverySecretExport(error: "native recovery export returned invalid JSON")
+        }
+        return value
+    }
+
+    static func generateRecoveryKey() -> NativeGeneratedRecoveryKey {
+        decodeGeneratedRecoveryKey(
+            json: takeString(irisDriveGenerateRecoveryKeyJson()),
+            fallbackError: "native recovery key generation returned invalid JSON"
+        )
+    }
+
+    static func recoveryPubkey(forPhrase phrase: String) -> NativeGeneratedRecoveryKey {
+        let json = phrase.withCString { pointer in
+            takeString(irisDriveRecoveryPubkeyForPhraseJson(pointer))
+        }
+        return decodeGeneratedRecoveryKey(
+            json: json,
+            fallbackError: "native recovery key import returned invalid JSON"
+        )
+    }
+
+    private static func decodeGeneratedRecoveryKey(
+        json: String,
+        fallbackError: String
+    ) -> NativeGeneratedRecoveryKey {
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeGeneratedRecoveryKey.self, from: data)
+        else {
+            return NativeGeneratedRecoveryKey(error: fallbackError)
         }
         return value
     }
@@ -573,6 +610,18 @@ struct NativeRecoverySecretExport: Codable {
         case recoveryPhrase = "recovery_phrase"
         case words
         case secretKey = "secret_key"
+        case error
+    }
+}
+
+struct NativeGeneratedRecoveryKey: Codable {
+    var words: [String] = []
+    var recoveryPubkey: String = ""
+    var error: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case words
+        case recoveryPubkey = "recovery_pubkey"
         case error
     }
 }

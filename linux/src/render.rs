@@ -29,21 +29,21 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
     if state.ui.app_actors.is_empty() {
-        list.append(&simple_row("No AppKeys", ""));
+        list.append(&simple_row("No devices yet", ""));
         return;
     }
     for actor in &state.ui.app_actors {
         let title = if actor.display_label.is_empty() {
-            "AppKey"
+            "Device"
         } else {
             &actor.display_label
         };
         let app_key_pubkey = actor.pubkey.as_str();
         let mut metadata = Vec::new();
         if actor.is_current_app_key {
-            metadata.push("this AppKey".to_string());
+            metadata.push("this device".to_string());
             if !app_key_pubkey.is_empty() {
-                metadata.push(format!("AppKey: {app_key_pubkey}"));
+                metadata.push(format!("Device key: {app_key_pubkey}"));
             }
         }
         metadata.push(if actor.role_label.is_empty() {
@@ -154,7 +154,7 @@ fn share_row(
     }
     metadata.push(share_participant_text(share.participant_count));
     if !share.shortcut_paths.is_empty() {
-        metadata.push(format!("shortcut {}", short_text(&share.shortcut_paths[0])));
+        metadata.push(format!("My Drive {}", short_text(&share.shortcut_paths[0])));
     }
     labels.append(&share_detail_label(&metadata.join(" | "), 72));
     let repair_text = share_repair_text(share);
@@ -162,6 +162,14 @@ fn share_row(
         labels.append(&share_detail_label(&repair_text, 72));
     }
     header.append(&labels);
+
+    let open_path = share_open_path(share);
+    if !open_path.is_empty() {
+        let open = icon_button("folder-open-symbolic", "Open share folder");
+        let model = Rc::clone(model);
+        open.connect_clicked(move |_| open_share_folder(&model, open_path.clone()));
+        header.append(&open);
+    }
 
     if repair_text.is_some() {
         let repair = icon_button("emblem-synchronizing-symbolic", "Repair key wraps");
@@ -172,12 +180,11 @@ fn share_row(
     }
 
     if share.shortcut_paths.is_empty() {
-        let shortcut = icon_button("emblem-symbolic-link-symbolic", "Add shortcut");
+        let shortcut = icon_button("folder-new-symbolic", "Add to My Drive");
         let model = Rc::clone(model);
         let share_id = share.share_id.clone();
-        let display_name = share.display_name.clone();
         shortcut.connect_clicked(move |_| {
-            add_share_shortcut(&model, share_id.clone(), display_name.clone());
+            add_share_shortcut(&model, share_id.clone());
         });
         header.append(&shortcut);
     }
@@ -193,6 +200,20 @@ fn share_row(
         header.append(&invite);
     }
 
+    let delete = icon_button("user-trash-symbolic", "Delete share");
+    delete.add_css_class("destructive-action");
+    let delete_model = Rc::clone(model);
+    let share_id = share.share_id.clone();
+    let display_name = if share.display_name.is_empty() {
+        "Shared folder".to_string()
+    } else {
+        share.display_name.clone()
+    };
+    delete.connect_clicked(move |_| {
+        show_delete_share_dialog(&delete_model, share_id.clone(), display_name.clone());
+    });
+    header.append(&delete);
+
     body.append(&header);
 
     let local_profile_id = state
@@ -203,7 +224,7 @@ fn share_row(
         .unwrap_or("");
     for member in &share.members {
         body.append(&share_member_row(
-            model,
+            &model,
             share,
             member,
             local_profile_id,
@@ -216,6 +237,20 @@ fn share_row(
 
     row.set_child(Some(&body));
     row
+}
+
+fn share_open_path(share: &iris_drive_app_core::state::UiShare) -> String {
+    share
+        .shortcut_paths
+        .first()
+        .cloned()
+        .filter(|path| !path.trim().is_empty())
+        .or_else(|| (!share.source_path.trim().is_empty()).then(|| share.source_path.clone()))
+        .or_else(|| {
+            (!share.shared_with_me_path.trim().is_empty())
+                .then(|| share.shared_with_me_path.clone())
+        })
+        .unwrap_or_default()
 }
 
 fn share_detail_label(text: &str, max_width_chars: i32) -> gtk::Label {
@@ -578,7 +613,7 @@ pub(crate) fn peer_row(
         appoint.connect_clicked(move |_| match appoint_admin(&app_key_pubkey) {
             Ok(()) => {
                 restart_daemon(&model);
-                model.ui.notice.set_text("AppKey made admin");
+                model.ui.notice.set_text("Device made admin");
                 refresh(&model);
             }
             Err(error) => model.ui.notice.set_text(&error),
@@ -602,7 +637,7 @@ pub(crate) fn peer_row(
     }
 
     if can_revoke {
-        let delete = icon_button("user-trash-symbolic", "Remove AppKey");
+        let delete = icon_button("user-trash-symbolic", "Remove Device");
         let model = Rc::clone(model);
         let app_key_pubkey = app_key_pubkey.to_string();
         let title = title.to_string();

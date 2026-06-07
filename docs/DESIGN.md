@@ -115,11 +115,12 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
 
 ### Phase 1 — `iris-drive-core` brain, headless (weeks 2–4)
 
-- **Identity**: `idrive init` creates an IrisProfile UUID, a fresh per-install
-  AppKey under `~/.config/iris-drive/key`, and a recovery phrase authority.
+- **Identity**: `idrive init` creates an IrisProfile UUID and a fresh
+  per-install AppKey under `~/.config/iris-drive/key`.
   UUIDs are created randomly or learned from verified roster evidence; they are
   never derived from Nostr pubkeys, nsecs, recovery phrases, or other recovery
-  secrets. Bare recovery phrase / `nsec` restore can create a fresh local
+  secrets. Recovery phrase authority is optional explicit recovery material.
+  Bare recovery phrase / `nsec` restore can create a fresh local
   IrisProfile with that secret as recovery authority; recovering an existing
   UUID requires roster ops, acceptance breadcrumbs, invites, or export data that
   carry the UUID and verify against the recovery key. If relays return multiple

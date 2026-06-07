@@ -48,6 +48,7 @@ BUILD_LOG="${IRIS_DRIVE_MACOS_BUILD_LOG:-/tmp/iris-drive-macos-build.log}"
 INSTALL_APP_PATH="${IRIS_DRIVE_MACOS_INSTALL_APP:-$HOME/Applications/Iris Drive.app}"
 HOST_ARCH="$(uname -m)"
 APP_PROCESS_NAME="Iris Drive"
+BUILD_APP_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -439,7 +440,7 @@ terminate_running_app() {
     pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
     for _ in {1..40}; do
       if ! pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
-        return 0
+        break
       fi
       sleep 0.1
     done
@@ -449,7 +450,7 @@ terminate_running_app() {
     pkill -TERM -x "IrisDriveFileProvider" >/dev/null 2>&1 || true
     for _ in {1..40}; do
       if ! pgrep -x "IrisDriveFileProvider" >/dev/null 2>&1; then
-        return 0
+        break
       fi
       sleep 0.1
     done
@@ -520,6 +521,7 @@ build_app() {
   register_app_bundle "$app_path" "$built_app_path"
   register_fileprovider_plugin "$app_path"
 
+  BUILD_APP_PATH="$app_path"
   printf '%s\n' "$app_path"
 }
 
@@ -529,7 +531,8 @@ run_app() {
   local mode
 
   mode="$(signing_mode)"
-  app_path="$(build_app)"
+  build_app
+  app_path="$BUILD_APP_PATH"
   if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi

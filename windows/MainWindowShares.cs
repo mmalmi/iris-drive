@@ -55,7 +55,7 @@ public partial class MainWindow
         }
         if (share.ShortcutPaths.Count > 0)
         {
-            stack.Children.Add(ShareDetail($"Shortcut: {share.ShortcutPaths[0]}"));
+            stack.Children.Add(ShareDetail($"My Drive: {share.ShortcutPaths[0]}"));
         }
 
         foreach (var member in share.Members)
@@ -73,6 +73,14 @@ public partial class MainWindow
             HorizontalAlignment = WpfHorizontalAlignment.Right,
         };
 
+        var openPath = ShareOpenPath(share);
+        if (!string.IsNullOrWhiteSpace(openPath))
+        {
+            var open = ShareActionButton("Open", openPath);
+            open.Click += OpenShare_Click;
+            actions.Children.Add(open);
+        }
+
         if (share.CanAdmin)
         {
             var invite = ShareActionButton("Invite", share.ShareId);
@@ -89,10 +97,14 @@ public partial class MainWindow
 
         if (share.ShortcutPaths.Count == 0)
         {
-            var shortcut = ShareActionButton("Shortcut", share.ShareId);
+            var shortcut = ShareActionButton("Add to My Drive", share.ShareId);
             shortcut.Click += AddShareShortcut_Click;
             actions.Children.Add(shortcut);
         }
+
+        var delete = ShareActionButton("Delete", share.ShareId);
+        delete.Click += DeleteShare_Click;
+        actions.Children.Add(delete);
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -214,6 +226,17 @@ public partial class MainWindow
         return "Repair needed";
     }
 
+    private static string ShareOpenPath(ShareRow share)
+    {
+        if (share.ShortcutPaths.Count > 0)
+        {
+            return share.ShortcutPaths[0];
+        }
+        return !string.IsNullOrWhiteSpace(share.SourcePath)
+            ? share.SourcePath
+            : share.SharedWithMePath;
+    }
+
     private WpfButton ShareActionButton(string text, string shareId) =>
         new()
         {
@@ -254,7 +277,6 @@ public partial class MainWindow
         }
 
         ShareSourceBox.Text = classification.ShareSourcePath.Trim();
-        ShareNameBox.Text = classification.ShareDisplayName.Trim();
 
         var recipient = FirstNonEmpty(
             classification.ShareRecipientDisplayName,
@@ -281,9 +303,8 @@ public partial class MainWindow
     {
         try
         {
-            await service.CreateShareAsync(ShareSourceBox.Text, ShareNameBox.Text);
+            await service.CreateShareAsync(ShareSourceBox.Text);
             ShareSourceBox.Text = "";
-            ShareNameBox.Text = "";
             NoticeText.Text = "Share created";
             await RefreshAsync();
         }
@@ -318,7 +339,53 @@ public partial class MainWindow
         try
         {
             await service.AddShareShortcutAsync(shareId);
-            NoticeText.Text = "Shortcut added";
+            NoticeText.Text = "Added to My Drive";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private void OpenShare_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: string path })
+        {
+            return;
+        }
+
+        try
+        {
+            service.OpenDrivePath(path);
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
+    }
+
+    private async void DeleteShare_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: string shareId })
+        {
+            return;
+        }
+
+        if (WpfMessageBox.Show(
+                this,
+                "Delete this share from this device? Folder contents stay in My Drive.",
+                "Delete share",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            await service.DeleteShareAsync(shareId);
+            NoticeText.Text = "Share deleted";
             await RefreshAsync();
         }
         catch (Exception error)
@@ -385,7 +452,7 @@ public partial class MainWindow
         };
         var npubHintBox = new WpfTextBox
         {
-            Tag = "Contact npub",
+            Tag = "User ID",
             MinHeight = 34,
             MinWidth = 460,
             Margin = new Thickness(0, 4, 0, 10),
@@ -434,7 +501,7 @@ public partial class MainWindow
         body.Children.Add(notice);
         body.Children.Add(new TextBlock { Text = "Recipient identity evidence", Style = (Style)FindResource("FieldName") });
         body.Children.Add(evidenceBox);
-        body.Children.Add(new TextBlock { Text = "Contact npub", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(new TextBlock { Text = "User ID", Style = (Style)FindResource("FieldName") });
         body.Children.Add(npubHintBox);
         body.Children.Add(new TextBlock { Text = "Name", Style = (Style)FindResource("FieldName") });
         body.Children.Add(displayNameBox);

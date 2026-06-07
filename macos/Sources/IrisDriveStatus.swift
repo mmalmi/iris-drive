@@ -4,12 +4,25 @@ import Foundation
 final class IrisDriveStatus: ObservableObject {
     static let shared = IrisDriveStatus()
     static let closeToMenuBarOnCloseKey = "closeToMenuBarOnClose"
+    static let autoCheckUpdatesKey = "updates.autoCheck"
+    static let autoInstallUpdatesKey = "updates.autoInstall"
 
     @Published var message = "Setup needed"
     @Published var daemonRunning = false
     @Published var closeToMenuBarOnClose =
         UserDefaults.standard.object(forKey: closeToMenuBarOnCloseKey) as? Bool ?? true
+    @Published var autoCheckUpdates =
+        UserDefaults.standard.object(forKey: autoCheckUpdatesKey) as? Bool ?? true
+    @Published var autoInstallUpdates =
+        UserDefaults.standard.object(forKey: autoInstallUpdatesKey) as? Bool ?? false
     @Published var localNhashResolverEnabled = true
+    @Published var updateChecking = false
+    @Published var updateInstalling = false
+    @Published var updateAvailable = false
+    @Published var updateVersion = ""
+    @Published var updateStatus = ""
+    @Published var updateAsset = ""
+    @Published var updateCanInstall = false
     @Published var initialized = false
     @Published var driveName = "My Drive"
     @Published var currentAppKeyNpub: String?
@@ -37,6 +50,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var rootIsPrivate: Bool?
     @Published var filesIrisURL: String?
     @Published var snapshotURL: String?
+    @Published var primaryDriveGatewayURL: String?
     @Published var fileCount: Int?
     @Published var visibleFileBytes: Int64?
     @Published var relays: [String] = []
@@ -58,6 +72,18 @@ final class IrisDriveStatus: ObservableObject {
             return nil
         }
         return snapshotURL
+    }
+
+    var updateStripeText: String {
+        let version = updateVersion.isEmpty ? "update" : updateVersion
+        let current = appVersionText
+        return current.isEmpty
+            ? "Update available: \(version)"
+            : "Update available: \(version) (you're on \(current))"
+    }
+
+    var appVersionText: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     }
 
 }

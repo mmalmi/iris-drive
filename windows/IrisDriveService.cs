@@ -18,8 +18,11 @@ public sealed class IrisDriveService
     {
         nativeCore = new IrisDriveNativeCore(
             DefaultConfigDirectory,
-            typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0");
+            AppVersion);
     }
+
+    public string AppVersion =>
+        typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
 
     public string DefaultConfigDirectory =>
         Path.Combine(
@@ -29,6 +32,17 @@ public sealed class IrisDriveService
     public Task<IrisDriveStatusData> StatusAsync()
     {
         return Task.FromResult(IrisDriveStatusData.FromNativeJson(nativeCore.RefreshJson()));
+    }
+
+    public Task<IrisDriveUpdateResult> CheckUpdateAsync()
+    {
+        return Task.Run(() => IrisDriveNativeCore.CheckUpdate(DefaultConfigDirectory, AppVersion));
+    }
+
+    public Task<IrisDriveUpdateResult> DownloadUpdateAsync(string downloadDirectory)
+    {
+        return Task.Run(() =>
+            IrisDriveNativeCore.DownloadUpdate(DefaultConfigDirectory, AppVersion, downloadDirectory));
     }
 
     public Task CreateProfileAsync(string username, string profilePhotoPath)
@@ -61,7 +75,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("IrisProfile invite link or admin AppKey is required.");
+            throw new InvalidOperationException("IrisProfile invite link or admin device key is required.");
         }
 
         return FinishSetupAsync(new[] { "link", target.Trim() });
@@ -76,7 +90,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("IrisProfile invite link or admin AppKey is required.");
+            throw new InvalidOperationException("IrisProfile invite link or admin device key is required.");
         }
 
         return FinishSetupAsync(new[] { "link", target.Trim(), "--force" });
@@ -86,7 +100,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("AppKey is required.");
+            throw new InvalidOperationException("Device key is required.");
         }
 
         await nativeCore.DispatchActionAsync(
@@ -102,7 +116,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(request))
         {
-            throw new InvalidOperationException("AppKey request is required.");
+            throw new InvalidOperationException("Device request is required.");
         }
 
         await nativeCore.DispatchActionAsync(
@@ -128,7 +142,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("AppKey is required.");
+            throw new InvalidOperationException("Device key is required.");
         }
 
         return nativeCore.DispatchActionAsync(
@@ -143,7 +157,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("AppKey is required.");
+            throw new InvalidOperationException("Device key is required.");
         }
 
         return nativeCore.DispatchActionAsync(
@@ -158,7 +172,7 @@ public sealed class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("AppKey is required.");
+            throw new InvalidOperationException("Device key is required.");
         }
 
         return nativeCore.DispatchActionAsync(
@@ -271,19 +285,61 @@ public sealed class IrisDriveService
             });
     }
 
-    public Task CreateShareAsync(string sourcePath, string displayName)
+    public async Task CreateShareAsync(string sourcePath)
     {
-        if (string.IsNullOrWhiteSpace(sourcePath))
+        var normalizedSourcePath = NormalizeProviderPath(sourcePath);
+        if (string.IsNullOrWhiteSpace(normalizedSourcePath))
         {
-            throw new InvalidOperationException("Source path is required.");
+            throw new InvalidOperationException("Folder path is required.");
+        }
+
+        var resolvedSourcePath = await ResolveShareSourcePathForCreateAsync(normalizedSourcePath);
+        await nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "create_share",
+                ["source_path"] = resolvedSourcePath,
+                ["display_name"] = "",
+            });
+    }
+
+    public Task DeleteShareAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
         }
 
         return nativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
-                ["type"] = "create_share",
-                ["source_path"] = sourcePath.Trim(),
-                ["display_name"] = displayName.Trim(),
+                ["type"] = "delete_share",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    public GeneratedRecoveryKey GenerateRecoveryKey()
+    {
+        return IrisDriveNativeCore.GenerateRecoveryKey();
+    }
+
+    public GeneratedRecoveryKey RecoveryPubkeyForPhrase(string recoveryPhrase)
+    {
+        return IrisDriveNativeCore.RecoveryPubkeyForPhrase(recoveryPhrase);
+    }
+
+    public Task AddRecoveryDeviceAsync(string recoveryPubkey)
+    {
+        if (string.IsNullOrWhiteSpace(recoveryPubkey))
+        {
+            throw new InvalidOperationException("Recovery key is required.");
+        }
+
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_recovery_device",
+                ["recovery_pubkey"] = recoveryPubkey.Trim(),
             });
     }
 
@@ -350,7 +406,7 @@ public sealed class IrisDriveService
         }
         if (string.IsNullOrWhiteSpace(representativeNpubHint))
         {
-            throw new InvalidOperationException("Contact npub is required.");
+            throw new InvalidOperationException("User ID is required.");
         }
 
         return nativeCore.DispatchActionAsync(
@@ -376,6 +432,9 @@ public sealed class IrisDriveService
             {
                 ["type"] = "add_share_shortcut",
                 ["share_id"] = shareId.Trim(),
+                ["path"] = "",
+                ["parent"] = "",
+                ["target_path"] = "",
             });
     }
 
@@ -549,6 +608,20 @@ public sealed class IrisDriveService
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     }
 
+    public void OpenDrivePath(string providerPath)
+    {
+        var normalized = NormalizeProviderPath(providerPath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InvalidOperationException("Share folder path is unavailable.");
+        }
+
+        var localPath = Path.Combine(
+            WindowsCloudFiles.SyncRootPath,
+            normalized.Replace('/', Path.DirectorySeparatorChar));
+        OpenPath(localPath);
+    }
+
     public void OpenUri(string uri)
     {
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
@@ -572,6 +645,50 @@ public sealed class IrisDriveService
     private async Task FinishSetupAsync(string[] arguments)
     {
         await RunAsync(arguments);
+    }
+
+    private async Task<string> ResolveShareSourcePathForCreateAsync(string sourcePath)
+    {
+        var entries = await ProviderEntriesAsync();
+        var existing = entries.FirstOrDefault(entry =>
+            string.Equals(entry.Path, sourcePath, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            if (!existing.IsDirectory)
+            {
+                throw new InvalidOperationException("Share source must be a folder.");
+            }
+            return sourcePath;
+        }
+
+        var createdPath = DefaultCreatedShareSourcePath(sourcePath);
+        existing = entries.FirstOrDefault(entry =>
+            string.Equals(entry.Path, createdPath, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            if (!existing.IsDirectory)
+            {
+                throw new InvalidOperationException($"{createdPath} is not a folder.");
+            }
+            return createdPath;
+        }
+
+        await RunProviderMutationAsync("provider", "mkdir", createdPath);
+        return createdPath;
+    }
+
+    private static string DefaultCreatedShareSourcePath(string sourcePath)
+    {
+        return sourcePath == "Shared" || sourcePath.StartsWith("Shared/", StringComparison.Ordinal)
+            ? sourcePath
+            : $"Shared/{sourcePath}";
+    }
+
+    private static string NormalizeProviderPath(string path)
+    {
+        return path.Trim()
+            .Replace('\\', '/')
+            .Trim('/');
     }
 
     private async Task<JsonDocument> RunJsonAsync(params string[] arguments)

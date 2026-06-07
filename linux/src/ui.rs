@@ -14,6 +14,24 @@ pub(crate) fn build_ui(app: &adw::Application) {
     header.set_title_widget(Some(&adw::WindowTitle::new("Iris Drive", "")));
     root.append(&header);
 
+    let update_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    update_bar.add_css_class("iris-update-bar");
+    update_bar.set_margin_top(8);
+    update_bar.set_margin_bottom(8);
+    update_bar.set_margin_start(18);
+    update_bar.set_margin_end(18);
+    update_bar.set_visible(false);
+    let update_label = gtk::Label::new(Some(""));
+    update_label.set_xalign(0.0);
+    update_label.set_hexpand(true);
+    let update_auto_check = gtk::CheckButton::with_label("Check automatically");
+    let update_auto_install = gtk::CheckButton::with_label("Install automatically");
+    let update_install_button =
+        action_button("folder-download-symbolic", "Download", "Download update");
+    update_bar.append(&update_label);
+    update_bar.append(&update_install_button);
+    root.append(&update_bar);
+
     let folder_button = action_button(
         "folder-open-symbolic",
         "Open Drive Folder",
@@ -128,7 +146,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let metrics = flow_section("iris-metrics", 1, 4);
     metrics.append(&metric_tile("Files", &files));
     metrics.append(&metric_tile("Storage", &storage));
-    metrics.append(&metric_tile("AppKeys", &devices));
+    metrics.append(&metric_tile("Devices", &devices));
     dashboard.append(&metrics);
 
     let drives = gtk::ListBox::new();
@@ -142,12 +160,12 @@ pub(crate) fn build_ui(app: &adw::Application) {
     dashboard.append(&notice);
 
     let peers_page = page_box();
-    peers_page.append(&section_title("AppKeys"));
+    peers_page.append(&section_title("Devices"));
     let account_app_key = value_label();
     let account_device = value_label();
     let account_authorization = value_label();
-    let copy_app_key_button = icon_button("edit-copy-symbolic", "Copy AppKey");
-    let copy_device_button = icon_button("edit-copy-symbolic", "Copy AppKey");
+    let copy_app_key_button = icon_button("edit-copy-symbolic", "Copy device key");
+    let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
     let account_grid = gtk::Grid::new();
     account_grid.add_css_class("iris-summary");
     account_grid.set_column_spacing(10);
@@ -156,14 +174,14 @@ pub(crate) fn build_ui(app: &adw::Application) {
     add_copy_field(
         &account_grid,
         0,
-        "AppKey",
+        "Device",
         &account_app_key,
         &copy_app_key_button,
     );
     add_copy_field(
         &account_grid,
         1,
-        "Current AppKey",
+        "Current Device Key",
         &account_device,
         &copy_device_button,
     );
@@ -171,14 +189,20 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     approve_box.set_hexpand(true);
-    let approve_device_button = action_button("list-add-symbolic", "Add AppKey", "Add AppKey");
+    let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
+    let add_recovery_key_button = action_button(
+        "dialog-password-symbolic",
+        "Add Recovery Key",
+        "Add recovery key",
+    );
     let reset_invite_button =
         action_button("view-refresh-symbolic", "Reset invite", "Reset invite");
     approve_box.append(&approve_device_button);
+    approve_box.append(&add_recovery_key_button);
     approve_box.append(&reset_invite_button);
     peers_page.append(&approve_box);
 
-    peers_page.append(&field_title("Linked AppKeys"));
+    peers_page.append(&field_title("Linked Devices"));
     let peers = gtk::ListBox::new();
     peers.add_css_class("iris-drive-list");
     peers.set_selection_mode(gtk::SelectionMode::None);
@@ -191,7 +215,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     backups.set_selection_mode(gtk::SelectionMode::None);
     backups_page.append(&backups);
     let backup_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let backup_entry = setup_entry("https://, npub1..., fs:/path, lmdb:/path");
+    let backup_entry = setup_entry("https://, User ID, fs:/path, lmdb:/path");
     backup_entry.set_hexpand(true);
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);
@@ -216,12 +240,9 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let share_create_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let share_source_entry = setup_entry("Folder path");
     share_source_entry.set_hexpand(true);
-    let share_name_entry = setup_entry("Name");
-    share_name_entry.set_width_request(160);
     let create_share_button =
         action_button("folder-new-symbolic", "Create", "Create shared folder");
     share_create_controls.append(&share_source_entry);
-    share_create_controls.append(&share_name_entry);
     share_create_controls.append(&create_share_button);
     shares_page.append(&share_create_controls);
 
@@ -243,8 +264,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let copy_last_share_invite_button = icon_button("edit-copy-symbolic", "Copy invite");
     let share_identity_placeholder = value_label();
     share_identity_placeholder.set_text("Signed IrisProfile proof");
-    let copy_share_identity_button =
-        icon_button("edit-copy-symbolic", "Copy my share identity");
+    let copy_share_identity_button = icon_button("edit-copy-symbolic", "Copy my share identity");
     add_copy_field(
         &last_invite_grid,
         0,
@@ -302,6 +322,19 @@ pub(crate) fn build_ui(app: &adw::Application) {
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
     settings_page.append(&local_nhash_resolver);
+    let update_check_button = action_button(
+        "view-refresh-symbolic",
+        "Check Updates",
+        "Check for updates",
+    );
+    let update_status = gtk::Label::new(None);
+    update_status.add_css_class("iris-muted");
+    update_status.set_xalign(0.0);
+    update_status.set_wrap(true);
+    settings_page.append(&update_auto_check);
+    settings_page.append(&update_auto_install);
+    settings_page.append(&update_check_button);
+    settings_page.append(&update_status);
     let recovery_phrase_button = action_button(
         "dialog-password-symbolic",
         "Recovery phrase",
@@ -313,7 +346,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     settings_page.append(&logout_button);
 
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
-    stack.add_titled(&peers_page, Some("devices"), "AppKeys");
+    stack.add_titled(&peers_page, Some("devices"), "Devices");
     stack.add_titled(&shares_page, Some("shares"), "Shares");
     stack.add_titled(&backups_page, Some("backups"), "Backups");
     stack.add_titled(&network_page, Some("network"), "Network");
@@ -321,7 +354,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     let nav_items = [
         ("drive", "drive-harddisk-symbolic", "My Drive"),
-        ("devices", "system-users-symbolic", "AppKeys"),
+        ("devices", "system-users-symbolic", "Devices"),
         ("shares", "emblem-shared-symbolic", "Shares"),
         ("backups", "security-high-symbolic", "Backups"),
         ("network", "network-workgroup-symbolic", "Network"),
@@ -376,10 +409,18 @@ pub(crate) fn build_ui(app: &adw::Application) {
     root.append(&shell);
     window.set_content(Some(&root));
 
+    let (update_sender, update_receiver) = mpsc::channel();
     let model = Rc::new(AppModel {
         application: app.clone(),
         ui: Ui {
             sidebar,
+            update_bar,
+            update_label,
+            update_auto_check,
+            update_auto_install,
+            update_install_button,
+            update_check_button,
+            update_status,
             setup,
             stack,
             sidebar_online,
@@ -401,6 +442,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             account_authorization,
             approve_box,
             approve_device_button,
+            add_recovery_key_button,
             reset_invite_button,
             notice,
             drives,
@@ -418,7 +460,6 @@ pub(crate) fn build_ui(app: &adw::Application) {
             backup_entry,
             backup_label_entry,
             share_source_entry,
-            share_name_entry,
             share_invite_entry,
             create_share_button,
             accept_share_invite_button,
@@ -440,6 +481,16 @@ pub(crate) fn build_ui(app: &adw::Application) {
         tray: RefCell::new(None),
         tray_available: Cell::new(false),
         settings_refreshing: Cell::new(false),
+        update: RefCell::new(updater::UpdateState {
+            auto_check: read_auto_check_updates(),
+            auto_install: read_auto_install_updates(),
+            ..updater::UpdateState::default()
+        }),
+        update_policy: RefCell::new(UpdateAutoCheckPolicy::new(Duration::from_secs(
+            update_poll_interval_secs(),
+        ))),
+        update_sender,
+        update_receiver: RefCell::new(update_receiver),
         closed_to_tray: Cell::new(false),
         retired: Cell::new(false),
         quit_requested: Cell::new(false),
@@ -493,6 +544,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
         let button = model.ui.approve_device_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| show_add_device_dialog(&model));
+    }
+    {
+        let button = model.ui.add_recovery_key_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| show_add_recovery_key_dialog(&model));
     }
     {
         let button = model.ui.reset_invite_button.clone();
@@ -553,6 +609,36 @@ pub(crate) fn build_ui(app: &adw::Application) {
         });
     }
     {
+        let button = model.ui.update_auto_check.clone();
+        let model = Rc::clone(&model);
+        button.connect_toggled(move |button| {
+            if model.settings_refreshing.get() {
+                return;
+            }
+            set_auto_check_updates(&model, button.is_active());
+        });
+    }
+    {
+        let button = model.ui.update_auto_install.clone();
+        let model = Rc::clone(&model);
+        button.connect_toggled(move |button| {
+            if model.settings_refreshing.get() {
+                return;
+            }
+            set_auto_install_updates(&model, button.is_active());
+        });
+    }
+    {
+        let button = model.ui.update_check_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| check_updates(&model, true));
+    }
+    {
+        let button = model.ui.update_install_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| download_update(&model));
+    }
+    {
         let button = model.ui.recovery_phrase_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| show_recovery_phrase_dialog(&model));
@@ -574,6 +660,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
             if model.ui.main_view.is_visible() {
                 refresh(&model);
             }
+            drain_update_events(&model);
+            check_updates_if_due(&model);
             glib::ControlFlow::Continue
         });
     }
@@ -616,6 +704,8 @@ pub(crate) fn build_ui(app: &adw::Application) {
 
     register_active_model(&model);
     refresh(&model);
+    render_update_state(&model);
+    check_updates_if_due(&model);
     drain_pending_launch_inputs(&model);
     window.present();
 }

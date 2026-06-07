@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
@@ -32,6 +33,8 @@ import to.iris.drive.app.core.recoverySecretExportFromJson
 import to.iris.drive.app.sync.BackgroundSyncPolicy
 import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
+import to.iris.drive.app.update.AndroidSelfUpdateManager
+import to.iris.drive.app.update.SelfUpdateActions
 
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState())
@@ -39,12 +42,21 @@ class MainActivity : ComponentActivity() {
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null
     private var nextShareDialogRequestId = 0L
+    private lateinit var selfUpdateManager: AndroidSelfUpdateManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyDebugEnvironment(intent)
         NativeCore.initializeAndroidContext(applicationContext)
         nativeHandle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
+        selfUpdateManager =
+            AndroidSelfUpdateManager(
+                context = applicationContext,
+                scope = lifecycleScope,
+                ioDispatcher = Dispatchers.IO,
+                dataDir = filesDir,
+            )
+        selfUpdateManager.startAutomaticChecks()
         refresh(::autoStartSyncIfNeeded)
         refreshJob = lifecycleScope.launch {
             while (true) {
@@ -68,6 +80,13 @@ class MainActivity : ComponentActivity() {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 shareDialogFlow = shareDialogFlow,
+                selfUpdateStateFlow = selfUpdateManager.state,
+                selfUpdateActions = SelfUpdateActions(
+                    setAutoCheck = selfUpdateManager::setAutoCheckEnabled,
+                    check = { selfUpdateManager.check() },
+                    download = { selfUpdateManager.download() },
+                    install = { selfUpdateManager.install(this@MainActivity) },
+                ),
                 onCreateProfile = { deviceLabel ->
                     dispatch(NativeActions.createProfile(resolveDeviceLabel(deviceLabel)), ::autoStartSyncIfNeeded)
                 },
@@ -98,6 +117,9 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.rejectDevice(request))
                 },
                 onResetInvite = { dispatch(NativeActions.resetInvite()) },
+                onAddRecoveryKey = { recoveryPubkey ->
+                    dispatch(NativeActions.addRecoveryDevice(recoveryPubkey))
+                },
                 onDeleteDevice = { devicePubkey ->
                     dispatch(NativeActions.deleteDevice(devicePubkey))
                 },
@@ -134,7 +156,7 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.checkBackups(target))
                 },
                 onCreateShare = { sourcePath, displayName ->
-                    dispatch(NativeActions.createShare(sourcePath, displayName))
+                    createShareFromProviderPath(sourcePath, displayName)
                 },
                 onInviteShareMember = { shareId, profileId, appKey, role, representativeNpubHint, displayName, label ->
                     dispatch(
@@ -190,6 +212,12 @@ class MainActivity : ComponentActivity() {
                 onRevokeShareMember = { shareId, profileId ->
                     dispatch(NativeActions.revokeShareMember(shareId, profileId))
                 },
+                onOpenSharePath = { path ->
+                    openProviderPath(path)
+                },
+                onDeleteShare = { shareId ->
+                    dispatch(NativeActions.deleteShare(shareId))
+                },
                 onAddShareShortcut = { shareId, path ->
                     dispatch(NativeActions.addShareShortcut(shareId, path))
                 },
@@ -225,6 +253,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         refreshJob?.cancel()
         refreshJob = null
+        if (::selfUpdateManager.isInitialized) {
+            selfUpdateManager.stopAutomaticChecks()
+        }
         val handle = nativeHandle
         nativeHandle = 0
         if (handle != 0L) {
@@ -312,6 +343,104 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "No app can open the drive folder", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun openProviderPath(path: String) {
+        val normalized = normalizeProviderPath(path)
+        runCatching {
+            val documentId = if (normalized.isBlank()) {
+                DOCUMENTS_ROOT_DOCUMENT_ID
+            } else {
+                "$DOCUMENTS_ROOT_DOCUMENT_ID/$normalized"
+            }
+            val uri = DocumentsContract.buildDocumentUri(
+                BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY,
+                documentId,
+            )
+            startActivity(
+                Intent(Intent.ACTION_VIEW)
+                    .setData(uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION),
+            )
+        }.onFailure {
+            Toast.makeText(this, "No app can open this folder", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun createShareFromProviderPath(sourcePath: String, displayName: String) {
+        val normalized = normalizeProviderPath(sourcePath)
+        if (normalized.isBlank()) {
+            Toast.makeText(this, "Share folder path required", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = resolveShareSourcePathForCreate(normalized)
+            withContext(Dispatchers.Main) {
+                val error = result.second
+                if (error.isNotBlank()) {
+                    Toast.makeText(this@MainActivity, error, Toast.LENGTH_SHORT).show()
+                } else {
+                    dispatch(NativeActions.createShare(result.first, displayName))
+                }
+            }
+        }
+    }
+
+    private fun resolveShareSourcePathForCreate(sourcePath: String): Pair<String, String> {
+        providerEntryKind(sourcePath)?.let { kind ->
+            return if (kind == "directory") {
+                sourcePath to ""
+            } else {
+                "" to "Share path must be a folder"
+            }
+        }
+        val createdPath = defaultCreatedShareSourcePath(sourcePath)
+        providerEntryKind(createdPath)?.let { kind ->
+            return if (kind == "directory") {
+                createdPath to ""
+            } else {
+                "" to "Share path must be a folder"
+            }
+        }
+        val mkdirJson = runCatching {
+            JSONObject(NativeCore.providerMkdirJson(filesDir.absolutePath, createdPath))
+        }.getOrElse { error ->
+            return "" to (error.message ?: "Creating share folder failed")
+        }
+        val mkdirError = mkdirJson.optString("error")
+        if (mkdirError.isNotBlank()) {
+            return "" to mkdirError
+        }
+        return mkdirJson.optString("path").ifBlank { createdPath } to ""
+    }
+
+    private fun providerEntryKind(path: String): String? =
+        runCatching {
+            val entries = JSONObject(NativeCore.providerListJson(filesDir.absolutePath))
+                .optJSONArray("entries")
+            if (entries == null) {
+                null
+            } else {
+                var kind: String? = null
+                for (index in 0 until entries.length()) {
+                    val entry = entries.optJSONObject(index) ?: continue
+                    if (entry.optString("path") == path) {
+                        kind = entry.optString("kind")
+                        break
+                    }
+                }
+                kind
+            }
+        }.getOrNull()
+
+    private fun defaultCreatedShareSourcePath(sourcePath: String): String =
+        if (sourcePath == "Shared" || sourcePath.startsWith("Shared/")) {
+            sourcePath
+        } else {
+            "Shared/$sourcePath"
+        }
+
+    private fun normalizeProviderPath(path: String): String =
+        NativeCore.normalizedProviderPath(path).orEmpty()
 
     private fun stateFromJson(json: String): AppState =
         AppState.fromJson(json)

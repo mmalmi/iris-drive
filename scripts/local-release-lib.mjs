@@ -53,6 +53,45 @@ export function semverFromTag(tag) {
   return stripped
 }
 
+export function buildNumberFromVersion(version) {
+  const match = semverFromTag(version).match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) {
+    throw new Error(`Version is not semver-shaped: ${version}`)
+  }
+  const [, major, minor, patch] = match
+  return String(Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch))
+}
+
+export function bumpPbxprojReleaseVersions(pbxprojText, version) {
+  const semver = semverFromTag(version)
+  const build = buildNumberFromVersion(semver)
+  return pbxprojText
+    .replace(/(\bMARKETING_VERSION\s*=\s*)[^;]+(;)/g, `$1${semver}$2`)
+    .replace(/(\bCURRENT_PROJECT_VERSION\s*=\s*)[^;]+(;)/g, `$1${build}$2`)
+}
+
+export function bumpXcodegenProjectVersions(projectText, version) {
+  const semver = semverFromTag(version)
+  const build = buildNumberFromVersion(semver)
+  return projectText
+    .replace(/(\bMARKETING_VERSION:\s*)"?[^"\n]+"?/g, `$1"${semver}"`)
+    .replace(/(\bCURRENT_PROJECT_VERSION:\s*)"?[^"\n]+"?/g, `$1"${build}"`)
+}
+
+export function bumpCargoPackageVersion(cargoTomlText, version) {
+  const semver = semverFromTag(version)
+  const match = cargoTomlText.match(/^\[package\]\s*\n([\s\S]*?)(?=^\[)/m)
+  if (!match) {
+    throw new Error('Could not find [package] table in Cargo.toml')
+  }
+  const original = match[0]
+  if (!/(\nversion\s*=\s*")[^"]+(")/.test(original)) {
+    throw new Error('Could not find version field inside [package] table')
+  }
+  const replaced = original.replace(/(\nversion\s*=\s*")[^"]+(")/, `$1${semver}$2`)
+  return cargoTomlText.replace(original, replaced)
+}
+
 export function readWorkspaceVersionTag(cargoTomlText) {
   const match = cargoTomlText.match(
     /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"\n]+)"/m,
@@ -88,6 +127,9 @@ export function describeAsset(name) {
   if (/^iris-drive-v.*-macos-arm64\.dmg$/.test(name)) {
     return 'Iris Drive for macOS'
   }
+  if (/^iris-drive-v.*-macos-arm64\.app\.tar\.gz$/.test(name)) {
+    return 'Iris Drive macOS updater archive'
+  }
   if (/^iris-drive-v.*-linux-x64\.(AppImage|deb)$/.test(name)) {
     return 'Iris Drive for Linux x64'
   }
@@ -106,6 +148,9 @@ export function validateReleaseAssetSet(
 ) {
   const names = [...assetNames]
   const hasMacosDmg = names.some((name) => /^iris-drive-v.*-macos-arm64\.dmg$/.test(name))
+  const hasMacosUpdater = names.some((name) =>
+    /^iris-drive-v.*-macos-arm64\.app\.tar\.gz$/.test(name),
+  )
   const hasLinuxX64Desktop = names.some((name) =>
     /^iris-drive-v.*-linux-x64\.(AppImage|deb)$/.test(name),
   )
@@ -125,10 +170,19 @@ export function validateReleaseAssetSet(
     )
   }
 
+  if (hasMacosDmg && !hasMacosUpdater) {
+    throw new Error(
+      'Release includes a macOS DMG but no macOS .app.tar.gz updater archive.',
+    )
+  }
+
   if (requireCompleteAppRelease) {
     const missing = []
     if (!hasMacosDmg) {
       missing.push('macOS DMG')
+    }
+    if (!hasMacosUpdater) {
+      missing.push('macOS updater archive')
     }
     if (!hasLinuxX64Desktop) {
       missing.push('Linux x64 desktop package')
@@ -152,6 +206,7 @@ export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = 
   if (selected.has('macos')) {
     names.push(`idrive-${normalizedTag}-aarch64-apple-darwin.tar.gz`)
     names.push(`iris-drive-${normalizedTag}-macos-arm64.dmg`)
+    names.push(`iris-drive-${normalizedTag}-macos-arm64.app.tar.gz`)
   }
   if (selected.has('linux')) {
     names.push(`idrive-${normalizedTag}-x86_64-unknown-linux-gnu.tar.gz`)

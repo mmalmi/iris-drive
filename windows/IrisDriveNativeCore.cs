@@ -70,6 +70,58 @@ public sealed class IrisDriveNativeCore : IDisposable
             TakeString(iris_drive_export_recovery_secret_json(dataDirectory)));
     }
 
+    public static GeneratedRecoveryKey GenerateRecoveryKey()
+    {
+        return GeneratedRecoveryKey.FromJson(TakeString(iris_drive_generate_recovery_key_json()));
+    }
+
+    public static GeneratedRecoveryKey RecoveryPubkeyForPhrase(string recoveryPhrase)
+    {
+        if (string.IsNullOrWhiteSpace(recoveryPhrase))
+        {
+            return new GeneratedRecoveryKey(Array.Empty<string>(), "", "Recovery phrase is required");
+        }
+
+        return GeneratedRecoveryKey.FromJson(
+            TakeString(iris_drive_recovery_pubkey_for_phrase_json(recoveryPhrase.Trim())));
+    }
+
+    public static IrisDriveUpdateResult CheckUpdate(
+        string dataDirectory,
+        string currentVersion,
+        string mode = "app")
+    {
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return IrisDriveUpdateResult.ErrorResult("profile is required");
+        }
+
+        return IrisDriveUpdateResult.FromJson(
+            TakeString(iris_drive_update_check_json(
+                dataDirectory,
+                currentVersion ?? "",
+                mode ?? "app")));
+    }
+
+    public static IrisDriveUpdateResult DownloadUpdate(
+        string dataDirectory,
+        string currentVersion,
+        string downloadDirectory,
+        string mode = "app")
+    {
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return IrisDriveUpdateResult.ErrorResult("profile is required");
+        }
+
+        return IrisDriveUpdateResult.FromJson(
+            TakeString(iris_drive_update_download_json(
+                dataDirectory,
+                currentVersion ?? "",
+                mode ?? "app",
+                downloadDirectory ?? "")));
+    }
+
     public void Dispose()
     {
         if (handle != IntPtr.Zero)
@@ -123,6 +175,26 @@ public sealed class IrisDriveNativeCore : IDisposable
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr iris_drive_export_recovery_secret_json(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_generate_recovery_key_json();
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_recovery_pubkey_for_phrase_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string recoveryPhrase);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_update_check_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string mode);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_update_download_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string mode,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string downloadDir);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern void iris_drive_string_free(IntPtr value);

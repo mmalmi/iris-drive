@@ -5,6 +5,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -45,6 +46,8 @@ import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.core.ShareState
 import to.iris.drive.app.core.SyncState
 import to.iris.drive.app.provider.IrisDriveDocumentStore
+import to.iris.drive.app.update.AndroidSelfUpdateState
+import to.iris.drive.app.update.SelfUpdateActions
 
 @RunWith(AndroidJUnit4::class)
 class IrisDriveAndroidGuiFlowTest {
@@ -218,8 +221,8 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
         compose.onNodeWithText("Recipient identity evidence").assertIsDisplayed()
         compose.onNodeWithText("Member profile UUID").assertIsDisplayed()
-        compose.onNodeWithText("Recipient AppActor pubkey").assertIsDisplayed()
-        compose.onNodeWithText("AppActor label").assertIsDisplayed()
+        compose.onNodeWithText("Recipient device key").assertIsDisplayed()
+        compose.onNodeWithText("Device label").assertIsDisplayed()
         compose.onNodeWithTag("shareRecipientEvidenceInput")
             .performTextInput("""{"profile_id":"profile-1"}""")
         compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
@@ -340,10 +343,10 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("sharesContent").assertIsDisplayed()
         compose.onNodeWithTag("shareSourceInput").assertTextContains("My Drive/Projects")
-        compose.onNodeWithTag("shareNameInput").assertTextContains("Projects")
-        compose.onNodeWithText("Create share").assertIsEnabled().activate()
+        compose.onNodeWithTag("shareNameInput").assertDoesNotExist()
+        compose.onNodeWithText("Create shared folder").assertIsEnabled().activate()
 
-        assertEquals(listOf("My Drive/Projects" to "Projects"), createdShares)
+        assertEquals(listOf("My Drive/Projects" to ""), createdShares)
     }
 
     @Test
@@ -592,7 +595,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOnline").assertIsDisplayed()
         compose.onNodeWithTag("deviceStatusDotOffline").assertIsDisplayed()
-        compose.onNodeWithText("Admin | Linked | This AppKey").assertIsDisplayed()
+        compose.onNodeWithText("Admin | Linked | This Device").assertIsDisplayed()
         compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
     }
 
@@ -609,7 +612,7 @@ class IrisDriveAndroidGuiFlowTest {
         assertFalse(pixel.isOnline)
 
         render(state = approved)
-        compose.onNodeWithText("0/2 AppKeys", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("0/2 devices", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Pixel"))
         compose.onNodeWithText("Pixel").assertIsDisplayed()
@@ -667,7 +670,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Remove"))
         compose.onNodeWithText("Remove").assertIsDisplayed().activate()
         assertTrue(deletedDevices.isEmpty())
-        compose.onNodeWithText("Remove AppKey?").assertIsDisplayed()
+        compose.onNodeWithText("Remove Device?").assertIsDisplayed()
 
         compose.onNodeWithTag("confirmDeleteDevice").assertIsDisplayed().activate()
 
@@ -701,7 +704,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
         compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
-        compose.onNodeWithText("AppKeys asking to join").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
 
         assertEquals(listOf(requestLink), rejectedRequests)
@@ -713,6 +716,7 @@ class IrisDriveAndroidGuiFlowTest {
         onLinkDevice: (String, String) -> Unit = { _, _ -> },
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
         onRejectDevice: (String) -> Unit = {},
+        onAddRecoveryKey: (String) -> Unit = {},
         onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
         onExportRecoverySecret: () -> RecoverySecretExport = { RecoverySecretExport() },
@@ -732,16 +736,26 @@ class IrisDriveAndroidGuiFlowTest {
             { _, _, _, _ -> },
         onAcceptShareInvite: (String) -> Unit = {},
         onRevokeShareMember: (String, String) -> Unit = { _, _ -> },
+        onOpenSharePath: (String) -> Unit = {},
+        onDeleteShare: (String) -> Unit = {},
         onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
         onRepairShareWraps: (String) -> Unit = {},
         shareDialogRequest: ShareDialogRequest? = null,
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
         val shareDialogFlow = MutableStateFlow(shareDialogRequest)
+        val selfUpdateStateFlow = MutableStateFlow(AndroidSelfUpdateState())
         compose.setContent {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 shareDialogFlow = shareDialogFlow,
+                selfUpdateStateFlow = selfUpdateStateFlow,
+                selfUpdateActions = SelfUpdateActions(
+                    setAutoCheck = {},
+                    check = {},
+                    download = {},
+                    install = {},
+                ),
                 onCreateProfile = onCreateProfile,
                 onRestoreProfile = { _, _ -> },
                 onLinkDevice = onLinkDevice,
@@ -752,6 +766,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
                 onResetInvite = {},
+                onAddRecoveryKey = onAddRecoveryKey,
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = { _ -> },
                 onDemoteAdmin = { _ -> },
@@ -773,6 +788,8 @@ class IrisDriveAndroidGuiFlowTest {
                 onRecordPendingShareInvite = onRecordPendingShareInvite,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
+                onOpenSharePath = onOpenSharePath,
+                onDeleteShare = onDeleteShare,
                 onAddShareShortcut = onAddShareShortcut,
                 onRepairShareWraps = onRepairShareWraps,
                 onStartSync = {},
@@ -871,7 +888,7 @@ class IrisDriveAndroidGuiFlowTest {
         state = "linked",
         stateLabel = "Linked",
         connectionState = if (isCurrentDevice) "local" else "offline",
-        connectionLabel = if (isCurrentDevice) "This AppKey" else "Offline",
+        connectionLabel = if (isCurrentDevice) "This Device" else "Offline",
         detail = pubkey,
         isCurrentDevice = isCurrentDevice,
         isOnline = isCurrentDevice,

@@ -65,7 +65,8 @@ pub(crate) fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
-    let (embedded_hashtree, embedded_hashtree_status) =
+    let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
+    let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
         match EmbeddedHashtreeHost::start(config_dir, &config) {
             Ok(host) => {
                 let status = host.status_payload();
@@ -82,7 +83,17 @@ pub(crate) fn cmd_daemon(
                 );
                 (None, json!({"running": false, "error": error}))
             }
-        };
+        }
+    } else {
+        let disabled_by = if !enable_gateway { "cli" } else { "settings" };
+        (
+            None,
+            json!({
+                "running": false,
+                "disabled_by": disabled_by,
+            }),
+        )
+    };
 
     runtime.block_on(async {
         let mut block_config = config.clone();
@@ -133,8 +144,7 @@ pub(crate) fn cmd_daemon(
                     })))
                 }
             };
-        let gateway_enabled =
-            enable_gateway && config.local_nhash_resolver_enabled && embedded_hashtree.is_some();
+        let gateway_enabled = embedded_hashtree_requested && embedded_hashtree.is_some();
         let gateway_disabled_by = if !enable_gateway {
             Some("cli")
         } else if !config.local_nhash_resolver_enabled {
@@ -183,7 +193,8 @@ pub(crate) fn cmd_daemon(
             })
         } else {
             json!({
-                "enabled": config.local_nhash_resolver_enabled,
+                "enabled": false,
+                "requested": embedded_hashtree_requested,
                 "running": false,
                 "disabled_by": gateway_disabled_by,
                 "host": iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
@@ -194,10 +205,12 @@ pub(crate) fn cmd_daemon(
             .await
             .context("connecting to relays")?;
         let relay_statuses = relay_status_payload(&client).await;
-        client
-            .subscribe(filters, None)
-            .await
-            .context("opening subscription")?;
+        for filter in filters {
+            client
+                .subscribe(filter, None)
+                .await
+                .context("opening subscription")?;
+        }
         let mut notifications = client.notifications();
         let mut relay_notifications_open = true;
         let mut direct_roots = DirectRootExchange::default();

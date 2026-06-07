@@ -354,46 +354,14 @@ dependencies = [
 
 [[package]]
 name = "async-utility"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a349201d80b4aa18d17a34a182bdd7f8ddf845e9e57d2ea130a12e10ef1e3a47"
-dependencies = [
- "futures-util",
- "gloo-timers 0.2.6",
- "tokio",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "async-utility"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a34a3b57207a7a1007832416c3e4862378c8451b4e8e093e436f48c2d3d2c151"
 dependencies = [
  "futures-util",
- "gloo-timers 0.3.0",
+ "gloo-timers",
  "tokio",
  "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "async-wsocket"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c0984bead67f20366bc8dd46018dfbe189b67eeefb0e5b86b9eade18d7c3c3b"
-dependencies = [
- "async-utility 0.2.0",
- "futures",
- "futures-util",
- "js-sys",
- "thiserror 1.0.69",
- "tokio",
- "tokio-rustls",
- "tokio-socks",
- "tokio-tungstenite 0.24.0",
- "url",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -402,7 +370,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c92385c7c8b3eb2de1b78aeca225212e4c9a69a78b802832759b108681a5069"
 dependencies = [
- "async-utility 0.3.1",
+ "async-utility",
  "futures",
  "futures-util",
  "js-sys",
@@ -413,15 +381,6 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "web-sys",
-]
-
-[[package]]
-name = "atomic-destructor"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d919cb60ba95c87ba42777e9e246c4e8d658057299b437b7512531ce0a09a23"
-dependencies = [
- "tracing",
 ]
 
 [[package]]
@@ -530,15 +489,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349a06037c7bf932dd7e7d1f653678b2038b9ad46a74102f1fc7bd7872678cce"
 
 [[package]]
-name = "base58ck"
-version = "0.1.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec5dc7e09f7bb15f0062da7c03086d6b71a2c84e0af4fccbbc7d8c6559847816"
-dependencies = [
- "bitcoin_hashes",
-]
-
-[[package]]
 name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -614,36 +564,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bitcoin"
-version = "0.32.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39581299241111285f3268ba75ddf372746fd041620918b145c1af9d75e91b6c"
-dependencies = [
- "base58ck",
- "bech32",
- "bitcoin-io",
- "bitcoin-units",
- "bitcoin_hashes",
- "hex-conservative",
- "hex_lit",
- "secp256k1 0.29.1",
- "serde",
-]
-
-[[package]]
 name = "bitcoin-io"
 version = "0.1.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11301df0b06f22dea7bb1916403fdd88a371031e495c49b8f96931b28189e175"
-
-[[package]]
-name = "bitcoin-units"
-version = "0.1.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57bad157b78d0d1b22c4cbb6a35a566211fc4d14866a37f2c780652b50f3b845"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bitcoin_hashes"
@@ -1717,7 +1641,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.52"
+version = "0.3.54"
 dependencies = [
  "bluer",
  "bytes",
@@ -1729,8 +1653,8 @@ dependencies = [
  "hkdf",
  "libc",
  "mdns-sd",
- "nostr 0.44.3",
- "nostr-sdk 0.44.1",
+ "nostr",
+ "nostr-sdk",
  "portable-atomic",
  "procfs",
  "rand 0.10.1",
@@ -2084,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2099,8 +2023,8 @@ dependencies = [
  "hashtree-lmdb",
  "hex",
  "libc",
- "nostr 0.35.0",
- "nostr-sdk 0.35.0",
+ "nostr",
+ "nostr-sdk",
  "reqwest",
  "rustls 0.23.40",
  "secp256k1 0.29.1",
@@ -2177,18 +2101,6 @@ dependencies = [
  "log",
  "regex-automata",
  "regex-syntax",
-]
-
-[[package]]
-name = "gloo-timers"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b995a66bb87bebce9a0f4a95aed01daca4872c050bfcb21653361c03bc35e5c"
-dependencies = [
- "futures-channel",
- "futures-core",
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2380,7 +2292,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2388,7 +2300,7 @@ dependencies = [
  "hashtree-config",
  "hashtree-core",
  "hex",
- "nostr 0.35.0",
+ "nostr",
  "reqwest",
  "serde",
  "serde_json",
@@ -2400,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2429,8 +2341,8 @@ dependencies = [
  "ignore",
  "libc",
  "lru 0.12.5",
- "nostr 0.35.0",
- "nostr-sdk 0.35.0",
+ "nostr",
+ "nostr-sdk",
  "nostr-social-graph",
  "nostr-social-graph-heed",
  "page_size",
@@ -2458,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-collection"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2471,7 +2383,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2481,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2500,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2511,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2530,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fs"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2542,7 +2454,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-index"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2552,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2562,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-network"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2573,7 +2485,7 @@ dependencies = [
  "hashtree-core",
  "hex",
  "lazy_static",
- "nostr-sdk 0.35.0",
+ "nostr-sdk",
  "rand 0.8.6",
  "rmp-serde",
  "serde",
@@ -2588,14 +2500,14 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "futures",
  "hashtree-collection",
  "hashtree-core",
  "hashtree-index",
  "hex",
- "nostr-sdk 0.35.0",
+ "nostr-sdk",
  "nostr-social-graph",
  "rmp-serde",
  "serde",
@@ -2618,11 +2530,12 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "async-trait",
  "hashtree-core",
- "nostr-sdk 0.35.0",
+ "hex",
+ "nostr-sdk",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
@@ -2630,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.57"
+version = "0.2.58"
 dependencies = [
  "flate2",
  "hashtree-core",
@@ -2700,12 +2613,6 @@ checksum = "fda06d18ac606267c40c04e41b9947729bf8b9efe74bd4e82b61a5f26a510b9f"
 dependencies = [
  "arrayvec",
 ]
-
-[[package]]
-name = "hex_lit"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3011d1213f159867b13cfd6ac92d2cd5f1345762c63be3554e84092d85a50bbd"
 
 [[package]]
 name = "hkdf"
@@ -3053,7 +2960,7 @@ dependencies = [
  "hashtree-provider",
  "iris-drive-core",
  "jni",
- "nostr-sdk 0.35.0",
+ "nostr-sdk",
  "qrcode",
  "rustls 0.23.40",
  "serde",
@@ -3082,10 +2989,12 @@ dependencies = [
  "hashtree-fs",
  "hashtree-nostr",
  "hashtree-provider",
+ "hashtree-resolver",
+ "hashtree-updater",
  "hex",
  "http",
  "mime_guess",
- "nostr-sdk 0.35.0",
+ "nostr-sdk",
  "reqwest",
  "rustls 0.23.40",
  "serde",
@@ -3106,8 +3015,10 @@ dependencies = [
  "glib",
  "gtk4",
  "iris-drive-app-core",
+ "iris-drive-core",
  "ksni",
  "libadwaita",
+ "serde_json",
 ]
 
 [[package]]
@@ -3490,18 +3401,6 @@ dependencies = [
 
 [[package]]
 name = "negentropy"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e664971378a3987224f7a0e10059782035e89899ae403718ee07de85bec42afe"
-
-[[package]]
-name = "negentropy"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a88da9dd148bbcdce323dd6ac47d369b4769d4a3b78c6c52389b9269f77932"
-
-[[package]]
-name = "negentropy"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0efe882e02d206d8d279c20eb40e03baf7cb5136a1476dc084a324fbc3ec42d"
@@ -3615,37 +3514,6 @@ dependencies = [
 
 [[package]]
 name = "nostr"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56db234b2e07901e372f34e9463f91590579cd8e6dbd34ed2ccc7e461e4ba639"
-dependencies = [
- "aes 0.8.4",
- "base64 0.22.1",
- "bech32",
- "bip39",
- "bitcoin",
- "cbc",
- "chacha20 0.9.1",
- "chacha20poly1305",
- "getrandom 0.2.17",
- "instant",
- "js-sys",
- "negentropy 0.3.1",
- "negentropy 0.4.3",
- "once_cell",
- "reqwest",
- "scrypt",
- "serde",
- "serde_json",
- "unicode-normalization",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "nostr"
 version = "0.44.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d8f0fe13526800300a36bf3b7c5f752e62e32ab81c74a8e5caa2865708625a"
@@ -3670,26 +3538,12 @@ dependencies = [
 
 [[package]]
 name = "nostr-database"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50de8cc5e77e7dafa7e2e0d0d67187ef19e191dcd1a68efffd3e05152d91b3c3"
-dependencies = [
- "async-trait",
- "lru 0.12.5",
- "nostr 0.35.0",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nostr-database"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7462c9d8ae5ef6a28d66a192d399ad2530f1f2130b13186296dbb11bdef5b3d1"
 dependencies = [
  "lru 0.16.4",
- "nostr 0.44.3",
+ "nostr",
  "tokio",
 ]
 
@@ -3699,26 +3553,7 @@ version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade30de16869618919c6b5efc8258f47b654a98b51541eb77f85e8ec5e3c83a6"
 dependencies = [
- "nostr 0.44.3",
-]
-
-[[package]]
-name = "nostr-relay-pool"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "800b9ca169902977366f8243ec645b1fa4a128ab621331796d4a26bd7bc22a88"
-dependencies = [
- "async-utility 0.2.0",
- "async-wsocket 0.9.0",
- "atomic-destructor 0.2.0",
- "negentropy 0.3.1",
- "negentropy 0.4.3",
- "nostr 0.35.0",
- "nostr-database 0.35.0",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tracing",
+ "nostr",
 ]
 
 [[package]]
@@ -3727,31 +3562,14 @@ version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91b2c039df4f96c4bf7dae52a74fd5516ad6dda83a11c0c69dea91b5255a4f37"
 dependencies = [
- "async-utility 0.3.1",
- "async-wsocket 0.13.2",
- "atomic-destructor 0.3.0",
+ "async-utility",
+ "async-wsocket",
+ "atomic-destructor",
  "hex",
  "lru 0.16.4",
- "negentropy 0.5.0",
- "nostr 0.44.3",
- "nostr-database 0.44.0",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nostr-sdk"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d93036bf4c1e35145ca2cd6ee4cb7bb9c74f41cbca9cc4caff1e87b5e192f253"
-dependencies = [
- "async-utility 0.2.0",
- "atomic-destructor 0.2.0",
- "nostr 0.35.0",
- "nostr-database 0.35.0",
- "nostr-relay-pool 0.35.0",
- "nostr-signer",
- "thiserror 1.0.69",
+ "negentropy",
+ "nostr",
+ "nostr-database",
  "tokio",
  "tracing",
 ]
@@ -3762,25 +3580,13 @@ version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "471732576710e779b64f04c55e3f8b5292f865fea228436daf19694f0bf70393"
 dependencies = [
- "async-utility 0.3.1",
- "nostr 0.44.3",
- "nostr-database 0.44.0",
+ "async-utility",
+ "nostr",
+ "nostr-database",
  "nostr-gossip",
- "nostr-relay-pool 0.44.1",
+ "nostr-relay-pool",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "nostr-signer"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1e132975a677a1c97a7695ef1161291dc06517a588b6e17e3aa05d3fb4056a0"
-dependencies = [
- "async-utility 0.2.0",
- "nostr 0.35.0",
- "thiserror 1.0.69",
- "tokio",
 ]
 
 [[package]]
@@ -4879,7 +4685,6 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
- "bitcoin_hashes",
  "rand 0.8.6",
  "secp256k1-sys",
  "serde",
@@ -4961,7 +4766,6 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
- "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -5587,12 +5391,8 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.40",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite 0.24.0",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5907,8 +5707,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
- "rustls 0.23.40",
- "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

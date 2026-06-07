@@ -54,7 +54,7 @@ pub fn setup_state_flags(setup_state: &str) -> SetupStateFlags {
 #[must_use]
 pub fn primary_status_label(primary_status: &str) -> &'static str {
     match primary_status {
-        "revoked" => "AppKey removed",
+        "revoked" => "Device removed",
         "awaiting_approval" => "Waiting for approval",
         _ => "Ready",
     }
@@ -99,7 +99,7 @@ pub fn app_key_display_label(
     fallback: &str,
 ) -> String {
     if is_current_app_key {
-        return "This AppKey".to_owned();
+        return "This Device".to_owned();
     }
     label
         .map(str::trim)
@@ -136,7 +136,7 @@ pub fn app_key_connection_label(
     srtt_ms: Option<u64>,
 ) -> String {
     if connection_state == "local" {
-        return "This AppKey".to_owned();
+        return "This Device".to_owned();
     }
     if connection_state == "offline" {
         return "Offline".to_owned();
@@ -457,7 +457,7 @@ mod tests {
             primary_status_label("awaiting_approval"),
             "Waiting for approval"
         );
-        assert_eq!(primary_status_label("revoked"), "AppKey removed");
+        assert_eq!(primary_status_label("revoked"), "Device removed");
         assert_eq!(sync_status_label("running"), "Sync on");
         assert_eq!(sync_status_label("profile synced"), "Profile synced");
         assert_eq!(sync_status_label("up to date"), "Up to date");
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(app_actor_role_label(AppActorRole::Member), "Member");
         assert_eq!(
             app_key_display_label(true, Some("Mac"), "npub1x"),
-            "This AppKey"
+            "This Device"
         );
         assert_eq!(
             app_key_display_label(false, Some("  Phone  "), "npub1x"),
@@ -486,7 +486,7 @@ mod tests {
             "Online (Mesh)"
         );
         assert_eq!(app_key_connection_label("offline", None, None), "Offline");
-        assert_eq!(app_key_connection_label("local", None, None), "This AppKey");
+        assert_eq!(app_key_connection_label("local", None, None), "This Device");
 
         let member = app_key_management_actions(true, false, false, 2);
         assert!(member.can_revoke);
@@ -536,11 +536,11 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].npub, current_npub);
-        assert_eq!(rows[0].display_label, "This AppKey");
+        assert_eq!(rows[0].display_label, "This Device");
         assert_eq!(rows[0].role, "admin");
         assert_eq!(rows[0].role_label, "Admin");
         assert_eq!(rows[0].connection_state, "local");
-        assert_eq!(rows[0].connection_label, "This AppKey");
+        assert_eq!(rows[0].connection_label, "This Device");
         assert!(!rows[0].can_revoke);
 
         assert_eq!(rows[1].npub, remote_npub);
@@ -605,7 +605,7 @@ mod tests {
         assert!(summary.can_admin_profile);
         assert_eq!(summary.active_app_key_count, 2);
         assert_eq!(summary.current_key_epoch, Some(3));
-        assert_eq!(summary.recovery_phrase_facet_count, 1);
+        assert_eq!(summary.recovery_phrase_facet_count, 0);
         assert_eq!(summary.nip46_facet_count, 0);
         assert_eq!(summary.social_profile_facet_count, 0);
         assert_eq!(summary.missing_key_wrap_npubs.len(), 2);

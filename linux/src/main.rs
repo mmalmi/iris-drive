@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 use iris_drive_app_core::{
-    LinkInputClassification, NativeAppAction, NativeAppState, UiState, classify_link_input,
+    LinkInputClassification, NativeAppAction, NativeAppState, UiState, UpdateAutoCheckPolicy,
+    classify_link_input,
 };
 
 mod actions;
@@ -21,6 +22,7 @@ mod render;
 mod setup;
 mod tray;
 mod ui;
+mod updater;
 mod widgets;
 
 use actions::*;
@@ -47,6 +49,13 @@ thread_local! {
 #[derive(Clone)]
 struct Ui {
     sidebar: gtk::Box,
+    update_bar: gtk::Box,
+    update_label: gtk::Label,
+    update_auto_check: gtk::CheckButton,
+    update_auto_install: gtk::CheckButton,
+    update_install_button: gtk::Button,
+    update_check_button: gtk::Button,
+    update_status: gtk::Label,
     setup: gtk::Box,
     stack: gtk::Stack,
     sidebar_online: gtk::Label,
@@ -68,6 +77,7 @@ struct Ui {
     account_authorization: gtk::Label,
     approve_box: gtk::Box,
     approve_device_button: gtk::Button,
+    add_recovery_key_button: gtk::Button,
     reset_invite_button: gtk::Button,
     notice: gtk::Label,
     drives: gtk::ListBox,
@@ -85,7 +95,6 @@ struct Ui {
     backup_entry: gtk::Entry,
     backup_label_entry: gtk::Entry,
     share_source_entry: gtk::Entry,
-    share_name_entry: gtk::Entry,
     share_invite_entry: gtk::Entry,
     create_share_button: gtk::Button,
     accept_share_invite_button: gtk::Button,
@@ -111,6 +120,10 @@ struct AppModel {
     tray: RefCell<Option<TrayServiceHandle>>,
     tray_available: Cell<bool>,
     settings_refreshing: Cell<bool>,
+    update: RefCell<updater::UpdateState>,
+    update_policy: RefCell<UpdateAutoCheckPolicy>,
+    update_sender: mpsc::Sender<updater::UpdateEvent>,
+    update_receiver: RefCell<mpsc::Receiver<updater::UpdateEvent>>,
     closed_to_tray: Cell<bool>,
     retired: Cell<bool>,
     quit_requested: Cell<bool>,
@@ -225,13 +238,14 @@ fn apply_launch_input(model: &AppRef, input: &str) {
 fn apply_share_dialog_link(model: &AppRef, classification: &LinkInputClassification) {
     model.ui.stack.set_visible_child_name("shares");
     if !classification.is_valid || classification.share_source_path.trim().is_empty() {
-        model.ui.notice.set_text(
-            if classification.error.trim().is_empty() {
+        model
+            .ui
+            .notice
+            .set_text(if classification.error.trim().is_empty() {
                 "Share folder path is required."
             } else {
                 classification.error.trim()
-            },
-        );
+            });
         return;
     }
 
@@ -239,10 +253,6 @@ fn apply_share_dialog_link(model: &AppRef, classification: &LinkInputClassificat
         .ui
         .share_source_entry
         .set_text(classification.share_source_path.trim());
-    model
-        .ui
-        .share_name_entry
-        .set_text(classification.share_display_name.trim());
 
     let recipient = first_non_empty([
         classification.share_recipient_display_name.as_str(),
@@ -265,4 +275,258 @@ fn first_non_empty(values: [&str; 3]) -> &str {
         .map(str::trim)
         .find(|value| !value.is_empty())
         .unwrap_or("")
+}
+
+fn render_update_state(model: &AppRef) {
+    let update = model.update.borrow();
+    model.ui.update_bar.set_visible(update.available);
+    model.ui.update_label.set_text(&update_stripe_text(
+        &update.version,
+        env!("CARGO_PKG_VERSION"),
+    ));
+    model.ui.update_install_button.set_sensitive(
+        update.available && update.asset.is_some() && !update.checking && !update.downloading,
+    );
+    model
+        .ui
+        .update_check_button
+        .set_sensitive(!update.checking && !update.downloading);
+    model.ui.update_status.set_text(&update.status);
+    model.settings_refreshing.set(true);
+    model.ui.update_auto_check.set_active(update.auto_check);
+    model.ui.update_auto_install.set_active(update.auto_install);
+    model.settings_refreshing.set(false);
+}
+
+fn set_auto_check_updates(model: &AppRef, enabled: bool) {
+    {
+        let mut update = model.update.borrow_mut();
+        update.auto_check = enabled;
+    }
+    write_auto_check_updates(enabled);
+    render_update_state(model);
+    if enabled {
+        check_updates_if_due(model);
+    }
+}
+
+fn set_auto_install_updates(model: &AppRef, enabled: bool) {
+    let should_download = {
+        let mut update = model.update.borrow_mut();
+        update.auto_install = enabled;
+        enabled && update.available && update.asset.is_some()
+    };
+    write_auto_install_updates(enabled);
+    render_update_state(model);
+    if should_download {
+        download_update(model);
+    }
+}
+
+fn check_updates(model: &AppRef, manual: bool) {
+    let (sender, config_dir) = {
+        let mut update = model.update.borrow_mut();
+        if update.checking || update.downloading {
+            return;
+        }
+        if manual {
+            model
+                .update_policy
+                .borrow_mut()
+                .note_manual_check_started(Instant::now());
+            update.status = "Checking for updates".to_string();
+        }
+        update.checking = true;
+        (model.update_sender.clone(), app_config_dir())
+    };
+    render_update_state(model);
+    updater::check(
+        env!("CARGO_PKG_VERSION").to_string(),
+        config_dir,
+        manual,
+        sender,
+    );
+}
+
+fn check_updates_if_due(model: &AppRef) {
+    let due = {
+        let update = model.update.borrow();
+        let enabled = update.auto_check;
+        drop(update);
+        model
+            .update_policy
+            .borrow_mut()
+            .should_start_check(enabled, Instant::now())
+    };
+    if due {
+        check_updates(model, false);
+    }
+}
+
+fn download_update(model: &AppRef) {
+    let (asset, sender, config_dir) = {
+        let mut update = model.update.borrow_mut();
+        if update.checking || update.downloading {
+            return;
+        }
+        let Some(asset) = update.asset.clone() else {
+            update.status = "No Linux update asset found".to_string();
+            render_update_state(model);
+            return;
+        };
+        update.downloading = true;
+        update.status = format!("Downloading {}", update.version);
+        (asset, model.update_sender.clone(), app_config_dir())
+    };
+    render_update_state(model);
+    updater::download(
+        env!("CARGO_PKG_VERSION").to_string(),
+        config_dir,
+        asset,
+        sender,
+    );
+}
+
+fn drain_update_events(model: &AppRef) {
+    let events = {
+        let receiver = model.update_receiver.borrow();
+        receiver.try_iter().collect::<Vec<_>>()
+    };
+    if events.is_empty() {
+        return;
+    }
+
+    let mut auto_download = false;
+    {
+        let mut update = model.update.borrow_mut();
+        for event in events {
+            match event {
+                updater::UpdateEvent::Checked { manual, result } => {
+                    update.checking = false;
+                    match result {
+                        Ok(check) => {
+                            update.available = check.newer;
+                            update.version = check.tag.clone();
+                            update.asset = if check.newer { check.asset } else { None };
+                            if check.newer {
+                                update.status = if update.asset.is_some() {
+                                    format!("Update {} available", check.tag)
+                                } else {
+                                    format!(
+                                        "Update {} found without a Linux desktop asset",
+                                        check.tag
+                                    )
+                                };
+                                auto_download = update.auto_install && update.asset.is_some();
+                            } else if manual {
+                                update.status = "Up to date".to_string();
+                            } else {
+                                update.status.clear();
+                            }
+                        }
+                        Err(error) => {
+                            if manual {
+                                update.status = error;
+                            } else {
+                                update.status.clear();
+                            }
+                        }
+                    }
+                }
+                updater::UpdateEvent::Downloaded(result) => {
+                    update.downloading = false;
+                    match result {
+                        Ok(path) => {
+                            update.status = format!(
+                                "Downloaded {}",
+                                path.file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("update")
+                            );
+                        }
+                        Err(error) => {
+                            update.status = error;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if auto_download {
+        download_update(model);
+    } else {
+        render_update_state(model);
+    }
+}
+
+fn update_stripe_text(version: &str, current: &str) -> String {
+    let version = version.trim();
+    let current = current.trim();
+    if current.is_empty() {
+        format!("Update available: {version}")
+    } else {
+        format!("Update available: {version} (you're on {current})")
+    }
+}
+
+fn update_preferences_path() -> PathBuf {
+    app_config_dir().join("linux-update-preferences")
+}
+
+fn read_auto_check_updates() -> bool {
+    read_update_preference("auto_check").unwrap_or(true)
+}
+
+fn write_auto_check_updates(enabled: bool) {
+    write_update_preference("auto_check", enabled);
+}
+
+fn read_auto_install_updates() -> bool {
+    read_update_preference("auto_install").unwrap_or(false)
+}
+
+fn write_auto_install_updates(enabled: bool) {
+    write_update_preference("auto_install", enabled);
+}
+
+fn read_update_preference(name: &str) -> Option<bool> {
+    let contents = std::fs::read_to_string(update_preferences_path()).ok()?;
+    contents.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if key.trim() == name {
+            Some(value.trim() == "true")
+        } else {
+            None
+        }
+    })
+}
+
+fn write_update_preference(name: &str, enabled: bool) {
+    let path = update_preferences_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut preferences = std::collections::BTreeMap::new();
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        for line in contents.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                preferences.insert(key.trim().to_string(), value.trim().to_string());
+            }
+        }
+    }
+    preferences.insert(name.to_string(), enabled.to_string());
+    let contents = preferences
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}\n"))
+        .collect::<String>();
+    let _ = std::fs::write(path, contents);
+}
+
+fn update_poll_interval_secs() -> u64 {
+    std::env::var("IRIS_DRIVE_UPDATE_POLL_SECONDS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(6 * 60 * 60)
 }

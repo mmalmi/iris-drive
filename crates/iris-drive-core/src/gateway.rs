@@ -4,7 +4,7 @@
 //! treat them as secure contexts without a custom CA or browser fork.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -226,6 +226,7 @@ fn socket_addr_authority(addr: SocketAddr) -> String {
 #[derive(Debug, Clone)]
 enum GatewayRequest {
     Local(LocalGatewayRequest),
+    Drive(DriveGatewayRequest),
     HtreeDaemon(HtreeProxyRequest),
 }
 
@@ -235,6 +236,12 @@ struct LocalGatewayRequest {
     path_segments: Vec<String>,
     cache_policy: CachePolicy,
     set_key_cookie: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct DriveGatewayRequest {
+    drive_id: String,
+    path_segments: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -288,11 +295,14 @@ async fn handle_gateway_request(
         return handle_share_action_api(&state, &method, &headers, body.as_ref());
     }
 
-    let request = resolve_gateway_request(&state, &uri, &headers)
+    let request = resolve_gateway_request(&uri, &headers)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let request = match request {
         GatewayRequest::Local(request) => request,
+        GatewayRequest::Drive(request) => materialize_drive_gateway_request(&state, request)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
         GatewayRequest::HtreeDaemon(request) => {
             return proxy_htree_daemon_request(&state, &method, &headers, request).await;
         }
@@ -548,11 +558,7 @@ fn htree_daemon_target(request: &HtreeProxyRequest) -> String {
     target
 }
 
-fn resolve_gateway_request(
-    state: &GatewayState,
-    uri: &Uri,
-    headers: &HeaderMap,
-) -> Result<GatewayRequest, GatewayError> {
+fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequest, GatewayError> {
     let host = headers
         .get(HOST)
         .and_then(|value| value.to_str().ok())
@@ -564,7 +570,7 @@ fn resolve_gateway_request(
 
     let (path_segments, route_from_path) = parse_gateway_path(uri.path())?;
     if let Some(route) = route_from_path {
-        return request_from_path_route(state, uri, headers, route, path_segments);
+        return request_from_path_route(uri, headers, route, path_segments);
     }
 
     if host == LOCAL_NHASH_RESOLVER_HOST {
@@ -586,7 +592,7 @@ fn resolve_gateway_request(
     }
 
     if let Some(drive_id) = host.strip_suffix(DRIVE_HOST_SUFFIX) {
-        return drive_host_request(state, drive_id, path_segments);
+        return drive_host_request(drive_id, path_segments);
     }
 
     if let Some(nhash) = nhash_from_split_host(&host, IRIS_LOCALHOST_SUFFIX)
@@ -598,7 +604,7 @@ fn resolve_gateway_request(
     if let Some(drive_id) = host.strip_suffix(IRIS_LOCALHOST_SUFFIX)
         && drive_id == PRIMARY_DRIVE_ID
     {
-        return drive_host_request(state, drive_id, path_segments);
+        return drive_host_request(drive_id, path_segments);
     }
 
     if is_loopback_host(&host) {
@@ -618,14 +624,13 @@ enum PathRoute {
 }
 
 fn request_from_path_route(
-    state: &GatewayState,
     uri: &Uri,
     headers: &HeaderMap,
     route: PathRoute,
     path_segments: Vec<String>,
 ) -> Result<GatewayRequest, GatewayError> {
     match route {
-        PathRoute::Drive(drive_id) => drive_host_request(state, &drive_id, path_segments),
+        PathRoute::Drive(drive_id) => drive_host_request(&drive_id, path_segments),
         PathRoute::Nhash(nhash) => nhash_request(&nhash, uri, headers, path_segments),
     }
 }
@@ -689,29 +694,51 @@ fn immutable_host_request(
 }
 
 fn drive_host_request(
-    state: &GatewayState,
     drive_id: &str,
     path_segments: Vec<String>,
 ) -> Result<GatewayRequest, GatewayError> {
     if !is_safe_drive_id(drive_id) {
         return Err(GatewayError::InvalidRequest("invalid drive id".into()));
     }
-    let root = current_drive_root(&state.config_dir, drive_id)?;
-    Ok(GatewayRequest::Local(LocalGatewayRequest {
-        root,
+    Ok(GatewayRequest::Drive(DriveGatewayRequest {
+        drive_id: drive_id.to_string(),
         path_segments,
-        cache_policy: CachePolicy::Mutable,
-        set_key_cookie: None,
     }))
 }
 
-fn current_drive_root(config_dir: &Path, drive_id: &str) -> Result<Cid, GatewayError> {
+async fn materialize_drive_gateway_request(
+    state: &GatewayState,
+    request: DriveGatewayRequest,
+) -> Result<LocalGatewayRequest, GatewayError> {
+    let root = current_drive_root(state, &request.drive_id).await?;
+    Ok(LocalGatewayRequest {
+        root,
+        path_segments: request.path_segments,
+        cache_policy: CachePolicy::Mutable,
+        set_key_cookie: None,
+    })
+}
+
+async fn current_drive_root(state: &GatewayState, drive_id: &str) -> Result<Cid, GatewayError> {
+    let config_dir = state.config_dir.as_ref();
     if !key_path_in(config_dir).exists() {
         return Err(GatewayError::InvalidRequest(
             "iris-drive is not initialized".into(),
         ));
     }
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config_path = config_path_in(config_dir);
+    let mut config = AppConfig::load_or_default(&config_path)?;
+    if crate::repair_missing_share_shortcuts(&mut config)
+        .map_err(|e| GatewayError::InvalidRequest(e.to_string()))?
+    {
+        config.save(&config_path)?;
+    }
+    if drive_id == PRIMARY_DRIVE_ID {
+        let merged = crate::primary_merged_root(state.tree.as_ref(), &config)
+            .await
+            .map_err(|e| GatewayError::Hashtree(e.to_string()))?;
+        return Ok(merged.root_cid);
+    }
     let drive = config
         .drive(drive_id)
         .ok_or_else(|| GatewayError::InvalidRequest(format!("drive {drive_id} not found")))?;

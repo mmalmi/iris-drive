@@ -18,6 +18,10 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import {
+  buildNumberFromVersion,
+  bumpCargoPackageVersion,
+  bumpPbxprojReleaseVersions,
+  bumpXcodegenProjectVersions,
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
@@ -36,7 +40,7 @@ const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const distDir = join(repoRoot, 'dist')
 const defaultEnvFiles = [join(repoRoot, '.env.release.local'), join(repoRoot, '.env.zapstore.local')]
-const defaultBuildSteps = ['macos', 'linux', 'windows', 'android', 'ios']
+const defaultBuildSteps = ['platform-versions', 'macos', 'linux', 'windows', 'android', 'ios']
 
 class SkipStepError extends Error {}
 
@@ -56,7 +60,7 @@ Options:
   --asset-dir <path>     Artifact directory (default: dist)
   --stage-dir <path>     Staging directory
   --env-file <path>      Extra dotenv file to load
-  --only <csv>           With --build, limit steps to macos,linux,windows,android,ios
+  --only <csv>           With --build, limit steps to platform-versions,macos,linux,windows,android,ios
   --skip <csv>           With --build, skip named steps
   --allow-partial        With --build, continue after unavailable platform builders
   --skip-zapstore        With --final, skip publishing the Android APK to Zapstore
@@ -225,15 +229,6 @@ function findFirstFile(root, matcher) {
   }
   const entry = readdirSync(root).sort().find((candidate) => matcher(candidate))
   return entry ? join(root, entry) : null
-}
-
-function buildNumberFromVersion(version) {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (!match) {
-    throw new Error(`Version is not semver-shaped: ${version}`)
-  }
-  const [, major, minor, patch] = match
-  return String(Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch))
 }
 
 function releaseVersionInfo(tag) {
@@ -477,6 +472,13 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     rmSync(dmgPath, { force: true })
   }
   run('hdiutil', ['create', '-volname', 'Iris Drive', '-srcfolder', appPath, '-ov', '-format', 'UDZO', dmgPath], {
+    dryRun,
+  })
+  const updaterArchivePath = join(distDir, `iris-drive-${tag}-macos-arm64.app.tar.gz`)
+  if (!dryRun) {
+    rmSync(updaterArchivePath, { force: true })
+  }
+  run('tar', ['-czf', updaterArchivePath, '-C', dirname(appPath), basename(appPath)], {
     dryRun,
   })
 }
@@ -751,6 +753,7 @@ function buildReleaseArtifacts({ env, tag, options }) {
     `Planned dist artifacts: ${plannedReleaseAssetNames(tag, steps, { signedAndroid }).join(', ') || '(none)'}`,
   )
   const builders = new Map([
+    ['platform-versions', () => syncPlatformVersions({ tag, dryRun: options.dryRun })],
     ['macos', () => buildMacosArtifacts({ env, tag, dryRun: options.dryRun })],
     ['linux', () => buildLinuxArtifacts({ env, tag, dryRun: options.dryRun })],
     ['windows', () => buildWindowsArtifacts({ env, tag, dryRun: options.dryRun })],
@@ -772,6 +775,54 @@ function buildReleaseArtifacts({ env, tag, options }) {
       throw error
     }
   }
+}
+
+function syncPlatformVersions({ tag, dryRun }) {
+  const targets = [
+    { path: rootCargoToml, bump: bumpWorkspaceVersion },
+    { path: join(repoRoot, 'linux', 'Cargo.toml'), bump: bumpCargoPackageVersion },
+    { path: join(repoRoot, 'macos', 'project.yml'), bump: bumpXcodegenProjectVersions },
+    { path: join(repoRoot, 'ios', 'project.yml'), bump: bumpXcodegenProjectVersions },
+    { path: join(repoRoot, 'macos', 'IrisDriveMac.xcodeproj', 'project.pbxproj'), bump: bumpPbxprojReleaseVersions },
+    { path: join(repoRoot, 'ios', 'IrisDriveIOS.xcodeproj', 'project.pbxproj'), bump: bumpPbxprojReleaseVersions },
+  ]
+  const updated = []
+  for (const { path, bump } of targets) {
+    if (!existsSync(path)) {
+      continue
+    }
+    const original = readFileSync(path, 'utf8')
+    const next = bump(original, tag)
+    if (next === original) {
+      continue
+    }
+    if (!dryRun) {
+      writeFileSync(path, next)
+    }
+    updated.push(path.replace(`${repoRoot}/`, ''))
+  }
+  if (updated.length > 0) {
+    console.log(`Synced platform versions to ${tag}: ${updated.join(', ')}`)
+  } else {
+    console.log(`Platform versions already at ${tag}`)
+  }
+}
+
+function bumpWorkspaceVersion(cargoTomlText, version) {
+  const semver = semverFromTag(version)
+  return cargoTomlText
+    .replace(
+      /^(\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"\n]+(")/m,
+      `$1${semver}$2`,
+    )
+    .replace(
+      /(iris-drive-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
+      `$1${semver}$2`,
+    )
+    .replace(
+      /(iris-drive-app-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
+      `$1${semver}$2`,
+    )
 }
 
 function collectReleaseAssetPaths(assetDir, tag) {

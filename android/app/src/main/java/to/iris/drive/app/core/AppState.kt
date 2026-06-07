@@ -261,6 +261,12 @@ internal object NativeActions {
 
     fun resetInvite(): String = JSONObject().put("type", "reset_invite").toString()
 
+    fun addRecoveryDevice(recoveryPubkey: String): String =
+        JSONObject()
+            .put("type", "add_recovery_device")
+            .put("recovery_pubkey", recoveryPubkey)
+            .toString()
+
     fun revokeDevice(devicePubkey: String): String =
         JSONObject()
             .put("type", "revoke_device")
@@ -362,6 +368,12 @@ internal object NativeActions {
             .put("display_name", displayName)
             .toString()
 
+    fun deleteShare(shareId: String): String =
+        JSONObject()
+            .put("type", "delete_share")
+            .put("share_id", shareId)
+            .toString()
+
     fun inviteShareMember(
         shareId: String,
         profileId: String,
@@ -434,7 +446,7 @@ internal object NativeActions {
         JSONObject()
             .put("type", "add_share_shortcut")
             .put("share_id", shareId)
-            .put("path", path)
+            .put("path", "")
             .put("parent", "")
             .put("target_path", "")
             .toString()

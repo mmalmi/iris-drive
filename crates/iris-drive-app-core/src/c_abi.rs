@@ -1,4 +1,5 @@
 use std::ffi::{CStr, CString, c_char};
+use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
 
@@ -23,7 +24,14 @@ use crate::{
     ffi::native_provider_rename_json,
     ffi::native_provider_resolve_path_json,
     ffi::native_provider_write_json,
-    ffi::{classify_link_input, export_recovery_secret, validate_link_input},
+    ffi::{
+        classify_link_input, drive_link_for_cid, export_recovery_secret, generate_recovery_key,
+        recovery_pubkey_for_phrase, validate_link_input,
+    },
+};
+use iris_drive_core::updater::{
+    ProductUpdateMode, ProductUpdateResult, check_product_update_blocking,
+    download_product_update_blocking, product_update_config_for_dir,
 };
 
 pub struct IrisDriveAppHandle {
@@ -36,6 +44,39 @@ struct QrMatrixResult {
     width: usize,
     cells: Vec<bool>,
     error: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct NativeUpdateResult {
+    available: bool,
+    current_version: String,
+    latest_version: String,
+    tag: String,
+    asset: String,
+    source: String,
+    verified: bool,
+    path: Option<String>,
+    root_cid: Option<String>,
+    release_cid: Option<String>,
+    error: String,
+}
+
+impl From<ProductUpdateResult> for NativeUpdateResult {
+    fn from(value: ProductUpdateResult) -> Self {
+        Self {
+            available: value.available,
+            current_version: value.current_version,
+            latest_version: value.latest_version,
+            tag: value.tag,
+            asset: value.asset,
+            source: value.source,
+            verified: value.verified,
+            path: value.path,
+            root_cid: value.root_cid,
+            release_cid: value.release_cid,
+            error: String::new(),
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -127,6 +168,61 @@ pub extern "C" fn iris_drive_validate_link_input_json(text: *const c_char) -> *m
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_export_recovery_secret_json(data_dir: *const c_char) -> *mut c_char {
     json_string(&export_recovery_secret(c_string_lossy(data_dir)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_generate_recovery_key_json() -> *mut c_char {
+    json_string(&generate_recovery_key())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_recovery_pubkey_for_phrase_json(
+    recovery_phrase: *const c_char,
+) -> *mut c_char {
+    json_string(&recovery_pubkey_for_phrase(c_string_lossy(recovery_phrase)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_link_for_cid_json(root_cid: *const c_char) -> *mut c_char {
+    json_string(&drive_link_for_cid(c_string_lossy(root_cid)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_update_check_json(
+    data_dir: *const c_char,
+    current_version: *const c_char,
+    mode: *const c_char,
+) -> *mut c_char {
+    let result = native_update_check(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(current_version),
+        &c_string_lossy(mode),
+    )
+    .unwrap_or_else(|error| NativeUpdateResult {
+        error,
+        ..NativeUpdateResult::default()
+    });
+    json_string(&result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_update_download_json(
+    data_dir: *const c_char,
+    current_version: *const c_char,
+    mode: *const c_char,
+    download_dir: *const c_char,
+) -> *mut c_char {
+    let result = native_update_download(
+        &c_string_lossy(data_dir),
+        &c_string_lossy(current_version),
+        &c_string_lossy(mode),
+        &c_string_lossy(download_dir),
+    )
+    .unwrap_or_else(|error| NativeUpdateResult {
+        error,
+        ..NativeUpdateResult::default()
+    });
+    json_string(&result)
 }
 
 #[unsafe(no_mangle)]
@@ -384,6 +480,70 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_exportRecoverySecr
 ) -> jstring {
     let data_dir = jni_string_lossy(&mut env, &data_dir);
     jni_json_string(env, &export_recovery_secret(data_dir))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_generateRecoveryKeyJson(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jstring {
+    jni_json_string(env, &generate_recovery_key())
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_recoveryPubkeyForPhraseJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    recovery_phrase: JString<'_>,
+) -> jstring {
+    let recovery_phrase = jni_string_lossy(&mut env, &recovery_phrase);
+    jni_json_string(env, &recovery_pubkey_for_phrase(recovery_phrase))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_updateCheckJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    current_version: JString<'_>,
+    mode: JString<'_>,
+) -> jstring {
+    let result = native_update_check(
+        &jni_string_lossy(&mut env, &data_dir),
+        &jni_string_lossy(&mut env, &current_version),
+        &jni_string_lossy(&mut env, &mode),
+    )
+    .unwrap_or_else(|error| NativeUpdateResult {
+        error,
+        ..NativeUpdateResult::default()
+    });
+    jni_json_string(env, &result)
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_updateDownloadJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    current_version: JString<'_>,
+    mode: JString<'_>,
+    download_dir: JString<'_>,
+) -> jstring {
+    let result = native_update_download(
+        &jni_string_lossy(&mut env, &data_dir),
+        &jni_string_lossy(&mut env, &current_version),
+        &jni_string_lossy(&mut env, &mode),
+        &jni_string_lossy(&mut env, &download_dir),
+    )
+    .unwrap_or_else(|error| NativeUpdateResult {
+        error,
+        ..NativeUpdateResult::default()
+    });
+    jni_json_string(env, &result)
 }
 
 #[cfg(target_os = "android")]
@@ -663,6 +823,53 @@ fn qr_matrix(text: &str) -> Result<QrMatrixResult, String> {
         cells,
         error: String::new(),
     })
+}
+
+fn native_update_check(
+    data_dir: &str,
+    current_version: &str,
+    mode: &str,
+) -> Result<NativeUpdateResult, String> {
+    let mode = parse_update_mode(mode)?;
+    let current_version = update_current_version(current_version);
+    let config = product_update_config_for_dir(Path::new(data_dir));
+    check_product_update_blocking(&current_version, mode, config)
+        .map(NativeUpdateResult::from)
+        .map_err(|error| format!("{error:#}"))
+}
+
+fn native_update_download(
+    data_dir: &str,
+    current_version: &str,
+    mode: &str,
+    download_dir: &str,
+) -> Result<NativeUpdateResult, String> {
+    let mode = parse_update_mode(mode)?;
+    let current_version = update_current_version(current_version);
+    let config = product_update_config_for_dir(Path::new(data_dir));
+    let download_dir = trimmed_nonempty(download_dir).map(Path::new);
+    download_product_update_blocking(&current_version, mode, config, download_dir)
+        .map(NativeUpdateResult::from)
+        .map_err(|error| format!("{error:#}"))
+}
+
+fn parse_update_mode(mode: &str) -> Result<ProductUpdateMode, String> {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "" | "app" => Ok(ProductUpdateMode::App),
+        "cli" | "idrive" => Ok(ProductUpdateMode::Cli),
+        other => Err(format!("unknown update mode: {other}")),
+    }
+}
+
+fn update_current_version(current_version: &str) -> String {
+    trimmed_nonempty(current_version)
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string()
+}
+
+fn trimmed_nonempty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 #[cfg(test)]

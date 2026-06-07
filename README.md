@@ -214,10 +214,10 @@ product detail above; keep agent/operator reference material here.
 
 ### Config Model
 
-`idrive init` creates an IrisProfile, a fresh per-install AppKey, and a
-12-word recovery phrase. `idrive restore` creates a fresh AppKey for the
-restored install, and `idrive link` creates a fresh AppKey that waits for
-admin approval.
+`idrive init` creates an IrisProfile and a fresh per-install AppKey. Recovery
+phrases are explicit recovery material, not part of normal profile creation.
+`idrive restore` creates a fresh AppKey for the restored install, and
+`idrive link` creates a fresh AppKey that waits for admin approval.
 
 By default, CLI config lives under the OS config directory with the
 `iris-drive` suffix. Set `IRIS_DRIVE_CONFIG_DIR` or pass `--config-dir` for

@@ -171,7 +171,7 @@ mod tests {
         let phrase =
             "leader monkey parrot ring guide accident before fence cannon height naive bean";
 
-        let secret = SecretKey::from_bech32(recovery_phrase_to_nsec(phrase).unwrap()).unwrap();
+        let secret = SecretKey::from_bech32(&recovery_phrase_to_nsec(phrase).unwrap()).unwrap();
 
         assert_eq!(
             secret.to_secret_hex(),

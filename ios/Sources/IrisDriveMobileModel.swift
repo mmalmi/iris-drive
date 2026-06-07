@@ -25,7 +25,7 @@ enum IrisDriveBackgroundSyncTask { static let identifier = "to.iris.drive.ios.ba
 final class IrisDriveMobileModel: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var statusTitle = "Ready"
-    @Published var statusDetail = "Waiting for this app install to be linked."
+    @Published var statusDetail = "Waiting for this device to be linked."
     @Published var deviceLabel = UIDevice.current.name
     @Published var profileLinkTarget = ""
     @Published var currentAppKeyNpub = ""
@@ -39,7 +39,6 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var backupLabelInput = ""
     @Published var blossomEndpointInput = ""
     @Published var shareSourceInput = ""
-    @Published var shareNameInput = ""
     @Published var shareInviteInput = ""
     @Published var shareRecipientNpubHint = ""
     @Published var shareRecipientDisplayName = ""
@@ -239,7 +238,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func openDriveFolder() {
         guard isSetupComplete else {
-            showFileProviderError("Link this app install before opening Iris Drive in Files.")
+            showFileProviderError("Link this device before opening Iris Drive in Files.")
             return
         }
         fileProviderError = ""
@@ -255,6 +254,28 @@ final class IrisDriveMobileModel: ObservableObject {
                 return
             }
             self.openRegisteredDriveFolder(attempt: attempt)
+        }
+    }
+
+    func openDriveFolder(path: String) {
+        guard isSetupComplete else {
+            showFileProviderError("Link this device before opening Iris Drive in Files.")
+            return
+        }
+        let normalized = IrisDriveNativeProvider.normalizePath(path: path).path
+        fileProviderError = ""
+        fileProviderStatus = "Opening Files provider"
+        rebuildDerivedState()
+        fileProviderOpenAttempt += 1
+        let attempt = fileProviderOpenAttempt
+        scheduleOpenInFilesTimeout(for: attempt)
+        ensureFileProviderDomain { [weak self] ready in
+            guard let self else { return }
+            guard ready else {
+                self.showFileProviderError("Files could not register Iris Drive.")
+                return
+            }
+            self.openRegisteredDriveFolder(attempt: attempt, path: normalized)
         }
     }
 
@@ -275,13 +296,13 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    private func openRegisteredDriveFolder(attempt: Int) {
+    private func openRegisteredDriveFolder(attempt: Int, path: String = "") {
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else {
             showFileProviderError("Files provider manager is unavailable.")
             return
         }
-        manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
+        manager.getUserVisibleURL(for: fileProviderIdentifier(for: path)) { [weak self] url, error in
             Task { @MainActor in
                 guard let self else { return }
                 guard self.fileProviderOpenAttempt == attempt else { return }
@@ -594,6 +615,23 @@ final class IrisDriveMobileModel: ObservableObject {
         dispatch(["type": "reset_invite"])
     }
 
+    func generateRecoveryKey() -> NativeGeneratedRecoveryKey {
+        IrisDriveNativeCore.generateRecoveryKey()
+    }
+
+    func recoveryPubkey(forPhrase phrase: String) -> NativeGeneratedRecoveryKey {
+        IrisDriveNativeCore.recoveryPubkey(forPhrase: phrase)
+    }
+
+    func addRecoveryKey(pubkey: String) {
+        let pubkey = pubkey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pubkey.isEmpty else { return }
+        dispatch([
+            "type": "add_recovery_device",
+            "recovery_pubkey": pubkey,
+        ])
+    }
+
     func revokeDevice(id: String) {
         deleteDevice(id: id)
     }
@@ -785,13 +823,18 @@ final class IrisDriveMobileModel: ObservableObject {
     func createShare() {
         let sourcePath = shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sourcePath.isEmpty else { return }
+        let resolved = resolveShareSourcePathForCreate(sourcePath)
+        guard resolved.error.isEmpty else {
+            statusTitle = "Share folder failed"
+            statusDetail = resolved.error
+            return
+        }
         dispatch([
             "type": "create_share",
-            "source_path": sourcePath,
-            "display_name": shareNameInput,
+            "source_path": resolved.path,
+            "display_name": "",
         ])
         shareSourceInput = ""
-        shareNameInput = ""
     }
 
     func openShareDialog(
@@ -804,7 +847,6 @@ final class IrisDriveMobileModel: ObservableObject {
         let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sourcePath.isEmpty else { return }
         shareSourceInput = sourcePath
-        shareNameInput = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         shareRecipientNpubHint = recipientNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
         shareRecipientDisplayName = recipientDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         shareRecipientProfileId = recipientProfileId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -897,13 +939,24 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
     }
 
-    func addShareShortcut(shareId: String, displayName: String) {
+    func deleteShare(shareId: String) {
+        dispatch([
+            "type": "delete_share",
+            "share_id": shareId,
+        ])
+    }
+
+    func openShareFolder(_ share: IrisDriveShare) {
+        let path = shareOpenPath(share)
+        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        openDriveFolder(path: path)
+    }
+
+    func addShareShortcut(shareId: String, displayName _: String) {
         dispatch([
             "type": "add_share_shortcut",
             "share_id": shareId,
-            "path": displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Shared folder"
-                : displayName,
+            "path": "",
             "parent": "",
             "target_path": "",
         ])
@@ -916,6 +969,66 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
     }
 
+    private func resolveShareSourcePathForCreate(_ input: String) -> (path: String, error: String) {
+        let normalized = IrisDriveNativeProvider.normalizePath(path: input)
+        if !normalized.error.isEmpty {
+            return ("", normalized.error)
+        }
+        let sourcePath = normalized.path
+        guard !sourcePath.isEmpty else {
+            return ("", "Share folder path required")
+        }
+        if let kind = providerEntryKind(path: sourcePath) {
+            return kind == "dir" ? (sourcePath, "") : ("", "Share path must be a folder")
+        }
+        let createdPath = defaultCreatedShareSourcePath(sourcePath)
+        if let kind = providerEntryKind(path: createdPath) {
+            return kind == "dir" ? (createdPath, "") : ("", "Share path must be a folder")
+        }
+        let mkdirJson = nativeJsonObject(IrisDriveNativeProvider.mkdir(dataDir: sharedContainerPath, path: createdPath))
+        let mkdirError = mkdirJson["error"] as? String ?? ""
+        if !mkdirError.isEmpty {
+            return ("", mkdirError)
+        }
+        let created = (mkdirJson["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (created.isEmpty ? createdPath : created, "")
+    }
+
+    private func providerEntryKind(path: String) -> String? {
+        let object = nativeJsonObject(IrisDriveNativeProvider.list(dataDir: sharedContainerPath))
+        guard let entries = object["entries"] as? [[String: Any]] else { return nil }
+        return entries.first { entry in
+            entry["path"] as? String == path
+        }?["kind"] as? String
+    }
+
+    private func defaultCreatedShareSourcePath(_ sourcePath: String) -> String {
+        if sourcePath == "Shared" || sourcePath.hasPrefix("Shared/") {
+            return sourcePath
+        }
+        return "Shared/\(sourcePath)"
+    }
+
+    private func shareOpenPath(_ share: IrisDriveShare) -> String {
+        if let shortcut = share.shortcutPaths.first,
+           !shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return shortcut
+        }
+        if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return share.sourcePath
+        }
+        return share.sharedWithMePath
+    }
+
+    private func nativeJsonObject(_ text: String) -> [String: Any] {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
+        }
+        return object
+    }
+
     func resetLocalState() {
         cancelBackgroundSync()
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
@@ -924,7 +1037,7 @@ final class IrisDriveMobileModel: ObservableObject {
         restoreSecret = ""
         syncRunning = false
         statusTitle = "Ready"
-        statusDetail = "Waiting for this app install to be linked."
+        statusDetail = "Waiting for this device to be linked."
         profileUsername = ""
         profilePhotoName = ""
         persistLocalSettings()
@@ -959,14 +1072,14 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         if canAdminProfile, linkInput.isComplete {
-            approveDevice(request: url.absoluteString, label: "Linked app install")
+            approveDevice(request: url.absoluteString, label: "Linked device")
             return
         }
 
-        statusTitle = canAdminProfile ? "Invalid AppKey invite" : "Open on a profile admin"
+        statusTitle = canAdminProfile ? "Invalid device invite" : "Open on a profile admin"
         statusDetail = canAdminProfile
             ? (linkInput.error.isEmpty ? url.absoluteString : linkInput.error)
-            : "Open this request on a profile admin install, or scan an invite link to join."
+            : "Open this request on a profile admin device, or scan an invite link to join."
     }
 
     func handleDebugLaunchEnvironment() {
@@ -1034,7 +1147,7 @@ final class IrisDriveMobileModel: ObservableObject {
             relay = defaultRelay
             syncRunning = false
             statusTitle = "Ready"
-            statusDetail = "Waiting for this app install to be linked."
+            statusDetail = "Waiting for this device to be linked."
             currentProviderSignalKey = ""
             lastProviderSignalKey = ""
             currentProviderDirectoryPaths = []

@@ -238,7 +238,7 @@ impl IrisProfileFacet {
             [IrisProfileKeyPurpose::RecoveryPhrase],
             IrisProfileCapabilities::recovery_phrase(),
             added_at,
-            Some("Recovery phrase".to_string()),
+            Some("Recovery key".to_string()),
         )
     }
 
@@ -475,9 +475,10 @@ pub fn build_iris_profile_roster_op_event(
     for pubkey in content.op.mentioned_pubkeys() {
         tags.push(Tag::public_key(public_key_from_hex(pubkey)?));
     }
-    EventBuilder::new(Kind::from(KIND_IRIS_PROFILE_ROSTER_OP), content_json, tags)
+    EventBuilder::new(Kind::from(KIND_IRIS_PROFILE_ROSTER_OP), content_json)
+        .tags(tags)
         .custom_created_at(nostr_sdk::Timestamp::from(ts))
-        .to_event(signer_keys)
+        .sign_with_keys(signer_keys)
         .map_err(|e| IrisProfileError::Event(e.to_string()))
 }
 
@@ -516,14 +517,11 @@ where
         tags.push(Tag::event(event_id_from_hex(roster_op_id)?));
     }
     let ts = u64::try_from(accepted_at).unwrap_or(0);
-    EventBuilder::new(
-        Kind::from(KIND_IRIS_PROFILE_FACET_ACCEPTANCE),
-        content_json,
-        tags,
-    )
-    .custom_created_at(nostr_sdk::Timestamp::from(ts))
-    .to_event(signer_keys)
-    .map_err(|e| IrisProfileError::Event(e.to_string()))
+    EventBuilder::new(Kind::from(KIND_IRIS_PROFILE_FACET_ACCEPTANCE), content_json)
+        .tags(tags)
+        .custom_created_at(nostr_sdk::Timestamp::from(ts))
+        .sign_with_keys(signer_keys)
+        .map_err(|e| IrisProfileError::Event(e.to_string()))
 }
 
 #[must_use]
@@ -556,6 +554,7 @@ pub fn iris_profile_tag_kind() -> TagKind<'static> {
 pub fn is_iris_profile_roster_op_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_IRIS_PROFILE_ROSTER_OP
         && event
+            .tags
             .identifier()
             .is_some_and(|d_tag| parse_iris_profile_roster_op_d_tag(d_tag).is_ok())
 }
@@ -564,6 +563,7 @@ pub fn is_iris_profile_roster_op_event_coordinate(event: &Event) -> bool {
 pub fn is_iris_profile_facet_acceptance_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_IRIS_PROFILE_FACET_ACCEPTANCE
         && event
+            .tags
             .identifier()
             .is_some_and(|d_tag| parse_iris_profile_facet_acceptance_d_tag(d_tag).is_ok())
 }
@@ -578,7 +578,10 @@ pub fn parse_iris_profile_roster_op_event(
             got: kind,
         });
     }
-    let d_tag = event.identifier().ok_or(IrisProfileError::MissingDTag)?;
+    let d_tag = event
+        .tags
+        .identifier()
+        .ok_or(IrisProfileError::MissingDTag)?;
     let (d_tag_profile, d_tag_nonce) = parse_iris_profile_roster_op_d_tag(d_tag)?;
     event
         .verify()
@@ -600,7 +603,7 @@ pub fn parse_iris_profile_roster_op_event(
             content_nonce: content.client_nonce,
         });
     }
-    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.created_at != event_created_at {
         return Err(IrisProfileError::CreatedAtMismatch {
             event_created_at,
@@ -653,7 +656,10 @@ pub fn parse_iris_profile_facet_acceptance_event(
             got: kind,
         });
     }
-    let d_tag = event.identifier().ok_or(IrisProfileError::MissingDTag)?;
+    let d_tag = event
+        .tags
+        .identifier()
+        .ok_or(IrisProfileError::MissingDTag)?;
     let (d_tag_profile, d_tag_nonce) = parse_iris_profile_facet_acceptance_d_tag(d_tag)?;
     event
         .verify()
@@ -677,7 +683,7 @@ pub fn parse_iris_profile_facet_acceptance_event(
             content_nonce: content.client_nonce,
         });
     }
-    let event_created_at = i64::try_from(event.created_at.as_u64()).unwrap_or(i64::MAX);
+    let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.accepted_at != event_created_at {
         return Err(IrisProfileError::CreatedAtMismatch {
             event_created_at,
@@ -1370,17 +1376,17 @@ mod tests {
         let event = EventBuilder::new(
             Kind::from(KIND_IRIS_PROFILE_FACET_ACCEPTANCE),
             serde_json::to_string(&content).unwrap(),
-            [
-                Tag::identifier(iris_profile_facet_acceptance_d_tag(
-                    profile_id,
-                    &client_nonce,
-                )),
-                Tag::custom(iris_profile_tag_kind(), [profile_id.to_string()]),
-                Tag::public_key(other.public_key()),
-            ],
         )
+        .tags([
+            Tag::identifier(iris_profile_facet_acceptance_d_tag(
+                profile_id,
+                &client_nonce,
+            )),
+            Tag::custom(iris_profile_tag_kind(), [profile_id.to_string()]),
+            Tag::public_key(other.public_key()),
+        ])
         .custom_created_at(nostr_sdk::Timestamp::from(12))
-        .to_event(&signer)
+        .sign_with_keys(&signer)
         .unwrap();
 
         assert!(matches!(
@@ -1432,9 +1438,9 @@ mod tests {
             13,
         )
         .unwrap();
-        let unrelated_event = EventBuilder::new(Kind::from(1_u16), "hello", [])
+        let unrelated_event = EventBuilder::new(Kind::from(1_u16), "hello")
             .custom_created_at(nostr_sdk::Timestamp::from(14))
-            .to_event(&admin)
+            .sign_with_keys(&admin)
             .unwrap();
 
         let candidates = iris_profile_candidate_ids_for_pubkey_from_events(

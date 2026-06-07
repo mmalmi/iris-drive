@@ -101,6 +101,82 @@ async fn primary_merged_root_builds_visible_mount_root_without_metadata() {
 }
 
 #[tokio::test]
+async fn primary_merged_root_projects_share_shortcut_from_source_path() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let source = tempdir().unwrap();
+    std::fs::create_dir(source.path().join("tst")).unwrap();
+    std::fs::create_dir(source.path().join("tst").join("empty")).unwrap();
+    std::fs::write(source.path().join("tst").join("note.txt"), b"shared").unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 1,
+    };
+    let source_root = index_dir_with_history_and_meta(&tree, source.path(), None, 1, Some(&meta))
+        .await
+        .unwrap();
+
+    let folder = crate::create_shared_folder(
+        account.app_key.keys(),
+        account.state.profile_id,
+        "tst",
+        "best",
+        account.state.app_key_label.clone(),
+        Vec::new(),
+        2,
+    )
+    .unwrap();
+    let shortcut = crate::ShareShortcut::new(folder.share_id, "best", "").unwrap();
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(source_root.to_string(), 1, &meta),
+    );
+    config.upsert_drive(drive);
+    config.upsert_shared_folder(folder);
+    config.upsert_share_shortcut(shortcut);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let shortcut_entry = view
+        .view
+        .files
+        .iter()
+        .find(|entry| entry.path == "best/note.txt")
+        .expect("shortcut projects source file");
+    assert_eq!(shortcut_entry.source_path.as_deref(), Some("tst/note.txt"));
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    let shortcut_file = tree
+        .resolve(&merged.root_cid, "best/note.txt")
+        .await
+        .unwrap()
+        .expect("shortcut file exists");
+    let bytes = tree.get(&shortcut_file, None).await.unwrap().unwrap();
+    assert_eq!(bytes, b"shared");
+    assert!(
+        tree.resolve(&merged.root_cid, "best/empty")
+            .await
+            .unwrap()
+            .is_some(),
+        "shortcut preserves empty source directories"
+    );
+}
+
+#[tokio::test]
 async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
     let cfg_dir = tempdir().unwrap();
     let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();

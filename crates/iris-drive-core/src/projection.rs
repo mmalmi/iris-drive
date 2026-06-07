@@ -111,6 +111,7 @@ pub async fn primary_merged_view<S: Store>(
         .collect();
     let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
+    add_primary_share_shortcut_entries(&mut view, config);
     Ok(PrimaryMergedView {
         view,
         authorized_app_keys: authorized.len(),
@@ -269,6 +270,8 @@ pub async fn primary_merged_root<S: Store>(
         &merged.view.suppressed_by_tombstone,
     )
     .await?;
+    let mut target_dirs = target_dirs;
+    add_primary_share_shortcut_directory_paths(&mut target_dirs, &merged.view.files, config);
     for dir in &target_dirs {
         root = ensure_visible_dir(tree, root, dir).await?;
     }
@@ -290,6 +293,104 @@ pub async fn primary_merged_root<S: Store>(
         file_count: merged.file_count(),
         top_level_entries: merged.top_level_entries(),
     })
+}
+
+fn add_primary_share_shortcut_entries(view: &mut MergedView, config: &AppConfig) {
+    if config.share_shortcuts.is_empty() {
+        return;
+    }
+
+    let source_entries = view.files.clone();
+    let mut occupied_paths = view
+        .files
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut shortcut_entries = Vec::new();
+
+    for shortcut in &config.share_shortcuts {
+        let Some(folder) = config.shared_folder(shortcut.share_id) else {
+            continue;
+        };
+        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
+        for entry in &source_entries {
+            let Some(suffix) = suffix_under_path(&entry.path, &source_root) else {
+                continue;
+            };
+            let path = projected_share_shortcut_path(&shortcut.path, suffix);
+            if !occupied_paths.insert(path.clone()) {
+                continue;
+            }
+
+            let mut shortcut_entry = entry.clone();
+            shortcut_entry.path = path;
+            shortcut_entry.source_path = Some(merged_entry_source_path(entry).to_string());
+            shortcut_entries.push(shortcut_entry);
+        }
+    }
+
+    if !shortcut_entries.is_empty() {
+        view.files.extend(shortcut_entries);
+        view.files.sort_by(|left, right| left.path.cmp(&right.path));
+    }
+}
+
+fn add_primary_share_shortcut_directory_paths(
+    target_dirs: &mut BTreeSet<String>,
+    visible_files: &[MergedEntry],
+    config: &AppConfig,
+) {
+    if config.share_shortcuts.is_empty() {
+        return;
+    }
+
+    let source_dirs = target_dirs.clone();
+    let file_paths = visible_files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<BTreeSet<_>>();
+    for shortcut in &config.share_shortcuts {
+        let Some(folder) = config.shared_folder(shortcut.share_id) else {
+            continue;
+        };
+        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
+        for dir in &source_dirs {
+            let Some(suffix) = suffix_under_path(dir, &source_root) else {
+                continue;
+            };
+            let path = projected_share_shortcut_path(&shortcut.path, suffix);
+            if !file_paths.contains(path.as_str()) {
+                target_dirs.insert(path);
+            }
+        }
+    }
+}
+
+fn share_shortcut_primary_source_path(
+    source_path: &str,
+    shortcut: &crate::sharing::ShareShortcut,
+) -> String {
+    if shortcut.target_path.is_empty() {
+        source_path.to_string()
+    } else {
+        format!("{source_path}/{}", shortcut.target_path)
+    }
+}
+
+fn suffix_under_path<'a>(path: &'a str, root: &str) -> Option<&'a str> {
+    if path == root {
+        return Some("");
+    }
+    let rest = path.strip_prefix(root)?;
+    rest.strip_prefix('/')
+}
+
+fn projected_share_shortcut_path(shortcut_path: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        shortcut_path.to_string()
+    } else {
+        format!("{shortcut_path}/{suffix}")
+    }
 }
 
 async fn merge_source_roots<S: Store>(

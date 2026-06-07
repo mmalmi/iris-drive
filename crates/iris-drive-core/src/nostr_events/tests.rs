@@ -113,17 +113,14 @@ fn drive_root_event_does_not_publish_root_key_in_cleartext() {
 #[test]
 fn retired_drive_root_kind_is_rejected() {
     let device = Keys::generate();
-    let event = EventBuilder::new(
-        Kind::from(30079u16),
-        "{}".to_string(),
-        [Tag::identifier(drive_root_d_tag(
+    let event = EventBuilder::new(Kind::from(30079u16), "{}".to_string())
+        .tag(Tag::identifier(drive_root_d_tag(
             &IrisProfileId::new_v4().to_string(),
             "main",
-        ))],
-    )
-    .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
-    .to_event(&device)
-    .unwrap();
+        )))
+        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
+        .sign_with_keys(&device)
+        .unwrap();
 
     assert!(matches!(
         parse_drive_root_event_for_device(&event, &device),
@@ -196,7 +193,7 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     assert!(is_app_key_link_request_event_coordinate(&event));
     assert!(!is_drive_root_event_coordinate(&event));
     assert_eq!(
-        event.identifier(),
+        event.tags.identifier(),
         Some(app_key_link_request_d_tag(frame.profile_id).as_str())
     );
     assert_eq!(parse_app_key_link_request_event(&event).unwrap(), frame);
@@ -218,9 +215,9 @@ fn app_key_link_request_event_d_tag_is_profile_scoped() {
     let event = EventBuilder::new(
         Kind::from(KIND_APP_KEY_LINK_REQUEST),
         serde_json::to_string(&frame).unwrap(),
-        [Tag::identifier(app_key_link_request_d_tag(other_profile))],
     )
-    .to_event(&device)
+    .tag(Tag::identifier(app_key_link_request_d_tag(other_profile)))
+    .sign_with_keys(&device)
     .unwrap();
 
     assert!(matches!(
@@ -265,7 +262,7 @@ fn private_hashtree_root_event_is_files_app_compatible() {
     let event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
     assert_eq!(event.kind.as_u16(), 30078);
     assert_eq!(event.pubkey, owner.public_key());
-    assert_eq!(event.identifier(), Some("main"));
+    assert_eq!(event.tags.identifier(), Some("main"));
     assert_eq!(event.content, "");
     assert_eq!(tag_value(&event, "l").as_deref(), Some("hashtree"));
     assert_eq!(tag_value(&event, "hash"), Some(hex::encode(root_hash)));
@@ -392,16 +389,13 @@ fn drive_root_d_tag_malformed_rejected() {
 #[test]
 fn drive_root_event_wrong_kind_rejected() {
     let device = Keys::generate();
-    let other = EventBuilder::new(
-        Kind::from(1u16),
-        "{}".to_string(),
-        [Tag::identifier(drive_root_d_tag(
+    let other = EventBuilder::new(Kind::from(1u16), "{}".to_string())
+        .tag(Tag::identifier(drive_root_d_tag(
             &IrisProfileId::new_v4().to_string(),
             "main",
-        ))],
-    )
-    .to_event(&device)
-    .unwrap();
+        )))
+        .sign_with_keys(&device)
+        .unwrap();
     assert!(matches!(
         parse_drive_root_event(&other),
         Err(WireError::WrongKind { .. })
