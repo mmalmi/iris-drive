@@ -41,8 +41,8 @@ extension AppDelegate {
                 "type": "add_blossom_server",
                 "url": url,
             ],
-            progress: "Adding Blossom",
-            success: "Blossom added"
+            progress: "Adding file server",
+            success: "File server added"
         )
     }
 
@@ -54,8 +54,8 @@ extension AppDelegate {
                 "type": "remove_blossom_server",
                 "url": url,
             ],
-            progress: "Removing Blossom",
-            success: "Blossom removed"
+            progress: "Removing file server",
+            success: "File server removed"
         )
     }
 

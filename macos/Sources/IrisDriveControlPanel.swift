@@ -1298,7 +1298,7 @@ struct IrisDriveControlPanel: View {
                 Button {
                     showAddBackup = true
                 } label: {
-                    Label("Add Backup", systemImage: "plus")
+                    Label("Add Custom Target", systemImage: "plus")
                 }
             }
             if status.backupTargets.isEmpty {
@@ -1324,7 +1324,7 @@ struct IrisDriveControlPanel: View {
 
     private var addBackupSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add a backup")
+            Text("Add a custom target")
                 .font(.title3.weight(.semibold))
             TextField("Destination", text: $backupInput)
                 .textFieldStyle(.roundedBorder)
@@ -1433,7 +1433,7 @@ struct IrisDriveControlPanel: View {
 
             Section("Network") {
                 relayEditor
-                EndpointGroup(title: "Blossom", values: status.blossomServers)
+                EndpointGroup(title: "File Servers", values: status.blossomServers)
                 FipsDiagnostics(status: status.fips)
             }
 

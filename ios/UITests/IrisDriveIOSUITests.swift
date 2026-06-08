@@ -77,6 +77,22 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(tabButton("AppKeys", in: app).isSelected)
     }
 
+    func testSharesTabExposesSharingView() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let sharesTab = tabButton("Shares", in: app)
+        XCTAssertTrue(sharesTab.waitForExistence(timeout: 10))
+        sharesTab.tap()
+
+        XCTAssertTrue(app.navigationBars["Shares"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["shareSourceInput"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["createShareButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["shareInviteInput"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["acceptShareInviteButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["copyShareIdentityButton"].waitForExistence(timeout: 10))
+    }
+
     func testMyDriveFileCountMatchesExpected() throws {
         let expected = try requiredEnvironment("IRIS_DRIVE_UI_TEST_EXPECTED_FILE_COUNT")
         let app = launchApp()

@@ -415,7 +415,7 @@ fn backup_row(model: &AppRef, title: &str, subtitle: &str, target: &str) -> gtk:
     check.connect_clicked(move |_| check_backup_target(&check_model, target_for_check.clone()));
     outer.append(&check);
 
-    let remove = icon_button("user-trash-symbolic", "Remove backup");
+    let remove = icon_button("user-trash-symbolic", "Remove target");
     let target_for_remove = target.to_string();
     let remove_model = model.clone();
     remove.connect_clicked(move |_| remove_backup_target(&remove_model, target_for_remove.clone()));
@@ -439,7 +439,7 @@ pub(crate) fn render_network(
     render_blossom_endpoints(blossom_list, &state.ui);
 
     if blossom_list.first_child().is_none() {
-        blossom_list.append(&simple_row("No Blossom servers", ""));
+        blossom_list.append(&simple_row("No file servers", ""));
     }
 }
 

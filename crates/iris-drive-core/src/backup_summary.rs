@@ -68,7 +68,7 @@ fn backup_target_label(target: &BackupTarget) -> Option<&str> {
         .filter(|label| !label.trim().is_empty())
         .or_else(|| {
             (target.kind == BackupTargetKind::Blossom && is_default_blossom_server(&target.target))
-                .then_some("Blossom remote")
+                .then_some("File server")
         })
 }
 
@@ -203,8 +203,8 @@ mod tests {
     fn default_blossom_and_fips_targets_get_friendly_summaries() {
         let default = blossom_backup_target(" https://upload.iris.to/ ").unwrap();
         let summary = backup_target_summary(&default);
-        assert_eq!(summary.label.as_deref(), Some("Blossom remote"));
-        assert_eq!(summary.title, "Blossom remote");
+        assert_eq!(summary.label.as_deref(), Some("File server"));
+        assert_eq!(summary.title, "File server");
         assert_eq!(summary.state, "ready");
 
         let fips_summary = backup_target_summary(&BackupTarget {

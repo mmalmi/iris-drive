@@ -513,7 +513,7 @@
                     <TextBlock Text="Check" />
                   </StackPanel>
                 </Button>
-                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" Margin="8,0,0,0">
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" ToolTip="Add custom target" Margin="8,0,0,0">
                   <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
                 </Button>
                 <TextBox x:Name="BackupLabelBox" Tag="Label" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
@@ -525,7 +525,7 @@
               <TextBlock Text="Network" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
               <TextBlock Text="FIPS" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="FipsList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
-              <TextBlock Text="Blossom" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <TextBlock Text="File Servers" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="BlossomList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
               <TextBlock Text="Relays" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="RelaysList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,10" />

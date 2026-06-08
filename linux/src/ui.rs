@@ -219,7 +219,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     backup_entry.set_hexpand(true);
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);
-    let add_backup_button = icon_button("list-add-symbolic", "Add backup");
+    let add_backup_button = icon_button("list-add-symbolic", "Add custom target");
     let check_backups_button = action_button("emblem-default-symbolic", "Check", "Check backups");
     let sync_backups_button =
         action_button("emblem-synchronizing-symbolic", "Sync", "Sync backups");
@@ -291,7 +291,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     let blossom = gtk::ListBox::new();
     blossom.add_css_class("iris-drive-list");
     blossom.set_selection_mode(gtk::SelectionMode::None);
-    network_page.append(&endpoint_group("Blossom", &blossom));
+    network_page.append(&endpoint_group("File Servers", &blossom));
 
     let relays_title = gtk::Label::new(Some("Relays"));
     relays_title.add_css_class("iris-field-name");

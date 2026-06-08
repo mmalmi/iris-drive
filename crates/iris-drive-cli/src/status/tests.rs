@@ -69,10 +69,10 @@ fn status_lists_default_blossom_server_as_backup_target() {
     let target = targets
         .iter()
         .find(|target| target["kind"] == "blossom" && target["target"] == "https://upload.iris.to")
-        .expect("default Blossom server should be visible in backup targets");
+        .expect("default file server should be visible in backup targets");
 
     assert_eq!(target["enabled"], true);
-    assert_eq!(target["label"], "Blossom remote");
+    assert_eq!(target["label"], "File server");
 }
 
 #[test]

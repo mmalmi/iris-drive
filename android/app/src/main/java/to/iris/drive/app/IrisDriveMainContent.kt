@@ -570,12 +570,13 @@ private fun BackupsPanel(
             },
             enabled = backupInput.isNotBlank(),
         ) {
-            Text("Add Backup")
+            Text("Add Custom Target")
         }
+        Text("File Servers", fontWeight = FontWeight.SemiBold)
         OutlinedTextField(
             value = blossomInput,
             onValueChange = { blossomInput = it },
-            label = { Text("Blossom endpoint") },
+            label = { Text("Server URL") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -586,10 +587,10 @@ private fun BackupsPanel(
             },
             enabled = blossomInput.isNotBlank(),
         ) {
-            Text("Add Blossom")
+            Text("Add File Server")
         }
         if (backups.isEmpty()) {
-            Text("No Blossom remotes configured", color = Muted)
+            Text("No file servers configured", color = Muted)
         }
         backups.forEach { backup ->
             Text(backup.label, fontWeight = FontWeight.SemiBold)
@@ -599,12 +600,13 @@ private fun BackupsPanel(
                 TextButton(onClick = { onCheckBackups(backup.target) }) {
                     Text("Check")
                 }
-                TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
-                    Text("Remove backup")
-                }
                 if (backup.kind == "blossom") {
                     TextButton(onClick = { onRemoveBlossomServer(backup.target) }) {
-                        Text("Remove Blossom")
+                        Text("Remove file server")
+                    }
+                } else {
+                    TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
+                        Text("Remove target")
                     }
                 }
             }

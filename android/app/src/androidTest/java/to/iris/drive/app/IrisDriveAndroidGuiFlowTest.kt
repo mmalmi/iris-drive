@@ -5,7 +5,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -39,6 +38,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
 import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.RelayStatus
@@ -322,6 +322,38 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun backupsPanelUsesFileServerCopyForBlossomTargets() {
+        render(
+            state = AppState(
+                profile = profileState(),
+                backups = listOf(
+                    BackupState(
+                        id = "blossom:https://backup.example",
+                        kind = "blossom",
+                        target = "https://backup.example",
+                        label = "File server",
+                        configuredLabel = "",
+                        state = "ready",
+                        detail = "https://backup.example",
+                        enabled = true,
+                    ),
+                ),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+        )
+
+        compose.onNodeWithTag("tabBackups").activate()
+        compose.onNodeWithText("Add Custom Target").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("File Servers").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Server URL").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Add File Server").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Remove file server").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Remove target").assertCountEquals(0)
+        compose.onAllNodesWithText("Blossom", substring = true).assertCountEquals(0)
+    }
+
+    @Test
     fun shareDialogRequestOpensSharesWithPrefilledCreateForm() {
         val createdShares = mutableListOf<Pair<String, String>>()
 
@@ -343,7 +375,7 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("sharesContent").assertIsDisplayed()
         compose.onNodeWithTag("shareSourceInput").assertTextContains("My Drive/Projects")
-        compose.onNodeWithTag("shareNameInput").assertDoesNotExist()
+        compose.onAllNodesWithTag("shareNameInput").assertCountEquals(0)
         compose.onNodeWithText("Create shared folder").assertIsEnabled().activate()
 
         assertEquals(listOf("My Drive/Projects" to ""), createdShares)

@@ -53,7 +53,7 @@ struct BackupTargetRow: View {
                 Button(role: .destructive) {
                     onRemove()
                 } label: {
-                    Label("Remove backup", systemImage: "trash")
+                    Label(removeLabel, systemImage: "trash")
                 }
                 .help("Remove \(target.target)")
                 Image(systemName: "chevron.right")
@@ -125,6 +125,10 @@ struct BackupTargetRow: View {
         default:
             return target.state
         }
+    }
+
+    private var removeLabel: String {
+        target.kind == "blossom" ? "Remove file server" : "Remove target"
     }
 
     private func checkedAgeLine(_ checkedAt: Int) -> String {

@@ -352,7 +352,8 @@ public partial class MainWindow : Window
 
         var check = new WpfButton { Content = "Check", Tag = target.Target, Margin = new Thickness(0, 0, 6, 0) };
         check.Click += CheckBackupTarget_Click;
-        var remove = new WpfButton { Content = "Remove backup", Tag = target.Target };
+        var removeText = target.Kind == "blossom" ? "Remove file server" : "Remove target";
+        var remove = new WpfButton { Content = removeText, Tag = target.Target };
         remove.Click += RemoveBackupTarget_Click;
 
         var actions = new StackPanel
@@ -519,7 +520,7 @@ public partial class MainWindow : Window
         BlossomList.Items.Clear();
         if (status.BlossomServers.Count == 0)
         {
-            BlossomList.Items.Add(Row("No Blossom servers", "", ""));
+            BlossomList.Items.Add(Row("No file servers", "", ""));
         }
         else
         {
@@ -1035,7 +1036,7 @@ public partial class MainWindow : Window
         try
         {
             await service.CheckBackupsAsync(target);
-            NoticeText.Text = "Backup checked";
+            NoticeText.Text = "Target checked";
             await RefreshAsync();
         }
         catch (Exception error)
@@ -1054,7 +1055,7 @@ public partial class MainWindow : Window
         try
         {
             await service.RemoveBackupTargetAsync(target);
-            NoticeText.Text = "Backup removed";
+            NoticeText.Text = "Target removed";
             await RefreshAsync();
         }
         catch (Exception error)

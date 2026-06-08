@@ -1065,12 +1065,14 @@ private struct SharesView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.createShare() }
+                    .accessibilityIdentifier("shareSourceInput")
                 Button {
                     model.createShare()
                 } label: {
                     Label("Create Shared Folder", systemImage: "plus")
                 }
                 .disabled(model.shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("createShareButton")
             }
 
             Section("Accept Invite") {
@@ -1078,12 +1080,14 @@ private struct SharesView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.acceptShareInvite() }
+                    .accessibilityIdentifier("shareInviteInput")
                 Button {
                     model.acceptShareInvite()
                 } label: {
                     Label("Accept invite", systemImage: "tray.and.arrow.down.fill")
                 }
                 .disabled(model.shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("acceptShareInviteButton")
                 Button {
                     model.copyLastShareInvite()
                 } label: {
@@ -1099,6 +1103,7 @@ private struct SharesView: View {
                     Label("Copy my share identity", systemImage: "person.crop.circle.badge.checkmark")
                 }
                 .disabled(!model.hasLocalProfile)
+                .accessibilityIdentifier("copyShareIdentityButton")
             }
 
             Section("Shared Folders") {
@@ -1381,7 +1386,7 @@ private struct BackupsView: View {
                 .disabled(model.backups.isEmpty)
             }
 
-            Section("Add Backup") {
+            Section("Add Custom Target") {
                 TextField("Destination", text: $model.backupTargetInput)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -1392,13 +1397,13 @@ private struct BackupsView: View {
                 Button {
                     model.addBackupTarget()
                 } label: {
-                    Label("Add Backup", systemImage: "plus")
+                    Label("Add Custom Target", systemImage: "plus")
                 }
                 .disabled(model.backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
-            Section("Blossom") {
-                TextField("Endpoint URL", text: $model.blossomEndpointInput)
+            Section("File Servers") {
+                TextField("Server URL", text: $model.blossomEndpointInput)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -1406,7 +1411,7 @@ private struct BackupsView: View {
                 Button {
                     model.addBlossomServer()
                 } label: {
-                    Label("Add Blossom", systemImage: "plus")
+                    Label("Add File Server", systemImage: "plus")
                 }
                 .disabled(model.blossomEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1422,16 +1427,17 @@ private struct BackupsView: View {
                         } label: {
                             Label("Check", systemImage: "checkmark.shield")
                         }
-                        Button(role: .destructive) {
-                            model.removeBackupTarget(backup.target)
-                        } label: {
-                            Label("Remove backup", systemImage: "trash")
-                        }
                         if backup.kind == "blossom" {
                             Button(role: .destructive) {
                                 model.removeBlossomServer(backup.target)
                             } label: {
-                                Label("Remove Blossom", systemImage: "xmark.circle")
+                                Label("Remove file server", systemImage: "trash")
+                            }
+                        } else {
+                            Button(role: .destructive) {
+                                model.removeBackupTarget(backup.target)
+                            } label: {
+                                Label("Remove target", systemImage: "trash")
                             }
                         }
                     } label: {
