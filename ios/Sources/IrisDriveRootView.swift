@@ -287,6 +287,7 @@ private struct CreateProfileSetupView: View {
                 }
                 .accessibilityIdentifier("createProfileSubmit")
             }
+            SetupErrorSection(message: model.setupErrorMessage)
         }
         .navigationTitle("Create profile")
         .toolbar(.visible, for: .navigationBar)
@@ -323,9 +324,26 @@ private struct ProfilePhotoSetupView: View {
                     Label(selectedPhoto == nil ? "Later" : "Create profile", systemImage: "plus")
                 }
             }
+            SetupErrorSection(message: model.setupErrorMessage)
         }
         .navigationTitle("Profile photo")
         .toolbar(.visible, for: .navigationBar)
+    }
+}
+
+private struct SetupErrorSection: View {
+    let message: String
+
+    var body: some View {
+        if !message.isEmpty {
+            Section {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("setupErrorMessage")
+            }
+        }
     }
 }
 

@@ -146,6 +146,18 @@ final class IrisDriveMobileModel: ObservableObject {
         !currentAppKeyNpub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var setupErrorMessage: String {
+        guard !isSetupComplete else { return "" }
+        if let error = lastState?.error.trimmingCharacters(in: .whitespacesAndNewlines),
+           !error.isEmpty {
+            return error
+        }
+        if statusTitle == "Native state failed" {
+            return statusDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+
     var isSetupComplete: Bool {
         lastState?.ui.setupComplete ?? false
     }
@@ -528,6 +540,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
+        statusTitle = "Creating profile"
+        statusDetail = "Preparing this device."
         profileUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         self.profilePhotoName = profileUsername.isEmpty ? "" : profilePhotoName
         dispatch([
@@ -1085,14 +1099,26 @@ final class IrisDriveMobileModel: ObservableObject {
     func handleDebugLaunchEnvironment() {
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
-        guard environment["IRIS_DRIVE_DEBUG_ACTION"] == "link-device",
-              let target = environment["IRIS_DRIVE_DEBUG_OWNER"],
-              !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
+        switch environment["IRIS_DRIVE_DEBUG_ACTION"] {
+        case "reset-local-state":
+            resetLocalState()
+        case "link-device":
+            guard let target = environment["IRIS_DRIVE_DEBUG_OWNER"],
+                  !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return
+            }
+            profileLinkTarget = target
+            linkDevice()
+        case "create-profile":
+            guard !hasLocalProfile else { return }
+            createProfile(
+                username: environment["IRIS_DRIVE_DEBUG_USERNAME"] ?? "",
+                profilePhotoName: ""
+            )
+        default:
             return
         }
-        profileLinkTarget = target
-        linkDevice()
         #endif
     }
 
@@ -1100,8 +1126,12 @@ final class IrisDriveMobileModel: ObservableObject {
         removeObsoletePrototypeDefaults()
         applyStateJson(nativeCore.refreshJson())
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
-        profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
-        profilePhotoName = defaults.string(forKey: "profilePhotoName") ?? profilePhotoName
+        if hasLocalProfile {
+            profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
+            profilePhotoName = defaults.string(forKey: "profilePhotoName") ?? profilePhotoName
+        } else {
+            clearStaleProfileSettings()
+        }
         relayInput = ""
         syncOverCellular = defaults.bool(forKey: "syncOverCellular")
     }
@@ -1122,6 +1152,8 @@ final class IrisDriveMobileModel: ObservableObject {
             "approvedDevices",
             "devicePublicKey",
             "canAdminProfile",
+            "hasOwnerAuthority",
+            "ownerPublicKey",
             "profileLinkTarget",
             "relay",
             "relays",
@@ -1129,6 +1161,13 @@ final class IrisDriveMobileModel: ObservableObject {
             "statusTitle",
             "syncRunning",
         ].forEach(defaults.removeObject)
+    }
+
+    private func clearStaleProfileSettings() {
+        profileUsername = ""
+        profilePhotoName = ""
+        defaults.removeObject(forKey: "profileUsername")
+        defaults.removeObject(forKey: "profilePhotoName")
     }
 
     private func rebuildDerivedState() {
@@ -1342,8 +1381,22 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func writeDebugState(_ json: String) {
         #if DEBUG
-        let url = IrisDriveSharedContainer.baseDirectory
-            .appendingPathComponent(iosDebugStateFileName, isDirectory: false)
+        writeDebugState(
+            json,
+            to: IrisDriveSharedContainer.baseDirectory
+                .appendingPathComponent(iosDebugStateFileName, isDirectory: false)
+        )
+        if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            writeDebugState(
+                json,
+                to: documents.appendingPathComponent(iosDebugStateFileName, isDirectory: false)
+            )
+        }
+        #endif
+    }
+
+    private func writeDebugState(_ json: String, to url: URL) {
+        #if DEBUG
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true

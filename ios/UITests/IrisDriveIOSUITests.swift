@@ -50,6 +50,50 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
     }
 
+    func testDebugResetLocalStateReturnsToWelcome() throws {
+        let baseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-reset-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: baseDir)
+        }
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
+        ])
+
+        app.buttons["welcomeCreateProfile"].tap()
+        app.buttons["createProfileSubmit"].tap()
+        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
+
+        app.terminate()
+        let resetApp = launchApp(environment: [
+            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
+            "IRIS_DRIVE_DEBUG_ACTION": "reset-local-state",
+        ])
+
+        XCTAssertTrue(resetApp.buttons["welcomeCreateProfile"].waitForExistence(timeout: 5))
+        XCTAssertTrue(resetApp.buttons["welcomeSignIn"].waitForExistence(timeout: 5))
+    }
+
+    func testCreateProfileSurfacesNativeSetupError() throws {
+        let blockedBaseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-blocked-\(UUID().uuidString)")
+        try "not a directory".write(to: blockedBaseDir, atomically: true, encoding: .utf8)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: blockedBaseDir)
+        }
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_UI_TEST_BASE_DIR": blockedBaseDir.path,
+        ])
+
+        app.buttons["welcomeCreateProfile"].tap()
+        app.buttons["createProfileSubmit"].tap()
+
+        let error = app.staticTexts["setupErrorMessage"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(accessibilityValue(error).contains("creating profile"))
+    }
+
     func testOpenDriveFolderInFilesApp() throws {
         let app = launchApp()
         ensureMyDriveReady(in: app)
@@ -145,10 +189,13 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["iOS UI linked"].waitForExistence(timeout: 15))
     }
 
-    private func launchApp() -> XCUIApplication {
+    private func launchApp(environment overrides: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         for (key, value) in ProcessInfo.processInfo.environment
             where key.hasPrefix("IRIS_DRIVE_UI_TEST_") || key.hasPrefix("IRIS_DRIVE_FIPS_") {
+            app.launchEnvironment[key] = value
+        }
+        for (key, value) in overrides {
             app.launchEnvironment[key] = value
         }
         app.launch()
@@ -208,7 +255,11 @@ final class IrisDriveIOSUITests: XCTestCase {
     }
 
     private func accessibilityValue(_ element: XCUIElement) -> String {
-        (element.value as? String ?? element.label).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (element.value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty {
+            return value
+        }
+        return element.label.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func waitForLinkedOnlineDeviceRow(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
