@@ -35,8 +35,6 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var profilePhotoName = ""
     @Published var relay = defaultRelay
     @Published var relayInput = ""
-    @Published var backupTargetInput = ""
-    @Published var backupLabelInput = ""
     @Published var blossomEndpointInput = ""
     @Published var shareSourceInput = ""
     @Published var shareInviteInput = ""
@@ -778,25 +776,6 @@ final class IrisDriveMobileModel: ObservableObject {
         persistLocalSettings()
     }
 
-    func addBackupTarget() {
-        let target = backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return }
-        dispatch([
-            "type": "add_backup_target",
-            "target": target,
-            "label": backupLabelInput,
-        ])
-        backupTargetInput = ""
-        backupLabelInput = ""
-    }
-
-    func removeBackupTarget(_ target: String) {
-        dispatch([
-            "type": "remove_backup_target",
-            "target": target,
-        ])
-    }
-
     func addBlossomServer() {
         let url = blossomEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
@@ -814,23 +793,44 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
     }
 
-    func syncBackups(_ target: String = "") {
-        guard isSetupComplete else { return }
+    func syncFileServers(_ fileServers: [IrisDriveBackup]) {
+        let targets = fileServers
+            .map { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard isSetupComplete, !targets.isEmpty else { return }
         Task {
-            await dispatchInBackground([
-                "type": "sync_backups",
-                "target": target,
-            ], invalidatePendingState: true)
+            for target in targets {
+                await dispatchInBackground([
+                    "type": "sync_backups",
+                    "target": target,
+                ], invalidatePendingState: true)
+            }
         }
     }
 
-    func checkBackups(_ target: String = "") {
-        guard isSetupComplete else { return }
+    func checkFileServer(_ target: String) {
+        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isSetupComplete, !target.isEmpty else { return }
         Task {
             await dispatchInBackground([
                 "type": "check_backups",
                 "target": target,
             ], invalidatePendingState: true)
+        }
+    }
+
+    func checkFileServers(_ fileServers: [IrisDriveBackup]) {
+        let targets = fileServers
+            .map { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard isSetupComplete, !targets.isEmpty else { return }
+        Task {
+            for target in targets {
+                await dispatchInBackground([
+                    "type": "check_backups",
+                    "target": target,
+                ], invalidatePendingState: true)
+            }
         }
     }
 

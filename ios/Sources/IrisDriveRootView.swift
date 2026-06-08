@@ -8,7 +8,7 @@ private enum MainTab: Hashable {
     case drive
     case devices
     case shares
-    case backups
+    case fileServers
     case settings
 }
 
@@ -54,12 +54,12 @@ struct IrisDriveRootView: View {
                 .tag(MainTab.shares)
 
                 NavigationStack {
-                    BackupsView(model: model)
+                    FileServersView(model: model)
                 }
                 .tabItem {
-                    Label("Backups", systemImage: "lock.shield.fill")
+                    Label("File Servers", systemImage: "server.rack")
                 }
-                .tag(MainTab.backups)
+                .tag(MainTab.fileServers)
 
                 NavigationStack {
                     SettingsView(model: model)
@@ -1384,43 +1384,31 @@ private struct InviteShareMemberSheet: View {
     }
 }
 
-private struct BackupsView: View {
+private struct FileServersView: View {
     @ObservedObject var model: IrisDriveMobileModel
+
+    private var fileServers: [IrisDriveBackup] {
+        model.backups.filter { $0.kind == "blossom" }
+    }
 
     var body: some View {
         Form {
             Section("Actions") {
                 Button {
-                    model.syncBackups()
+                    model.syncFileServers(fileServers)
                 } label: {
                     Label("Sync Now", systemImage: "arrow.up.circle")
                 }
-                .disabled(model.backups.isEmpty)
+                .disabled(fileServers.isEmpty)
                 Button {
-                    model.checkBackups()
+                    model.checkFileServers(fileServers)
                 } label: {
                     Label("Check All", systemImage: "checkmark.shield")
                 }
-                .disabled(model.backups.isEmpty)
+                .disabled(fileServers.isEmpty)
             }
 
-            Section("Add Custom Target") {
-                TextField("Destination", text: $model.backupTargetInput)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit { model.addBackupTarget() }
-                TextField("Name", text: $model.backupLabelInput)
-                    .onSubmit { model.addBackupTarget() }
-                Button {
-                    model.addBackupTarget()
-                } label: {
-                    Label("Add Custom Target", systemImage: "plus")
-                }
-                .disabled(model.backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            Section("File Servers") {
+            Section("Add File Server") {
                 TextField("Server URL", text: $model.blossomEndpointInput)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -1434,42 +1422,39 @@ private struct BackupsView: View {
                 .disabled(model.blossomEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
-            Section("Targets") {
-                ForEach(model.backups) { backup in
-                    DisclosureGroup {
-                        Text(backup.detail)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Button {
-                            model.checkBackups(backup.target)
-                        } label: {
-                            Label("Check", systemImage: "checkmark.shield")
-                        }
-                        if backup.kind == "blossom" {
+            Section("File Servers") {
+                if fileServers.isEmpty {
+                    Text("No file servers yet")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(fileServers) { backup in
+                        DisclosureGroup {
+                            Text(backup.detail)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button {
+                                model.checkFileServer(backup.target)
+                            } label: {
+                                Label("Check", systemImage: "checkmark.shield")
+                            }
                             Button(role: .destructive) {
                                 model.removeBlossomServer(backup.target)
                             } label: {
                                 Label("Remove file server", systemImage: "trash")
                             }
-                        } else {
-                            Button(role: .destructive) {
-                                model.removeBackupTarget(backup.target)
-                            } label: {
-                                Label("Remove target", systemImage: "trash")
+                        } label: {
+                            VStack(alignment: .leading) {
+                                Text(backup.label)
+                                Text(backup.state)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                        }
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(backup.label)
-                            Text(backup.state)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
         }
-        .navigationTitle("Backups")
+        .navigationTitle("File Servers")
     }
 }
 

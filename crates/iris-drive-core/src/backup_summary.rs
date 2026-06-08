@@ -66,14 +66,10 @@ fn backup_target_label(target: &BackupTarget) -> Option<&str> {
         .label
         .as_deref()
         .filter(|label| !label.trim().is_empty())
-        .or_else(|| {
-            (target.kind == BackupTargetKind::Blossom && is_default_blossom_server(&target.target))
-                .then_some("File server")
-        })
 }
 
 fn backup_target_title(target: &BackupTarget, label: Option<&str>) -> String {
-    label.map_or_else(|| backup_target_display_target(target), ToOwned::to_owned)
+    label.map_or_else(|| backup_target_display_title(target), ToOwned::to_owned)
 }
 
 fn backup_target_state(target: &BackupTarget) -> &str {
@@ -113,6 +109,29 @@ fn backup_target_display_target(target: &BackupTarget) -> String {
     } else {
         target.target.clone()
     }
+}
+
+fn backup_target_display_title(target: &BackupTarget) -> String {
+    if target.kind == BackupTargetKind::Blossom {
+        blossom_server_host(&target.target)
+            .unwrap_or_else(|| backup_target_display_target(target))
+    } else {
+        backup_target_display_target(target)
+    }
+}
+
+fn blossom_server_host(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let authority = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let host = authority.rsplit('@').next().unwrap_or(authority).trim();
+    (!host.is_empty()).then(|| host.to_owned())
 }
 
 fn short_status_value(value: &str) -> String {
@@ -203,9 +222,15 @@ mod tests {
     fn default_blossom_and_fips_targets_get_friendly_summaries() {
         let default = blossom_backup_target(" https://upload.iris.to/ ").unwrap();
         let summary = backup_target_summary(&default);
-        assert_eq!(summary.label.as_deref(), Some("File server"));
-        assert_eq!(summary.title, "File server");
+        assert_eq!(summary.label.as_deref(), None);
+        assert_eq!(summary.title, "upload.iris.to");
         assert_eq!(summary.state, "ready");
+
+        let custom_server = backup_target_summary(
+            &blossom_backup_target("https://files.example.com/v1").unwrap(),
+        );
+        assert_eq!(custom_server.title, "files.example.com");
+        assert_eq!(custom_server.detail, "https://files.example.com/v1");
 
         let fips_summary = backup_target_summary(&BackupTarget {
             id: "fips-1".to_owned(),

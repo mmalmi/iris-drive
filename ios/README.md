@@ -3,7 +3,7 @@
 Native SwiftUI shell for Iris Drive on iOS.
 
 The app is a mobile control surface with the same four destinations as the
-desktop shells: My Drive, AppKeys, Backups, and Settings. The bundled File
+desktop shells: My Drive, AppKeys, File Servers, and Settings. The bundled File
 Provider extension exposes a virtual Iris Drive domain to the Files app; it
 does not create a user-visible normal folder.
 

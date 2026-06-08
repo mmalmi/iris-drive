@@ -8,7 +8,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
     case peers
     case shares
-    case backups
+    case fileServers
     case settings
 
     var id: Self { self }
@@ -21,8 +21,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "Devices"
         case .shares:
             return "Shares"
-        case .backups:
-            return "Backups"
+        case .fileServers:
+            return "File Servers"
         case .settings:
             return "Settings"
         }
@@ -36,8 +36,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "person.2.fill"
         case .shares:
             return "person.3.fill"
-        case .backups:
-            return "lock.shield.fill"
+        case .fileServers:
+            return "server.rack"
         case .settings:
             return "gearshape.fill"
         }
@@ -52,8 +52,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return .peers
         case "share", "shares":
             return .shares
-        case "backup", "backups":
-            return .backups
+        case "backup", "backups", "file-server", "file-servers", "server", "servers":
+            return .fileServers
         case "setting", "settings":
             return .settings
         default:
@@ -100,8 +100,7 @@ struct IrisDriveControlPanel: View {
     let controller: AppDelegate
     @State private var selectedTab = IrisDrivePanelTab.initialScreenshotSelection
     @State private var relayInput = ""
-    @State private var backupInput = ""
-    @State private var backupLabel = ""
+    @State private var fileServerInput = ""
     @State private var shareSourceInput = ""
     @State private var shareInviteInput = ""
     @State private var shareRecipientNpubHint = ""
@@ -131,15 +130,18 @@ struct IrisDriveControlPanel: View {
     @State private var importedRecoveryWordIndex = 0
     @State private var showAddDevice = false
     @State private var showAddRecoveryKey = false
-    @State private var showAddBackup = false
     @State private var inviteShare: IrisDriveShareStatus?
     @State private var deleteShare: IrisDriveShareStatus?
     @State private var showMyNpub = false
     @State private var revokeShareMember: ShareMemberRevokeTarget?
-    @State private var checkingAllBackups = false
+    @State private var checkingAllFileServers = false
     @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
     @State private var recoveryExportWordIndex = 0
+
+    private var fileServerTargets: [IrisDriveBackupTarget] {
+        status.backupTargets.filter { $0.kind == "blossom" }
+    }
 
     var body: some View {
         Group {
@@ -208,8 +210,8 @@ struct IrisDriveControlPanel: View {
             page { peers }
         case .shares:
             page { shares }
-        case .backups:
-            page { backups }
+        case .fileServers:
+            page { fileServers }
         case .settings:
             settingsForm
         }
@@ -1272,83 +1274,58 @@ struct IrisDriveControlPanel: View {
         return value.isEmpty ? nil : value
     }
 
-    // MARK: Backups
+    // MARK: File Servers
 
-    private var backups: some View {
+    private var fileServers: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionTitle("Backups")
+                SectionTitle("File Servers")
                 Spacer()
                 Button {
-                    guard !checkingAllBackups else { return }
-                    checkingAllBackups = true
-                    controller.checkBackups {
-                        checkingAllBackups = false
+                    guard !checkingAllFileServers else { return }
+                    checkingAllFileServers = true
+                    controller.checkFileServers(fileServerTargets) {
+                        checkingAllFileServers = false
                     }
                 } label: {
-                    Label(checkingAllBackups ? "Checking..." : "Check All", systemImage: "checkmark.shield")
+                    Label(checkingAllFileServers ? "Checking..." : "Check All", systemImage: "checkmark.shield")
                 }
-                .disabled(status.backupTargets.isEmpty || checkingAllBackups)
+                .disabled(fileServerTargets.isEmpty || checkingAllFileServers)
                 Button {
-                    controller.syncBackups()
+                    controller.syncFileServers(fileServerTargets)
                 } label: {
                     Label("Sync Now", systemImage: "arrow.up.circle")
                 }
-                .disabled(status.backupTargets.isEmpty)
-                Button {
-                    showAddBackup = true
-                } label: {
-                    Label("Add Custom Target", systemImage: "plus")
-                }
+                .disabled(fileServerTargets.isEmpty)
             }
-            if status.backupTargets.isEmpty {
-                emptyState("No backups yet")
+            HStack(spacing: 8) {
+                TextField("Server URL", text: $fileServerInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { addFileServerFromInput() }
+                Button {
+                    addFileServerFromInput()
+                } label: {
+                    Label("Add File Server", systemImage: "plus")
+                }
+                .disabled(fileServerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if fileServerTargets.isEmpty {
+                emptyState("No file servers yet")
             } else {
-                ForEach(status.backupTargets) { target in
+                ForEach(fileServerTargets) { target in
                     BackupTargetRow(
                         target: target,
                         onCheck: { completion in
-                            controller.checkBackupTarget(target, completion: completion)
+                            controller.checkFileServer(target, completion: completion)
                         },
                         onRemove: {
-                            controller.removeBackupTarget(target)
+                            controller.removeBlossomServer(target.target)
                         }
                     )
                 }
             }
         }
-        .sheet(isPresented: $showAddBackup) {
-            addBackupSheet
-        }
-    }
-
-    private var addBackupSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Add a custom target")
-                .font(.title3.weight(.semibold))
-            TextField("Destination", text: $backupInput)
-                .textFieldStyle(.roundedBorder)
-                .disableAutocorrection(true)
-            TextField("Name (optional)", text: $backupLabel)
-                .textFieldStyle(.roundedBorder)
-            Text("A web address, another user's ID, or a local path (fs:/…, lmdb:/…).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    showAddBackup = false
-                }
-                Button("Add") {
-                    addBackupFromInput()
-                    showAddBackup = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(backupInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 440)
     }
 
     // MARK: Settings
@@ -1600,12 +1577,11 @@ struct IrisDriveControlPanel: View {
         relayInput = ""
     }
 
-    private func addBackupFromInput() {
-        let value = backupInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func addFileServerFromInput() {
+        let value = fileServerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        controller.addBackupTarget(value, label: backupLabel)
-        backupInput = ""
-        backupLabel = ""
+        controller.addBlossomServer(value)
+        fileServerInput = ""
     }
 
     private func saveRelayEdit(_ oldURL: String) {

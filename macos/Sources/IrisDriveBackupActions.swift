@@ -2,37 +2,6 @@ import AppKit
 import Foundation
 
 extension AppDelegate {
-    func addBackupTarget(_ value: String, label: String) {
-        let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return }
-        dispatchNativeAction(
-            [
-                "type": "add_backup_target",
-                "target": target,
-                "label": label.trimmingCharacters(in: .whitespacesAndNewlines),
-            ],
-            progress: "Adding backup",
-            success: "Backup added"
-        )
-    }
-
-    func removeBackupTarget(_ target: IrisDriveBackupTarget) {
-        removeBackupTarget(target.target)
-    }
-
-    func removeBackupTarget(_ target: String) {
-        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return }
-        dispatchNativeAction(
-            [
-                "type": "remove_backup_target",
-                "target": target,
-            ],
-            progress: "Removing backup",
-            success: "Backup removed"
-        )
-    }
-
     func addBlossomServer(_ value: String) {
         let url = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
@@ -59,43 +28,84 @@ extension AppDelegate {
         )
     }
 
-    func syncBackups() {
-        dispatchNativeAction(
-            [
-                "type": "sync_backups",
-                "target": "",
-            ],
-            progress: "Syncing backups",
-            success: "Backups synced"
+    func syncFileServers(_ targets: [IrisDriveBackupTarget]) {
+        let urls = fileServerURLs(targets)
+        guard !urls.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        dispatchFileServerBatch(
+            urls,
+            actionType: "sync_backups",
+            progress: "Syncing file servers",
+            success: "File servers synced"
         )
     }
 
-    func checkBackups(completion: (() -> Void)? = nil) {
-        dispatchNativeAction(
-            [
-                "type": "check_backups",
-                "target": "",
-            ],
-            progress: "Checking backups",
-            success: "Backups checked",
+    func checkFileServers(
+        _ targets: [IrisDriveBackupTarget],
+        completion: (() -> Void)? = nil
+    ) {
+        let urls = fileServerURLs(targets)
+        guard !urls.isEmpty else {
+            NSSound.beep()
+            completion?()
+            return
+        }
+        dispatchFileServerBatch(
+            urls,
+            actionType: "check_backups",
+            progress: "Checking file servers",
+            success: "File servers checked",
             completion: completion
         )
     }
 
-    func checkBackupTarget(_ target: IrisDriveBackupTarget, completion: (() -> Void)? = nil) {
-        guard !target.target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            NSSound.beep()
+    func checkFileServer(_ target: IrisDriveBackupTarget, completion: (() -> Void)? = nil) {
+        checkFileServers([target], completion: completion)
+    }
+
+    private func fileServerURLs(_ targets: [IrisDriveBackupTarget]) -> [String] {
+        targets.compactMap { target in
+            guard target.kind == "blossom" else { return nil }
+            let url = target.target.trimmingCharacters(in: .whitespacesAndNewlines)
+            return url.isEmpty ? nil : url
+        }
+    }
+
+    private func dispatchFileServerBatch(
+        _ urls: [String],
+        actionType: String,
+        progress: String,
+        success: String,
+        index: Int = 0,
+        completion: (() -> Void)? = nil
+    ) {
+        guard urls.indices.contains(index) else {
             completion?()
             return
         }
         dispatchNativeAction(
             [
-                "type": "check_backups",
-                "target": target.target,
+                "type": actionType,
+                "target": urls[index],
             ],
-            progress: "Checking backup",
-            success: "Backup checked",
-            completion: completion
+            progress: progress,
+            success: success,
+            completion: { [weak self] in
+                guard let self else {
+                    completion?()
+                    return
+                }
+                self.dispatchFileServerBatch(
+                    urls,
+                    actionType: actionType,
+                    progress: progress,
+                    success: success,
+                    index: index + 1,
+                    completion: completion
+                )
+            }
         )
     }
 }

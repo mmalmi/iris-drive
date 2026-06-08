@@ -72,7 +72,8 @@ fn status_lists_default_blossom_server_as_backup_target() {
         .expect("default file server should be visible in backup targets");
 
     assert_eq!(target["enabled"], true);
-    assert_eq!(target["label"], "File server");
+    assert!(target["label"].is_null());
+    assert_eq!(target["title"], "upload.iris.to");
 }
 
 #[test]
