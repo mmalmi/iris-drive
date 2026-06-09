@@ -309,6 +309,20 @@ function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
   }
 }
 
+function stageLinuxDebCliBinary({ env, targetTriple, dryRun }) {
+  const sourcePath = join(cargoTargetDir(env), targetTriple, 'release', 'idrive')
+  const releaseDir = join(repoRoot, 'target', 'release')
+  const destPath = join(releaseDir, 'idrive')
+  if (dryRun) {
+    console.log(`$ mkdir -p ${quote(releaseDir)}`)
+    console.log(`$ cp ${quote(sourcePath)} ${quote(destPath)}`)
+    return
+  }
+  mkdirSync(releaseDir, { recursive: true })
+  copyFileSync(sourcePath, destPath)
+  chmodSync(destPath, 0o755)
+}
+
 function macosDeveloperIdIdentity(env, dryRun) {
   const requested = String(env.IRIS_DRIVE_MACOS_SIGN_IDENTITY ?? '').trim()
   if (requested) {
@@ -670,6 +684,7 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
     tag,
     dryRun,
   })
+  stageLinuxDebCliBinary({ env, targetTriple, dryRun })
   run('cargo', ['build', '--release', '--manifest-path', join(repoRoot, 'linux', 'Cargo.toml')], {
     dryRun,
     env,

@@ -516,6 +516,29 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.match(result.stdout, /v9\.9\.9/)
 })
 
+test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'linux',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /\$ mkdir -p .*target\/release/)
+  assert.match(
+    result.stdout,
+    /\$ cp .*target\/x86_64-unknown-linux-gnu\/release\/idrive .*target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+  )
+})
+
 test('local-release dry-run passes release versions to macOS and Android builders', () => {
   const result = spawnSync(
     process.execPath,
