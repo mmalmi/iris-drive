@@ -26,6 +26,8 @@ pub struct UiState {
     pub provider_change_key: String,
     pub provider_directory_paths: Vec<String>,
     pub snapshot_link: String,
+    pub local_nhash_resolver_enabled: bool,
+    pub sites_portal_url: String,
     pub last_share_invite: String,
     pub last_share_recipient_evidence: String,
 }

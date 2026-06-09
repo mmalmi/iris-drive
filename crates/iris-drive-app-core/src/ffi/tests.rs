@@ -1042,6 +1042,32 @@ fn snapshot_link_uses_drive_iris_nhash_route() {
 }
 
 #[test]
+fn app_state_surfaces_local_resolver_and_portal_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let created = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Pixel".to_owned(),
+    });
+
+    assert!(created.ui.local_nhash_resolver_enabled);
+    assert_eq!(
+        created.ui.sites_portal_url,
+        iris_drive_core::gateway::local_portal_url(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
+    );
+
+    let config_path = config_path_in(dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    config.local_nhash_resolver_enabled = false;
+    config.save(&config_path).unwrap();
+
+    let refreshed = app.refresh();
+
+    assert!(!refreshed.ui.local_nhash_resolver_enabled);
+    assert!(refreshed.ui.sites_portal_url.is_empty());
+}
+
+#[test]
 fn drive_link_for_cid_uses_drive_iris_nhash_route() {
     let root_cid = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
                     :1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"

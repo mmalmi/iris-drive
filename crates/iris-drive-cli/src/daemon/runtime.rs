@@ -178,7 +178,7 @@ pub(crate) fn cmd_daemon(
                 "enabled": true,
                 "running": true,
                 "bind": server.local_addr().to_string(),
-                "portal_url": format!("http://sites.iris.localhost:{port}/"),
+                "portal_url": iris_drive_core::gateway::local_portal_url(port),
                 "primary_drive_url": iris_drive_core::gateway::local_drive_url(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,

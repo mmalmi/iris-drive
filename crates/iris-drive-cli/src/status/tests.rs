@@ -51,6 +51,10 @@ fn local_gateway_status_includes_nhash_resolver_host_when_enabled() {
         status["nhash_resolver_url"],
         "http://nhash.iris.localhost:17321/"
     );
+    assert_eq!(
+        status["portal_url"],
+        iris_drive_core::gateway::local_portal_url(17_321)
+    );
 }
 
 #[test]

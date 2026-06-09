@@ -1171,6 +1171,10 @@ impl NativeAppRuntime {
             primary_status: "not_setup".to_owned(),
             primary_status_label: primary_status_label("not_setup").to_owned(),
             snapshot_link: String::new(),
+            local_nhash_resolver_enabled: true,
+            sites_portal_url: iris_drive_core::gateway::local_portal_url(
+                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
+            ),
             ..UiState::default()
         };
 
@@ -1189,6 +1193,14 @@ impl NativeAppRuntime {
                 self.state.error = format!("repairing share shortcuts: {error:#}");
             }
         }
+        self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
+        self.state.ui.sites_portal_url = if config.local_nhash_resolver_enabled {
+            iris_drive_core::gateway::local_portal_url(
+                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
+            )
+        } else {
+            String::new()
+        };
         self.state.ui.relays = if config.relays.is_empty() {
             default_relays()
         } else {

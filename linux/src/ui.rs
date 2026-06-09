@@ -322,6 +322,12 @@ pub(crate) fn build_ui(app: &adw::Application) {
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
     settings_page.append(&local_nhash_resolver);
+    let open_sites_portal_button = action_button(
+        "web-browser-symbolic",
+        "Open hashtree apps",
+        "Open hashtree apps",
+    );
+    settings_page.append(&open_sites_portal_button);
     let update_check_button = action_button(
         "view-refresh-symbolic",
         "Check Updates",
@@ -454,6 +460,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             blossom,
             tray_on_close,
             local_nhash_resolver,
+            open_sites_portal_button,
             recovery_phrase_button,
             logout_button,
             relay_entry,
@@ -607,6 +614,11 @@ pub(crate) fn build_ui(app: &adw::Application) {
             }
             set_local_nhash_resolver(&model, button.is_active());
         });
+    }
+    {
+        let button = model.ui.open_sites_portal_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| open_sites_portal(&model));
     }
     {
         let button = model.ui.update_auto_check.clone();

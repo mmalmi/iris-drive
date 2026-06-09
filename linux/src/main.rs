@@ -89,6 +89,7 @@ struct Ui {
     blossom: gtk::ListBox,
     tray_on_close: gtk::CheckButton,
     local_nhash_resolver: gtk::CheckButton,
+    open_sites_portal_button: gtk::Button,
     recovery_phrase_button: gtk::Button,
     logout_button: gtk::Button,
     relay_entry: gtk::Entry,

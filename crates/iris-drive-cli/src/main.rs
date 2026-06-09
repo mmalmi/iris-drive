@@ -66,7 +66,7 @@ use sync::*;
 #[allow(clippy::wildcard_imports)]
 use updater::*;
 
-const DEFAULT_GATEWAY_PORT: u16 = 17_321;
+const DEFAULT_GATEWAY_PORT: u16 = iris_drive_core::gateway::DEFAULT_GATEWAY_PORT;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
 const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];

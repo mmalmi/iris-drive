@@ -256,6 +256,7 @@ public partial class MainWindow : Window
         {
             settingsUpdating = false;
         }
+        OpenSitesPortalButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SitesPortalUrl);
         UpdateTrayText(syncRunning);
     }
 
@@ -273,6 +274,7 @@ public partial class MainWindow : Window
         AuthValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
         OpenSnapshotButton.IsEnabled = false;
+        OpenSitesPortalButton.IsEnabled = false;
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
         StartButton.Visibility = Visibility.Visible;
@@ -806,6 +808,14 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(currentStatus?.SnapshotUrl))
         {
             service.OpenUri(currentStatus.SnapshotUrl);
+        }
+    }
+
+    private void OpenSitesPortal_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(currentStatus?.SitesPortalUrl))
+        {
+            service.OpenUri(currentStatus.SitesPortalUrl);
         }
     }
 

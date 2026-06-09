@@ -42,8 +42,12 @@ use self::paths::*;
 #[allow(clippy::wildcard_imports)]
 use self::response::*;
 
-const LOCAL_PORTAL_HOST: &str = "sites.iris.localhost";
+pub const LOCAL_PORTAL_HOST: &str = "iris.localhost";
 pub const LOCAL_NHASH_RESOLVER_HOST: &str = "nhash.iris.localhost";
+pub const DEFAULT_GATEWAY_PORT: u16 = 17_321;
+pub const IRIS_SITES_PORTAL_NPUB: &str =
+    "npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm";
+pub const IRIS_SITES_PORTAL_TREE: &str = "sites";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
 const HASH_HOST_SUFFIX: &str = ".hash.localhost";
 const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";
@@ -85,7 +89,7 @@ impl GatewayBind {
 
 impl Default for GatewayBind {
     fn default() -> Self {
-        Self::loopback_v4(17_321)
+        Self::loopback_v4(DEFAULT_GATEWAY_PORT)
     }
 }
 
@@ -246,9 +250,15 @@ struct DriveGatewayRequest {
 
 #[derive(Debug, Clone)]
 struct HtreeProxyRequest {
-    nhash: String,
+    root: HtreeProxyRoot,
     path_segments: Vec<String>,
     key_query: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum HtreeProxyRoot {
+    Nhash(String),
+    Mutable { npub: String, tree_name: String },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -546,7 +556,16 @@ fn is_proxy_response_header(name: &str) -> bool {
 }
 
 fn htree_daemon_target(request: &HtreeProxyRequest) -> String {
-    let mut target = format!("/htree/{}", percent_encode_path_segment(&request.nhash));
+    let mut target = match &request.root {
+        HtreeProxyRoot::Nhash(nhash) => {
+            format!("/htree/{}", percent_encode_path_segment(nhash))
+        }
+        HtreeProxyRoot::Mutable { npub, tree_name } => format!(
+            "/htree/{}/{}",
+            percent_encode_path_segment(npub),
+            percent_encode_path_segment(tree_name)
+        ),
+    };
     for segment in &request.path_segments {
         target.push('/');
         target.push_str(&percent_encode_path_segment(segment));
@@ -578,9 +597,11 @@ fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequ
     }
 
     if host == LOCAL_PORTAL_HOST {
-        return Err(GatewayError::InvalidRequest(
-            "use a content host such as main.drive.iris.localhost".into(),
-        ));
+        return Ok(portal_host_request(path_segments));
+    }
+
+    if let Some((npub, tree_name)) = mutable_site_host(&host) {
+        return Ok(mutable_htree_request(npub, tree_name, path_segments));
     }
 
     if let Some(label) = host.strip_suffix(IMMUTABLE_HOST_SUFFIX) {
@@ -665,10 +686,58 @@ fn nhash_request(
         })
         .transpose()?;
     Ok(GatewayRequest::HtreeDaemon(HtreeProxyRequest {
-        nhash: nhash.to_string(),
+        root: HtreeProxyRoot::Nhash(nhash.to_string()),
         path_segments,
         key_query,
     }))
+}
+
+fn portal_host_request(mut path_segments: Vec<String>) -> GatewayRequest {
+    if path_segments.is_empty() {
+        path_segments.push("index.html".to_owned());
+    }
+    mutable_htree_request(
+        IRIS_SITES_PORTAL_NPUB.to_owned(),
+        IRIS_SITES_PORTAL_TREE.to_owned(),
+        path_segments,
+    )
+}
+
+fn mutable_htree_request(
+    npub: String,
+    tree_name: String,
+    mut path_segments: Vec<String>,
+) -> GatewayRequest {
+    if path_segments.is_empty() {
+        path_segments.push("index.html".to_owned());
+    }
+    GatewayRequest::HtreeDaemon(HtreeProxyRequest {
+        root: HtreeProxyRoot::Mutable { npub, tree_name },
+        path_segments,
+        key_query: None,
+    })
+}
+
+fn mutable_site_host(host: &str) -> Option<(String, String)> {
+    let name = host.strip_suffix(IRIS_LOCALHOST_SUFFIX)?;
+    let (tree_name, npub) = name.split_once('.')?;
+    if tree_name.contains('.') || !npub.starts_with("npub1") {
+        return None;
+    }
+    if !is_dns_site_label(tree_name) || !is_dns_site_label(npub) {
+        return None;
+    }
+    Some((npub.to_owned(), tree_name.to_owned()))
+}
+
+fn is_dns_site_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 63
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
 }
 
 fn immutable_host_request(
@@ -1004,6 +1073,21 @@ async fn serve_file<S: Store>(
 #[must_use]
 pub fn local_drive_url(port: u16, drive_id: &str) -> String {
     format!("http://{drive_id}.drive.iris.localhost:{port}/")
+}
+
+#[must_use]
+pub fn local_portal_url(port: u16) -> String {
+    local_mutable_site_url(port, IRIS_SITES_PORTAL_NPUB, IRIS_SITES_PORTAL_TREE)
+}
+
+#[must_use]
+pub fn local_mutable_site_url(port: u16, npub: &str, tree_name: &str) -> String {
+    format!("http://{tree_name}.{npub}.iris.localhost:{port}/")
+}
+
+#[must_use]
+pub fn local_iris_url(port: u16) -> String {
+    format!("http://{LOCAL_PORTAL_HOST}:{port}/")
 }
 
 #[must_use]

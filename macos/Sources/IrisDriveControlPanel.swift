@@ -1347,6 +1347,12 @@ struct IrisDriveControlPanel: View {
                         set: { controller.setLocalNhashResolver($0) }
                     )
                 )
+                Button {
+                    controller.openSitesPortal()
+                } label: {
+                    Label("Open hashtree apps", systemImage: "safari")
+                }
+                .disabled(status.sitesPortalURL == nil)
             }
 
             Section("Updates") {

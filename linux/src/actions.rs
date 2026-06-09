@@ -1420,11 +1420,25 @@ pub(crate) fn open_snapshot_link(model: &AppRef) {
     }
 }
 
+pub(crate) fn open_sites_portal(model: &AppRef) {
+    match current_sites_portal_url() {
+        Ok(link) => open_uri(&link),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn current_snapshot_link() -> Result<String, String> {
     let state = desktop_state()?;
     snapshot_link(&state)
         .map(str::to_string)
         .ok_or_else(|| "No snapshot available".to_string())
+}
+
+pub(crate) fn current_sites_portal_url() -> Result<String, String> {
+    let state = desktop_state()?;
+    sites_portal_url(&state)
+        .map(str::to_string)
+        .ok_or_else(|| "Local resolver is disabled".to_string())
 }
 
 pub(crate) fn current_account_value(key: &str) -> Result<String, String> {

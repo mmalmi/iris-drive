@@ -67,6 +67,10 @@ pub(crate) fn refresh(model: &AppRef) {
             model.settings_refreshing.set(false);
             model
                 .ui
+                .open_sites_portal_button
+                .set_sensitive(sites_portal_url(&state).is_some());
+            model
+                .ui
                 .recovery_phrase_button
                 .set_visible(account.is_some_and(|account| account.can_export_recovery_phrase));
             let has_snapshot = snapshot_link(&state).is_some();
@@ -116,6 +120,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.sidebar_online.set_text("0/0 online");
             model.ui.copy_snapshot_button.set_sensitive(false);
             model.ui.open_snapshot_button.set_sensitive(false);
+            model.ui.open_sites_portal_button.set_sensitive(false);
             model.ui.last_share_invite.set_text("-");
             model.ui.copy_last_share_invite_button.set_sensitive(false);
             model.ui.recovery_phrase_button.set_visible(false);

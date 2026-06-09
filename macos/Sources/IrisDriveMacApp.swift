@@ -744,6 +744,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSWorkspace.shared.open(url)
     }
 
+    @objc func openSitesPortal() {
+        guard let link = IrisDriveStatus.shared.sitesPortalURL,
+              let url = URL(string: link)
+        else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     @objc func openConfigFolder() {
         let paths = runtimePathsForMenu ?? runtimePaths()
         NSWorkspace.shared.open(paths.configDirectory)
@@ -2461,7 +2471,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.localNhashResolverEnabled = enabled
             if !enabled {
                 status.primaryDriveGatewayURL = nil
+                status.sitesPortalURL = nil
             }
+        }
+        if let portalURL = gateway["portal_url"] as? String,
+           !portalURL.isEmpty {
+            status.sitesPortalURL = portalURL
         }
         if let primaryDriveURL = gateway["primary_drive_url"] as? String,
            !primaryDriveURL.isEmpty {

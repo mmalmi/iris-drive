@@ -30,6 +30,7 @@ public sealed class IrisDriveStatusData
     public string? CurrentRootCid { get; init; }
     public string ProviderRefreshKey { get; init; } = "";
     public string? SnapshotUrl { get; init; }
+    public string? SitesPortalUrl { get; init; }
     public string? LastShareInviteUrl { get; init; }
     public string? LastShareRecipientEvidence { get; init; }
     public int FileCount { get; init; }
@@ -64,6 +65,15 @@ public sealed class IrisDriveStatusData
         var profile = ui.ValueKind == JsonValueKind.Object ? Object(ui, "profile") : null;
         var paths = ui.ValueKind == JsonValueKind.Object ? Object(ui, "paths") : null;
         var setupComplete = ui.ValueKind == JsonValueKind.Object && Bool(ui, "setup_complete");
+        var localNhashResolverEnabled =
+            ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("local_nhash_resolver_enabled", out var localResolver) ||
+            localResolver.ValueKind == JsonValueKind.True;
+        const string DefaultSitesPortalUrl =
+            "http://sites.npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm.iris.localhost:17321/";
+        var sitesPortalUrl =
+            EmptyToNull(String(ui, "sites_portal_url")) ??
+            (localNhashResolverEnabled ? DefaultSitesPortalUrl : null);
 
         var backupTargets = NativeBackupRows(ui);
         return new IrisDriveStatusData
@@ -96,11 +106,12 @@ public sealed class IrisDriveStatusData
             ConfigDirectory = paths.HasValue ? String(paths.Value, "data_dir") : null,
             ProviderRefreshKey = String(ui, "provider_change_key") ?? "",
             SnapshotUrl = EmptyToNull(String(ui, "snapshot_link")),
+            SitesPortalUrl = sitesPortalUrl,
             LastShareInviteUrl = EmptyToNull(String(ui, "last_share_invite")),
             LastShareRecipientEvidence = EmptyToNull(String(ui, "last_share_recipient_evidence")),
             FileCount = Int(ui, "file_count"),
             VisibleFileBytes = Long(ui, "visible_file_bytes"),
-            LocalNhashResolverEnabled = true,
+            LocalNhashResolverEnabled = localNhashResolverEnabled,
             Drives = NativeDriveRows(ui, setupComplete),
             Peers = NativePeerRows(ui),
             BackupTargets = backupTargets,

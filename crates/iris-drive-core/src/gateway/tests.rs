@@ -299,6 +299,82 @@ async fn gateway_proxies_nhash_to_hashtree_daemon() {
 }
 
 #[tokio::test]
+async fn gateway_portal_host_proxies_iris_sites_release() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let htree = fake_htree_daemon(
+        &format!("/htree/{IRIS_SITES_PORTAL_NPUB}/{IRIS_SITES_PORTAL_TREE}/index.html"),
+        "iris sites portal",
+    )
+    .await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let response = http_get(server.local_addr(), LOCAL_PORTAL_HOST, "/").await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("iris sites portal"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_proxies_mutable_site_host_to_hashtree_daemon() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let tree_name = "hashtree-cc-site";
+    let htree = fake_htree_daemon(
+        &format!("/htree/{IRIS_SITES_PORTAL_NPUB}/{tree_name}/app.js"),
+        "mutable app",
+    )
+    .await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let host = format!("{tree_name}.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+    let response = http_get(server.local_addr(), &host, "/app.js").await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("mutable app"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_does_not_keep_sites_portal_alias() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let response = http_get(server.local_addr(), "sites.iris.localhost", "/").await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "{response}"
+    );
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn gateway_without_htree_upstream_does_not_use_global_daemon() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
