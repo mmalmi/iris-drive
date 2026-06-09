@@ -13,7 +13,8 @@ use axum::extract::State;
 use axum::http::header::{
     ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
-    COOKIE, ETAG, HOST, IF_NONE_MATCH, ORIGIN, RANGE, SET_COOKIE, VARY, X_CONTENT_TYPE_OPTIONS,
+    COOKIE, ETAG, HOST, IF_NONE_MATCH, LOCATION, ORIGIN, RANGE, SET_COOKIE, VARY,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
@@ -232,6 +233,7 @@ enum GatewayRequest {
     Local(LocalGatewayRequest),
     Drive(DriveGatewayRequest),
     HtreeDaemon(HtreeProxyRequest),
+    Redirect(String),
 }
 
 #[derive(Debug, Clone)]
@@ -316,6 +318,7 @@ async fn handle_gateway_request(
         GatewayRequest::HtreeDaemon(request) => {
             return proxy_htree_daemon_request(&state, &method, &headers, request).await;
         }
+        GatewayRequest::Redirect(location) => return Ok(redirect_response(&location)),
     };
 
     if method != Method::GET && method != Method::HEAD {
@@ -578,11 +581,11 @@ fn htree_daemon_target(request: &HtreeProxyRequest) -> String {
 }
 
 fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequest, GatewayError> {
-    let host = headers
+    let host_header = headers
         .get(HOST)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| GatewayError::InvalidRequest("missing Host header".into()))?;
-    let host = normalize_host(host);
+    let host = normalize_host(host_header);
     if host.is_empty() {
         return Err(GatewayError::InvalidRequest("empty Host header".into()));
     }
@@ -597,7 +600,7 @@ fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequ
     }
 
     if host == LOCAL_PORTAL_HOST {
-        return Ok(portal_host_request(path_segments));
+        return Ok(portal_host_redirect(uri, host_header));
     }
 
     if let Some((npub, tree_name)) = mutable_site_host(&host) {
@@ -692,17 +695,6 @@ fn nhash_request(
     }))
 }
 
-fn portal_host_request(mut path_segments: Vec<String>) -> GatewayRequest {
-    if path_segments.is_empty() {
-        path_segments.push("index.html".to_owned());
-    }
-    mutable_htree_request(
-        IRIS_SITES_PORTAL_NPUB.to_owned(),
-        IRIS_SITES_PORTAL_TREE.to_owned(),
-        path_segments,
-    )
-}
-
 fn mutable_htree_request(
     npub: String,
     tree_name: String,
@@ -716,6 +708,29 @@ fn mutable_htree_request(
         path_segments,
         key_query: None,
     })
+}
+
+fn portal_host_redirect(uri: &Uri, host_header: &str) -> GatewayRequest {
+    let mut location = match host_port(host_header) {
+        Some(port) => {
+            local_mutable_site_origin(Some(port), IRIS_SITES_PORTAL_NPUB, IRIS_SITES_PORTAL_TREE)
+        }
+        None => local_mutable_site_origin(None, IRIS_SITES_PORTAL_NPUB, IRIS_SITES_PORTAL_TREE),
+    };
+    location.push_str(uri.path_and_query().map_or("/", |value| value.as_str()));
+    GatewayRequest::Redirect(location)
+}
+
+fn host_port(host_header: &str) -> Option<u16> {
+    let trimmed = host_header.trim().trim_end_matches('.');
+    if trimmed.starts_with('[') {
+        return trimmed
+            .split_once("]:")
+            .and_then(|(_, port)| port.parse().ok());
+    }
+    trimmed
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse().ok())
 }
 
 fn mutable_site_host(host: &str) -> Option<(String, String)> {
@@ -1082,12 +1097,21 @@ pub fn local_portal_url(port: u16) -> String {
 
 #[must_use]
 pub fn local_mutable_site_url(port: u16, npub: &str, tree_name: &str) -> String {
-    format!("http://{tree_name}.{npub}.iris.localhost:{port}/")
+    let mut url = local_mutable_site_origin(Some(port), npub, tree_name);
+    url.push('/');
+    url
 }
 
 #[must_use]
 pub fn local_iris_url(port: u16) -> String {
     format!("http://{LOCAL_PORTAL_HOST}:{port}/")
+}
+
+fn local_mutable_site_origin(port: Option<u16>, npub: &str, tree_name: &str) -> String {
+    match port {
+        Some(port) => format!("http://{tree_name}.{npub}.iris.localhost:{port}"),
+        None => format!("http://{tree_name}.{npub}.iris.localhost"),
+    }
 }
 
 #[must_use]

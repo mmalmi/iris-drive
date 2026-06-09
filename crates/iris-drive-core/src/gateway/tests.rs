@@ -299,29 +299,33 @@ async fn gateway_proxies_nhash_to_hashtree_daemon() {
 }
 
 #[tokio::test]
-async fn gateway_portal_host_proxies_iris_sites_release() {
+async fn gateway_root_host_redirects_to_mutable_portal_host() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
-    let htree = fake_htree_daemon(
-        &format!("/htree/{IRIS_SITES_PORTAL_NPUB}/{IRIS_SITES_PORTAL_TREE}/index.html"),
-        "iris sites portal",
-    )
-    .await;
 
-    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+    let server = GatewayServer::bind_with_tree(
         cfg_dir.path(),
         daemon.tree_handle(),
-        htree.addr.clone(),
         GatewayBind::loopback_v4(0),
     )
     .await
     .unwrap();
-    let response = http_get(server.local_addr(), LOCAL_PORTAL_HOST, "/").await;
-    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.contains("iris sites portal"), "{response}");
+    let port = server.local_addr().port();
+    let host = format!("{LOCAL_PORTAL_HOST}:{port}");
+
+    let response = http_get(server.local_addr(), &host, "/").await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 307 Temporary Redirect"),
+        "{response}"
+    );
+    assert!(
+        response.contains(&format!("location: {}", local_portal_url(port))),
+        "{response}"
+    );
+    assert!(response.contains("cache-control: no-store"), "{response}");
     server.shutdown().await.unwrap();
-    htree.shutdown().await;
 }
 
 #[tokio::test]

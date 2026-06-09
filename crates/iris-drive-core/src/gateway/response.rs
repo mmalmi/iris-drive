@@ -68,6 +68,14 @@ pub(crate) fn text_response(status: StatusCode, message: &str) -> Response {
         .expect("response")
 }
 
+pub(crate) fn redirect_response(location: &str) -> Response {
+    response_builder(StatusCode::TEMPORARY_REDIRECT, false)
+        .header(LOCATION, location)
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .expect("response")
+}
+
 pub(crate) fn response_builder(status: StatusCode, _head: bool) -> http::response::Builder {
     Response::builder().status(status)
 }

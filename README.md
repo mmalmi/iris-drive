@@ -133,6 +133,9 @@ When `idrive daemon` is running it starts a loopback browser gateway on port
 http://main.drive.iris.localhost:17321/
 ```
 
+The hand-typed root `http://iris.localhost:17321/` redirects to the canonical
+hashtree apps portal at `sites.<publisher-npub>.iris.localhost`.
+
 Immutable hashtree roots are served from per-root hosts under
 `*.sites.iris.localhost`, and nhash links can be opened through:
 
