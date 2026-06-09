@@ -10,6 +10,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -26,6 +27,7 @@ import {
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
   normalizeTag,
+  parseNotarytoolSubmitOutput,
   parseEnvFile,
   plannedReleaseAssetNames,
   readWorkspaceVersionTag,
@@ -166,11 +168,12 @@ function psSingleQuote(value) {
 function run(command, args, {
   capture = false,
   cwd = repoRoot,
+  displayArgs = args,
   dryRun = false,
   env = process.env,
   input = undefined,
 } = {}) {
-  const rendered = [command, ...args].map(quote).join(' ')
+  const rendered = [command, ...displayArgs].map(quote).join(' ')
   console.log(`$ ${rendered}`)
   if (dryRun) {
     return ''
@@ -196,6 +199,11 @@ function runCodesign(args, { dryRun = false, env = process.env } = {}) {
   }
   const attempts = Number.parseInt(String(env.IRIS_DRIVE_MACOS_CODESIGN_ATTEMPTS ?? '5'), 10)
   const maxAttempts = Number.isFinite(attempts) && attempts > 0 ? attempts : 5
+  const delaySeconds = Number.parseInt(
+    String(env.IRIS_DRIVE_MACOS_CODESIGN_RETRY_DELAY_SECONDS ?? '30'),
+    10,
+  )
+  const retryDelaySeconds = Number.isFinite(delaySeconds) && delaySeconds >= 0 ? delaySeconds : 30
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       run('codesign', args, { env })
@@ -204,8 +212,10 @@ function runCodesign(args, { dryRun = false, env = process.env } = {}) {
       if (attempt === maxAttempts) {
         throw error
       }
-      console.error(`codesign failed; retrying in 5s (attempt ${attempt}/${maxAttempts})...`)
-      spawnSync('sleep', ['5'], { stdio: 'inherit' })
+      console.error(
+        `codesign failed; retrying in ${retryDelaySeconds}s (attempt ${attempt}/${maxAttempts})...`,
+      )
+      spawnSync('sleep', [String(retryDelaySeconds)], { stdio: 'inherit' })
     }
   }
 }
@@ -340,6 +350,149 @@ function macosCodesignTimestampArgs(env) {
   return [url ? `--timestamp=${url}` : '--timestamp']
 }
 
+function macosHardenedRuntimeArgs() {
+  return ['--options', 'runtime']
+}
+
+function resolveMacosNotaryAuth(env) {
+  const profile = String(
+    env.IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE ?? env.IRIS_DRIVE_MACOS_NOTARY_PROFILE ?? '',
+  ).trim()
+  if (profile) {
+    return { mode: 'keychain-profile', profile }
+  }
+  const ascAuth = resolveIosAscAuth(env)
+  const keyPath = String(
+    env.IRIS_DRIVE_MACOS_NOTARY_KEY_PATH ??
+      env.IRIS_DRIVE_ASC_AUTH_KEY_PATH ??
+      env.IRIS_DRIVE_ASC_KEY_PATH ??
+      ascAuth.keyPath ??
+      '',
+  ).trim()
+  const keyId = String(
+    env.IRIS_DRIVE_MACOS_NOTARY_KEY_ID ??
+      env.IRIS_DRIVE_ASC_AUTH_KEY_ID ??
+      env.IRIS_DRIVE_ASC_KEY_ID ??
+      ascAuth.keyId ??
+      '',
+  ).trim()
+  const issuerId = String(
+    env.IRIS_DRIVE_MACOS_NOTARY_ISSUER_ID ??
+      env.IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID ??
+      env.IRIS_DRIVE_ASC_ISSUER_ID ??
+      ascAuth.issuerId ??
+      '',
+  ).trim()
+  return {
+    mode: 'api-key',
+    keyPath: keyPath ? resolve(repoRoot, keyPath) : '',
+    keyId,
+    issuerId,
+  }
+}
+
+function macosNotaryAuthArgs(env, dryRun) {
+  const auth = resolveMacosNotaryAuth(env)
+  if (auth.mode === 'keychain-profile') {
+    return {
+      args: ['--keychain-profile', auth.profile],
+      displayArgs: ['--keychain-profile', auth.profile],
+    }
+  }
+  if (auth.keyPath && auth.keyId && auth.issuerId) {
+    return {
+      args: ['--key', auth.keyPath, '--key-id', auth.keyId, '--issuer', auth.issuerId],
+      displayArgs: ['--key', '<path>', '--key-id', '<key-id>', '--issuer', '<issuer-id>'],
+    }
+  }
+  if (dryRun) {
+    return {
+      args: ['--keychain-profile', 'iris-drive-notary'],
+      displayArgs: ['--keychain-profile', 'iris-drive-notary'],
+    }
+  }
+  throw new Error(
+    'Missing macOS notarization inputs. Set IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE, or set IRIS_DRIVE_MACOS_NOTARY_KEY_PATH, IRIS_DRIVE_MACOS_NOTARY_KEY_ID, and IRIS_DRIVE_MACOS_NOTARY_ISSUER_ID.',
+  )
+}
+
+function validateMacosNotaryInputs(env) {
+  const auth = resolveMacosNotaryAuth(env)
+  if (auth.mode === 'keychain-profile') {
+    return []
+  }
+  const missing = []
+  if (!auth.keyPath) {
+    missing.push('macOS notarization API key path')
+  } else if (!existsSync(auth.keyPath)) {
+    missing.push(`macOS notarization API key file not found: ${auth.keyPath}`)
+  }
+  if (!auth.keyId) {
+    missing.push('macOS notarization API key ID')
+  }
+  if (!auth.issuerId) {
+    missing.push('macOS notarization issuer ID')
+  }
+  return missing
+}
+
+function submitMacosNotarization({ artifactPath, env, dryRun }) {
+  const auth = macosNotaryAuthArgs(env, dryRun)
+  const output = run('xcrun', ['notarytool', 'submit', artifactPath, '--wait', ...auth.args], {
+    capture: !dryRun,
+    dryRun,
+    env,
+    displayArgs: ['notarytool', 'submit', artifactPath, '--wait', ...auth.displayArgs],
+  })
+  if (output) {
+    console.log(output)
+  }
+  if (!dryRun) {
+    const result = parseNotarytoolSubmitOutput(output)
+    if (result.status !== 'accepted') {
+      const suffix = result.id ? ` (submission ${result.id})` : ''
+      const status = result.status || 'unknown'
+      throw new Error(`Apple notarization failed for ${basename(artifactPath)}: ${status}${suffix}`)
+    }
+  }
+}
+
+function stapleMacosArtifact({ artifactPath, dryRun }) {
+  run('xcrun', ['stapler', 'staple', artifactPath], { dryRun })
+  run('xcrun', ['stapler', 'validate', artifactPath], { dryRun })
+}
+
+function notarizeMacosApp({ appPath, signingDir, env, dryRun }) {
+  const appZipPath = join(signingDir, 'IrisDriveMac.notary.zip')
+  if (!dryRun) {
+    rmSync(appZipPath, { force: true })
+  }
+  run('ditto', ['-c', '-k', '--keepParent', appPath, appZipPath], { dryRun, env })
+  submitMacosNotarization({ artifactPath: appZipPath, env, dryRun })
+  stapleMacosArtifact({ artifactPath: appPath, dryRun })
+}
+
+function createMacosDmg({ appPath, dmgPath, dryRun, env }) {
+  const dmgRoot = join(repoRoot, 'macos', '.build', 'ReleaseDmgRoot')
+  const dmgAppPath = join(dmgRoot, basename(appPath))
+  const applicationsLink = join(dmgRoot, 'Applications')
+  if (!dryRun) {
+    rmSync(dmgRoot, { recursive: true, force: true })
+    mkdirSync(dmgRoot, { recursive: true })
+  }
+  run('ditto', [appPath, dmgAppPath], { dryRun, env })
+  if (dryRun) {
+    console.log(`Would link /Applications -> ${applicationsLink}`)
+  } else {
+    symlinkSync('/Applications', applicationsLink)
+  }
+  run(
+    'hdiutil',
+    ['create', '-volname', 'Iris Drive', '-srcfolder', dmgRoot, '-ov', '-format', 'UDZO', dmgPath],
+    { dryRun, env },
+  )
+}
+
 function prepareMacosEntitlements(sourcePath, outputPath, teamId, dryRun) {
   if (dryRun) {
     console.log(`Would prepare entitlements ${sourcePath} for team ${teamId}`)
@@ -432,10 +585,12 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     }
   }
   const timestampArgs = macosCodesignTimestampArgs(env)
+  const runtimeArgs = macosHardenedRuntimeArgs()
   runCodesign(
     [
       '--force',
       ...timestampArgs,
+      ...runtimeArgs,
       '--sign',
       identity,
       join(appPath, 'Contents', 'MacOS', 'idrive'),
@@ -446,6 +601,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     runCodesign([
       '--force',
       ...timestampArgs,
+      ...runtimeArgs,
       '--sign',
       identity,
       join(appexPath, 'Contents', 'MacOS', 'idrive'),
@@ -453,6 +609,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     runCodesign([
       '--force',
       ...timestampArgs,
+      ...runtimeArgs,
       '--sign',
       identity,
       '--entitlements',
@@ -461,19 +618,31 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     ], { env })
   }
   runCodesign(
-    ['--force', ...timestampArgs, '--sign', identity, '--entitlements', appEntitlements, appPath],
+    [
+      '--force',
+      ...timestampArgs,
+      ...runtimeArgs,
+      '--sign',
+      identity,
+      '--entitlements',
+      appEntitlements,
+      appPath,
+    ],
     { dryRun, env },
   )
   run('codesign', ['--verify', '--deep', '--strict', appPath], { dryRun })
+  notarizeMacosApp({ appPath, signingDir, env, dryRun })
 
   const dmgPath = join(distDir, `iris-drive-${tag}-macos-arm64.dmg`)
   if (!dryRun) {
     mkdirSync(distDir, { recursive: true })
     rmSync(dmgPath, { force: true })
   }
-  run('hdiutil', ['create', '-volname', 'Iris Drive', '-srcfolder', appPath, '-ov', '-format', 'UDZO', dmgPath], {
-    dryRun,
-  })
+  createMacosDmg({ appPath, dmgPath, dryRun, env })
+  runCodesign(['--force', ...timestampArgs, '--sign', identity, dmgPath], { dryRun, env })
+  run('codesign', ['--verify', '--strict', dmgPath], { dryRun })
+  submitMacosNotarization({ artifactPath: dmgPath, env, dryRun })
+  stapleMacosArtifact({ artifactPath: dmgPath, dryRun })
   const updaterArchivePath = join(distDir, `iris-drive-${tag}-macos-arm64.app.tar.gz`)
   if (!dryRun) {
     rmSync(updaterArchivePath, { force: true })
@@ -566,6 +735,9 @@ function resolveIosAscAuth(env) {
 
 function validateFinalReleaseBuildInputs({ env, steps }) {
   const missing = []
+  if (steps.includes('macos')) {
+    missing.push(...validateMacosNotaryInputs(env))
+  }
   if (steps.includes('android') && !androidSigningIsComplete(env)) {
     missing.push(
       'Android signing inputs: ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD',

@@ -224,6 +224,17 @@ export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = 
   return names
 }
 
+export function parseNotarytoolSubmitOutput(text) {
+  const idMatches = [...String(text).matchAll(/^\s*id:\s*([0-9a-f-]+)/gim)]
+  const statusMatches = [
+    ...String(text).matchAll(/(?:Current status:|^\s*status:)\s*([A-Za-z]+)/gim),
+  ]
+  return {
+    id: idMatches.at(-1)?.[1] ?? '',
+    status: statusMatches.at(-1)?.[1]?.toLowerCase() ?? '',
+  }
+}
+
 export function buildZapstorePublishPlan({
   tag,
   assetDir,

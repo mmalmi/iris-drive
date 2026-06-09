@@ -17,6 +17,7 @@ import {
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
   describeAsset,
+  parseNotarytoolSubmitOutput,
   plannedReleaseAssetNames,
   readWorkspaceVersionTag,
   validateReleaseAssetSet,
@@ -114,6 +115,32 @@ test('describeAsset labels idrive release assets', () => {
   assert.equal(
     describeAsset('idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz'),
     'Linux x64 idrive CLI',
+  )
+})
+
+test('parseNotarytoolSubmitOutput reads accepted and invalid statuses', () => {
+  assert.deepEqual(
+    parseNotarytoolSubmitOutput(`
+Submission ID received
+  id: 957413ec-c90f-4f17-8c4a-24666bf4ad6a
+Processing complete
+  id: 957413ec-c90f-4f17-8c4a-24666bf4ad6a
+  status: Accepted
+`),
+    {
+      id: '957413ec-c90f-4f17-8c4a-24666bf4ad6a',
+      status: 'accepted',
+    },
+  )
+
+  assert.deepEqual(
+    parseNotarytoolSubmitOutput(
+      'Waiting for processing to complete.\rCurrent status: In Progress...\rCurrent status: Invalid',
+    ),
+    {
+      id: '',
+      status: 'invalid',
+    },
   )
 })
 
@@ -237,6 +264,7 @@ test('local-release dry-run validates planned build assets over partial existing
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
       },
     },
   )
@@ -310,6 +338,45 @@ test('local-release final dry-run rejects missing App Store Connect auth for iOS
   assert.doesNotMatch(result.stdout, /htree release publish/)
 })
 
+test('local-release final dry-run rejects missing macOS notarization auth', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: '',
+        IRIS_DRIVE_MACOS_NOTARY_PROFILE: '',
+        IRIS_DRIVE_MACOS_NOTARY_KEY_PATH: '',
+        IRIS_DRIVE_MACOS_NOTARY_KEY_ID: '',
+        IRIS_DRIVE_MACOS_NOTARY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ROOT: join(tmpdir(), 'iris-drive-missing-asc-root'),
+        IRIS_DRIVE_ASC_AUTH_KEY_PATH: '',
+        IRIS_DRIVE_ASC_KEY_PATH: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ID: '',
+        IRIS_DRIVE_ASC_KEY_ID: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ISSUER_ID: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /macOS notarization/)
+  assert.doesNotMatch(result.stdout, /cargo build/)
+})
+
 test('local-release final dry-run preflights Zapstore signing before publishing', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-preflight-test-'))
   const keystorePath = join(root, 'upload-keystore.jks')
@@ -378,6 +445,7 @@ test('local-release final dry-run can plan Zapstore publish from signed Android 
         ANDROID_KEY_PASSWORD: 'password',
         PATH: `${binDir}:${process.env.PATH}`,
         SIGN_WITH: 'nsec1test',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
       },
     },
   )
@@ -427,10 +495,43 @@ test('local-release dry-run passes release versions to macOS and Android builder
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
   assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
   assert.match(result.stdout, /--timestamp/)
+  assert.match(result.stdout, /codesign --force --timestamp --options runtime --sign/)
   assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
   assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
   assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
+})
+
+test('local-release dry-run notarizes macOS artifacts and adds Applications shortcut', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /xcrun notarytool submit .*IrisDriveMac\.notary\.zip .*--keychain-profile/)
+  assert.match(result.stdout, /xcrun stapler staple .*Iris Drive\.app/)
+  assert.match(result.stdout, /ditto .*ReleaseDmgRoot\/Iris Drive\.app/)
+  assert.match(result.stdout, /Would link \/Applications -> .*ReleaseDmgRoot\/Applications/)
+  assert.match(result.stdout, /hdiutil create .* -srcfolder .*ReleaseDmgRoot .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /codesign .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /xcrun notarytool submit .*iris-drive-v9\.9\.9-macos-arm64\.dmg .*--keychain-profile/)
+  assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
 })
 
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {
