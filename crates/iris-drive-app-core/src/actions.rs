@@ -61,6 +61,9 @@ pub enum NativeAppAction {
     RemoveBlossomServer {
         url: String,
     },
+    SetLaunchOnStartup {
+        enabled: bool,
+    },
     SyncBackups {
         target: String,
     },

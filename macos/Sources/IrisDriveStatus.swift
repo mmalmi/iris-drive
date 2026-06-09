@@ -16,6 +16,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var autoInstallUpdates =
         UserDefaults.standard.object(forKey: autoInstallUpdatesKey) as? Bool ?? false
     @Published var localNhashResolverEnabled = true
+    @Published var launchOnStartup = true
     @Published var updateChecking = false
     @Published var updateInstalling = false
     @Published var updateAvailable = false

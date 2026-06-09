@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(summary.recovery_phrase_facet_count, 0);
         assert_eq!(summary.nip46_facet_count, 0);
         assert_eq!(summary.social_profile_facet_count, 0);
-        assert_eq!(summary.missing_key_wrap_npubs.len(), 2);
+        assert_eq!(summary.missing_key_wrap_npubs.len(), 1);
         assert!(
             summary
                 .missing_key_wrap_npubs

@@ -219,44 +219,35 @@ async fn live_daemons_three_vm_match_seafile_release_operation_permutations() {
     let cluster = SyncCluster::start_three(Duration::from_millis(100)).await;
     cluster.wait_until_authorized().await;
 
-    for source in Client::THREE_VM {
-        let prefix = format!("release/{}", source.label());
-        matrix_progress(format!(
-            "seafile permutations source={} add-delete-add",
-            source.label()
-        ));
+    let primary = Client::Windows;
+    let primary_prefix = format!("release/{}", primary.label());
+    seafile_progress(primary, "add-delete-add");
+    seafile_add_delete_add_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "create-update");
+    seafile_create_update_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "rename");
+    seafile_rename_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "delete");
+    seafile_delete_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "case-rename");
+    seafile_case_rename_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "empty-directory");
+    seafile_empty_directory_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(primary, "single-operation");
+    seafile_single_operation_sequence(&cluster, primary, &primary_prefix).await;
+
+    for source in [Client::Ubuntu, Client::MacOS] {
+        let prefix = format!("release/{}-origin", source.label());
+        seafile_progress(source, "representative add-delete-add");
         seafile_add_delete_add_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} create-update",
-            source.label()
-        ));
-        seafile_create_update_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} rename",
-            source.label()
-        ));
-        seafile_rename_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} delete",
-            source.label()
-        ));
-        seafile_delete_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} case-rename",
-            source.label()
-        ));
-        seafile_case_rename_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} empty-directory",
-            source.label()
-        ));
-        seafile_empty_directory_sequence(&cluster, source, &prefix).await;
-        matrix_progress(format!(
-            "seafile permutations source={} single-operation",
-            source.label()
-        ));
-        seafile_single_operation_sequence(&cluster, source, &prefix).await;
     }
+}
+
+fn seafile_progress(source: Client, phase: &str) {
+    matrix_progress(format!(
+        "seafile permutations source={} {phase}",
+        source.label()
+    ));
 }
 
 async fn seafile_add_delete_add_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {

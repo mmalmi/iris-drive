@@ -274,6 +274,7 @@ pub(crate) fn cmd_nhash_resolver(
 pub(crate) fn settings_status(config: &AppConfig) -> Value {
     json!({
         "local_nhash_resolver_enabled": config.local_nhash_resolver_enabled,
+        "launch_on_startup": config.launch_on_startup,
     })
 }
 

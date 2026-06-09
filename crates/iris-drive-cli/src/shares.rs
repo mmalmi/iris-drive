@@ -687,7 +687,11 @@ mod tests {
                 .get(&account.state.app_key_pubkey),
             Some(&account.state.profile_id)
         );
-        assert!(saved.share_shortcuts.is_empty());
+        assert_eq!(saved.share_shortcuts.len(), 1);
+        let shortcut = &saved.share_shortcuts[0];
+        assert_eq!(shortcut.share_id, folder.share_id);
+        assert_eq!(shortcut.path, "Alpha");
+        assert_eq!(shortcut.target_path, "");
     }
 
     #[test]

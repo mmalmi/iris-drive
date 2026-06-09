@@ -88,6 +88,7 @@ struct Ui {
     relays: gtk::ListBox,
     blossom: gtk::ListBox,
     tray_on_close: gtk::CheckButton,
+    launch_on_startup: gtk::CheckButton,
     local_nhash_resolver: gtk::CheckButton,
     open_sites_portal_button: gtk::Button,
     recovery_phrase_button: gtk::Button,
@@ -126,6 +127,7 @@ struct AppModel {
     update_sender: mpsc::Sender<updater::UpdateEvent>,
     update_receiver: RefCell<mpsc::Receiver<updater::UpdateEvent>>,
     closed_to_tray: Cell<bool>,
+    launch_on_startup_synced: Cell<Option<bool>>,
     retired: Cell<bool>,
     quit_requested: Cell<bool>,
 }
@@ -163,7 +165,7 @@ enum TrayCommand {
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     app.connect_startup(|app| {
         match AppInstanceLock::acquire() {
@@ -186,11 +188,11 @@ fn main() -> glib::ExitCode {
             window.present();
             return;
         }
-        build_ui(app);
+        build_ui(app, true);
     });
     app.connect_open(|app, files, _hint| {
         if app.active_window().is_none() {
-            build_ui(app);
+            build_ui(app, true);
         }
         for file in files {
             handle_launch_input(&file.uri());
@@ -198,6 +200,28 @@ fn main() -> glib::ExitCode {
         if let Some(window) = app.active_window() {
             window.present();
         }
+    });
+    app.connect_command_line(|app, command_line| {
+        let mut present = true;
+        for arg in command_line.arguments() {
+            let arg = arg.to_string_lossy();
+            if arg == HIDDEN_LAUNCH_ARG {
+                present = false;
+                continue;
+            }
+            if arg.starts_with("iris-drive://") {
+                handle_launch_input(&arg);
+                present = true;
+            }
+        }
+        if let Some(window) = app.active_window() {
+            if present {
+                window.present();
+            }
+        } else {
+            build_ui(app, present);
+        }
+        glib::ExitCode::SUCCESS.into()
     });
     app.run()
 }

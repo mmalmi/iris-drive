@@ -69,6 +69,11 @@ pub struct AppConfig {
     /// interoperable with web Drive links without extra setup.
     #[serde(default = "default_true")]
     pub local_nhash_resolver_enabled: bool,
+    /// Launch the native desktop shell when the user signs in. Native shells
+    /// apply this by registering their platform-specific per-user autostart
+    /// entry and launching hidden.
+    #[serde(default = "default_true")]
+    pub launch_on_startup: bool,
     /// Encrypted offsite backup endpoints. Blossom targets are usable
     /// today; FIPS targets are stored for the future direct-device
     /// backup transport.
@@ -125,6 +130,7 @@ impl Default for AppConfig {
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
             local_nhash_resolver_enabled: true,
+            launch_on_startup: true,
             backup_targets: Vec::new(),
         }
     }
@@ -559,6 +565,12 @@ mod tests {
     }
 
     #[test]
+    fn default_enables_launch_on_startup() {
+        let cfg = AppConfig::default();
+        assert!(cfg.launch_on_startup);
+    }
+
+    #[test]
     fn user_profile_requires_username_before_photo() {
         assert_eq!(
             UserProfile::from_optional(None, Some("/tmp/avatar.png")),
@@ -631,6 +643,13 @@ authorization_state = "authorized"
     }
 
     #[test]
+    fn missing_launch_on_startup_field_loads_enabled() {
+        let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
+        let cfg: AppConfig = toml::from_str(&raw).unwrap();
+        assert!(cfg.launch_on_startup);
+    }
+
+    #[test]
     fn legacy_app_key_root_ref_defaults_causal_fields() {
         let raw = r#"
 root_cid = "cid-legacy"
@@ -700,12 +719,10 @@ dck_generation = 1
     #[test]
     fn load_adopts_single_roster_profile_id_from_recovery_evidence() {
         let owner_dir = tempdir().unwrap();
+        let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
         let owner =
-            crate::profile::Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
-        let phrase = crate::recovery_phrase::load_recovery_phrase(
-            crate::paths::recovery_phrase_path_in(owner_dir.path()),
-        )
-        .unwrap();
+            crate::profile::Profile::restore(owner_dir.path(), &phrase, Some("Owner".into()))
+                .unwrap();
 
         let restored_dir = tempdir().unwrap();
         let restored =

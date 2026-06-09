@@ -2,6 +2,33 @@ import AppKit
 import Foundation
 
 extension AppDelegate {
+    func addBackupTarget(_ value: String, label: String) {
+        let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        dispatchNativeAction(
+            [
+                "type": "add_backup_target",
+                "target": target,
+                "label": label.trimmingCharacters(in: .whitespacesAndNewlines),
+            ],
+            progress: "Adding backup target",
+            success: "Backup target added"
+        )
+    }
+
+    func removeBackupTarget(_ value: String) {
+        let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        dispatchNativeAction(
+            [
+                "type": "remove_backup_target",
+                "target": target,
+            ],
+            progress: "Removing backup target",
+            success: "Backup target removed"
+        )
+    }
+
     func addBlossomServer(_ value: String) {
         let url = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
@@ -28,6 +55,20 @@ extension AppDelegate {
         )
     }
 
+    func syncBackups(_ targets: [IrisDriveBackupTarget]) {
+        let targets = backupTargetURLs(targets)
+        guard !targets.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        dispatchBackupTargetBatch(
+            targets,
+            actionType: "sync_backups",
+            progress: "Syncing backups",
+            success: "Backups synced"
+        )
+    }
+
     func syncFileServers(_ targets: [IrisDriveBackupTarget]) {
         let urls = fileServerURLs(targets)
         guard !urls.isEmpty else {
@@ -39,6 +80,25 @@ extension AppDelegate {
             actionType: "sync_backups",
             progress: "Syncing file servers",
             success: "File servers synced"
+        )
+    }
+
+    func checkBackups(
+        _ targets: [IrisDriveBackupTarget],
+        completion: (() -> Void)? = nil
+    ) {
+        let targets = backupTargetURLs(targets)
+        guard !targets.isEmpty else {
+            NSSound.beep()
+            completion?()
+            return
+        }
+        dispatchBackupTargetBatch(
+            targets,
+            actionType: "check_backups",
+            progress: "Checking backups",
+            success: "Backups checked",
+            completion: completion
         )
     }
 
@@ -65,12 +125,55 @@ extension AppDelegate {
         checkFileServers([target], completion: completion)
     }
 
+    private func backupTargetURLs(_ targets: [IrisDriveBackupTarget]) -> [String] {
+        targets.compactMap { target in
+            let url = target.target.trimmingCharacters(in: .whitespacesAndNewlines)
+            return url.isEmpty ? nil : url
+        }
+    }
+
     private func fileServerURLs(_ targets: [IrisDriveBackupTarget]) -> [String] {
         targets.compactMap { target in
             guard target.kind == "blossom" else { return nil }
             let url = target.target.trimmingCharacters(in: .whitespacesAndNewlines)
             return url.isEmpty ? nil : url
         }
+    }
+
+    private func dispatchBackupTargetBatch(
+        _ targets: [String],
+        actionType: String,
+        progress: String,
+        success: String,
+        index: Int = 0,
+        completion: (() -> Void)? = nil
+    ) {
+        guard targets.indices.contains(index) else {
+            completion?()
+            return
+        }
+        dispatchNativeAction(
+            [
+                "type": actionType,
+                "target": targets[index],
+            ],
+            progress: progress,
+            success: success,
+            completion: { [weak self] in
+                guard let self else {
+                    completion?()
+                    return
+                }
+                self.dispatchBackupTargetBatch(
+                    targets,
+                    actionType: actionType,
+                    progress: progress,
+                    success: success,
+                    index: index + 1,
+                    completion: completion
+                )
+            }
+        )
     }
 
     private func dispatchFileServerBatch(

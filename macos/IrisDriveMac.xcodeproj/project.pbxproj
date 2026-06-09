@@ -11,6 +11,7 @@
 		14A423B4189C5896341F2183 /* IrisDriveRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */; };
 		1727D10ED3515B8FA1CEB36D /* IrisDriveRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */; };
 		299FD436F79DE19CD1813197 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */; };
+		396C5A1BC6FAD34CF982AE37 /* IrisDriveStartup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E96589580A4A6F8C0C61784 /* IrisDriveStartup.swift */; };
 		47C8C9305C692805883C114C /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A13E19A7BB747CF4257EEA /* FileProviderExtension.swift */; };
 		4FD4398E0FAB2A9688A37A03 /* IrisDriveBackupActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */; };
 		6A74754BE3D3C08EAD801E69 /* BackupTargetRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A583172656F67925362E493 /* BackupTargetRow.swift */; };
@@ -54,6 +55,7 @@
 		060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupActions.swift; sourceTree = "<group>"; };
 		096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMacApp.swift; sourceTree = "<group>"; };
 		0E5A127BDC2089F051BD64AF /* IrisDriveSetupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveSetupViews.swift; sourceTree = "<group>"; };
+		0E96589580A4A6F8C0C61784 /* IrisDriveStartup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveStartup.swift; sourceTree = "<group>"; };
 		16433B5A1961F8CE8C1F968A /* IrisDriveControlPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveControlPanel.swift; sourceTree = "<group>"; };
 		22A59194714CECC5B65B8422 /* IrisDriveScreenshotFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveScreenshotFixtures.swift; sourceTree = "<group>"; };
 		2D8F0559841E0DD05F20DA05 /* IrisDriveDesktopCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDesktopCore.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 				5987391F8E13B56428E6B624 /* IrisDriveMacFileProvider.swift */,
 				22A59194714CECC5B65B8422 /* IrisDriveScreenshotFixtures.swift */,
 				0E5A127BDC2089F051BD64AF /* IrisDriveSetupViews.swift */,
+				0E96589580A4A6F8C0C61784 /* IrisDriveStartup.swift */,
 				DABEA3F9DC2A990742681F74 /* IrisDriveStatus.swift */,
 			);
 			path = Sources;
@@ -254,6 +257,7 @@
 				14A423B4189C5896341F2183 /* IrisDriveRuntimeSupport.swift in Sources */,
 				E2E340ADECF90A8FB0FB9F0B /* IrisDriveScreenshotFixtures.swift in Sources */,
 				B94CF2614467C8B708ED65EE /* IrisDriveSetupViews.swift in Sources */,
+				396C5A1BC6FAD34CF982AE37 /* IrisDriveStartup.swift in Sources */,
 				CAA21A3955327C55C24193DE /* IrisDriveStatus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -343,7 +347,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1004;
+				CURRENT_PROJECT_VERSION = 1005;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -362,7 +366,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -450,7 +454,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1004;
+				CURRENT_PROJECT_VERSION = 1005;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -463,7 +467,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.macos;

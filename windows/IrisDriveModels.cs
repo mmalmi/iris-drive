@@ -36,6 +36,7 @@ public sealed class IrisDriveStatusData
     public int FileCount { get; init; }
     public long VisibleFileBytes { get; init; }
     public bool LocalNhashResolverEnabled { get; init; } = true;
+    public bool LaunchOnStartup { get; init; } = true;
     public IReadOnlyList<DriveRow> Drives { get; init; } = Array.Empty<DriveRow>();
     public IReadOnlyList<PeerRow> Peers { get; init; } = Array.Empty<PeerRow>();
     public IReadOnlyList<BackupTargetRow> BackupTargets { get; init; } =
@@ -69,6 +70,10 @@ public sealed class IrisDriveStatusData
             ui.ValueKind != JsonValueKind.Object ||
             !ui.TryGetProperty("local_nhash_resolver_enabled", out var localResolver) ||
             localResolver.ValueKind == JsonValueKind.True;
+        var launchOnStartup =
+            ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("launch_on_startup", out var launchOnStartupValue) ||
+            launchOnStartupValue.ValueKind == JsonValueKind.True;
         const string DefaultSitesPortalUrl =
             "http://sites.npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm.iris.localhost:17321/";
         var sitesPortalUrl =
@@ -112,6 +117,7 @@ public sealed class IrisDriveStatusData
             FileCount = Int(ui, "file_count"),
             VisibleFileBytes = Long(ui, "visible_file_bytes"),
             LocalNhashResolverEnabled = localNhashResolverEnabled,
+            LaunchOnStartup = launchOnStartup,
             Drives = NativeDriveRows(ui, setupComplete),
             Peers = NativePeerRows(ui),
             BackupTargets = backupTargets,

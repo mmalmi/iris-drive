@@ -130,14 +130,20 @@ export function describeAsset(name) {
   if (/^iris-drive-v.*-macos-arm64\.app\.tar\.gz$/.test(name)) {
     return 'Iris Drive macOS updater archive'
   }
-  if (/^iris-drive-v.*-linux-x64\.(AppImage|deb)$/.test(name)) {
-    return 'Iris Drive for Linux x64'
+  if (/^iris-drive-v.*-linux-x64\.AppImage$/.test(name)) {
+    return 'Iris Drive for Linux AppImage'
+  }
+  if (/^iris-drive-v.*-linux-x64\.deb$/.test(name)) {
+    return 'Iris Drive for Debian/Ubuntu (.deb)'
   }
   if (/^iris-drive-v.*-windows-x64-setup\.exe$/.test(name)) {
     return 'Iris Drive for Windows'
   }
   if (/^iris-drive-v.*-android-arm64\.apk$/.test(name)) {
     return 'Iris Drive for Android'
+  }
+  if (/^iris-drive-v.*-android-arm64\.aab$/.test(name)) {
+    return 'Iris Drive Android app bundle'
   }
   return name
 }
@@ -352,11 +358,105 @@ export function buildReleaseManifestFiles(manifest) {
   ]
 }
 
-export function renderReleaseNotes({ tag, commit, assetNames }) {
-  const lines = [`# Iris Drive ${normalizeTag(tag)}`, '', '## Downloads', '']
-  for (const name of [...assetNames].sort((left, right) => left.localeCompare(right))) {
-    lines.push(`- ${describeAsset(name)}: [${name}](assets/${encodeURIComponent(name)})`)
+function assetReference(name) {
+  return `[${name}](assets/${encodeURIComponent(name)})`
+}
+
+function firstMatchingAsset(assetNames, patterns) {
+  return assetNames.find((name) => patterns.some((pattern) => pattern.test(name))) ?? null
+}
+
+function pushAssetLine(lines, usedAssets, assetNames, label, patterns) {
+  const name = firstMatchingAsset(assetNames, patterns)
+  if (!name) {
+    return null
   }
+  usedAssets.add(name)
+  lines.push(`- ${label}: ${assetReference(name)}`)
+  return name
+}
+
+function markMatchingAssetsUsed(usedAssets, assetNames, patterns) {
+  for (const name of assetNames) {
+    if (patterns.some((pattern) => pattern.test(name))) {
+      usedAssets.add(name)
+    }
+  }
+}
+
+function pushDownloadSections(lines, assetNames) {
+  const sortedNames = [...assetNames].sort((left, right) => left.localeCompare(right))
+  const usedAssets = new Set()
+
+  lines.push('## Downloads', '', '### Most People Will Want', '')
+
+  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for macOS', [
+    /^iris-drive-v.*-macos-arm64\.dmg$/,
+  ])
+  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Linux AppImage', [
+    /^iris-drive-v.*-linux-x64\.AppImage$/,
+  ])
+  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Debian/Ubuntu (.deb)', [
+    /^iris-drive-v.*-linux-x64\.deb$/,
+  ])
+  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Windows', [
+    /^iris-drive-v.*-windows-x64-setup\.exe$/,
+  ])
+  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Android', [
+    /^iris-drive-v.*-android-arm64\.apk$/,
+  ])
+
+  const cliLines = []
+  const addCliAsset = (label, preferredPatterns, duplicatePatterns = preferredPatterns) => {
+    const name = firstMatchingAsset(sortedNames, preferredPatterns)
+    if (!name) {
+      return
+    }
+    usedAssets.add(name)
+    markMatchingAssetsUsed(usedAssets, sortedNames, duplicatePatterns)
+    cliLines.push(`- ${label}: ${assetReference(name)}`)
+  }
+
+  addCliAsset('macOS Apple Silicon idrive CLI', [
+    /^idrive-v.*-aarch64-apple-darwin\.tar\.gz$/,
+  ])
+  addCliAsset('macOS Intel idrive CLI', [
+    /^idrive-v.*-x86_64-apple-darwin\.tar\.gz$/,
+  ])
+  addCliAsset('Linux x64 idrive CLI', [
+    /^idrive-v.*-x86_64-unknown-linux-gnu\.tar\.gz$/,
+    /^idrive-v.*-x86_64-unknown-linux-musl\.tar\.gz$/,
+  ], [/^idrive-v.*-x86_64-unknown-linux-(gnu|musl)\.tar\.gz$/])
+  addCliAsset('Linux ARM64 idrive CLI', [
+    /^idrive-v.*-aarch64-unknown-linux-musl\.tar\.gz$/,
+  ])
+  addCliAsset('Windows x64 idrive CLI', [
+    /^idrive-v.*-x86_64-pc-windows-msvc\.zip$/,
+  ])
+  addCliAsset('Windows ARM64 idrive CLI', [
+    /^idrive-v.*-aarch64-pc-windows-msvc\.zip$/,
+  ])
+
+  if (cliLines.length > 0) {
+    lines.push('', '### Command Line', '', ...cliLines)
+  }
+
+  const otherLines = []
+  for (const name of sortedNames) {
+    if (usedAssets.has(name)) {
+      continue
+    }
+    otherLines.push(`- ${describeAsset(name)}: ${assetReference(name)}`)
+  }
+
+  if (otherLines.length > 0) {
+    lines.push('', '### Other Files', '', ...otherLines)
+  }
+}
+
+export function renderReleaseNotes({ tag, commit, assetNames }) {
+  const lines = [`# Iris Drive ${normalizeTag(tag)}`, '']
+  pushDownloadSections(lines, assetNames)
   if (commit) {
     lines.push('', '## Release Build', '', `- Built from commit \`${commit}\`.`)
   }

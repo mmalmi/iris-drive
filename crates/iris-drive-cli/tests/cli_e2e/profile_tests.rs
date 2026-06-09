@@ -714,7 +714,7 @@ fn app_keys_request_rejects_manual_app_key_without_profile_id() {
         .assert()
         .failure()
         .stderr(contains(
-            "manual AppKey linking requires an IrisProfile UUID",
+            "manual device linking requires an IrisProfile UUID",
         ));
 }
 

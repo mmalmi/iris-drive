@@ -494,6 +494,16 @@ public sealed class IrisDriveService
         return RunAsync("nhash-resolver", enabled ? "enable" : "disable");
     }
 
+    public Task SetLaunchOnStartupAsync(bool enabled)
+    {
+        return nativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "set_launch_on_startup",
+                ["enabled"] = enabled,
+            });
+    }
+
     public Task LogoutAsync()
     {
         return nativeCore.DispatchActionAsync(

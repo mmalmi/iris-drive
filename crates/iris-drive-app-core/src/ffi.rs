@@ -363,6 +363,9 @@ impl NativeAppRuntime {
             NativeAppAction::RemoveBlossomServer { url } => {
                 self.remove_blossom_server(&url);
             }
+            NativeAppAction::SetLaunchOnStartup { enabled } => {
+                self.set_launch_on_startup(enabled);
+            }
             NativeAppAction::SyncBackups { target } => {
                 self.sync_backups(&target);
             }
@@ -1013,6 +1016,20 @@ impl NativeAppRuntime {
         }
     }
 
+    fn set_launch_on_startup(&mut self, enabled: bool) {
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        config.launch_on_startup = enabled;
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
+        }
+    }
+
     fn add_backup_target(&mut self, target: &str, label: &str) {
         if let Err(error) =
             core_add_backup_target(Path::new(&self.data_dir), target, label_option(label))
@@ -1172,6 +1189,7 @@ impl NativeAppRuntime {
             primary_status_label: primary_status_label("not_setup").to_owned(),
             snapshot_link: String::new(),
             local_nhash_resolver_enabled: true,
+            launch_on_startup: true,
             sites_portal_url: iris_drive_core::gateway::local_portal_url(
                 iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
             ),
@@ -1194,6 +1212,7 @@ impl NativeAppRuntime {
             }
         }
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
+        self.state.ui.launch_on_startup = config.launch_on_startup;
         self.state.ui.sites_portal_url = if config.local_nhash_resolver_enabled {
             iris_drive_core::gateway::local_portal_url(
                 iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,

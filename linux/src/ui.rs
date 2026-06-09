@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-pub(crate) fn build_ui(app: &adw::Application) {
+pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Iris Drive")
@@ -318,6 +318,10 @@ pub(crate) fn build_ui(app: &adw::Application) {
     tray_on_close.set_active(read_close_to_tray_on_close());
     tray_on_close.set_sensitive(false);
     settings_page.append(&tray_on_close);
+    let launch_on_startup = gtk::CheckButton::with_label("Launch on startup");
+    launch_on_startup.add_css_class("iris-setting-check");
+    launch_on_startup.set_active(true);
+    settings_page.append(&launch_on_startup);
     let local_nhash_resolver = gtk::CheckButton::with_label("nhash.iris.localhost resolver");
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
@@ -459,6 +463,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
             relays,
             blossom,
             tray_on_close,
+            launch_on_startup,
             local_nhash_resolver,
             open_sites_portal_button,
             recovery_phrase_button,
@@ -499,6 +504,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
         update_sender,
         update_receiver: RefCell::new(update_receiver),
         closed_to_tray: Cell::new(false),
+        launch_on_startup_synced: Cell::new(None),
         retired: Cell::new(false),
         quit_requested: Cell::new(false),
     });
@@ -605,6 +611,16 @@ pub(crate) fn build_ui(app: &adw::Application) {
     model.ui.tray_on_close.connect_toggled(|button| {
         write_close_to_tray_on_close(button.is_active());
     });
+    {
+        let button = model.ui.launch_on_startup.clone();
+        let model = Rc::clone(&model);
+        button.connect_toggled(move |button| {
+            if model.settings_refreshing.get() {
+                return;
+            }
+            set_launch_on_startup(&model, button.is_active());
+        });
+    }
     {
         let button = model.ui.local_nhash_resolver.clone();
         let model = Rc::clone(&model);
@@ -719,5 +735,7 @@ pub(crate) fn build_ui(app: &adw::Application) {
     render_update_state(&model);
     check_updates_if_due(&model);
     drain_pending_launch_inputs(&model);
-    window.present();
+    if present {
+        window.present();
+    }
 }

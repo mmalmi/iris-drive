@@ -31,9 +31,14 @@ public partial class App : System.Windows.Application
         ownsAppMutex = true;
 
         base.OnStartup(e);
+        var startHidden = StartupService.IsHiddenLaunch(e.Args);
         var window = new MainWindow(e.Args);
         StartLaunchArgumentPipe(window);
         window.Show();
+        if (startHidden)
+        {
+            window.Hide();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

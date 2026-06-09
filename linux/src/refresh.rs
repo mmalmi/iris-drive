@@ -9,6 +9,7 @@ pub(crate) fn refresh(model: &AppRef) {
             let awaiting_link_approval =
                 initialized && !revoked && is_awaiting_link_approval(&state);
             let sync_running = initialized && !revoked && ensure_daemon_running(model);
+            sync_launch_on_startup_if_needed(model, launch_on_startup_enabled(&state));
             set_view_mode(
                 model,
                 initialized && !awaiting_link_approval && !revoked,
@@ -60,6 +61,10 @@ pub(crate) fn refresh(model: &AppRef) {
                 .sidebar_online
                 .set_text(&sidebar_online_value(&state));
             model.settings_refreshing.set(true);
+            model
+                .ui
+                .launch_on_startup
+                .set_active(launch_on_startup_enabled(&state));
             model
                 .ui
                 .local_nhash_resolver
@@ -133,6 +138,16 @@ pub(crate) fn refresh(model: &AppRef) {
             clear_list(&model.ui.blossom);
             render_update_state(model);
         }
+    }
+}
+
+fn sync_launch_on_startup_if_needed(model: &AppRef, enabled: bool) {
+    if model.launch_on_startup_synced.get() == Some(enabled) {
+        return;
+    }
+    match configure_launch_on_startup(enabled) {
+        Ok(()) => model.launch_on_startup_synced.set(Some(enabled)),
+        Err(error) => model.ui.notice.set_text(&error),
     }
 }
 

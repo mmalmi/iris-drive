@@ -33,6 +33,49 @@ run() {
   "$@"
 }
 
+run_parallel_checks() {
+  local tmpdir
+  tmpdir="$(mktemp -d -t iris-drive-release-gate.XXXXXX)"
+  local labels=()
+  local pids=()
+  local logs=()
+
+  start_check() {
+    local label="$1"
+    shift
+    local logfile="$tmpdir/$label.log"
+    labels+=("$label")
+    logs+=("$logfile")
+    printf '[release-gate] %s\n' "$*" >&2
+    ("$@" >"$logfile" 2>&1) &
+    pids+=("$!")
+  }
+
+  start_check local-release-tests node --test scripts/local-release.test.mjs
+  start_check fmt cargo fmt --check
+  start_check structure just structure
+  start_check workspace-tests cargo test --workspace --exclude idrive
+
+  local failed=0
+  local index
+  for index in "${!pids[@]}"; do
+    if wait "${pids[$index]}"; then
+      sed "s/^/[release-gate:${labels[$index]}] /" "${logs[$index]}"
+    else
+      failed=1
+      sed "s/^/[release-gate:${labels[$index]}] /" "${logs[$index]}" >&2
+      printf '[release-gate] %s failed\n' "${labels[$index]}" >&2
+    fi
+  done
+  rm -rf "$tmpdir"
+  return "$failed"
+}
+
+run_rust_tests() {
+  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e -- --test-threads=1
+  run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
+}
+
 full="${IRIS_DRIVE_RELEASE_GATE_FULL:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,10 +102,8 @@ if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
   export SOURCE_DATE_EPOCH
 fi
 
-run node --test scripts/local-release.test.mjs
-run cargo fmt --check
-run cargo test --workspace -- --test-threads=1
-run just structure
+run_parallel_checks
+run_rust_tests
 run cargo build --workspace --release
 
 case "$(uname -s)" in

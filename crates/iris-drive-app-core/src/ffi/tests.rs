@@ -1051,6 +1051,7 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
     });
 
     assert!(created.ui.local_nhash_resolver_enabled);
+    assert!(created.ui.launch_on_startup);
     assert_eq!(
         created.ui.sites_portal_url,
         iris_drive_core::gateway::local_portal_url(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
@@ -1059,12 +1060,32 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
     let config_path = config_path_in(dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     config.local_nhash_resolver_enabled = false;
+    config.launch_on_startup = false;
     config.save(&config_path).unwrap();
 
     let refreshed = app.refresh();
 
     assert!(!refreshed.ui.local_nhash_resolver_enabled);
+    assert!(!refreshed.ui.launch_on_startup);
     assert!(refreshed.ui.sites_portal_url.is_empty());
+}
+
+#[test]
+fn app_state_dispatch_toggles_launch_on_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let disabled = app.dispatch(NativeAppAction::SetLaunchOnStartup { enabled: false });
+
+    assert!(!disabled.ui.launch_on_startup);
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(!config.launch_on_startup);
+
+    let enabled = app.dispatch(NativeAppAction::SetLaunchOnStartup { enabled: true });
+
+    assert!(enabled.ui.launch_on_startup);
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(config.launch_on_startup);
 }
 
 #[test]

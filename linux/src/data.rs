@@ -83,6 +83,10 @@ pub(crate) fn local_nhash_resolver_enabled(state: &NativeAppState) -> bool {
     state.ui.local_nhash_resolver_enabled
 }
 
+pub(crate) fn launch_on_startup_enabled(state: &NativeAppState) -> bool {
+    state.ui.launch_on_startup
+}
+
 pub(crate) fn sites_portal_url(state: &NativeAppState) -> Option<&str> {
     (!state.ui.sites_portal_url.is_empty()).then_some(state.ui.sites_portal_url.as_str())
 }

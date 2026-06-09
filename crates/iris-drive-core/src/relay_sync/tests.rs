@@ -28,6 +28,17 @@ fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
     (cfg, acct)
 }
 
+fn config_with_recovery_owner_account(dir: &std::path::Path) -> (AppConfig, Profile, String) {
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let acct = Profile::restore(dir, &phrase, None).unwrap();
+    let mut cfg = AppConfig {
+        profile: Some(acct.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(acct.state.root_scope_id()));
+    (cfg, acct, phrase)
+}
+
 fn profile_event(op: &crate::SignedIrisProfileRosterOp) -> Event {
     Event::from_json(&op.event_json).unwrap()
 }
@@ -325,11 +336,7 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
 #[test]
 fn restore_candidate_filters_match_roster_mentions_and_acceptance_events() {
     let dir = tempdir().unwrap();
-    let (_, acct) = config_with_owner_account(dir.path());
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(dir.path()),
-    )
-    .unwrap();
+    let (_, acct, phrase) = config_with_recovery_owner_account(dir.path());
     let recovery_key =
         crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
             .unwrap();
@@ -366,11 +373,7 @@ fn restore_candidate_filters_match_roster_mentions_and_acceptance_events() {
 #[test]
 fn restore_candidates_require_active_recovery_facet_projection() {
     let dir = tempdir().unwrap();
-    let (_, mut acct) = config_with_owner_account(dir.path());
-    let phrase = crate::recovery_phrase::load_recovery_phrase(
-        crate::paths::recovery_phrase_path_in(dir.path()),
-    )
-    .unwrap();
+    let (_, mut acct, phrase) = config_with_recovery_owner_account(dir.path());
     let recovery_key =
         crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
             .unwrap();

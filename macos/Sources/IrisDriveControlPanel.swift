@@ -100,6 +100,8 @@ struct IrisDriveControlPanel: View {
     let controller: AppDelegate
     @State private var selectedTab = IrisDrivePanelTab.initialScreenshotSelection
     @State private var relayInput = ""
+    @State private var backupTargetInput = ""
+    @State private var backupTargetLabelInput = ""
     @State private var fileServerInput = ""
     @State private var shareSourceInput = ""
     @State private var shareInviteInput = ""
@@ -141,6 +143,10 @@ struct IrisDriveControlPanel: View {
 
     private var fileServerTargets: [IrisDriveBackupTarget] {
         status.backupTargets.filter { $0.kind == "blossom" }
+    }
+
+    private var customBackupTargets: [IrisDriveBackupTarget] {
+        status.backupTargets.filter { $0.kind != "blossom" }
     }
 
     var body: some View {
@@ -1284,19 +1290,49 @@ struct IrisDriveControlPanel: View {
                 Button {
                     guard !checkingAllFileServers else { return }
                     checkingAllFileServers = true
-                    controller.checkFileServers(fileServerTargets) {
+                    controller.checkBackups(status.backupTargets) {
                         checkingAllFileServers = false
                     }
                 } label: {
                     Label(checkingAllFileServers ? "Checking..." : "Check All", systemImage: "checkmark.shield")
                 }
-                .disabled(fileServerTargets.isEmpty || checkingAllFileServers)
+                .disabled(status.backupTargets.isEmpty || checkingAllFileServers)
                 Button {
-                    controller.syncFileServers(fileServerTargets)
+                    controller.syncBackups(status.backupTargets)
                 } label: {
                     Label("Sync Now", systemImage: "arrow.up.circle")
                 }
-                .disabled(fileServerTargets.isEmpty)
+                .disabled(status.backupTargets.isEmpty)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField("Target URL", text: $backupTargetInput)
+                        .textFieldStyle(.roundedBorder)
+                        .disableAutocorrection(true)
+                        .onSubmit { addBackupTargetFromInput() }
+                    TextField("Label", text: $backupTargetLabelInput)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addBackupTargetFromInput() }
+                    Button {
+                        addBackupTargetFromInput()
+                    } label: {
+                        Label("Add Custom Target", systemImage: "plus")
+                    }
+                    .disabled(backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if !customBackupTargets.isEmpty {
+                    ForEach(customBackupTargets) { target in
+                        BackupTargetRow(
+                            target: target,
+                            onCheck: { completion in
+                                controller.checkBackups([target], completion: completion)
+                            },
+                            onRemove: {
+                                controller.removeBackupTarget(target.target)
+                            }
+                        )
+                    }
+                }
             }
             HStack(spacing: 8) {
                 TextField("Server URL", text: $fileServerInput)
@@ -1338,6 +1374,13 @@ struct IrisDriveControlPanel: View {
                     isOn: Binding(
                         get: { status.closeToMenuBarOnClose },
                         set: { controller.setCloseToMenuBarOnClose($0) }
+                    )
+                )
+                Toggle(
+                    "Launch on startup",
+                    isOn: Binding(
+                        get: { status.launchOnStartup },
+                        set: { controller.setLaunchOnStartup($0) }
                     )
                 )
                 Toggle(
@@ -1588,6 +1631,14 @@ struct IrisDriveControlPanel: View {
         guard !value.isEmpty else { return }
         controller.addBlossomServer(value)
         fileServerInput = ""
+    }
+
+    private func addBackupTargetFromInput() {
+        let value = backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        controller.addBackupTarget(value, label: backupTargetLabelInput)
+        backupTargetInput = ""
+        backupTargetLabelInput = ""
     }
 
     private func saveRelayEdit(_ oldURL: String) {

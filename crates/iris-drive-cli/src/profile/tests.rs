@@ -4,11 +4,8 @@ use tempfile::tempdir;
 #[test]
 fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let owner_dir = tempdir().unwrap();
-    let mut owner = Profile::create(owner_dir.path(), Some("native".into())).unwrap();
-    let phrase = iris_drive_core::recovery_phrase::load_recovery_phrase(
-        iris_drive_core::paths::recovery_phrase_path_in(owner_dir.path()),
-    )
-    .unwrap();
+    let phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    let mut owner = Profile::restore(owner_dir.path(), &phrase, Some("native".into())).unwrap();
     let owner_dck = owner.current_dck().unwrap();
 
     let recovered_dir = tempdir().unwrap();

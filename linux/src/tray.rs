@@ -78,7 +78,7 @@ pub(crate) fn show_window(model: &AppRef, window: &adw::ApplicationWindow) {
     }) {
         model.retired.set(true);
         shutdown_tray(model);
-        build_ui(&model.application);
+        build_ui(&model.application, true);
         return;
     }
 

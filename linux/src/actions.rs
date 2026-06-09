@@ -561,6 +561,24 @@ pub(crate) fn set_local_nhash_resolver(model: &AppRef, enabled: bool) {
     }
 }
 
+pub(crate) fn set_launch_on_startup(model: &AppRef, enabled: bool) {
+    match configure_launch_on_startup(enabled) {
+        Ok(()) => match dispatch_desktop_action(NativeAppAction::SetLaunchOnStartup { enabled }) {
+            Ok(_) => {
+                model.launch_on_startup_synced.set(Some(enabled));
+                model.ui.notice.set_text(if enabled {
+                    "Launch on startup enabled"
+                } else {
+                    "Launch on startup disabled"
+                });
+                refresh(model);
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        },
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn reset_relays(model: &AppRef) {
     match dispatch_desktop_action(NativeAppAction::ResetRelays) {
         Ok(_) => refresh(model),

@@ -55,11 +55,16 @@ public partial class MainWindow : Window
     {
         pendingLaunchArguments = launchArguments?
             .Where(argument => !string.IsNullOrWhiteSpace(argument))
+            .Where(argument => !string.Equals(
+                argument,
+                StartupService.HiddenLaunchArgument,
+                StringComparison.OrdinalIgnoreCase))
             .ToArray() ?? Array.Empty<string>();
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
         settingsUpdating = true;
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
+        LaunchOnStartupCheckBox.IsChecked = true;
         LocalNhashResolverCheckBox.IsChecked = true;
         AutoCheckUpdatesCheckBox.IsChecked = ReadAutoCheckUpdates();
         AutoInstallUpdatesCheckBox.IsChecked = ReadAutoInstallUpdates();
@@ -99,6 +104,13 @@ public partial class MainWindow : Window
         pendingLaunchArguments = Array.Empty<string>();
         foreach (var argument in launchArguments)
         {
+            if (string.Equals(
+                    argument,
+                    StartupService.HiddenLaunchArgument,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             OpenShareDialogFromLink(argument);
         }
     }
@@ -250,12 +262,14 @@ public partial class MainWindow : Window
         try
         {
             settingsUpdating = true;
+            LaunchOnStartupCheckBox.IsChecked = status.LaunchOnStartup;
             LocalNhashResolverCheckBox.IsChecked = status.LocalNhashResolverEnabled;
         }
         finally
         {
             settingsUpdating = false;
         }
+        SyncLaunchOnStartup(status.LaunchOnStartup);
         OpenSitesPortalButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SitesPortalUrl);
         UpdateTrayText(syncRunning);
     }

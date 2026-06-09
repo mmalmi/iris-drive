@@ -20,6 +20,7 @@ import {
   parseNotarytoolSubmitOutput,
   plannedReleaseAssetNames,
   readWorkspaceVersionTag,
+  renderReleaseNotes,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
@@ -227,6 +228,45 @@ test('plannedReleaseAssetNames names the public release artifacts', () => {
 test('plannedReleaseAssetNames covers the complete final release validator', () => {
   const names = plannedReleaseAssetNames('v0.2.27', ['macos', 'linux', 'windows', 'android'])
   assert.doesNotThrow(() => validateReleaseAssetSet(names, { requireCompleteAppRelease: true }))
+})
+
+test('renderReleaseNotes groups common app downloads before advanced files', () => {
+  const notes = renderReleaseNotes({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    assetNames: [
+      'iris-drive-v0.2.27-macos-arm64.dmg',
+      'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
+      'iris-drive-v0.2.27-linux-x64.deb',
+      'iris-drive-v0.2.27-windows-x64-setup.exe',
+      'iris-drive-v0.2.27-android-arm64.apk',
+      'iris-drive-v0.2.27-android-arm64.aab',
+      'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
+      'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
+      'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
+    ],
+  })
+
+  assert.match(notes, /### Most People Will Want/)
+  assert.match(notes, /Iris Drive for macOS/)
+  assert.match(notes, /Iris Drive for Debian\/Ubuntu \(\.deb\)/)
+  assert.match(notes, /Iris Drive for Windows/)
+  assert.match(notes, /Iris Drive for Android/)
+  assert.match(notes, /### Command Line/)
+  assert.match(notes, /macOS Apple Silicon idrive CLI/)
+  assert.match(notes, /Linux x64 idrive CLI/)
+  assert.match(notes, /Windows x64 idrive CLI/)
+  assert.match(notes, /### Other Files/)
+  assert.match(notes, /Iris Drive macOS updater archive/)
+  assert.match(notes, /Iris Drive Android app bundle/)
+  assert(
+    notes.indexOf('### Most People Will Want') < notes.indexOf('### Command Line'),
+    'common downloads should appear before CLI archives',
+  )
+  assert(
+    notes.indexOf('### Command Line') < notes.indexOf('### Other Files'),
+    'CLI archives should appear before other files',
+  )
 })
 
 test('local-release dry-run validates planned build assets over partial existing dist assets', () => {

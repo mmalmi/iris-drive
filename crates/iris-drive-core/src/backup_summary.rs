@@ -113,8 +113,7 @@ fn backup_target_display_target(target: &BackupTarget) -> String {
 
 fn backup_target_display_title(target: &BackupTarget) -> String {
     if target.kind == BackupTargetKind::Blossom {
-        blossom_server_host(&target.target)
-            .unwrap_or_else(|| backup_target_display_target(target))
+        blossom_server_host(&target.target).unwrap_or_else(|| backup_target_display_target(target))
     } else {
         backup_target_display_target(target)
     }
@@ -226,9 +225,8 @@ mod tests {
         assert_eq!(summary.title, "upload.iris.to");
         assert_eq!(summary.state, "ready");
 
-        let custom_server = backup_target_summary(
-            &blossom_backup_target("https://files.example.com/v1").unwrap(),
-        );
+        let custom_server =
+            backup_target_summary(&blossom_backup_target("https://files.example.com/v1").unwrap());
         assert_eq!(custom_server.title, "files.example.com");
         assert_eq!(custom_server.detail, "https://files.example.com/v1");
 

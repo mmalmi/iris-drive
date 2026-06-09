@@ -35,6 +35,8 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var profilePhotoName = ""
     @Published var relay = defaultRelay
     @Published var relayInput = ""
+    @Published var backupTargetInput = ""
+    @Published var backupTargetLabelInput = ""
     @Published var blossomEndpointInput = ""
     @Published var shareSourceInput = ""
     @Published var shareInviteInput = ""
@@ -794,18 +796,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func syncFileServers(_ fileServers: [IrisDriveBackup]) {
-        let targets = fileServers
-            .map { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard isSetupComplete, !targets.isEmpty else { return }
-        Task {
-            for target in targets {
-                await dispatchInBackground([
-                    "type": "sync_backups",
-                    "target": target,
-                ], invalidatePendingState: true)
-            }
-        }
+        syncBackups(fileServers)
     }
 
     func checkFileServer(_ target: String) {
@@ -820,18 +811,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func checkFileServers(_ fileServers: [IrisDriveBackup]) {
-        let targets = fileServers
-            .map { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard isSetupComplete, !targets.isEmpty else { return }
-        Task {
-            for target in targets {
-                await dispatchInBackground([
-                    "type": "check_backups",
-                    "target": target,
-                ], invalidatePendingState: true)
-            }
-        }
+        checkBackups(fileServers)
     }
 
     func createShare() {
@@ -1303,7 +1283,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    private func dispatch(_ action: [String: Any]) {
+    func dispatch(_ action: [String: Any]) {
         guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
             statusDetail = "Unable to encode action."
@@ -1313,7 +1293,7 @@ final class IrisDriveMobileModel: ObservableObject {
         applyStateJson(nativeCore.dispatchJson(actionJson))
     }
 
-    private func dispatchInBackground(
+    func dispatchInBackground(
         _ action: [String: Any],
         invalidatePendingState: Bool = false
     ) async {

@@ -5,7 +5,8 @@ import Security
 import SwiftUI
 
 let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
-private let irisDriveDisplayName = "Iris Drive"
+let irisDriveDisplayName = "Iris Drive"
+let irisDriveHiddenLaunchArgument = "--hidden"
 let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
@@ -63,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var windowObserver: NSObjectProtocol?
     private var openControlPanelWindow: (() -> Void)?
     private var controlPanelWindow: NSWindow?
+    var hiddenLaunchWindowSuppressed = false
+    var launchOnStartupSynced: Bool?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
@@ -109,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installStatusItem()
         installWindowObserver()
         observeWindows()
+        suppressHiddenLaunchWindowIfNeeded()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
@@ -667,13 +671,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
-        DistributedNotificationCenter.default().postNotificationName(
-            irisDriveShowControlPanelNotification,
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
-        existing.activate(options: [.activateAllWindows])
+        if !launchedHidden {
+            DistributedNotificationCenter.default().postNotificationName(
+                irisDriveShowControlPanelNotification,
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+            existing.activate(options: [.activateAllWindows])
+        }
         NSLog(
             "Iris Drive instance already running at pid \(existing.processIdentifier); exiting duplicate pid \(currentPID)"
         )
@@ -2138,6 +2144,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.setupLabel = ui["setup_label"] as? String ?? "Not linked"
             status.primaryStatus = ui["primary_status"] as? String ?? "not_setup"
             status.primaryStatusLabel = ui["primary_status_label"] as? String ?? "Ready"
+            status.launchOnStartup = ui["launch_on_startup"] as? Bool ?? true
+            self.syncLaunchAgentIfNeeded(enabled: status.launchOnStartup)
             if let sync = ui["sync"] as? [String: Any] {
                 status.syncStatus = sync["status"] as? String ?? status.syncStatus
                 status.syncStatusLabel = sync["status_label"] as? String ?? status.syncStatusLabel
@@ -2308,6 +2316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let settings = json["settings"] as? [String: Any] {
                 status.localNhashResolverEnabled =
                     settings["local_nhash_resolver_enabled"] as? Bool ?? true
+                status.launchOnStartup = settings["launch_on_startup"] as? Bool ?? true
+                self.syncLaunchAgentIfNeeded(enabled: status.launchOnStartup)
             } else if let hashtree = json["hashtree"] as? [String: Any],
                       let gateway = hashtree["local_gateway"] as? [String: Any] {
                 status.localNhashResolverEnabled = gateway["enabled"] as? Bool ?? true

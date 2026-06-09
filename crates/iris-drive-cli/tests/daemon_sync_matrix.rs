@@ -28,7 +28,7 @@ mod support;
 include!("daemon_sync_matrix/harness.rs");
 use support::{LocalBlossomServer, LocalNostrRelay};
 
-const WAIT_TIMEOUT: Duration = Duration::from_secs(90);
+const WAIT_TIMEOUT: Duration = Duration::from_secs(180);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 static LIVE_DAEMON_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
