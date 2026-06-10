@@ -328,8 +328,8 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     settings_page.append(&local_nhash_resolver);
     let open_sites_portal_button = action_button(
         "web-browser-symbolic",
-        "Open hashtree apps",
-        "Open hashtree apps",
+        "Open Iris Apps",
+        "Open Iris Apps",
     );
     settings_page.append(&open_sites_portal_button);
     let update_check_button = action_button(

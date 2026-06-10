@@ -552,7 +552,7 @@
               <Button x:Name="OpenSitesPortalButton" Click="OpenSitesPortal_Click" Margin="0,10,0,0">
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE774;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                  <TextBlock Text="Open hashtree apps" />
+                  <TextBlock Text="Open Iris Apps" />
                 </StackPanel>
               </Button>
               <TextBlock Text="Updates" Style="{StaticResource FieldName}" Margin="0,18,0,6" />

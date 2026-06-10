@@ -1511,7 +1511,7 @@ struct IrisDriveControlPanel: View {
                 Button {
                     controller.openSitesPortal()
                 } label: {
-                    Label("Open hashtree apps", systemImage: "safari")
+                    Label("Open Iris Apps", systemImage: "safari")
                 }
                 .disabled(status.sitesPortalURL == nil)
             }
