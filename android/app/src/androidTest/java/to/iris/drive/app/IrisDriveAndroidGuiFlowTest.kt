@@ -617,6 +617,24 @@ class IrisDriveAndroidGuiFlowTest {
                     isCurrentDevice = false,
                     canRevoke = true,
                 ),
+                to.iris.drive.app.core.DeviceState(
+                    pubkey = "recovery-key",
+                    label = "Recovery key",
+                    displayLabel = "Recovery key",
+                    role = "recovery",
+                    roleLabel = "Recovery",
+                    state = "linked",
+                    stateLabel = "Linked",
+                    connectionState = "recovery",
+                    connectionLabel = "Recovery key",
+                    detail = "recovery-key",
+                    isCurrentDevice = false,
+                    isOnline = false,
+                    canRevoke = false,
+                    canAppointAdmin = false,
+                    canDemoteAdmin = false,
+                    actorKind = "recovery_key",
+                ),
             ),
         )
 
@@ -625,10 +643,12 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithContentDescription("Pixel online").assertIsDisplayed()
         compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
-        compose.onNodeWithTag("deviceStatusDotOnline").assertIsDisplayed()
-        compose.onNodeWithTag("deviceStatusDotOffline").assertIsDisplayed()
+        compose.onAllNodesWithTag("deviceStatusDotOnline").assertCountEquals(1)
+        compose.onAllNodesWithTag("deviceStatusDotOffline").assertCountEquals(1)
         compose.onNodeWithText("Admin | Linked | This Device").assertIsDisplayed()
         compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
+        compose.onNodeWithText("Recovery Keys").assertIsDisplayed()
+        compose.onNodeWithText("Recovery | Linked").assertIsDisplayed()
     }
 
     @Test

@@ -128,6 +128,7 @@ pub struct UiAppKeyLinkRequest {
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct UiAppActor {
+    pub actor_kind: String,
     pub pubkey: String,
     pub label: String,
     pub display_label: String,

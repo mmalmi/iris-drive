@@ -28,52 +28,80 @@ pub(crate) fn render_drives(list: &gtk::ListBox, state: &NativeAppState) {
 pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
-    if state.ui.app_actors.is_empty() {
+    let app_actors = &state.ui.app_actors;
+    let device_actors = app_actors
+        .iter()
+        .filter(|actor| actor.actor_kind == "device")
+        .collect::<Vec<_>>();
+    let recovery_key_actors = app_actors
+        .iter()
+        .filter(|actor| actor.actor_kind != "device")
+        .collect::<Vec<_>>();
+    if device_actors.is_empty() {
         list.append(&simple_row("No devices yet", ""));
-        return;
+    } else {
+        for actor in device_actors {
+            append_peer_actor_row(model, list, actor, true);
+        }
     }
-    for actor in &state.ui.app_actors {
-        let title = if actor.display_label.is_empty() {
-            "Device"
-        } else {
-            &actor.display_label
-        };
-        let app_key_pubkey = actor.pubkey.as_str();
-        let mut metadata = Vec::new();
-        if actor.is_current_app_key {
-            metadata.push("this device".to_string());
-            if !app_key_pubkey.is_empty() {
-                metadata.push(format!("Device key: {app_key_pubkey}"));
-            }
-        }
-        metadata.push(if actor.role_label.is_empty() {
-            "Member".to_string()
-        } else {
-            actor.role_label.clone()
-        });
-        if !actor.state_label.is_empty() {
-            metadata.push(actor.state_label.clone());
-        }
-        if !actor.detail.is_empty() {
-            metadata.push(actor.detail.clone());
-        }
-        let connection = if actor.connection_label.is_empty() {
-            "Offline"
-        } else {
-            &actor.connection_label
-        };
-        list.append(&peer_row(
-            model,
-            title,
-            &metadata.join(" | "),
-            connection,
-            actor.is_online,
-            app_key_pubkey,
-            actor.can_appoint_admin,
-            actor.can_demote_admin,
-            actor.can_revoke,
+    if !recovery_key_actors.is_empty() {
+        list.append(&simple_row(
+            "Recovery Keys",
+            &recovery_key_actors.len().to_string(),
         ));
+        for actor in recovery_key_actors {
+            append_peer_actor_row(model, list, actor, false);
+        }
     }
+}
+
+fn append_peer_actor_row(
+    model: &AppRef,
+    list: &gtk::ListBox,
+    actor: &iris_drive_app_core::state::UiAppActor,
+    show_status_dot: bool,
+) {
+    let title = if actor.display_label.is_empty() {
+        "Device"
+    } else {
+        &actor.display_label
+    };
+    let app_key_pubkey = actor.pubkey.as_str();
+    let mut metadata = Vec::new();
+    if actor.is_current_app_key {
+        metadata.push("this device".to_string());
+        if !app_key_pubkey.is_empty() {
+            metadata.push(format!("Device key: {app_key_pubkey}"));
+        }
+    }
+    metadata.push(if actor.role_label.is_empty() {
+        "Member".to_string()
+    } else {
+        actor.role_label.clone()
+    });
+    if !actor.state_label.is_empty() {
+        metadata.push(actor.state_label.clone());
+    }
+    if !actor.detail.is_empty() {
+        metadata.push(actor.detail.clone());
+    }
+    let connection = if actor.connection_label.is_empty() {
+        "Offline"
+    } else {
+        &actor.connection_label
+    };
+    list.append(&peer_row(
+        model,
+        title,
+        &metadata.join(" | "),
+        connection,
+        actor.is_online,
+        show_status_dot,
+        app_key_pubkey,
+        actor.can_appoint_admin,
+        actor.can_demote_admin,
+        actor.can_revoke,
+    ));
 }
 
 pub(crate) fn render_backups(model: &AppRef, state: &NativeAppState) {
@@ -564,6 +592,7 @@ pub(crate) fn peer_row(
     subtitle: &str,
     state: &str,
     is_online: bool,
+    show_status_dot: bool,
     app_key_pubkey: &str,
     can_appoint_admin: bool,
     can_demote_admin: bool,
@@ -577,15 +606,17 @@ pub(crate) fn peer_row(
     body.set_margin_start(12);
     body.set_margin_end(12);
 
-    let dot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    dot.add_css_class(if is_online {
-        "iris-peer-online"
-    } else {
-        "iris-peer-offline"
-    });
-    dot.set_valign(gtk::Align::Center);
-    dot.set_tooltip_text(Some(state));
-    body.append(&dot);
+    if show_status_dot {
+        let dot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        dot.add_css_class(if is_online {
+            "iris-peer-online"
+        } else {
+            "iris-peer-offline"
+        });
+        dot.set_valign(gtk::Align::Center);
+        dot.set_tooltip_text(Some(state));
+        body.append(&dot);
+    }
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
     labels.set_hexpand(true);

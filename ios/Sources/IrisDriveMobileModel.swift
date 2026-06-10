@@ -1212,6 +1212,10 @@ final class IrisDriveMobileModel: ObservableObject {
         devices = state.ui.devices.map { device in
             return IrisDriveDevice(
                 label: device.displayLabel,
+                actorKind: device.actorKind
+                    ?? (device.role == "recovery" || device.connectionState == "recovery"
+                        ? "recovery_key"
+                        : "device"),
                 role: device.roleLabel,
                 state: device.stateLabel,
                 connectionState: device.connectionState,

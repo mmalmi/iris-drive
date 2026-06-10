@@ -106,8 +106,8 @@ public sealed class IrisDriveStatusData
             AppKeyLinkRequests = profile.HasValue
                 ? NativeAppKeyLinkRequests(profile.Value)
                 : Array.Empty<AppKeyLinkRequestRow>(),
-            AuthorizedDeviceCount = Int(ui, "authorized_device_count"),
-            OnlineDeviceCount = Int(ui, "online_device_count"),
+            AuthorizedDeviceCount = Int(ui, "authorized_app_key_count"),
+            OnlineDeviceCount = Int(ui, "online_app_key_count"),
             ConfigDirectory = paths.HasValue ? String(paths.Value, "data_dir") : null,
             ProviderRefreshKey = String(ui, "provider_change_key") ?? "",
             SnapshotUrl = EmptyToNull(String(ui, "snapshot_link")),
@@ -206,7 +206,7 @@ public sealed class IrisDriveStatusData
     private static IReadOnlyList<PeerRow> NativePeerRows(JsonElement ui)
     {
         if (ui.ValueKind != JsonValueKind.Object ||
-            !ui.TryGetProperty("devices", out var devices) ||
+            !ui.TryGetProperty("app_actors", out var devices) ||
             devices.ValueKind != JsonValueKind.Array)
         {
             return Array.Empty<PeerRow>();
@@ -216,6 +216,10 @@ public sealed class IrisDriveStatusData
         foreach (var device in devices.EnumerateArray())
         {
             var pubkey = String(device, "pubkey") ?? "";
+            var role = String(device, "role") ?? "member";
+            var connectionState = String(device, "connection_state") ?? "";
+            var actorKind = String(device, "actor_kind") ??
+                (role == "recovery" || connectionState == "recovery" ? "recovery_key" : "device");
             var metadata = new List<string>();
             foreach (var value in new[]
             {
@@ -233,12 +237,13 @@ public sealed class IrisDriveStatusData
             var canManagePeer = !string.IsNullOrWhiteSpace(pubkey);
             rows.Add(new PeerRow(
                 pubkey,
+                actorKind,
                 String(device, "display_label") ?? "",
-                String(device, "role") ?? "member",
+                role,
                 string.Join(" | ", metadata),
                 String(device, "connection_label") ?? "",
                 Bool(device, "is_online"),
-                Bool(device, "is_current_device"),
+                Bool(device, "is_current_app_key"),
                 canManagePeer && Bool(device, "can_revoke"),
                 canManagePeer && Bool(device, "can_appoint_admin"),
                 canManagePeer && Bool(device, "can_demote_admin")));
@@ -830,6 +835,7 @@ public sealed record AppKeyLinkRequestRow(
 
 public sealed record PeerRow(
     string DeviceNpub,
+    string ActorKind,
     string Title,
     string Role,
     string Subtitle,
@@ -838,4 +844,7 @@ public sealed record PeerRow(
     bool IsCurrentDevice,
     bool CanRevoke,
     bool CanAppointAdmin,
-    bool CanDemoteAdmin);
+    bool CanDemoteAdmin)
+{
+    public bool IsDeviceActor => ActorKind == "device";
+}

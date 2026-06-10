@@ -313,16 +313,17 @@ public partial class MainWindow : Window
     private void RenderPeers(IrisDriveStatusData status)
     {
         PeersList.Items.Clear();
-        if (status.Peers.Count == 0)
-        {
+        var devicePeers = status.Peers.Where(peer => peer.IsDeviceActor).ToList();
+        var recoveryKeyPeers = status.Peers.Where(peer => !peer.IsDeviceActor).ToList();
+        if (devicePeers.Count == 0)
             PeersList.Items.Add(Row("No devices yet", "", ""));
-            return;
-        }
-
-        foreach (var peer in status.Peers)
-        {
+        foreach (var peer in devicePeers)
             PeersList.Items.Add(PeerListRow(peer));
-        }
+        if (recoveryKeyPeers.Count == 0)
+            return;
+        PeersList.Items.Add(Row("Recovery Keys", recoveryKeyPeers.Count.ToString(), ""));
+        foreach (var peer in recoveryKeyPeers)
+            PeersList.Items.Add(PeerListRow(peer));
     }
 
     private void RenderBackups(IrisDriveStatusData status)
@@ -428,21 +429,22 @@ public partial class MainWindow : Window
             });
         }
 
-        var dot = new Ellipse
-        {
-            Width = 8,
-            Height = 8,
-            Fill = PeerConnectivityBrush(peer),
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = WpfHorizontalAlignment.Left,
-            ToolTip = peer.State,
-        };
-
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(dot);
+        if (peer.IsDeviceActor)
+        {
+            grid.Children.Add(new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = PeerConnectivityBrush(peer),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = WpfHorizontalAlignment.Left,
+                ToolTip = peer.State,
+            });
+        }
         Grid.SetColumn(stack, 1);
         grid.Children.Add(stack);
 

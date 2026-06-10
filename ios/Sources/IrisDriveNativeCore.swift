@@ -647,6 +647,7 @@ struct QrMatrix: Codable, Equatable {
 }
 
 struct NativeDevice: Codable {
+    var actorKind: String?
     var pubkey: String
     var label: String
     var displayLabel: String
@@ -664,6 +665,7 @@ struct NativeDevice: Codable {
     var canDemoteAdmin: Bool
 
     enum CodingKeys: String, CodingKey {
+        case actorKind = "actor_kind"
         case pubkey
         case label
         case displayLabel = "display_label"

@@ -150,6 +150,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!account.app_key_link_invite.contains("local-owner"));
     assert!(!account.app_key_link_invite.contains("device-"));
     assert_eq!(state.ui.app_actors.len(), 1);
+    assert_eq!(state.ui.app_actors[0].actor_kind, "device");
     assert_eq!(state.ui.app_actors[0].label, "Pixel");
     assert_eq!(state.ui.app_actors[0].display_label, "This Device");
     assert_eq!(state.ui.app_actors[0].role, "admin");
@@ -225,6 +226,8 @@ fn add_recovery_key_saves_only_generated_public_key_to_devices_view() {
     assert_eq!(account.recovery_phrase_facet_count, 1);
     assert!(!account.can_export_recovery_phrase);
     assert_eq!(account.profile_roster_op_count, 4);
+    assert_eq!(updated.ui.authorized_app_key_count, 1);
+    assert_eq!(updated.ui.online_app_key_count, 0);
     assert!(!dir.path().join("recovery_phrase").exists());
 
     let recovery_devices = updated
@@ -234,6 +237,7 @@ fn add_recovery_key_saves_only_generated_public_key_to_devices_view() {
         .filter(|device| device.role == "recovery")
         .collect::<Vec<_>>();
     assert_eq!(recovery_devices.len(), 1);
+    assert_eq!(recovery_devices[0].actor_kind, "recovery_key");
     assert_eq!(recovery_devices[0].display_label, "Recovery key");
     assert_eq!(recovery_devices[0].connection_label, "Recovery key");
     assert!(!recovery_devices[0].is_online);
