@@ -152,6 +152,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
             },
             "settings": settings_status(&config),
             "daemon": daemon_status,
+            "service": service_status_payload(config_dir),
             "conflicts": conflict_status,
             "peers": peers,
         })
@@ -373,8 +374,9 @@ pub(crate) fn daemon_status_path(config_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
-    let pid = daemon_lock_pid(config_dir);
-    let running = pid.is_some_and(process_is_running);
+    let liveness = iris_drive_core::daemon_liveness::daemon_liveness(config_dir);
+    let pid = liveness.pid;
+    let running = liveness.running;
     let now = unix_now();
     let raw = std::fs::read_to_string(daemon_status_path(config_dir)).ok();
     let mut value = raw
@@ -643,12 +645,6 @@ pub(crate) fn merge_daemon_status(
         update(object);
     }
     write_daemon_status(config_dir, value);
-}
-
-pub(crate) fn daemon_lock_pid(config_dir: &Path) -> Option<u32> {
-    std::fs::read_to_string(config_dir.join("daemon.lock"))
-        .ok()
-        .and_then(|contents| contents.trim().parse::<u32>().ok())
 }
 
 pub(crate) fn unix_now() -> i64 {

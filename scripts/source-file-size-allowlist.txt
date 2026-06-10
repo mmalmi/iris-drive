@@ -17,7 +17,7 @@ crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
 scripts/dev-vm-update-run.sh 2661 Cross-platform VM orchestration needs a later split; VM Cargo build env keeps macOS smoke viable on small disks.
 linux/src/actions.rs 1500 Legacy Linux action handlers now include desktop startup settings; split pending dialog/action modules.
-macos/Sources/IrisDriveMacApp.swift 3050 Legacy macOS shell pending view/runtime split; startup state gate added before split.
+macos/Sources/IrisDriveMacApp.swift 3070 Legacy macOS shell pending view/runtime split; daemon service-mode branches remain here while helpers live in IrisDriveDaemonService.swift.
 scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.

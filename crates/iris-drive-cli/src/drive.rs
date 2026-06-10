@@ -173,13 +173,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         .context("building tokio runtime")?;
     runtime.block_on(async {
         let started = std::time::Instant::now();
-        let _config_lock = if matches!(
-            &command,
-            ProviderCmd::Write { .. }
-                | ProviderCmd::Mkdir { .. }
-                | ProviderCmd::Delete { .. }
-                | ProviderCmd::Rename { .. }
-        ) {
+        let provider_mutation = provider_command_is_mutation(&command);
+        let _config_lock = if provider_mutation {
+            iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(
+                config_dir,
+            )?;
             Some(ConfigMutationLock::acquire(config_dir).await?)
         } else {
             None
@@ -393,6 +391,16 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
 
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
+    matches!(
+        command,
+        ProviderCmd::Write { .. }
+            | ProviderCmd::Mkdir { .. }
+            | ProviderCmd::Delete { .. }
+            | ProviderCmd::Rename { .. }
+    )
 }
 
 async fn provider_entries(

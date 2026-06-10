@@ -25,6 +25,31 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
     linked_config.save(config_path_in(linked_dir)).unwrap();
 }
 
+fn mark_daemon_live(config_dir: &Path) {
+    std::fs::write(
+        iris_drive_core::daemon_liveness::daemon_lock_path(config_dir),
+        format!("{}\n", std::process::id()),
+    )
+    .unwrap();
+}
+
+#[test]
+fn native_provider_mutation_reports_daemon_unavailable_without_live_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+
+    let result = super::native_provider_mkdir_json(&dir.path().display().to_string(), "Reports");
+    let error = result["error"].as_str().unwrap_or_default();
+
+    assert!(
+        error.contains("daemon is unavailable"),
+        "unexpected provider mutation result: {result:#}"
+    );
+}
+
 #[test]
 fn import_file_action_writes_shared_file_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
@@ -32,6 +57,7 @@ fn import_file_action_writes_shared_file_into_provider_root() {
     let _ = app.dispatch(NativeAppAction::CreateProfile {
         app_key_label: "iPhone".to_owned(),
     });
+    mark_daemon_live(dir.path());
 
     let source = dir.path().join("share-source.txt");
     std::fs::write(&source, b"from share sheet").unwrap();
@@ -66,6 +92,7 @@ fn provider_list_includes_summary_and_change_key() {
     let _ = app.dispatch(NativeAppAction::CreateProfile {
         app_key_label: "iPhone".to_owned(),
     });
+    mark_daemon_live(dir.path());
     let source = dir.path().join("nested.txt");
     std::fs::write(&source, b"nested bytes").unwrap();
 
@@ -127,6 +154,7 @@ fn app_constructor_defers_provider_summary_until_refresh() {
     let _ = app.dispatch(NativeAppAction::CreateProfile {
         app_key_label: "iPhone".to_owned(),
     });
+    mark_daemon_live(dir.path());
     let source = dir.path().join("startup.txt");
     std::fs::write(&source, b"startup bytes").unwrap();
 
@@ -162,6 +190,7 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     let _ = app.dispatch(NativeAppAction::CreateProfile {
         app_key_label: "iPhone".to_owned(),
     });
+    mark_daemon_live(dir.path());
     let source = dir.path().join("shared.txt");
     std::fs::write(&source, b"first").unwrap();
 

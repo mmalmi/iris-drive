@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::daemon_liveness::{daemon_lock_path, process_is_running};
 use iris_drive_core::provider::normalize_provider_path;
 use iris_drive_core::relay_config::normalize_relay_url;
 
@@ -370,7 +371,7 @@ impl DaemonProcessLock {
     pub(crate) fn acquire(config_dir: &std::path::Path) -> Result<Self> {
         std::fs::create_dir_all(config_dir)
             .with_context(|| format!("creating config dir {}", config_dir.display()))?;
-        let path = config_dir.join("daemon.lock");
+        let path = daemon_lock_path(config_dir);
         match Self::try_create(&path) {
             Ok(lock) => return Ok(lock),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -491,52 +492,11 @@ impl Drop for ConfigMutationLock {
     }
 }
 
-#[cfg(unix)]
-pub(crate) fn process_is_running(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return true;
+pub(crate) async fn parent_exit_signal(service_mode: bool) {
+    if service_mode {
+        std::future::pending::<()>().await;
+        return;
     }
-    std::process::Command::new("/bin/kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-#[cfg(windows)]
-pub(crate) fn process_is_running(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return true;
-    }
-    let filter = format!("PID eq {pid}");
-    let output = std::process::Command::new("tasklist")
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().any(|line| {
-        let mut fields = line.split(',');
-        let _image = fields.next();
-        fields
-            .next()
-            .map(|value| value.trim_matches('"').trim() == pid.to_string())
-            .unwrap_or(false)
-    })
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(crate) fn process_is_running(pid: u32) -> bool {
-    pid == std::process::id()
-}
-
-pub(crate) async fn parent_exit_signal() {
     let Some(parent_pid) = std::env::var("IRIS_DRIVE_PARENT_PID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())

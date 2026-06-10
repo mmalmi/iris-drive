@@ -129,6 +129,7 @@ pub(crate) fn native_provider_import_shared_file(
     display_name: &str,
     source_path: &str,
 ) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
     let display_name = sanitized_provider_file_name(display_name);
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
@@ -247,6 +248,7 @@ fn run_native_provider_write(
     path: &str,
     source_path: &str,
 ) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
@@ -259,6 +261,7 @@ fn run_native_provider_write(
 }
 
 fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
@@ -269,6 +272,7 @@ fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde
 }
 
 fn run_native_provider_delete(data_dir: &str, path: &str) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
@@ -283,6 +287,7 @@ fn run_native_provider_rename(
     old_path: &str,
     new_path: &str,
 ) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let old_path = normalize_provider_path(old_path)?;
@@ -291,6 +296,13 @@ fn run_native_provider_rename(
         rename_provider_path(&provider, &old_path, &new_path).await?;
         import_provider_mutation(&mut daemon, &provider, &new_path, Some(visible_root)).await
     })
+}
+
+fn ensure_daemon_available_for_provider_mutation(data_dir: &str) -> anyhow::Result<()> {
+    iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(Path::new(
+        data_dir,
+    ))?;
+    Ok(())
 }
 
 fn native_provider_runtime() -> anyhow::Result<tokio::runtime::Runtime> {

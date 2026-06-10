@@ -50,6 +50,7 @@ struct IrisDriveMacApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let screenshotFixtureMode = IrisDriveScreenshotFixtures.enabled
     private var daemon: Process?
+    var daemonServiceActive = false
     private var userRequestedSyncStop = false
     private var daemonRestartWorkItem: DispatchWorkItem?
     private var statusItem: NSStatusItem?
@@ -787,9 +788,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
         stopExternalDaemonStatusWatcher()
+        let paths = runtimePathsForMenu ?? runtimePaths()
         if externalDaemonMode {
             setDaemonRunning(true)
             updateStatus("Sync managed externally")
+            return
+        }
+        if daemonServiceActive {
+            stopDaemonService(paths: paths)
             return
         }
         guard let daemon else {
@@ -820,6 +826,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func restartSync() {
+        if daemonServiceActive {
+            userRequestedSyncStop = false
+            startDaemon(idriveExecutableURL(), paths: runtimePathsForMenu ?? runtimePaths())
+            return
+        }
         stopSync()
         startSync()
     }
@@ -1721,6 +1732,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
+        if daemonServiceSupervisionEnabled {
+            startDaemonService(idrive, paths: paths)
+            return
+        }
+
         let process = Process()
         configure(
             process,
@@ -1749,7 +1765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func startStatusRefreshTimer(interval: TimeInterval) {
+    func startStatusRefreshTimer(interval: TimeInterval) {
         DispatchQueue.main.async {
             self.statusRefreshTimer?.invalidate()
             let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -1761,7 +1777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func startExternalDaemonStatusWatcher(paths: IrisDriveRuntimePaths) {
+    func startExternalDaemonStatusWatcher(paths: IrisDriveRuntimePaths) {
         DispatchQueue.main.async {
             self.stopExternalDaemonStatusWatcher()
             self.startExternalDaemonStatusDirectoryWatcher(paths: paths)
@@ -1850,7 +1866,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
-        guard !userRequestedSyncStop, !externalDaemonMode else { return }
+        guard !userRequestedSyncStop, !externalDaemonMode, !daemonServiceActive else { return }
         guard !IrisDriveStatus.shared.revoked else {
             updateStatus("Device removed")
             setDaemonRunning(false)
@@ -2325,9 +2341,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
 
-            if let daemon = json["daemon"] as? [String: Any],
-               let gateway = daemon["browser_gateway"] as? [String: Any] {
-                Self.applyGatewayStatus(gateway, to: status)
+            var daemonStatusRunning: Bool?
+            if let daemon = json["daemon"] as? [String: Any] {
+                daemonStatusRunning = daemon["running"] as? Bool
+                if let gateway = daemon["browser_gateway"] as? [String: Any] {
+                    Self.applyGatewayStatus(gateway, to: status)
+                }
+            }
+
+            if let service = json["service"] as? [String: Any] {
+                self.daemonServiceActive = service["installed"] as? Bool ?? self.daemonServiceActive
+                let serviceRunning = service["running"] as? Bool ?? false
+                self.setDaemonRunning(serviceRunning || (daemonStatusRunning ?? false))
+            } else if let daemonStatusRunning {
+                self.setDaemonRunning(daemonStatusRunning)
             }
 
             if let network = json["network"] as? [String: Any] {
@@ -2540,7 +2567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func refreshStatus() {
         guard let paths = runtimePathsForMenu else { return }
-        if externalDaemonMode {
+        if externalDaemonMode || daemonServiceActive {
             refreshExternalDaemonStatus(paths: paths)
             return
         }
@@ -2607,6 +2634,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let gateway = json["browser_gateway"] as? [String: Any] {
                 Self.applyGatewayStatus(gateway, to: status)
             }
+            if let running = json["running"] as? Bool {
+                self.setDaemonRunning(running)
+            }
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)
             }
@@ -2625,7 +2655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func prepareFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) {
+    func prepareFileProviderRuntime(paths: IrisDriveRuntimePaths, idrive: URL?) {
         do {
             try ensureDirectory(paths.configDirectory)
             if externalFileProviderRuntimeMode {
@@ -2896,7 +2926,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func setDaemonRunning(_ running: Bool) {
+    func setDaemonRunning(_ running: Bool) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
                 self?.setDaemonRunning(running)

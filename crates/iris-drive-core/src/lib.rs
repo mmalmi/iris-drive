@@ -7,6 +7,7 @@ pub mod backup_summary;
 pub mod block_sync;
 pub mod blossom_sync;
 pub mod config;
+pub mod daemon_liveness;
 pub mod direct_root_transport;
 pub mod fips_status;
 pub mod fips_sync;

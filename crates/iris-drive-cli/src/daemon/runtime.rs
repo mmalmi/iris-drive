@@ -20,6 +20,7 @@ pub(crate) fn cmd_daemon(
     relay_override: &[String],
     watch_interval: u64,
     watch_debounce_ms: u64,
+    service_mode: bool,
     gateway_port: u16,
     enable_gateway: bool,
     mount_drive: bool,
@@ -255,6 +256,7 @@ pub(crate) fn cmd_daemon(
                 "relays": relays,
                 "current_app_key_npub": pubkey_npub(&state.app_key_pubkey),
                 "provider_update_mode": "event_driven",
+                "supervision": if service_mode { "service" } else { "app" },
                 "watch_debounce_ms": watch_debounce_ms,
                 "root_update_throttle_ms": root_update_debounce.as_millis(),
                 "mount": mount_status,
@@ -311,7 +313,7 @@ pub(crate) fn cmd_daemon(
 
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
-        let parent_exit = parent_exit_signal();
+        let parent_exit = parent_exit_signal(service_mode);
         tokio::pin!(parent_exit);
 
         let relay_status_period = std::time::Duration::from_secs(10);

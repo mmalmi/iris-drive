@@ -35,6 +35,7 @@ mod drive;
 mod mount;
 mod profile;
 mod publish;
+mod service;
 mod shares;
 mod stats;
 mod status;
@@ -55,6 +56,8 @@ use drive::*;
 use profile::*;
 #[allow(clippy::wildcard_imports)]
 use publish::*;
+#[allow(clippy::wildcard_imports)]
+use service::*;
 #[allow(clippy::wildcard_imports)]
 use shares::*;
 #[allow(clippy::wildcard_imports)]
@@ -158,6 +161,7 @@ fn run_cli() -> ExitCode {
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),
+        Command::Service { command } => cmd_service(&config_dir, command),
         Command::Stats => cmd_stats(&config_dir),
         Command::Shares { command } => cmd_shares(&config_dir, command),
         Command::LinkInput { command } => cmd_link_input(command),
@@ -183,6 +187,7 @@ fn run_cli() -> ExitCode {
             relay,
             watch_interval,
             watch_debounce_ms,
+            service,
             gateway_port,
             no_gateway,
             mount,
@@ -192,6 +197,7 @@ fn run_cli() -> ExitCode {
             &relay,
             watch_interval,
             watch_debounce_ms,
+            service,
             gateway_port,
             !no_gateway,
             mount,

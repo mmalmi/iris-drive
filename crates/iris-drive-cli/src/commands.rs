@@ -118,6 +118,11 @@ pub(crate) enum Command {
     RotateDck,
     /// Print daemon and sync status as JSON.
     Status,
+    /// Install, start, stop, or inspect the background daemon service.
+    Service {
+        #[command(subcommand)]
+        command: ServiceCmd,
+    },
     /// Print compact GUI summary stats as JSON.
     Stats,
     /// List shared folders and add shortcuts into My Drive.
@@ -230,6 +235,9 @@ pub(crate) enum Command {
         /// Reserved for virtual-provider write coalescing.
         #[arg(long, default_value_t = 500)]
         watch_debounce_ms: u64,
+        /// Run under a service manager instead of exiting with the GUI parent.
+        #[arg(long)]
+        service: bool,
         /// Start the loopback browser gateway on this port.
         #[arg(long, default_value_t = DEFAULT_GATEWAY_PORT)]
         gateway_port: u16,
@@ -243,6 +251,46 @@ pub(crate) enum Command {
         /// Mountpoint for --mount. Defaults to the configured/default drive path.
         #[arg(long)]
         mountpoint: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ServiceCmd {
+    /// Install or refresh the current user's daemon service.
+    Install {
+        /// Start or restart the service after writing its definition.
+        #[arg(long)]
+        launch: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+        /// Executable to run from the service. Defaults to the current idrive binary.
+        #[arg(long)]
+        executable: Option<PathBuf>,
+    },
+    /// Start a previously installed service.
+    Start {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the service without unregistering the provider domain.
+    Stop {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove the service definition.
+    Uninstall {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print service status.
+    Status {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 

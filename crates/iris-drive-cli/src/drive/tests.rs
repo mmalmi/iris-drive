@@ -42,10 +42,38 @@ fn init_config_with_remote_device(config_dir: &Path) -> (Profile, String, DriveR
     (account, remote, remote_meta)
 }
 
+fn mark_daemon_live(config_dir: &Path) {
+    std::fs::write(
+        iris_drive_core::daemon_liveness::daemon_lock_path(config_dir),
+        format!("{}\n", std::process::id()),
+    )
+    .unwrap();
+}
+
+#[test]
+fn provider_mutation_requires_live_daemon() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+
+    let error = cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Mkdir {
+            path: "Reports".into(),
+        },
+    )
+    .expect_err("provider mutation should fail when daemon is unavailable");
+
+    assert!(
+        error.to_string().contains("daemon is unavailable"),
+        "unexpected error: {error:#}"
+    );
+}
+
 #[test]
 fn provider_delete_local_file_is_idempotent() {
     let config_dir = tempfile::tempdir().unwrap();
     init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
     let source_dir = tempfile::tempdir().unwrap();
     std::fs::write(source_dir.path().join("juuh.txt"), b"delete me").unwrap();
     cmd_import(config_dir.path(), source_dir.path()).unwrap();
@@ -89,6 +117,7 @@ fn provider_delete_local_file_is_idempotent() {
 fn provider_delete_directory_removes_tree() {
     let config_dir = tempfile::tempdir().unwrap();
     init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
     let source_dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(source_dir.path().join("folder")).unwrap();
     std::fs::write(
@@ -130,6 +159,7 @@ fn provider_delete_directory_removes_tree() {
 fn provider_delete_tombstones_foreign_visible_files() {
     let config_dir = tempfile::tempdir().unwrap();
     let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
+    mark_daemon_live(config_dir.path());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
