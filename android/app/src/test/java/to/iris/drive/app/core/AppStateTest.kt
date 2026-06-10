@@ -116,6 +116,7 @@ class AppStateTest {
         )
 
         assertEquals("Linked", state.setupLabel)
+        assertTrue(state.isLoaded)
         assertTrue(state.isSetupComplete)
         assertEquals("Ready", state.primaryStatusLabel)
         assertEquals("Up to date", state.sync.statusLabel)
@@ -130,6 +131,14 @@ class AppStateTest {
         assertEquals("local", state.devices.single().connectionState)
         assertEquals("This Device", state.devices.single().connectionLabel)
         assertEquals("{\"profile_id\":\"profile-a\"}", state.lastShareRecipientEvidence)
+    }
+
+    @Test
+    fun defaultAppStateIsLoadedForFirstRunFixtures() {
+        val state = AppState()
+
+        assertTrue(state.isLoaded)
+        assertEquals(false, state.isSetupComplete)
     }
 
     @Test

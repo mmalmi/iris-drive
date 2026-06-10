@@ -4,6 +4,8 @@ android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt 1400 Legacy 
 crates/iris-drive-app-core/src/ffi.rs 2850 Legacy app-core FFI runtime now includes desktop startup settings; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 1800 App-core parity and native action fixtures include startup defaults; split pending scenario modules.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
+crates/iris-drive-cli/src/profile.rs 1050 CLI profile command surface already exceeds default; pending command/test split.
+crates/iris-drive-cli/src/status.rs 1050 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1100 Scenario matrix needs a later harness split.
 crates/iris-drive-core/src/gateway.rs 1150 Local gateway routing needs a later route-module split.
 crates/iris-drive-core/src/iris_profile.rs 2100 IrisProfile authority model needs a later roster-event-projection module split.
@@ -15,11 +17,11 @@ crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
 scripts/dev-vm-update-run.sh 2661 Cross-platform VM orchestration needs a later split; VM Cargo build env keeps macOS smoke viable on small disks.
 linux/src/actions.rs 1500 Legacy Linux action handlers now include desktop startup settings; split pending dialog/action modules.
-macos/Sources/IrisDriveMacApp.swift 3000 Legacy macOS shell pending view/runtime split.
+macos/Sources/IrisDriveMacApp.swift 3050 Legacy macOS shell pending view/runtime split; startup state gate added before split.
 scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
-macos/Sources/IrisDriveControlPanel.swift 2550 Legacy macOS control panel includes backup target controls; pending view split.
+macos/Sources/IrisDriveControlPanel.swift 2700 Legacy macOS control panel includes backup target controls; pending view split.
 scripts/local-release.mjs 1250 Local release orchestration needs a later module split.
 windows/IrisDriveService.cs 1020 Legacy Windows service bridge pending command-client split.
 windows/MainWindow.xaml.cs 1800 Legacy Windows window controller pending view-model split.

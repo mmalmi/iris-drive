@@ -7,7 +7,7 @@ final class IrisDriveStatus: ObservableObject {
     static let autoCheckUpdatesKey = "updates.autoCheck"
     static let autoInstallUpdatesKey = "updates.autoInstall"
 
-    @Published var message = "Setup needed"
+    @Published var message = "Loading"
     @Published var daemonRunning = false
     @Published var closeToMenuBarOnClose =
         UserDefaults.standard.object(forKey: closeToMenuBarOnCloseKey) as? Bool ?? true
@@ -24,6 +24,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var updateStatus = ""
     @Published var updateAsset = ""
     @Published var updateCanInstall = false
+    @Published var stateLoaded = false
     @Published var initialized = false
     @Published var driveName = "My Drive"
     @Published var currentAppKeyNpub: String?

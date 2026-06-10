@@ -142,6 +142,7 @@ struct IrisDriveControlPanel: View {
     @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
     @State private var recoveryExportWordIndex = 0
+    @State private var showStartupLoading = false
 
     private var fileServerTargets: [IrisDriveBackupTarget] {
         status.backupTargets.filter { $0.kind == "blossom" }
@@ -153,18 +154,30 @@ struct IrisDriveControlPanel: View {
 
     var body: some View {
         Group {
-            if !status.setupComplete {
+            if !status.stateLoaded {
+                startupLoading
+            } else if !status.setupComplete {
                 setup
             } else {
                 controlPanel
             }
         }
         .onAppear {
-            controller.ensureFileProviderDomainIfProfileExists()
+            if status.stateLoaded {
+                controller.ensureFileProviderDomainIfProfileExists()
+            }
             applyPendingShareDialog()
+        }
+        .onChange(of: status.stateLoaded) { _, loaded in
+            if loaded {
+                controller.ensureFileProviderDomainIfProfileExists()
+            }
         }
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
+        }
+        .task(id: status.stateLoaded) {
+            await revealStartupLoadingIfNeeded()
         }
         .overlay(alignment: .bottom) {
             if let copyStatus = status.copyStatus, !copyStatus.isEmpty {
@@ -174,6 +187,25 @@ struct IrisDriveControlPanel: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: status.copyStatus)
+        .animation(.easeInOut(duration: 0.18), value: status.stateLoaded)
+        .animation(.easeInOut(duration: 0.18), value: showStartupLoading)
+    }
+
+    private var startupLoading: some View {
+        StartupLoadingPanelView(showLabel: showStartupLoading)
+    }
+
+    @MainActor
+    private func revealStartupLoadingIfNeeded() async {
+        showStartupLoading = false
+        guard !status.stateLoaded else { return }
+        do {
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, !status.stateLoaded else { return }
+        showStartupLoading = true
     }
 
     private var controlPanel: some View {

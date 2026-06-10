@@ -189,6 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             fileProviderDomainState = .unavailable
             return
         }
+        guard IrisDriveStatus.shared.stateLoaded else {
+            fileProviderDomainState = .unavailable
+            return
+        }
         let paths = runtimePathsForMenu ?? runtimePaths()
         guard localProfileExists(paths: paths) else {
             fileProviderDomainState = .unavailable
@@ -457,6 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func ensureFileProviderDomainAfterStatusIfNeeded() {
         guard fileProviderIntegrationEnabled else { return }
+        guard IrisDriveStatus.shared.stateLoaded else { return }
         guard IrisDriveStatus.shared.setupComplete else { return }
         guard fileProviderDomainState != .registered
             || !fileProviderRegistrationIdentityIsCurrent()
@@ -1502,17 +1507,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try ensureDirectory(paths.configDirectory)
             if !localProfileExists(paths: paths) {
                 irisDriveDebugLog("Iris Drive local profile not found at \(paths.configDirectory.path)")
+                markStartupStateLoaded()
                 updateStatus("Setup needed")
                 return
             }
 
+            refreshStatus()
             updateStatus("Turning sync on")
             startDaemon(idrive, paths: paths)
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
+            markStartupStateLoaded()
             updateStatus("Sync failed")
         }
     }
+
+    private func markStartupStateLoaded() { DispatchQueue.main.async { IrisDriveStatus.shared.stateLoaded = true } }
 
     private func localProfileExists(paths: IrisDriveRuntimePaths) -> Bool {
         FileManager.default.fileExists(
@@ -1585,6 +1595,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showFileProviderItem(path targetPath: String?) {
         let paths = runtimePathsForMenu ?? runtimePaths()
         let status = IrisDriveStatus.shared
+        guard status.stateLoaded else {
+            updateStatus("Loading")
+            return
+        }
         guard localProfileExists(paths: paths), status.setupComplete else {
             updateStatus(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
             return
@@ -2108,6 +2122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let ui = state["ui"] as? [String: Any] ?? [:]
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
+            status.stateLoaded = true
             let account = ui["profile"] as? [String: Any]
             let paths = ui["paths"] as? [String: Any] ?? [:]
             status.initialized = account != nil
@@ -2257,6 +2272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyStatusPayload(_ json: [String: Any]) {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
+            status.stateLoaded = true
             status.initialized = json["initialized"] as? Bool ?? false
             status.configDirectory = json["config_dir"] as? String
 
@@ -2572,6 +2588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyExternalDaemonStatusPayload(_ json: [String: Any]) {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
+            status.stateLoaded = true
             status.initialized = true
             status.configDirectory = self.runtimePathsForMenu?.configDirectory.path
             if let event = json["event"] as? String {

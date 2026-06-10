@@ -24,6 +24,7 @@ enum IrisDriveScreenshotFixtures {
     static func apply(to status: IrisDriveStatus = .shared) {
         status.message = "Sync on"
         status.daemonRunning = true
+        status.stateLoaded = true
         status.initialized = true
         status.driveName = "My Drive"
         status.currentAppKeyNpub = fakeNpub("appkey")

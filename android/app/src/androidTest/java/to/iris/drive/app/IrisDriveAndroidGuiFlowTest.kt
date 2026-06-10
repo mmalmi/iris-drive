@@ -90,6 +90,26 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun startupPendingStateDoesNotFlashWelcomeActions() {
+        compose.mainClock.autoAdvance = false
+        try {
+            render(state = AppState(isLoaded = false))
+
+            compose.onNodeWithTag("startupLoadingView").assertIsDisplayed()
+            compose.onAllNodesWithTag("welcomeCreateProfile").assertCountEquals(0)
+            compose.onAllNodesWithTag("welcomeSignIn").assertCountEquals(0)
+            compose.onAllNodesWithText("Loading").assertCountEquals(0)
+
+            compose.mainClock.advanceTimeBy(1_999)
+            compose.onAllNodesWithText("Loading").assertCountEquals(0)
+            compose.mainClock.advanceTimeBy(1)
+            compose.onNodeWithText("Loading").assertIsDisplayed()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
     fun linkThisDeviceFlowClicksThroughSignInUi() {
         val owner = createOwnerProfile("Android UI owner")
         val linkedHandle = newNativeHandle()

@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeCore
@@ -222,10 +224,19 @@ internal fun IrisDriveAndroidApp(
     val selfUpdateState by selfUpdateStateFlow.collectAsState()
     val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
+    var showStartupLoading by remember { mutableStateOf(false) }
 
     LaunchedEffect(shareDialogRequest?.id, state.isSetupComplete) {
         if (state.isSetupComplete && shareDialogRequest != null) {
             selectedTab = MainTab.Shares
+        }
+    }
+
+    LaunchedEffect(state.isLoaded) {
+        showStartupLoading = false
+        if (!state.isLoaded) {
+            delay(2_000)
+            showStartupLoading = true
         }
     }
 
@@ -234,12 +245,12 @@ internal fun IrisDriveAndroidApp(
             modifier = Modifier.testTag("irisDriveApp"),
             containerColor = Background,
             topBar = {
-                if (state.isSetupComplete) {
+                if (state.isLoaded && state.isSetupComplete) {
                     AppTopBar(title = selectedTab.label)
                 }
             },
             bottomBar = {
-                if (state.isSetupComplete) {
+                if (state.isLoaded && state.isSetupComplete) {
                     MainNavigationBar(
                         selectedTab = selectedTab,
                         onSelectTab = { selectedTab = it },
@@ -247,7 +258,9 @@ internal fun IrisDriveAndroidApp(
                 }
             },
         ) { padding ->
-            if (!state.isSetupComplete) {
+            if (!state.isLoaded) {
+                StartupLoadingContent(padding = padding, showLabel = showStartupLoading)
+            } else if (!state.isSetupComplete) {
                 if (state.isRevoked && profile != null) {
                     RevokedDeviceContent(
                         padding = padding,
@@ -375,6 +388,35 @@ private fun RevokedDeviceContent(
                 shape = RoundedCornerShape(6.dp),
             ) {
                 Text("Log out")
+            }
+        }
+    }
+}
+
+@Composable
+private fun StartupLoadingContent(
+    padding: PaddingValues,
+    showLabel: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .padding(32.dp)
+            .testTag("startupLoadingView"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            SetupBrand()
+            if (showLabel) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 3.dp,
+                )
+                Text("Loading", color = Muted, modifier = Modifier.testTag("startupLoadingLabel"))
             }
         }
     }

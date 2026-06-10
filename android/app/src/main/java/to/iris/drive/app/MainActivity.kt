@@ -37,7 +37,7 @@ import to.iris.drive.app.update.AndroidSelfUpdateManager
 import to.iris.drive.app.update.SelfUpdateActions
 
 class MainActivity : ComponentActivity() {
-    private val stateFlow = MutableStateFlow(AppState())
+    private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
     private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null

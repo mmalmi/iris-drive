@@ -26,6 +26,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var driveName = "My Drive"
     @Published var statusTitle = "Ready"
     @Published var statusDetail = "Waiting for this device to be linked."
+    @Published var stateLoaded = false
     @Published var deviceLabel = UIDevice.current.name
     @Published var profileLinkTarget = ""
     @Published var currentAppKeyNpub = ""
@@ -185,6 +186,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func ensureFileProviderDomainIfProfileExists() {
+        guard stateLoaded else { fileProviderStatus = "Files provider not registered"; rebuildDerivedState(); return }
         guard isSetupComplete else {
             removeFileProviderDomain()
             fileProviderStatus = "Files provider not registered"
@@ -1047,6 +1049,7 @@ final class IrisDriveMobileModel: ObservableObject {
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
         removeFileProviderDomain()
         lastState = nil
+        stateLoaded = false
         restoreSecret = ""
         syncRunning = false
         statusTitle = "Ready"
@@ -1372,11 +1375,13 @@ final class IrisDriveMobileModel: ObservableObject {
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(NativeAppState.self, from: data)
         else {
+            stateLoaded = true
             statusTitle = "Native state failed"
             statusDetail = json
             writeDebugState(json)
             return
         }
+        stateLoaded = true
         lastState = state
         rebuildDerivedState()
         writeDebugState(json)

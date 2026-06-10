@@ -15,6 +15,7 @@ private enum MainTab: Hashable {
 struct IrisDriveRootView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var selectedTab = MainTab.drive
+    @State private var showStartupLoading = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -26,11 +27,18 @@ struct IrisDriveRootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: model.copyFeedback)
+        .animation(.easeInOut(duration: 0.18), value: model.stateLoaded)
+        .animation(.easeInOut(duration: 0.18), value: showStartupLoading)
+        .task(id: model.stateLoaded) {
+            await revealStartupLoadingIfNeeded()
+        }
     }
 
     @ViewBuilder
     private var content: some View {
-        if !model.isSetupComplete {
+        if !model.stateLoaded {
+            StartupLoadingView(showLabel: showStartupLoading)
+        } else if !model.isSetupComplete {
             if model.isRevoked {
                 RevokedDeviceSetupView(model: model)
             } else if model.isAwaitingApproval {
@@ -91,6 +99,19 @@ struct IrisDriveRootView: View {
                 selectedTab = .shares
             }
         }
+    }
+
+    @MainActor
+    private func revealStartupLoadingIfNeeded() async {
+        showStartupLoading = false
+        guard !model.stateLoaded else { return }
+        do {
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, !model.stateLoaded else { return }
+        showStartupLoading = true
     }
 }
 

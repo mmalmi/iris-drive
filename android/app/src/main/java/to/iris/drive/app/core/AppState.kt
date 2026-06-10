@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal data class AppState(
+    val isLoaded: Boolean = true,
     val profile: ProfileState? = null,
     val roots: List<SyncRoot> = emptyList(),
     val shares: List<ShareState> = emptyList(),
@@ -37,6 +38,7 @@ internal data class AppState(
             }
             val ui = json.optJSONObject("ui") ?: JSONObject()
             return AppState(
+                isLoaded = true,
                 profile = ui.optJSONObject("profile")?.toProfile(),
                 roots = ui.optJSONArray("roots").toRoots(),
                 shares = ui.optJSONArray("shares").toShares(),

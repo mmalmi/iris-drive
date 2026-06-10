@@ -26,6 +26,7 @@
 		89D8B799C3537B200EACD87A /* FileProviderStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4711B533A555343A234B3E03 /* FileProviderStorage.swift */; };
 		A24658800A09D2C8CE9C0311 /* FileProviderStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4711B533A555343A234B3E03 /* FileProviderStorage.swift */; };
 		A2D69683D223341A6401A814 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A63880B58F406AD06ACD2A66 /* Assets.xcassets */; };
+		BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */; };
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
 /* End PBXBuildFile section */
@@ -81,6 +82,7 @@
 		4257294BF467D6B229B52DBD /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		4711B533A555343A234B3E03 /* FileProviderStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderStorage.swift; sourceTree = "<group>"; };
 		51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveNativeCore.swift; sourceTree = "<group>"; };
+		57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupLoadingView.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupViews.swift; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 				050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */,
 				05D4B51FEA3B8CED41DCF37E /* IrisDriveTypes.swift */,
 				0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */,
+				57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -325,6 +328,7 @@
 				4BEA90FF19E22C4AC1DBD5BF /* IrisDriveRootView.swift in Sources */,
 				894AF158E3CF979243462B09 /* IrisDriveTypes.swift in Sources */,
 				E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */,
+				BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

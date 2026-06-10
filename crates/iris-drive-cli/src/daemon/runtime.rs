@@ -1,7 +1,13 @@
 #[allow(clippy::needless_pass_by_value)]
 fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
-    let payload = write_daemon_status(config_dir, payload);
+    let payload = write_runtime_daemon_status(config_dir, payload);
     println!("{payload}");
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn write_runtime_daemon_status(config_dir: &Path, mut payload: Value) -> Value {
+    normalize_daemon_status_for_clients(config_dir, &mut payload);
+    write_daemon_status(config_dir, payload)
 }
 
 #[allow(
@@ -39,7 +45,7 @@ pub(crate) fn cmd_daemon(
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     state.recompute_authorization();
     if state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Revoked {
-        write_daemon_status(config_dir, json!({
+        write_runtime_daemon_status(config_dir, json!({
             "event": "revoked",
             "error": "device removed",
         }));
@@ -260,7 +266,7 @@ pub(crate) fn cmd_daemon(
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
-        let subscribed_status = write_daemon_status(config_dir, subscribed_status);
+        let subscribed_status = write_runtime_daemon_status(config_dir, subscribed_status);
         println!("{subscribed_status}");
         spawn_daemon_heartbeat(config_dir.to_path_buf());
 
