@@ -437,8 +437,10 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
     let npub: String
     let label: String?
     let displayLabel: String
+    let actorKind: String
     let role: String
     let roleLabel: String
+    let stateLabel: String
     let isCurrentDevice: Bool
     let authorized: Bool
     let fipsOnline: Bool
@@ -465,22 +467,34 @@ struct IrisDrivePeerStatus: Identifiable, Equatable {
             json["fips_online"] as? Bool
             ?? json["is_online"] as? Bool
             ?? false
+        let roleValue = json["role"] as? String ?? ""
+        let connectionStateValue = json["connection_state"] as? String ?? stateValue ?? ""
         id = pubkey
         npub = json["app_key_npub"] as? String ?? json["pubkey"] as? String ?? pubkey
         label = labelValue
         displayLabel = json["display_label"] as? String ?? ""
-        role = json["role"] as? String ?? ""
+        actorKind =
+            json["actor_kind"] as? String
+            ?? (roleValue == "recovery" || connectionStateValue == "recovery"
+                ? "recovery_key"
+                : "device")
+        role = roleValue
         roleLabel = json["role_label"] as? String ?? ""
+        stateLabel = json["state_label"] as? String ?? ""
         isCurrentDevice = isCurrentDeviceValue
         authorized = authorizedValue
         fipsOnline = fipsOnlineValue
-        connectionState = json["connection_state"] as? String ?? stateValue ?? ""
+        connectionState = connectionStateValue
         connectionLabel = json["connection_label"] as? String ?? ""
         hasRoot = json["has_root"] as? Bool ?? false
         rootCID = json["root_cid"] as? String
         rootIsPrivate = json["root_private"] as? Bool
         publishedAt = (json["published_at"] as? NSNumber)?.intValue
         dckGeneration = (json["dck_generation"] as? NSNumber)?.intValue
+    }
+
+    var isDeviceActor: Bool {
+        actorKind == "device"
     }
 }
 

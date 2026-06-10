@@ -724,6 +724,14 @@ struct IrisDriveControlPanel: View {
 
     // MARK: Devices
 
+    private var devicePeers: [IrisDrivePeerStatus] {
+        status.peers.filter(\.isDeviceActor)
+    }
+
+    private var recoveryKeyPeers: [IrisDrivePeerStatus] {
+        status.peers.filter { !$0.isDeviceActor }
+    }
+
     private var peers: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -744,17 +752,32 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            if status.peers.isEmpty {
+            if devicePeers.isEmpty {
                 emptyState("No devices yet")
             } else {
-                let adminCount = status.peers.filter { $0.role == "admin" }.count
-                ForEach(status.peers) { peer in
+                let adminCount = devicePeers.filter { $0.role == "admin" }.count
+                ForEach(devicePeers) { peer in
                     PeerRow(
                         peer: peer,
                         canManageDevices: status.canAdminProfile,
                         adminCount: adminCount,
                         controller: controller
                     )
+                }
+            }
+            if !recoveryKeyPeers.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Recovery Keys")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(recoveryKeyPeers) { peer in
+                        PeerRow(
+                            peer: peer,
+                            canManageDevices: status.canAdminProfile,
+                            adminCount: 0,
+                            controller: controller
+                        )
+                    }
                 }
             }
             if !status.inboundAppKeyLinkRequests.isEmpty {
@@ -2273,11 +2296,13 @@ private struct PeerRow: View {
                 }
             } label: {
                 HStack(spacing: 12) {
-                    Circle()
-                        .fill(
-                            peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5)
-                        )
-                        .frame(width: 8, height: 8)
+                    if peer.isDeviceActor {
+                        Circle()
+                            .fill(
+                                peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5)
+                            )
+                            .frame(width: 8, height: 8)
+                    }
                     Image(
                         systemName: peer.role == "recovery"
                             ? "key.fill"
@@ -2367,6 +2392,11 @@ private struct PeerRow: View {
     }
 
     private var subtitle: String {
+        if !peer.isDeviceActor {
+            return [peer.roleLabel, peer.stateLabel]
+                .filter { !$0.isEmpty }
+                .joined(separator: " | ")
+        }
         if peer.isCurrentDevice {
             return "\(peer.connectionLabel) | \(peer.roleLabel)"
         }

@@ -3,6 +3,7 @@ import Foundation
 struct IrisDriveDevice: Identifiable, Equatable {
     var id: String { detail }
     var label: String
+    var actorKind: String
     var role: String
     var state: String
     var connectionState: String
@@ -13,6 +14,10 @@ struct IrisDriveDevice: Identifiable, Equatable {
     var canRevoke: Bool
     var canAppointAdmin: Bool
     var canDemoteAdmin: Bool
+
+    var isDeviceActor: Bool {
+        actorKind == "device"
+    }
 }
 
 struct IrisDriveAppKeyLinkRequest: Identifiable, Equatable {

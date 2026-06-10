@@ -95,6 +95,7 @@ class AppStateTest {
                   }]
                 },
                 "app_actors": [{
+                  "actor_kind": "device",
                   "pubkey": "device-a",
                   "label": "Pixel",
                   "display_label": "This Device",
@@ -123,11 +124,41 @@ class AppStateTest {
         assertEquals(1, state.fips.rosterOnlineDeviceCount)
         assertEquals("TCP, 12 ms", state.fips.peerStatuses.single().connectionLabel)
         assertEquals("This Device", state.devices.single().displayLabel)
+        assertEquals("device", state.devices.single().actorKind)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)
         assertEquals("local", state.devices.single().connectionState)
         assertEquals("This Device", state.devices.single().connectionLabel)
         assertEquals("{\"profile_id\":\"profile-a\"}", state.lastShareRecipientEvidence)
+    }
+
+    @Test
+    fun recoveryActorKindFallsBackFromRoleForOlderNativeJson() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "app_actors": [{
+                  "pubkey": "npub1recovery",
+                  "label": "Recovery key",
+                  "display_label": "Recovery key",
+                  "role": "recovery",
+                  "role_label": "Recovery",
+                  "state": "linked",
+                  "state_label": "Linked",
+                  "connection_state": "recovery",
+                  "connection_label": "Recovery key",
+                  "detail": "npub1recovery",
+                  "is_current_app_key": false,
+                  "is_online": false
+                }]
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("recovery_key", state.devices.single().actorKind)
     }
 
     @Test

@@ -669,78 +669,29 @@ private struct DevicesView: View {
     @State private var showingAddRecoveryKey = false
     @State private var devicePendingDelete: IrisDriveDevice?
 
+    private var deviceActors: [IrisDriveDevice] {
+        model.devices.filter(\.isDeviceActor)
+    }
+
+    private var recoveryKeyActors: [IrisDriveDevice] {
+        model.devices.filter { !$0.isDeviceActor }
+    }
+
     var body: some View {
         List {
             Section {
-                ForEach(model.devices) { device in
-                    DisclosureGroup {
-                        if device.detail == model.devicePublicKey {
-                            LabeledContent("Device Key", value: model.devicePublicKey)
-                        }
-                        Text(device.detail)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
-                            HStack {
-                                if device.canAppointAdmin {
-                                    Button {
-                                        model.appointAdmin(id: device.id)
-                                    } label: {
-                                        Label("Make Admin", systemImage: "person.badge.key")
-                                    }
-                                }
-                                if device.canDemoteAdmin {
-                                    Button {
-                                        model.demoteAdmin(id: device.id)
-                                    } label: {
-                                        Label("Remove Admin", systemImage: "person.badge.minus")
-                                    }
-                                }
-                                if device.canRevoke {
-                                    Button(role: .destructive) {
-                                        devicePendingDelete = device
-                                    } label: {
-                                        Label("Remove", systemImage: "trash")
-                                    }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: device.isOnline ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(device.isOnline ? .green : .secondary)
-                            VStack(alignment: .leading) {
-                                Text(device.label)
-                                Text("\(device.role) | \(device.state) | \(device.connectionLabel)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .swipeActions {
-                        if device.canAppointAdmin {
-                            Button {
-                                model.appointAdmin(id: device.id)
-                            } label: {
-                                Label("Make Admin", systemImage: "person.badge.key")
-                            }
-                        }
-                        if device.canDemoteAdmin {
-                            Button {
-                                model.demoteAdmin(id: device.id)
-                            } label: {
-                                Label("Remove Admin", systemImage: "person.badge.minus")
-                            }
-                        }
-                        if device.canRevoke {
-                            Button(role: .destructive) {
-                                devicePendingDelete = device
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
+                if deviceActors.isEmpty {
+                    Text("No devices yet")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(deviceActors) { device in
+                    deviceRow(device, showPresence: true)
+                }
+            }
+            if !recoveryKeyActors.isEmpty {
+                Section("Recovery Keys") {
+                    ForEach(recoveryKeyActors) { device in
+                        deviceRow(device, showPresence: false)
                     }
                 }
             }
@@ -792,6 +743,89 @@ private struct DevicesView: View {
         } message: { device in
             Text("Remove \(device.label) from Iris Drive? This removes its access to future syncs.")
         }
+    }
+
+    @ViewBuilder
+    private func deviceRow(_ device: IrisDriveDevice, showPresence: Bool) -> some View {
+        DisclosureGroup {
+            if device.detail == model.devicePublicKey {
+                LabeledContent("Device Key", value: model.devicePublicKey)
+            }
+            Text(device.detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
+                HStack {
+                    if device.canAppointAdmin {
+                        Button {
+                            model.appointAdmin(id: device.id)
+                        } label: {
+                            Label("Make Admin", systemImage: "person.badge.key")
+                        }
+                    }
+                    if device.canDemoteAdmin {
+                        Button {
+                            model.demoteAdmin(id: device.id)
+                        } label: {
+                            Label("Remove Admin", systemImage: "person.badge.minus")
+                        }
+                    }
+                    if device.canRevoke {
+                        Button(role: .destructive) {
+                            devicePendingDelete = device
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        } label: {
+            HStack {
+                if showPresence {
+                    Image(systemName: device.isOnline ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(device.isOnline ? .green : .secondary)
+                }
+                VStack(alignment: .leading) {
+                    Text(device.label)
+                    Text(deviceSubtitle(device, includeConnection: showPresence))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .swipeActions {
+            if device.canAppointAdmin {
+                Button {
+                    model.appointAdmin(id: device.id)
+                } label: {
+                    Label("Make Admin", systemImage: "person.badge.key")
+                }
+            }
+            if device.canDemoteAdmin {
+                Button {
+                    model.demoteAdmin(id: device.id)
+                } label: {
+                    Label("Remove Admin", systemImage: "person.badge.minus")
+                }
+            }
+            if device.canRevoke {
+                Button(role: .destructive) {
+                    devicePendingDelete = device
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private func deviceSubtitle(_ device: IrisDriveDevice, includeConnection: Bool) -> String {
+        var parts = [device.role, device.state].filter { !$0.isEmpty }
+        if includeConnection && !device.connectionLabel.isEmpty {
+            parts.append(device.connectionLabel)
+        }
+        return parts.joined(separator: " | ")
     }
 }
 

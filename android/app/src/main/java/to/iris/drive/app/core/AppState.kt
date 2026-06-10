@@ -111,6 +111,7 @@ internal data class DeviceState(
     val canRevoke: Boolean,
     val canAppointAdmin: Boolean,
     val canDemoteAdmin: Boolean,
+    val actorKind: String = "device",
 )
 
 internal data class BackupState(
@@ -570,23 +571,33 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
             val item = optJSONObject(index) ?: continue
             val isCurrentDevice = item.optBoolean("is_current_app_key")
             val isOnline = item.optBoolean("is_online")
+            val role = item.optString("role")
+            val connectionState = item.optString("connection_state")
             add(
                 DeviceState(
                     pubkey = item.optString("pubkey"),
                     label = item.optString("label"),
                     displayLabel = item.optString("display_label"),
-                    role = item.optString("role"),
+                    role = role,
                     roleLabel = item.optString("role_label"),
                     state = item.optString("state"),
                     stateLabel = item.optString("state_label"),
                     detail = item.optString("detail"),
                     isCurrentDevice = isCurrentDevice,
                     isOnline = isOnline,
-                    connectionState = item.optString("connection_state"),
+                    connectionState = connectionState,
                     connectionLabel = item.optString("connection_label"),
                     canRevoke = item.optBoolean("can_revoke"),
                     canAppointAdmin = item.optBoolean("can_appoint_admin"),
                     canDemoteAdmin = item.optBoolean("can_demote_admin"),
+                    actorKind = item.optString(
+                        "actor_kind",
+                        if (role == "recovery" || connectionState == "recovery") {
+                            "recovery_key"
+                        } else {
+                            "device"
+                        },
+                    ),
                 ),
             )
         }

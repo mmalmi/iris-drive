@@ -1332,13 +1332,19 @@ impl NativeAppRuntime {
             .clone_into(&mut self.state.ui.setup_label);
         primary_status_label(&self.state.ui.primary_status)
             .clone_into(&mut self.state.ui.primary_status_label);
-        self.state.ui.authorized_app_key_count = self.state.ui.app_actors.len() as u64;
         self.state.ui.online_app_key_count = self
             .state
             .ui
             .app_actors
             .iter()
-            .filter(|app_actor| app_actor.is_online)
+            .filter(|app_actor| app_actor.actor_kind == "device" && app_actor.is_online)
+            .count() as u64;
+        self.state.ui.authorized_app_key_count = self
+            .state
+            .ui
+            .app_actors
+            .iter()
+            .filter(|app_actor| app_actor.actor_kind == "device")
             .count() as u64;
         self.state.ui.fips = fips_status.unwrap_or_else(paused_ui_fips_status);
     }
@@ -2486,6 +2492,7 @@ fn app_actors_from_account(
             )
             .iter()
             .map(|app_key| UiAppActor {
+                actor_kind: "device".to_owned(),
                 pubkey: app_key.npub.clone(),
                 label: app_key.label.clone().unwrap_or_default(),
                 display_label: app_key.display_label.clone(),
@@ -2529,6 +2536,7 @@ fn recovery_devices_from_account(state: &iris_drive_core::ProfileState) -> Vec<U
                 .unwrap_or("Recovery key")
                 .to_owned();
             UiAppActor {
+                actor_kind: "recovery_key".to_owned(),
                 pubkey: npub.clone(),
                 label: label.clone(),
                 display_label: label,

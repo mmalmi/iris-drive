@@ -68,11 +68,13 @@ internal fun DevicesPanel(
     var showAddDevice by remember { mutableStateOf(false) }
     var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
+    val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
+    val recoveryKeyActors = remember(devices) { devices.filterNot { it.isDeviceActor } }
     val manualRequestIsComplete = remember(request) {
         NativeCore.isCompleteLinkInput(request)
     }
 
-    CardSection(title = "Devices", trailing = "${devices.size}") {
+    CardSection(title = "Devices", trailing = "${deviceActors.size}") {
         if (canApprove) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
@@ -89,46 +91,30 @@ internal fun DevicesPanel(
                 }
             }
         }
-        devices.forEach { device ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                DeviceStatusDot(device = device)
-                Spacer(Modifier.size(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(device.displayLabel, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "${device.roleLabel} | ${device.stateLabel} | ${device.connectionLabel}",
-                        color = Muted,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (device.isCurrentDevice) {
-                        Text(
-                            "Device key: ${device.pubkey}",
-                            color = Muted,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (device.canAppointAdmin) {
-                    TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
-                        Text("Make admin")
-                    }
-                }
-                if (device.canDemoteAdmin) {
-                    TextButton(onClick = { onDemoteAdmin(device.pubkey) }) {
-                        Text("Remove admin")
-                    }
-                }
-                if (device.canRevoke) {
-                    TextButton(onClick = { devicePendingDelete = device }) {
-                        Icon(
-                            painterResource(R.drawable.ic_delete),
-                            contentDescription = null,
-                            tint = Danger,
-                        )
-                        Text("Remove", color = Danger)
-                    }
-                }
+        if (deviceActors.isEmpty()) {
+            Text("No devices yet", color = Muted)
+        }
+        deviceActors.forEach { device ->
+            DeviceActorRow(
+                device = device,
+                showStatusDot = true,
+                onAppointAdmin = onAppointAdmin,
+                onDemoteAdmin = onDemoteAdmin,
+                onDelete = { devicePendingDelete = it },
+            )
+        }
+    }
+
+    if (recoveryKeyActors.isNotEmpty()) {
+        CardSection(title = "Recovery Keys", trailing = "${recoveryKeyActors.size}") {
+            recoveryKeyActors.forEach { device ->
+                DeviceActorRow(
+                    device = device,
+                    showStatusDot = false,
+                    onAppointAdmin = onAppointAdmin,
+                    onDemoteAdmin = onDemoteAdmin,
+                    onDelete = { devicePendingDelete = it },
+                )
             }
         }
     }
@@ -179,6 +165,63 @@ internal fun DevicesPanel(
 }
 
 @Composable
+private fun DeviceActorRow(
+    device: DeviceState,
+    showStatusDot: Boolean,
+    onAppointAdmin: (String) -> Unit,
+    onDemoteAdmin: (String) -> Unit,
+    onDelete: (DeviceState) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        if (showStatusDot) {
+            DeviceStatusDot(device = device)
+            Spacer(Modifier.size(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(device.displayLabel, fontWeight = FontWeight.SemiBold)
+            Text(
+                actorSubtitle(
+                    roleLabel = device.roleLabel,
+                    stateLabel = device.stateLabel,
+                    connectionLabel = device.connectionLabel,
+                    includeConnection = showStatusDot,
+                ),
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (device.isCurrentDevice) {
+                Text(
+                    "Device key: ${device.pubkey}",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (device.canAppointAdmin) {
+            TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
+                Text("Make admin")
+            }
+        }
+        if (device.canDemoteAdmin) {
+            TextButton(onClick = { onDemoteAdmin(device.pubkey) }) {
+                Text("Remove admin")
+            }
+        }
+        if (device.canRevoke) {
+            TextButton(onClick = { onDelete(device) }) {
+                Icon(
+                    painterResource(R.drawable.ic_delete),
+                    contentDescription = null,
+                    tint = Danger,
+                )
+                Text("Remove", color = Danger)
+            }
+        }
+    }
+}
+
+@Composable
 private fun DeviceStatusDot(device: DeviceState) {
     Box(
         modifier = Modifier
@@ -193,6 +236,27 @@ private fun DeviceStatusDot(device: DeviceState) {
 }
 
 private val OnlineGreen = Color(0xFF16A34A)
+
+private val DeviceState.isDeviceActor: Boolean
+    get() = actorKind.ifBlank {
+        if (role == "recovery" || connectionState == "recovery") {
+            "recovery_key"
+        } else {
+            "device"
+        }
+    } == "device"
+
+private fun actorSubtitle(
+    roleLabel: String,
+    stateLabel: String,
+    connectionLabel: String,
+    includeConnection: Boolean,
+): String =
+    buildList {
+        if (roleLabel.isNotBlank()) add(roleLabel)
+        if (stateLabel.isNotBlank()) add(stateLabel)
+        if (includeConnection && connectionLabel.isNotBlank()) add(connectionLabel)
+    }.joinToString(" | ")
 
 private val DeviceState.onlineIndicatorDescription: String
     get() {
