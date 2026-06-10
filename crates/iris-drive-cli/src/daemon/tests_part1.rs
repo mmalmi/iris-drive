@@ -59,8 +59,8 @@ fn root_update_debounce_has_fast_floor() {
 }
 
 #[test]
-fn provider_root_poll_is_disabled_when_config_watch_is_active() {
-    assert!(!provider_root_poll_enabled(true));
+fn provider_root_poll_remains_safety_sweep_when_config_watch_is_active() {
+    assert!(provider_root_poll_enabled(true));
     assert!(provider_root_poll_enabled(false));
     assert_eq!(
         provider_root_poll_period(0),

@@ -53,8 +53,8 @@ async fn publish_provider_root_if_changed(
     ))?))
 }
 
-fn provider_root_poll_enabled(config_root_watch_active: bool) -> bool {
-    !config_root_watch_active
+fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {
+    true
 }
 
 fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
@@ -285,13 +285,12 @@ pub(crate) fn spawn_status_probe(
             Ok(status) => status,
             Err(_) => Some(json!({"status": "timeout"})),
         };
-        let mut status = json!({
+        let status = json!({
             "event": "relay_statuses",
             "relay_statuses": relay_statuses,
             "fips_block_sync": fips_status,
         });
-        normalize_daemon_status_for_clients(&config_dir, &mut status);
-        write_daemon_status(&config_dir, status.clone());
+        let status = write_daemon_status(&config_dir, status);
         println!("{status}");
     });
 }

@@ -511,6 +511,64 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
     output
 }
 
+pub(crate) fn cached_profile_identity_json_map(
+    state: &ProfileState,
+) -> serde_json::Map<String, Value> {
+    let snapshot = state.app_keys.as_ref();
+    let current_actor = snapshot.and_then(|snapshot| snapshot.app_actor(&state.app_key_pubkey));
+    let current_app_key_label = current_actor
+        .and_then(|actor| actor.label.clone())
+        .or_else(|| state.app_key_label.clone());
+    let can_write_roots = cached_can_write_roots(state);
+    let can_admin_profile =
+        snapshot.is_some_and(|snapshot| snapshot.is_admin(&state.app_key_pubkey));
+    let active_app_key_count = snapshot.map_or(0, |snapshot| snapshot.app_actors.len());
+    let current_key_epoch = snapshot.map(|snapshot| snapshot.dck_generation);
+    let authorization_state =
+        iris_drive_core::app_key_summary::authorization_state_key(state.authorization_state);
+    let profile = json!({
+        "profile_id": state.profile_id.to_string(),
+        "current_app_key_pubkey": state.app_key_pubkey.clone(),
+        "current_app_key_npub": pubkey_npub(&state.app_key_pubkey),
+        "current_app_key_label": current_app_key_label.clone(),
+        "authorization_state": authorization_state,
+        "can_write_roots": can_write_roots,
+        "can_admin_profile": can_admin_profile,
+        "active_app_key_count": active_app_key_count,
+        "profile_roster_op_count": state.profile_roster_ops.len(),
+        "current_key_epoch": current_key_epoch,
+        "recovery_phrase_facet_count": 0,
+        "nip46_facet_count": 0,
+        "social_profile_facet_count": 0,
+        "missing_key_wraps": Vec::<String>::new(),
+    });
+    let mut output = serde_json::Map::new();
+    output.insert("profile".to_string(), profile);
+    output.insert(
+        "profile_id".to_string(),
+        json!(state.profile_id.to_string()),
+    );
+    output.insert(
+        "current_app_key_pubkey".to_string(),
+        json!(state.app_key_pubkey.clone()),
+    );
+    output.insert(
+        "current_app_key_npub".to_string(),
+        json!(pubkey_npub(&state.app_key_pubkey)),
+    );
+    output.insert(
+        "current_app_key_label".to_string(),
+        json!(current_app_key_label),
+    );
+    output.insert(
+        "authorization_state".to_string(),
+        json!(authorization_state),
+    );
+    output.insert("can_write_roots".to_string(), json!(can_write_roots));
+    output.insert("can_admin_profile".to_string(), json!(can_admin_profile));
+    output
+}
+
 fn iris_profile_summary_json(
     summary: &iris_drive_core::app_key_summary::IrisProfileSummary,
 ) -> Value {

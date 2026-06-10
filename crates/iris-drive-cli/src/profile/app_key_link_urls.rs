@@ -40,8 +40,33 @@ pub(crate) fn resolve_app_key_link_target_with_admin(
     iris_drive_core::resolve_app_key_link_target(input, admin_app_key)
 }
 
+fn cached_can_admin_profile(state: &ProfileState) -> bool {
+    state
+        .app_keys
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.is_admin(&state.app_key_pubkey))
+}
+
+pub(crate) fn cached_can_write_roots(state: &ProfileState) -> bool {
+    state
+        .app_keys
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.contains(&state.app_key_pubkey))
+}
+
 pub(crate) fn app_key_link_request_json(state: &ProfileState) -> Value {
-    if state.can_admin_profile()
+    app_key_link_request_json_for_admin_state(state, state.can_admin_profile())
+}
+
+pub(crate) fn cached_app_key_link_request_json(state: &ProfileState) -> Value {
+    app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state))
+}
+
+fn app_key_link_request_json_for_admin_state(
+    state: &ProfileState,
+    can_admin_profile: bool,
+) -> Value {
+    if can_admin_profile
         || state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
     {
         return Value::Null;
@@ -79,7 +104,18 @@ pub(crate) fn app_key_link_request_json(state: &ProfileState) -> Value {
 }
 
 pub(crate) fn app_key_link_invite_json(state: &ProfileState) -> Value {
-    if !state.can_admin_profile() {
+    app_key_link_invite_json_for_admin_state(state, state.can_admin_profile())
+}
+
+pub(crate) fn cached_app_key_link_invite_json(state: &ProfileState) -> Value {
+    app_key_link_invite_json_for_admin_state(state, cached_can_admin_profile(state))
+}
+
+fn app_key_link_invite_json_for_admin_state(
+    state: &ProfileState,
+    can_admin_profile: bool,
+) -> Value {
+    if !can_admin_profile {
         return Value::Null;
     }
     let Ok(url) = iris_drive_core::app_key_link_invite::encode_app_key_link_invite(

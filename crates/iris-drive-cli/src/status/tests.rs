@@ -466,6 +466,28 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
 }
 
 #[test]
+fn daemon_status_profile_block_uses_cached_app_keys_without_reprojecting_roster() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let mut state = owner.state.clone();
+    state.profile_roster_ops.clear();
+    state.authorization_state = iris_drive_core::AppKeyAuthorizationState::Authorized;
+    let config = AppConfig {
+        profile: Some(state),
+        ..AppConfig::default()
+    };
+
+    let profile = status_profile_block(&config).expect("profile block");
+
+    assert_eq!(profile["authorization_state"], "authorized");
+    assert_eq!(profile["can_write_roots"], true);
+    assert_eq!(profile["can_admin_profile"], true);
+    assert_eq!(profile["current_app_key_label"], "Mac");
+    assert_eq!(profile["profile"]["active_app_key_count"], 1);
+    assert_eq!(profile["profile"]["profile_roster_op_count"], 0);
+}
+
+#[test]
 fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     let dir = tempfile::tempdir().unwrap();
     AppConfig::default()
