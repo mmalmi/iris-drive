@@ -17,6 +17,19 @@ struct IrisDriveRootView: View {
     @State private var selectedTab = MainTab.drive
 
     var body: some View {
+        ZStack(alignment: .bottom) {
+            content
+            if !model.copyFeedback.isEmpty {
+                CopyFeedbackToast(message: model.copyFeedback)
+                    .padding(.bottom, 18)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: model.copyFeedback)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if !model.isSetupComplete {
             if model.isRevoked {
                 RevokedDeviceSetupView(model: model)
@@ -78,6 +91,20 @@ struct IrisDriveRootView: View {
                 selectedTab = .shares
             }
         }
+    }
+}
+
+private struct CopyFeedbackToast: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.callout.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(radius: 10, y: 4)
     }
 }
 
@@ -1429,14 +1456,14 @@ private struct RecoveryPhraseExportView: View {
                 }
                 Section {
                     Button {
-                        UIPasteboard.general.string = export.recoveryPhrase
+                        model.copyToClipboard(export.recoveryPhrase, feedback: "Recovery phrase copied")
                         copied = true
                     } label: {
                         Label(copied ? "Copied" : "Copy recovery phrase", systemImage: "doc.on.doc")
                     }
                     .accessibilityIdentifier("copyRecoveryPhrase")
                     Button {
-                        UIPasteboard.general.string = export.secretKey
+                        model.copyToClipboard(export.secretKey, feedback: "Secret key copied")
                     } label: {
                         Label("Copy secret key", systemImage: "key")
                     }

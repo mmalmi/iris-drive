@@ -533,10 +533,10 @@ fn iris_profile_summary_json(
 }
 
 pub(crate) const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
-pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
 pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
 pub(crate) const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
-pub(crate) const APP_KEY_LINK_TICK_MILLIS: u64 = 250;
+pub(crate) const APP_KEY_LINK_TICK_MILLIS: u64 = 1_000;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SentAppKeyLinkRequest {

@@ -122,6 +122,8 @@ struct IrisDriveControlPanel: View {
     @State private var approveDeviceKey = ""
     @State private var approveDeviceKeyIsComplete = false
     @State private var approveDeviceLabel = ""
+    @State private var approveDeviceError = ""
+    @State private var approveDevicePending = false
     @State private var generatedRecoveryWords: [String] = []
     @State private var generatedRecoveryPubkey = ""
     @State private var generatedRecoveryWordIndex = 0
@@ -164,6 +166,14 @@ struct IrisDriveControlPanel: View {
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
         }
+        .overlay(alignment: .bottom) {
+            if let copyStatus = status.copyStatus, !copyStatus.isEmpty {
+                IrisDriveCopyToast(message: copyStatus)
+                    .padding(.bottom, 18)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: status.copyStatus)
     }
 
     private var controlPanel: some View {
@@ -811,11 +821,23 @@ struct IrisDriveControlPanel: View {
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
+                    approveDeviceError = ""
                     refreshApproveAppKeyLinkInput(newValue)
                 }
                 .onAppear {
                     refreshApproveAppKeyLinkInput(approveDeviceKey)
                 }
+            if !approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !approveDeviceKeyIsComplete {
+                Text("That is not a complete device key or request link.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            if !approveDeviceError.isEmpty {
+                Text(approveDeviceError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
             TextField("Name (optional)", text: $approveDeviceLabel)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -824,14 +846,23 @@ struct IrisDriveControlPanel: View {
                     showAddDevice = false
                 }
                 Button("Add") {
-                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel)
-                    approveDeviceKey = ""
-                    approveDeviceKeyIsComplete = false
-                    approveDeviceLabel = ""
-                    showAddDevice = false
+                    approveDevicePending = true
+                    approveDeviceError = ""
+                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel) { result in
+                        approveDevicePending = false
+                        switch result {
+                        case .success:
+                            approveDeviceKey = ""
+                            approveDeviceKeyIsComplete = false
+                            approveDeviceLabel = ""
+                            showAddDevice = false
+                        case let .failure(error):
+                            approveDeviceError = error.localizedDescription
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!approveDeviceKeyIsComplete)
+                .disabled(!approveDeviceKeyIsComplete || approveDevicePending)
             }
         }
         .padding(20)
@@ -1664,8 +1695,41 @@ struct IrisDriveControlPanel: View {
 }
 
 func irisDriveCopyToPasteboard(_ value: String) {
+    irisDriveCopyToPasteboard(value, feedback: "Copied")
+}
+
+func irisDriveCopyToPasteboard(_ value: String, feedback: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(value, forType: .string)
+    irisDriveShowCopyFeedback(feedback)
+}
+
+private var irisDriveCopyFeedbackGeneration = 0
+
+private func irisDriveShowCopyFeedback(_ message: String) {
+    DispatchQueue.main.async {
+        irisDriveCopyFeedbackGeneration += 1
+        let generation = irisDriveCopyFeedbackGeneration
+        IrisDriveStatus.shared.copyStatus = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard generation == irisDriveCopyFeedbackGeneration else { return }
+            IrisDriveStatus.shared.copyStatus = nil
+        }
+    }
+}
+
+private struct IrisDriveCopyToast: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(radius: 10, y: 4)
+    }
 }
 
 func scanQRCodeFromImage(_ completion: @escaping (String) -> Void) {
@@ -2382,32 +2446,50 @@ private struct PeerRow: View {
 private struct AppKeyLinkRequestRow: View {
     let request: IrisDriveAppKeyLinkRequestStatus
     let controller: AppDelegate
+    @State private var approvalError = ""
+    @State private var approvalPending = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "iphone.gen3")
-                .frame(width: 24)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(request.label?.isEmpty == false ? request.label! : "New Device")
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                Text(request.deviceNpub)
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: "iphone.gen3")
+                    .frame(width: 24)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(request.label?.isEmpty == false ? request.label! : "New Device")
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(request.deviceNpub)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    controller.rejectDevice(request.requestURL)
+                } label: {
+                    Label("Reject", systemImage: "xmark")
+                }
+                .disabled(approvalPending)
+                Button {
+                    approvalPending = true
+                    approvalError = ""
+                    controller.approveDevice(request.requestURL, label: request.label ?? "") { result in
+                        approvalPending = false
+                        if case let .failure(error) = result {
+                            approvalError = error.localizedDescription
+                        }
+                    }
+                } label: {
+                    Label("Add", systemImage: "checkmark")
+                }
+                .disabled(approvalPending)
             }
-            Spacer()
-            Button(role: .destructive) {
-                controller.rejectDevice(request.requestURL)
-            } label: {
-                Label("Reject", systemImage: "xmark")
-            }
-            Button {
-                controller.approveDevice(request.requestURL, label: request.label ?? "")
-            } label: {
-                Label("Add", systemImage: "checkmark")
+            if !approvalError.isEmpty {
+                Text(approvalError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
         }
         .padding(12)

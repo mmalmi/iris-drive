@@ -1,4 +1,6 @@
-use iris_drive_core::{DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame};
+use iris_drive_core::{
+    DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame, FipsMeshPubsubEvent,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
@@ -170,41 +172,54 @@ impl DirectRootExchange {
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     ) -> Result<()> {
         for message in sync.drain_mesh_pubsub_events().await {
-            if !message
-                .stream_id
-                .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
-            {
-                continue;
-            }
-            let frame: DirectRootFrame =
-                serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
-            let root_key = frame.key.clone();
-            let root_event_id = frame.event_id.clone();
-            if !self
-                .apply_direct_root_frame(
-                    client,
-                    config_dir,
-                    sync.clone(),
-                    mount_refresh.clone(),
-                    frame,
-                )
-                .await?
-            {
-                continue;
-            }
-            println!(
-                "{}",
-                json!({
-                    "event": "direct_root_mesh_event",
-                    "stream": message.stream_id,
-                    "peer": message.from_peer_id,
-                    "origin": message.origin_peer_id,
-                    "seq": message.seq,
-                    "root_key": root_key,
-                    "root_event_id": root_event_id,
-                })
-            );
+            self.handle_mesh_event(
+                client,
+                config_dir,
+                sync.clone(),
+                mount_refresh.clone(),
+                message,
+            )
+            .await?;
         }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_mesh_event(
+        &mut self,
+        client: &nostr_sdk::Client,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        message: FipsMeshPubsubEvent,
+    ) -> Result<()> {
+        if !message
+            .stream_id
+            .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
+        {
+            return Ok(());
+        }
+        let frame: DirectRootFrame =
+            serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
+        let root_key = frame.key.clone();
+        let root_event_id = frame.event_id.clone();
+        if !self
+            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, frame)
+            .await?
+        {
+            return Ok(());
+        }
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_mesh_event",
+                "stream": message.stream_id,
+                "peer": message.from_peer_id,
+                "origin": message.origin_peer_id,
+                "seq": message.seq,
+                "root_key": root_key,
+                "root_event_id": root_event_id,
+            })
+        );
         Ok(())
     }
 

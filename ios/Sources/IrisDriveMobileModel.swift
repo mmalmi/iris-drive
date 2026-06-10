@@ -56,6 +56,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var backups: [IrisDriveBackup] = []
     @Published var shares: [IrisDriveShare] = []
     @Published var roots: [IrisDriveRoot] = []
+    @Published var copyFeedback = ""
     @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
     @Published var authorizedDeviceCount = 0
@@ -71,6 +72,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var lastProviderSignalKey = ""
     private var currentProviderDirectoryPaths: [String] = []
     private var foregroundSyncTask: Task<Void, Never>?
+    private var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
 
@@ -710,19 +712,19 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func copyAppKey() {
-        UIPasteboard.general.string = currentAppKeyNpub
+        copyToClipboard(currentAppKeyNpub, feedback: "Device copied")
     }
 
     func copyDeviceKey() {
-        UIPasteboard.general.string = devicePublicKey
+        copyToClipboard(devicePublicKey, feedback: "Device key copied")
     }
 
     func copyLinkRequest() {
-        UIPasteboard.general.string = appKeyLinkRequest
+        copyToClipboard(appKeyLinkRequest, feedback: "Request link copied")
     }
 
     func copyLinkInvite() {
-        UIPasteboard.general.string = appKeyLinkInvite
+        copyToClipboard(appKeyLinkInvite, feedback: "Invite link copied")
     }
 
     func qrMatrix(for value: String) -> QrMatrix {
@@ -731,18 +733,35 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func copySnapshotLink() {
         guard !snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        UIPasteboard.general.string = snapshotLink
+        copyToClipboard(snapshotLink, feedback: "drive.iris.to link copied")
     }
 
     func copyLastShareInvite() {
         guard !lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        UIPasteboard.general.string = lastShareInvite
+        copyToClipboard(lastShareInvite, feedback: "Share invite copied")
     }
 
     func copyShareRecipientEvidence() {
         exportShareRecipientEvidence(displayName: deviceLabel)
         guard !lastShareRecipientEvidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        UIPasteboard.general.string = lastShareRecipientEvidence
+        copyToClipboard(lastShareRecipientEvidence, feedback: "Share identity copied")
+    }
+
+    func copyToClipboard(_ value: String, feedback: String) {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        UIPasteboard.general.string = value
+        showCopyFeedback(feedback)
+    }
+
+    private func showCopyFeedback(_ message: String) {
+        copyFeedbackTask?.cancel()
+        copyFeedback = message
+        copyFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            copyFeedback = ""
+        }
     }
 
     func openSnapshotLink() {

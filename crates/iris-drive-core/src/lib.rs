@@ -75,7 +75,7 @@ pub use direct_root_transport::{
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayServer};
-pub use hashtree_fips_transport::FipsAppMessage;
+pub use hashtree_fips_transport::{FipsAppMessage, FipsMeshPubsubEvent};
 pub use identity::{AppKey, Identity, IdentityError, RecoveryKey};
 pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,

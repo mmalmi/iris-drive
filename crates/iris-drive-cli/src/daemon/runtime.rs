@@ -14,7 +14,7 @@ fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
 pub(crate) fn cmd_daemon(
     config_dir: &std::path::Path,
     relay_override: &[String],
-    _watch_interval: u64,
+    watch_interval: u64,
     watch_debounce_ms: u64,
     gateway_port: u16,
     enable_gateway: bool,
@@ -295,6 +295,15 @@ pub(crate) fn cmd_daemon(
             startup_config,
             startup_state,
         );
+        if let Err(error) =
+            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
+                .await
+        {
+            println!(
+                "{}",
+                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+            );
+        }
         println!("(running — Ctrl+C to stop)");
 
         let ctrl_c = tokio::signal::ctrl_c();
@@ -308,10 +317,17 @@ pub(crate) fn cmd_daemon(
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut provider_root_poll_timer = tokio::time::interval(std::time::Duration::from_secs(1));
+        let direct_root_announce_period =
+            std::time::Duration::from_secs(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS);
+        let mut direct_root_announce_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + direct_root_announce_period,
+            direct_root_announce_period,
+        );
+        direct_root_announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let config_root_watch_active = config_root_change_rx.is_some();
+        let mut provider_root_poll_timer =
+            tokio::time::interval(provider_root_poll_period(watch_interval));
         provider_root_poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut direct_mesh_timer = tokio::time::interval(std::time::Duration::from_millis(100));
-        direct_mesh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut app_key_link_timer = tokio::time::interval_at(
             tokio::time::Instant::now(),
             std::time::Duration::from_millis(APP_KEY_LINK_TICK_MILLIS),
@@ -604,6 +620,8 @@ pub(crate) fn cmd_daemon(
                     direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await;
+                }
+                _ = direct_root_announce_timer.tick() => {
                     if let Err(error) =
                         announce_current_state_direct(
                             &mut direct_roots,
@@ -618,7 +636,7 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
-                _ = provider_root_poll_timer.tick() => {
+                _ = provider_root_poll_timer.tick(), if provider_root_poll_enabled(config_root_watch_active) => {
                     match publish_provider_root_if_changed(
                         &client,
                         config_dir,
@@ -721,21 +739,39 @@ pub(crate) fn cmd_daemon(
                         }
                     }
                 }
-                _ = direct_mesh_timer.tick() => {
-                    if let Some(sync) = fips_blocks.as_ref()
-                        && let Err(error) = direct_roots
-                            .drain_mesh_events(
+                message = async {
+                    if let Some(sync) = fips_blocks.clone() {
+                        sync.recv_mesh_pubsub_event().await
+                    } else {
+                        std::future::pending::<iris_drive_core::FipsMeshPubsubEvent>().await
+                    }
+                } => {
+                    if let Some(sync) = fips_blocks.as_ref() {
+                        let mut result = direct_roots
+                            .handle_mesh_event(
                                 &client,
                                 config_dir,
                                 sync.clone(),
                                 mount_refresh_tx.clone(),
+                                message,
                             )
-                            .await
-                    {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                        );
+                            .await;
+                        if result.is_ok() {
+                            result = direct_roots
+                                .drain_mesh_events(
+                                    &client,
+                                    config_dir,
+                                    sync.clone(),
+                                    mount_refresh_tx.clone(),
+                                )
+                                .await;
+                        }
+                        if let Err(error) = result {
+                            println!(
+                                "{}",
+                                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                            );
+                        }
                     }
                 }
             }

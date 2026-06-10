@@ -53,6 +53,14 @@ async fn publish_provider_root_if_changed(
     ))?))
 }
 
+fn provider_root_poll_enabled(config_root_watch_active: bool) -> bool {
+    !config_root_watch_active
+}
+
+fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(watch_interval_secs.max(1))
+}
+
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
     let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;

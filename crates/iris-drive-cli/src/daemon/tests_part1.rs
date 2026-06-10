@@ -59,6 +59,20 @@ fn root_update_debounce_has_fast_floor() {
 }
 
 #[test]
+fn provider_root_poll_is_disabled_when_config_watch_is_active() {
+    assert!(!provider_root_poll_enabled(true));
+    assert!(provider_root_poll_enabled(false));
+    assert_eq!(
+        provider_root_poll_period(0),
+        std::time::Duration::from_secs(1)
+    );
+    assert_eq!(
+        provider_root_poll_period(60),
+        std::time::Duration::from_secs(60)
+    );
+}
+
+#[test]
 fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {

@@ -129,12 +129,12 @@ const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(not(test))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
-const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 250;
+const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
 const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
 #[cfg(not(test))]
 const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
-#[cfg(not(test))]
-const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 250;
+const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 1_000;
+const NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy)]
 struct SentAppKeyLinkRequest {
@@ -1509,10 +1509,16 @@ async fn run_app_key_link_exchange_async(
     let mut sent_rosters = BTreeMap::new();
     let mut acked_rosters = BTreeSet::new();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
-    let mut tick = tokio::time::interval(std::time::Duration::from_millis(
+    let mut app_key_link_tick = tokio::time::interval(std::time::Duration::from_millis(
         APP_KEY_LINK_EXCHANGE_TICK_MILLIS,
     ));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    app_key_link_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let direct_root_period = std::time::Duration::from_millis(NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS);
+    let mut direct_root_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + direct_root_period,
+        direct_root_period,
+    );
+    direct_root_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let _ = drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
@@ -1523,10 +1529,16 @@ async fn run_app_key_link_exchange_async(
         &acked_rosters,
     )
     .await?;
+    if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
+        tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
+    }
+    if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
+        tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
+    }
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
-            _ = tick.tick() => {
+            _ = app_key_link_tick.tick() => {
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
@@ -1539,8 +1551,19 @@ async fn run_app_key_link_exchange_async(
                     &mut sent_rosters,
                     &acked_rosters,
                 ).await?;
+            }
+            _ = direct_root_tick.tick() => {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
                 if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
                     tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
+                }
+            }
+            message = sync.recv_mesh_pubsub_event() => {
+                if let Err(error) = direct_roots.handle_mesh_event(config_dir, &sync, message).await {
+                    tracing::warn!(error = %error, "native direct-root FIPS mesh event failed");
+                    continue;
                 }
                 if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
                     tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");

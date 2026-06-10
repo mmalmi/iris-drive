@@ -261,6 +261,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.mesh_pubsub.drain_pubsub_events().await
     }
 
+    pub async fn recv_mesh_pubsub_event(&self) -> FipsMeshPubsubEvent {
+        self.mesh_pubsub.recv_pubsub_event().await
+    }
+
     pub async fn mesh_peer_count(&self) -> usize {
         self.mesh_pubsub.peer_count().await
     }

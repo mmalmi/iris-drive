@@ -122,16 +122,26 @@ impl DirectRootExchange {
         sync: &FsFipsBlockSync,
     ) -> Result<(), String> {
         for message in sync.drain_mesh_pubsub_events().await {
-            if !message
-                .stream_id
-                .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
-            {
-                continue;
-            }
-            let frame: DirectRootFrame = serde_json::from_slice(&message.payload)
-                .map_err(|error| format!("parsing direct-root mesh frame: {error}"))?;
-            self.apply_frame(config_dir, sync, frame).await?;
+            self.handle_mesh_event(config_dir, sync, message).await?;
         }
+        Ok(())
+    }
+
+    pub async fn handle_mesh_event(
+        &mut self,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+        message: crate::FipsMeshPubsubEvent,
+    ) -> Result<(), String> {
+        if !message
+            .stream_id
+            .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
+        {
+            return Ok(());
+        }
+        let frame: DirectRootFrame = serde_json::from_slice(&message.payload)
+            .map_err(|error| format!("parsing direct-root mesh frame: {error}"))?;
+        self.apply_frame(config_dir, sync, frame).await?;
         Ok(())
     }
 

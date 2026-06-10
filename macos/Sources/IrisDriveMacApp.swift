@@ -716,7 +716,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         copyText(link, statusMessage: "drive.iris.to link copied")
-        IrisDriveStatus.shared.copyStatus = "Copied"
         NSLog("Iris Drive drive.iris.to link copied")
     }
 
@@ -735,8 +734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+        irisDriveCopyToPasteboard(value, feedback: statusMessage)
         updateStatus(statusMessage)
     }
 
@@ -949,10 +947,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    func approveDevice(_ device: String, label: String) {
+    func approveDevice(
+        _ device: String,
+        label: String,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
             updateStatus("Device key required")
+            completion?(.failure(NSError(
+                domain: "IrisDriveMac",
+                code: 40,
+                userInfo: [NSLocalizedDescriptionKey: "Device key required"]
+            )))
             return
         }
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -960,7 +967,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ["type": "approve_device", "request": device, "label": label],
             progress: "Approving device",
             success: "Device approved",
-            restartSyncAfterSuccess: true
+            restartSyncAfterSuccess: true,
+            completion: {
+                completion?(.success(()))
+            },
+            failure: { error in
+                completion?(.failure(error))
+            }
         )
     }
 
@@ -2198,7 +2211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         progress: String,
         success: String,
         restartSyncAfterSuccess: Bool = false,
-        completion: (() -> Void)? = nil
+        completion: (() -> Void)? = nil,
+        failure: ((Error) -> Void)? = nil
     ) {
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
@@ -2227,9 +2241,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } catch {
                 NSLog("Iris Drive native action failed: \(error)")
-                self.updateStatus("\(success) failed")
+                self.updateStatus(error.localizedDescription)
                 DispatchQueue.main.async {
                     NSSound.beep()
+                    failure?(error)
                 }
             }
         }
