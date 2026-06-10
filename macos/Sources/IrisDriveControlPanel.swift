@@ -139,6 +139,8 @@ struct IrisDriveControlPanel: View {
     @State private var showMyNpub = false
     @State private var revokeShareMember: ShareMemberRevokeTarget?
     @State private var checkingAllFileServers = false
+    @State private var checkedFileServerCount = 0
+    @State private var fileServerCheckTotal = 0
     @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
     @State private var recoveryExportWordIndex = 0
@@ -1366,6 +1368,13 @@ struct IrisDriveControlPanel: View {
         return value.isEmpty ? nil : value
     }
 
+    private var checkingAllFileServersLabel: String {
+        if fileServerCheckTotal > 0 {
+            return "Checking \(checkedFileServerCount) of \(fileServerCheckTotal)"
+        }
+        return "Checked \(checkedFileServerCount)"
+    }
+
     // MARK: File Servers
 
     private var fileServers: some View {
@@ -1375,12 +1384,24 @@ struct IrisDriveControlPanel: View {
                 Spacer()
                 Button {
                     guard !checkingAllFileServers else { return }
+                    let targets = status.backupTargets
+                    checkedFileServerCount = 0
+                    fileServerCheckTotal = targets.count
                     checkingAllFileServers = true
-                    controller.checkBackups(status.backupTargets) {
+                    controller.checkBackups(targets, progress: { checked, total in
+                        checkedFileServerCount = checked
+                        fileServerCheckTotal = total
+                    }) {
                         checkingAllFileServers = false
+                        checkedFileServerCount = 0
+                        fileServerCheckTotal = 0
                     }
                 } label: {
-                    Label(checkingAllFileServers ? "Checking..." : "Check All", systemImage: "checkmark.shield")
+                    if checkingAllFileServers {
+                        Text(checkingAllFileServersLabel)
+                    } else {
+                        Label("Check All", systemImage: "checkmark.shield")
+                    }
                 }
                 .disabled(status.backupTargets.isEmpty || checkingAllFileServers)
                 Button {
@@ -1389,6 +1410,17 @@ struct IrisDriveControlPanel: View {
                     Label("Sync Now", systemImage: "arrow.up.circle")
                 }
                 .disabled(status.backupTargets.isEmpty)
+            }
+            if checkingAllFileServers {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(
+                        value: Double(checkedFileServerCount),
+                        total: Double(max(fileServerCheckTotal, 1))
+                    )
+                    Text(checkingAllFileServersLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -1470,7 +1502,7 @@ struct IrisDriveControlPanel: View {
                     )
                 )
                 Toggle(
-                    "nhash.iris.localhost resolver",
+                    "*.iris.localhost resolver",
                     isOn: Binding(
                         get: { status.localNhashResolverEnabled },
                         set: { controller.setLocalNhashResolver($0) }
@@ -1503,7 +1535,10 @@ struct IrisDriveControlPanel: View {
                     Button {
                         controller.checkForUpdates()
                     } label: {
-                        Label(status.updateChecking ? "Checking..." : "Check for Updates", systemImage: "arrow.clockwise")
+                        Label(
+                            status.updateChecking ? "Checking for Updates" : "Check for Updates",
+                            systemImage: "arrow.clockwise"
+                        )
                     }
                     .disabled(status.updateChecking || status.updateInstalling)
                     Button {

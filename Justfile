@@ -198,6 +198,7 @@ structure:
     ./scripts/check-desktop-core-backed-actions.sh
     ./scripts/check-macos-native-link-input.sh
     ./scripts/check-macos-normalized-status.sh
+    ./scripts/check-macos-gateway-default.sh
     ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh

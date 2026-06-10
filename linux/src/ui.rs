@@ -322,7 +322,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     launch_on_startup.add_css_class("iris-setting-check");
     launch_on_startup.set_active(true);
     settings_page.append(&launch_on_startup);
-    let local_nhash_resolver = gtk::CheckButton::with_label("nhash.iris.localhost resolver");
+    let local_nhash_resolver = gtk::CheckButton::with_label("*.iris.localhost resolver");
     local_nhash_resolver.add_css_class("iris-setting-check");
     local_nhash_resolver.set_active(true);
     settings_page.append(&local_nhash_resolver);
@@ -420,6 +420,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     window.set_content(Some(&root));
 
     let (update_sender, update_receiver) = mpsc::channel();
+    let (backup_check_sender, backup_check_receiver) = mpsc::channel();
     let model = Rc::new(AppModel {
         application: app.clone(),
         ui: Ui {
@@ -503,6 +504,9 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         ))),
         update_sender,
         update_receiver: RefCell::new(update_receiver),
+        backup_check_sender,
+        backup_check_receiver: RefCell::new(backup_check_receiver),
+        backup_checking: Cell::new(false),
         closed_to_tray: Cell::new(false),
         launch_on_startup_synced: Cell::new(None),
         retired: Cell::new(false),
@@ -678,6 +682,17 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     }
 
     connect_tray(&model, &window);
+
+    {
+        let model = Rc::clone(&model);
+        glib::timeout_add_local(Duration::from_millis(150), move || {
+            if model.retired.get() {
+                return glib::ControlFlow::Break;
+            }
+            drain_backup_check_events(&model);
+            glib::ControlFlow::Continue
+        });
+    }
 
     {
         let model = Rc::clone(&model);

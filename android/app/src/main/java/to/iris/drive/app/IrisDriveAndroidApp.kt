@@ -179,6 +179,7 @@ internal fun IrisDriveAndroidApp(
     stateFlow: StateFlow<AppState>,
     shareDialogFlow: StateFlow<ShareDialogRequest?>,
     selfUpdateStateFlow: StateFlow<AndroidSelfUpdateState>,
+    backupCheckProgressFlow: StateFlow<BackupCheckProgress>,
     selfUpdateActions: SelfUpdateActions,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
@@ -222,6 +223,7 @@ internal fun IrisDriveAndroidApp(
     val state by stateFlow.collectAsState()
     val shareDialogRequest by shareDialogFlow.collectAsState()
     val selfUpdateState by selfUpdateStateFlow.collectAsState()
+    val backupCheckProgress by backupCheckProgressFlow.collectAsState()
     val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
     var showStartupLoading by remember { mutableStateOf(false) }
@@ -306,6 +308,7 @@ internal fun IrisDriveAndroidApp(
                     state = state,
                     selfUpdateState = selfUpdateState,
                     selfUpdateActions = selfUpdateActions,
+                    backupCheckProgress = backupCheckProgress,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
                     onCopyAppKey = { onCopyText("Device", activeProfile.currentAppKeyNpub) },

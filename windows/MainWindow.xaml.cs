@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private string? preparedDriveRefreshKey;
     private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
+    private bool checkingBackups;
     private bool updateChecking;
     private bool updateInstalling;
     private bool updateAvailable;
@@ -324,77 +325,6 @@ public partial class MainWindow : Window
         PeersList.Items.Add(Row("Recovery Keys", recoveryKeyPeers.Count.ToString(), ""));
         foreach (var peer in recoveryKeyPeers)
             PeersList.Items.Add(PeerListRow(peer));
-    }
-
-    private void RenderBackups(IrisDriveStatusData status)
-    {
-        BackupsList.Items.Clear();
-        if (status.BackupTargets.Count == 0)
-        {
-            BackupsList.Items.Add(Row("No backup targets", "", ""));
-            return;
-        }
-
-        foreach (var target in status.BackupTargets)
-        {
-            BackupsList.Items.Add(BackupListRow(target));
-        }
-    }
-
-    private Border BackupListRow(BackupTargetRow target)
-    {
-        var titleBlock = new TextBlock
-        {
-            Text = target.Title,
-            FontWeight = FontWeights.SemiBold,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        };
-        var subtitleBlock = new TextBlock
-        {
-            Text = target.Subtitle,
-            Foreground = WpfBrushes.Gray,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        };
-        var stateBlock = new TextBlock
-        {
-            Text = target.State,
-            Foreground = WpfBrushes.Gray,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
-        };
-
-        var text = new StackPanel { Orientation = WpfOrientation.Vertical };
-        text.Children.Add(titleBlock);
-        text.Children.Add(subtitleBlock);
-
-        var check = new WpfButton { Content = "Check", Tag = target.Target, Margin = new Thickness(0, 0, 6, 0) };
-        check.Click += CheckBackupTarget_Click;
-        var removeText = target.Kind == "blossom" ? "Remove file server" : "Remove target";
-        var remove = new WpfButton { Content = removeText, Tag = target.Target };
-        remove.Click += RemoveBackupTarget_Click;
-
-        var actions = new StackPanel
-        {
-            Orientation = WpfOrientation.Horizontal,
-            HorizontalAlignment = WpfHorizontalAlignment.Right,
-        };
-        actions.Children.Add(stateBlock);
-        actions.Children.Add(check);
-        actions.Children.Add(remove);
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(text, 0);
-        Grid.SetColumn(actions, 1);
-        grid.Children.Add(text);
-        grid.Children.Add(actions);
-
-        return new Border
-        {
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
-        };
     }
 
     private Border PeerListRow(PeerRow peer)
@@ -1001,87 +931,6 @@ public partial class MainWindow : Window
         try
         {
             await service.ResetRelaysAsync();
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void AddBackup_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await service.AddBackupTargetAsync(BackupTargetBox.Text, BackupLabelBox.Text);
-            BackupTargetBox.Clear();
-            BackupLabelBox.Clear();
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void SyncBackups_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await service.SyncBackupsAsync();
-            NoticeText.Text = "Backups synced";
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void CheckBackups_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await service.CheckBackupsAsync();
-            NoticeText.Text = "Backups checked";
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void CheckBackupTarget_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as WpfButton)?.Tag is not string target)
-        {
-            return;
-        }
-
-        try
-        {
-            await service.CheckBackupsAsync(target);
-            NoticeText.Text = "Target checked";
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void RemoveBackupTarget_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as WpfButton)?.Tag is not string target)
-        {
-            return;
-        }
-
-        try
-        {
-            await service.RemoveBackupTargetAsync(target);
-            NoticeText.Text = "Target removed";
             await RefreshAsync();
         }
         catch (Exception error)

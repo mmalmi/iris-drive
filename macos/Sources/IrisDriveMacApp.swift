@@ -1725,7 +1725,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configure(
             process,
             executable: idrive,
-            arguments: ["daemon", "--watch-interval", "0", "--no-gateway"],
+            arguments: ["daemon", "--watch-interval", "0"],
             paths: paths
         )
         pipeLogs(from: process, label: "idrive")
@@ -2182,6 +2182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.onlineDeviceCount = Self.intValue(ui["online_app_key_count"]) ?? 0
             status.fileCount = Self.intValue(ui["file_count"]) ?? 0
             status.visibleFileBytes = Self.int64Value(ui["visible_file_bytes"]) ?? 0
+            status.localNhashResolverEnabled =
+                ui["local_nhash_resolver_enabled"] as? Bool ?? status.localNhashResolverEnabled
+            let portalURL = ui["sites_portal_url"] as? String ?? ""
+            status.sitesPortalURL = portalURL.isEmpty ? nil : portalURL
             status.relays = ui["relays"] as? [String] ?? []
             status.relayStatuses =
                 (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)

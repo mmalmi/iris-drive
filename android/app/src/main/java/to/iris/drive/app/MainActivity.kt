@@ -38,6 +38,7 @@ import to.iris.drive.app.update.SelfUpdateActions
 
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
+    private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
     private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 stateFlow = stateFlow,
                 shareDialogFlow = shareDialogFlow,
                 selfUpdateStateFlow = selfUpdateManager.state,
+                backupCheckProgressFlow = backupCheckProgressFlow,
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = selfUpdateManager::setAutoCheckEnabled,
                     check = { selfUpdateManager.check() },
@@ -142,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.syncBackups(target))
                 },
                 onCheckBackups = { target ->
-                    dispatch(NativeActions.checkBackups(target))
+                    checkBackupsWithProgress(target)
                 },
                 onCreateShare = { sourcePath, displayName ->
                     createShareFromProviderPath(sourcePath, displayName)
@@ -312,6 +314,57 @@ class MainActivity : ComponentActivity() {
                 writeDebugState()
                 IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
                 onState?.invoke(state)
+            }
+        }
+    }
+
+    private fun checkBackupsWithProgress(target: String) {
+        if (backupCheckProgressFlow.value.isRunning) return
+        val targets =
+            if (target.isBlank()) {
+                stateFlow.value.backups
+                    .map { it.target.trim() }
+                    .filter { it.isNotEmpty() }
+            } else {
+                listOf(target.trim()).filter { it.isNotEmpty() }
+            }
+        if (targets.isEmpty()) return
+
+        val handle = nativeHandle
+        if (handle == 0L) return
+        backupCheckProgressFlow.value = BackupCheckProgress(
+            checked = 0,
+            total = targets.size,
+            activeTarget = targets.first(),
+        )
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                for ((index, currentTarget) in targets.withIndex()) {
+                    withContext(Dispatchers.Main) {
+                        backupCheckProgressFlow.value = BackupCheckProgress(
+                            checked = index,
+                            total = targets.size,
+                            activeTarget = currentTarget,
+                        )
+                    }
+                    val state =
+                        stateFromJson(NativeCore.dispatchJson(handle, NativeActions.checkBackups(currentTarget)))
+                    withContext(Dispatchers.Main) {
+                        stateFlow.value = state
+                        writeDebugState()
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+                        backupCheckProgressFlow.value = BackupCheckProgress(
+                            checked = index + 1,
+                            total = targets.size,
+                            activeTarget = targets.getOrNull(index + 1).orEmpty(),
+                        )
+                    }
+                }
+                delay(350)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    backupCheckProgressFlow.value = BackupCheckProgress()
+                }
             }
         }
     }

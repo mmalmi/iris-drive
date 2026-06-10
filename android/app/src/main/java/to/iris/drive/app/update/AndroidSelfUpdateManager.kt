@@ -354,7 +354,7 @@ internal fun parseUpdateResult(body: String): IrisDriveUpdateResult {
 
 internal fun AndroidSelfUpdateState.buttonText(): String =
     when {
-        checking -> "Checking..."
+        checking -> "Checking for updates"
         downloading -> "Downloading..."
         downloaded -> "Install update"
         available -> "Download update"

@@ -22,12 +22,24 @@ struct FileServersView: View {
                 }
                 .disabled(customTargets.isEmpty && fileServers.isEmpty)
                 Button {
-                    model.checkBackups(customTargets)
-                    model.checkFileServers(fileServers)
+                    model.checkBackups(customTargets + fileServers)
                 } label: {
-                    Label("Check All", systemImage: "checkmark.shield")
+                    if model.isCheckingBackups {
+                        Text(model.backupCheckProgressLabel)
+                    } else {
+                        Label("Check All", systemImage: "checkmark.shield")
+                    }
                 }
-                .disabled(customTargets.isEmpty && fileServers.isEmpty)
+                .disabled((customTargets.isEmpty && fileServers.isEmpty) || model.isCheckingBackups)
+                if model.isCheckingBackups {
+                    ProgressView(
+                        value: Double(model.backupCheckCompleted),
+                        total: Double(max(model.backupCheckTotal, 1))
+                    )
+                    Text(model.backupCheckProgressLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Add Custom Target") {
@@ -90,8 +102,12 @@ struct FileServersView: View {
                         Button {
                             model.checkFileServer(backup.target)
                         } label: {
-                            Label("Check", systemImage: "checkmark.shield")
+                            Label(
+                                model.backupIsChecking(backup.target) ? "Checking 0 of 1" : "Check",
+                                systemImage: "checkmark.shield"
+                            )
                         }
+                        .disabled(model.backupIsChecking(backup.target))
                         Button(role: .destructive) {
                             remove(backup.target)
                         } label: {
@@ -100,7 +116,7 @@ struct FileServersView: View {
                     } label: {
                         VStack(alignment: .leading) {
                             Text(backup.label)
-                            Text(backup.state)
+                            Text(model.backupIsChecking(backup.target) ? "Checking 0 of 1" : backup.state)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

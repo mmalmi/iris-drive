@@ -85,6 +85,7 @@ extension AppDelegate {
 
     func checkBackups(
         _ targets: [IrisDriveBackupTarget],
+        progress: ((Int, Int) -> Void)? = nil,
         completion: (() -> Void)? = nil
     ) {
         let targets = backupTargetURLs(targets)
@@ -98,12 +99,14 @@ extension AppDelegate {
             actionType: "check_backups",
             progress: "Checking backups",
             success: "Backups checked",
+            progressUpdate: progress,
             completion: completion
         )
     }
 
     func checkFileServers(
         _ targets: [IrisDriveBackupTarget],
+        progress: ((Int, Int) -> Void)? = nil,
         completion: (() -> Void)? = nil
     ) {
         let urls = fileServerURLs(targets)
@@ -117,6 +120,7 @@ extension AppDelegate {
             actionType: "check_backups",
             progress: "Checking file servers",
             success: "File servers checked",
+            progressUpdate: progress,
             completion: completion
         )
     }
@@ -146,12 +150,15 @@ extension AppDelegate {
         progress: String,
         success: String,
         index: Int = 0,
+        progressUpdate: ((Int, Int) -> Void)? = nil,
         completion: (() -> Void)? = nil
     ) {
         guard targets.indices.contains(index) else {
+            progressUpdate?(targets.count, targets.count)
             completion?()
             return
         }
+        progressUpdate?(index, targets.count)
         dispatchNativeAction(
             [
                 "type": actionType,
@@ -170,6 +177,7 @@ extension AppDelegate {
                     progress: progress,
                     success: success,
                     index: index + 1,
+                    progressUpdate: progressUpdate,
                     completion: completion
                 )
             }
@@ -182,12 +190,15 @@ extension AppDelegate {
         progress: String,
         success: String,
         index: Int = 0,
+        progressUpdate: ((Int, Int) -> Void)? = nil,
         completion: (() -> Void)? = nil
     ) {
         guard urls.indices.contains(index) else {
+            progressUpdate?(urls.count, urls.count)
             completion?()
             return
         }
+        progressUpdate?(index, urls.count)
         dispatchNativeAction(
             [
                 "type": actionType,
@@ -206,6 +217,7 @@ extension AppDelegate {
                     progress: progress,
                     success: success,
                     index: index + 1,
+                    progressUpdate: progressUpdate,
                     completion: completion
                 )
             }

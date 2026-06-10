@@ -69,9 +69,10 @@ require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.
 require_contains linux/src/actions.rs "NativeAppAction::AddBackupTarget"
 require_contains linux/src/actions.rs "NativeAppAction::RemoveBackupTarget"
 require_contains linux/src/actions.rs "NativeAppAction::SyncBackups"
-require_contains linux/src/actions.rs "NativeAppAction::CheckBackups"
+require_contains linux/src/actions/backup_check.rs "NativeAppAction::CheckBackups"
 require_absent linux/src/actions.rs 'run_idrive(["backups", "sync"])'
 require_absent linux/src/actions.rs 'run_idrive(["backups", "check"])'
+require_absent linux/src/actions/backup_check.rs 'run_idrive(["backups", "check"])'
 require_contains linux/src/ui.rs "Add custom target"
 require_contains linux/src/ui.rs "File Servers"
 require_contains linux/src/render.rs "Remove target"
@@ -103,11 +104,11 @@ require_absent windows/IrisDriveService.cs 'RunAsync("backups", "sync")'
 require_absent windows/IrisDriveService.cs 'RunAsync("backups", "check")'
 require_contains windows/MainWindow.xaml "Add custom target"
 require_contains windows/MainWindow.xaml "File Servers"
-require_contains windows/MainWindow.xaml.cs "Remove file server"
-require_contains windows/MainWindow.xaml.cs "Remove target"
-require_contains windows/MainWindow.xaml.cs "No file servers"
+require_contains windows/MainWindowBackups.cs "Remove file server"
+require_contains windows/MainWindowBackups.cs "Remove target"
+require_contains windows/MainWindowBackups.cs "No backup targets"
 require_absent windows/MainWindow.xaml "Text=\"Blossom\""
-require_absent windows/MainWindow.xaml.cs "Remove backup"
-require_absent windows/MainWindow.xaml.cs "No Blossom servers"
+require_absent windows/MainWindowBackups.cs "Remove backup"
+require_absent windows/MainWindowBackups.cs "No Blossom servers"
 
 echo "BACKUP_CONTROL_PARITY_OK"

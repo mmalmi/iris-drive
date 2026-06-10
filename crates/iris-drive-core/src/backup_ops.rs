@@ -15,7 +15,8 @@ use crate::config::{
 use crate::daemon::Daemon;
 use crate::paths::{config_path_in, key_path_in};
 
-const DEFAULT_BACKUP_CHECK_SAMPLE_SIZE: usize = 16;
+const DEFAULT_BACKUP_CHECK_SAMPLE_SIZE: usize = 4;
+const BACKUP_CHECK_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackupOperationReport {
@@ -227,7 +228,7 @@ pub async fn check_backups(
             BackupTargetKind::Blossom => {
                 let servers = vec![target.target.clone()];
                 let client = crate::blossom_sync_client(device.keys().clone(), &servers)
-                    .with_timeout(std::time::Duration::from_secs(5));
+                    .with_timeout(BACKUP_CHECK_REQUEST_TIMEOUT);
                 match crate::blossom_sync::check_tree_on_server(
                     daemon.tree(),
                     &root_cid,
@@ -711,4 +712,18 @@ fn unix_now() -> i64 {
         .map_or(0, |duration| {
             i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_backup_check_is_a_short_probe() {
+        assert_eq!(default_backup_check_sample_size(), 4);
+        assert_eq!(
+            BACKUP_CHECK_REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(2)
+        );
+    }
 }

@@ -55,6 +55,9 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var devices: [IrisDriveDevice] = []
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
+    @Published var checkingBackupTargets: Set<String> = []
+    @Published var backupCheckCompleted = 0
+    @Published var backupCheckTotal = 0
     @Published var shares: [IrisDriveShare] = []
     @Published var roots: [IrisDriveRoot] = []
     @Published var copyFeedback = ""
@@ -825,12 +828,7 @@ final class IrisDriveMobileModel: ObservableObject {
     func checkFileServer(_ target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isSetupComplete, !target.isEmpty else { return }
-        Task {
-            await dispatchInBackground([
-                "type": "check_backups",
-                "target": target,
-            ], invalidatePendingState: true)
-        }
+        dispatchBackupAction("check_backups", targets: [target])
     }
 
     func checkFileServers(_ fileServers: [IrisDriveBackup]) {

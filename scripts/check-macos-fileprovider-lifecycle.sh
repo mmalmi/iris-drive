@@ -44,7 +44,7 @@ require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "
 require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "com.apple.security.network.server"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "        return 0"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'app_path="$(build_app)"'
-require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
+require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "status.primaryDriveGatewayURL = nil"
 require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Open on drive.iris.to"
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"

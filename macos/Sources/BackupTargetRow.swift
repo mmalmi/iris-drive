@@ -46,7 +46,11 @@ struct BackupTargetRow: View {
                         checking = false
                     }
                 } label: {
-                    Label(checking ? "Checking..." : "Check", systemImage: "checkmark.shield")
+                    if checking {
+                        Text("Checking 0 of 1")
+                    } else {
+                        Label("Check", systemImage: "checkmark.shield")
+                    }
                 }
                 .disabled(checking)
                 .help("Check \(target.target)")
@@ -100,7 +104,7 @@ struct BackupTargetRow: View {
 
     private var statusLine: String {
         if checking {
-            return "Checking..."
+            return "Checking 0 of 1"
         }
         if let checkedAt = target.checkedAt {
             let checked = checkedAgeLine(checkedAt)

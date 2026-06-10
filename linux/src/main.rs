@@ -126,6 +126,9 @@ struct AppModel {
     update_policy: RefCell<UpdateAutoCheckPolicy>,
     update_sender: mpsc::Sender<updater::UpdateEvent>,
     update_receiver: RefCell<mpsc::Receiver<updater::UpdateEvent>>,
+    backup_check_sender: mpsc::Sender<BackupCheckEvent>,
+    backup_check_receiver: RefCell<mpsc::Receiver<BackupCheckEvent>>,
+    backup_checking: Cell<bool>,
     closed_to_tray: Cell<bool>,
     launch_on_startup_synced: Cell<Option<bool>>,
     retired: Cell<bool>,
@@ -133,6 +136,11 @@ struct AppModel {
 }
 
 type AppRef = Rc<AppModel>;
+
+enum BackupCheckEvent {
+    Progress { checked: usize, total: usize },
+    Finished(Result<String, String>),
+}
 
 #[cfg(target_os = "linux")]
 type TrayServiceHandle = ksni::blocking::Handle<IrisDriveTray>;
@@ -482,6 +490,35 @@ fn drain_update_events(model: &AppRef) {
         download_update(model);
     } else {
         render_update_state(model);
+    }
+}
+
+fn drain_backup_check_events(model: &AppRef) {
+    let events = {
+        let receiver = model.backup_check_receiver.borrow();
+        receiver.try_iter().collect::<Vec<_>>()
+    };
+    if events.is_empty() {
+        return;
+    }
+
+    for event in events {
+        match event {
+            BackupCheckEvent::Progress { checked, total } => {
+                model
+                    .ui
+                    .notice
+                    .set_text(&format!("Checking {checked} of {total}"));
+            }
+            BackupCheckEvent::Finished(result) => {
+                model.backup_checking.set(false);
+                match result {
+                    Ok(message) => model.ui.notice.set_text(&message),
+                    Err(error) => model.ui.notice.set_text(&error),
+                }
+                refresh(model);
+            }
+        }
     }
 }
 

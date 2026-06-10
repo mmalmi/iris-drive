@@ -30,7 +30,7 @@ class AndroidSelfUpdateTest {
     @Test
     fun updateButtonTextFollowsState() {
         assertEquals("Check for updates", AndroidSelfUpdateState().buttonText())
-        assertEquals("Checking...", AndroidSelfUpdateState(checking = true).buttonText())
+        assertEquals("Checking for updates", AndroidSelfUpdateState(checking = true).buttonText())
         assertEquals("Downloading...", AndroidSelfUpdateState(downloading = true).buttonText())
         assertEquals("Download update", AndroidSelfUpdateState(available = true).buttonText())
         assertEquals("Install update", AndroidSelfUpdateState(downloaded = true).buttonText())

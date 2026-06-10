@@ -1,6 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+mod backup_check;
+pub(crate) use backup_check::{check_backup_target, check_backups};
+
 pub(crate) fn add_relay(model: &AppRef) {
     let relay = model.ui.relay_entry.text().trim().to_string();
     if relay.is_empty() {
@@ -47,28 +50,6 @@ pub(crate) fn sync_backups(model: &AppRef) {
 pub(crate) fn remove_backup_target(model: &AppRef, target: String) {
     match dispatch_desktop_action(NativeAppAction::RemoveBackupTarget { target }) {
         Ok(_) => refresh(model),
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
-pub(crate) fn check_backup_target(model: &AppRef, target: String) {
-    match dispatch_desktop_action(NativeAppAction::CheckBackups { target }) {
-        Ok(_) => {
-            model.ui.notice.set_text("Backup checked");
-            refresh(model);
-        }
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
-pub(crate) fn check_backups(model: &AppRef) {
-    match dispatch_desktop_action(NativeAppAction::CheckBackups {
-        target: String::new(),
-    }) {
-        Ok(_) => {
-            model.ui.notice.set_text("Backups checked");
-            refresh(model);
-        }
         Err(error) => model.ui.notice.set_text(&error),
     }
 }

@@ -52,11 +52,7 @@ import to.iris.drive.app.update.AndroidSelfUpdateState
 import to.iris.drive.app.update.SelfUpdateActions
 import to.iris.drive.app.update.buttonText
 
-private data class ShareInvitePrefill(
-    val profileId: String = "",
-    val npubHint: String = "",
-    val displayName: String = "",
-)
+private data class ShareInvitePrefill(val profileId: String = "", val npubHint: String = "", val displayName: String = "")
 
 @Composable
 internal fun AuthenticatedContent(
@@ -67,6 +63,7 @@ internal fun AuthenticatedContent(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
+    backupCheckProgress: BackupCheckProgress,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
     onCopyAppKey: () -> Unit,
@@ -134,6 +131,7 @@ internal fun AuthenticatedContent(
         MainTab.Backups -> BackupsContent(
             padding = padding,
             state = state,
+            backupCheckProgress = backupCheckProgress,
             onAddBackupTarget = onAddBackupTarget,
             onRemoveBackupTarget = onRemoveBackupTarget,
             onAddBlossomServer = onAddBlossomServer,
@@ -273,6 +271,7 @@ private fun DevicesContent(
 private fun BackupsContent(
     padding: PaddingValues,
     state: AppState,
+    backupCheckProgress: BackupCheckProgress,
     onAddBackupTarget: (String, String) -> Unit,
     onRemoveBackupTarget: (String) -> Unit,
     onAddBlossomServer: (String) -> Unit,
@@ -294,6 +293,7 @@ private fun BackupsContent(
         item {
             BackupsPanel(
                 backups = state.backups,
+                backupCheckProgress = backupCheckProgress,
                 onAddBackupTarget = onAddBackupTarget,
                 onRemoveBackupTarget = onRemoveBackupTarget,
                 onAddBlossomServer = onAddBlossomServer,
@@ -522,6 +522,7 @@ private fun ProviderPanel(
 @Composable
 private fun BackupsPanel(
     backups: List<BackupState>,
+    backupCheckProgress: BackupCheckProgress,
     onAddBackupTarget: (String, String) -> Unit,
     onRemoveBackupTarget: (String) -> Unit,
     onAddBlossomServer: (String) -> Unit,
@@ -543,10 +544,13 @@ private fun BackupsPanel(
             }
             OutlinedButton(
                 onClick = { onCheckBackups("") },
-                enabled = backups.isNotEmpty(),
+                enabled = backups.isNotEmpty() && !backupCheckProgress.isRunning,
             ) {
-                Text("Check All")
+                Text(if (backupCheckProgress.isRunning) backupCheckProgress.label else "Check All")
             }
+        }
+        if (backupCheckProgress.isRunning) {
+            BackupProgressIndicator(backupCheckProgress)
         }
         OutlinedTextField(
             value = backupInput,
@@ -593,12 +597,21 @@ private fun BackupsPanel(
             Text("No file servers configured", color = Muted)
         }
         backups.forEach { backup ->
+            val checkingThisTarget =
+                backupCheckProgress.isRunning && backupCheckProgress.activeTarget == backup.target
             Text(backup.label, fontWeight = FontWeight.SemiBold)
-            Text(backup.state, color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(
+                if (checkingThisTarget) backupCheckProgress.label else backup.state,
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
             Text(backup.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { onCheckBackups(backup.target) }) {
-                    Text("Check")
+                TextButton(
+                    onClick = { onCheckBackups(backup.target) },
+                    enabled = !backupCheckProgress.isRunning,
+                ) {
+                    Text(if (checkingThisTarget) "Checking 0 of 1" else "Check")
                 }
                 if (backup.kind == "blossom") {
                     TextButton(onClick = { onRemoveBlossomServer(backup.target) }) {
