@@ -32,7 +32,7 @@ public sealed class IrisDriveNativeCore : IDisposable
     public Task<IrisDriveStatusData> DispatchActionAsync(IReadOnlyDictionary<string, object> action)
     {
         var actionJson = JsonSerializer.Serialize(action);
-        return Task.FromResult(IrisDriveStatusData.FromNativeJson(DispatchJson(actionJson)));
+        return Task.Run(() => IrisDriveStatusData.FromNativeJson(DispatchJson(actionJson)));
     }
 
     public static bool IsCompleteLinkInput(string input)

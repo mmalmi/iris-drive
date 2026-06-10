@@ -47,8 +47,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyDebugEnvironment(intent)
-        NativeCore.initializeAndroidContext(applicationContext)
-        nativeHandle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
         selfUpdateManager =
             AndroidSelfUpdateManager(
                 context = applicationContext,
@@ -56,15 +54,6 @@ class MainActivity : ComponentActivity() {
                 ioDispatcher = Dispatchers.IO,
                 dataDir = filesDir,
             )
-        selfUpdateManager.startAutomaticChecks()
-        refresh(::autoStartSyncIfNeeded)
-        refreshJob = lifecycleScope.launch {
-            while (true) {
-                delay(2_000)
-                refresh()
-            }
-        }
-        handleDebugIntent(intent)
 
         setContent {
             val notificationPermissionLauncher =
@@ -241,6 +230,7 @@ class MainActivity : ComponentActivity() {
                 },
             )
         }
+        startNativeCore(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -262,6 +252,40 @@ class MainActivity : ComponentActivity() {
             NativeCore.appFree(handle)
         }
         super.onDestroy()
+    }
+
+    private fun startNativeCore(launchIntent: Intent?) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            NativeCore.initializeAndroidContext(applicationContext)
+            val handle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
+            var installed = false
+            try {
+                val initialState = stateFromJson(NativeCore.stateJson(handle))
+                withContext(Dispatchers.Main) {
+                    if (nativeHandle != 0L) {
+                        return@withContext
+                    }
+                    nativeHandle = handle
+                    installed = true
+                    stateFlow.value = initialState
+                    writeDebugState()
+                    IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, initialState)
+                    refresh(::autoStartSyncIfNeeded)
+                    refreshJob = lifecycleScope.launch {
+                        while (true) {
+                            delay(2_000)
+                            refresh()
+                        }
+                    }
+                    handleDebugIntent(launchIntent)
+                    selfUpdateManager.startAutomaticChecks()
+                }
+            } finally {
+                if (!installed) {
+                    NativeCore.appFree(handle)
+                }
+            }
+        }
     }
 
     private fun refresh(onState: ((AppState) -> Unit)? = null) {

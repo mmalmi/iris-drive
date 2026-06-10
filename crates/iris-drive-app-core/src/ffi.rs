@@ -274,6 +274,12 @@ struct NativeAppRuntime {
     app_key_link_exchange_stop: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderSummaryMode {
+    Skip,
+    Refresh,
+}
+
 impl NativeAppRuntime {
     fn new(data_dir: String, app_version: String) -> Self {
         let mut state = NativeAppState::default();
@@ -293,7 +299,7 @@ impl NativeAppRuntime {
             #[cfg(not(test))]
             app_key_link_exchange_stop: Arc::new(AtomicBool::new(false)),
         };
-        runtime.reload_from_disk();
+        runtime.reload_from_disk(ProviderSummaryMode::Skip);
         runtime.start_app_key_link_exchange_if_needed();
         runtime
     }
@@ -1167,13 +1173,13 @@ impl NativeAppRuntime {
         let error = self.state.error.clone();
         let last_share_invite = self.state.ui.last_share_invite.clone();
         let last_share_recipient_evidence = self.state.ui.last_share_recipient_evidence.clone();
-        self.reload_from_disk();
+        self.reload_from_disk(ProviderSummaryMode::Refresh);
         self.state.error = error;
         self.state.ui.last_share_invite = last_share_invite;
         self.state.ui.last_share_recipient_evidence = last_share_recipient_evidence;
     }
 
-    fn reload_from_disk(&mut self) {
+    fn reload_from_disk(&mut self, provider_summary: ProviderSummaryMode) {
         let paths = paths_for(&self.data_dir);
         let sync = self.state.ui.sync.clone();
         let previous_roots = self.state.ui.roots.clone();
@@ -1283,7 +1289,9 @@ impl NativeAppRuntime {
         let ui_fips_status = ui_fips_status(fips_status.as_ref());
         self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
         update_snapshot_link(&mut self.state, &config);
-        self.refresh_provider_summary();
+        if provider_summary == ProviderSummaryMode::Refresh {
+            self.refresh_provider_summary();
+        }
         self.refresh_ui_summary(Some(ui_fips_status));
     }
 

@@ -1512,7 +1512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
-            refreshStatus()
+            try applyNativeStateJson(desktopCore.stateJson())
             updateStatus("Turning sync on")
             startDaemon(idrive, paths: paths)
         } catch {

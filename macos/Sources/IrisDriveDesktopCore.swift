@@ -9,6 +9,9 @@ private func irisDriveAppNew(
 @_silgen_name("iris_drive_app_free")
 private func irisDriveAppFree(_ handle: UnsafeMutableRawPointer?)
 
+@_silgen_name("iris_drive_app_state_json")
+private func irisDriveAppStateJson(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_app_refresh_json")
 private func irisDriveAppRefreshJson(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
 
@@ -76,6 +79,10 @@ final class IrisDriveDesktopCore {
 
     deinit {
         irisDriveAppFree(handle)
+    }
+
+    func stateJson() -> String {
+        takeString(irisDriveAppStateJson(handle))
     }
 
     func refreshJson() -> String {

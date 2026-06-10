@@ -498,6 +498,8 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomainIfProfileExists()
     }
 
+    func refreshAfterStartup() { Task { await refreshInBackground() } }
+
     func scheduleBackgroundSyncIfNeeded() {
         guard shouldRunBackgroundSync else { return cancelBackgroundSync() }
         let request = BGAppRefreshTaskRequest(identifier: IrisDriveBackgroundSyncTask.identifier)
@@ -1126,7 +1128,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func load() {
         removeObsoletePrototypeDefaults()
-        applyStateJson(nativeCore.refreshJson())
+        applyStateJson(nativeCore.stateJson())
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
         if hasLocalProfile {
             profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername

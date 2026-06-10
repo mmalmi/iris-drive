@@ -731,11 +731,16 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     }
 
     register_active_model(&model);
-    refresh(&model);
     render_update_state(&model);
-    check_updates_if_due(&model);
-    drain_pending_launch_inputs(&model);
     if present {
         window.present();
+    }
+    {
+        let model = Rc::clone(&model);
+        glib::idle_add_local_once(move || {
+            refresh(&model);
+            check_updates_if_due(&model);
+            drain_pending_launch_inputs(&model);
+        });
     }
 }

@@ -59,7 +59,7 @@ require_absent macos/Sources/IrisDriveMacApp.swift 'arguments: ["approve", devic
 require_absent macos/Sources/IrisDriveMacApp.swift 'arguments: ["devices", command, device]'
 
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_app_dispatch_json"
-require_contains windows/IrisDriveService.cs "nativeCore.RefreshJson()"
+require_contains windows/IrisDriveService.cs "NativeCore.RefreshJson()"
 require_contains windows/IrisDriveService.cs '["type"] = "create_share"'
 require_contains windows/IrisDriveService.cs '["type"] = "invite_share_member_from_evidence"'
 require_contains windows/IrisDriveService.cs '["type"] = "record_pending_share_invite"'

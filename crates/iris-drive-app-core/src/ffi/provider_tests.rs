@@ -121,6 +121,41 @@ fn provider_list_includes_summary_and_change_key() {
 }
 
 #[test]
+fn app_constructor_defers_provider_summary_until_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    let source = dir.path().join("startup.txt");
+    std::fs::write(&source, b"startup bytes").unwrap();
+
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "startup.txt",
+            &source.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let restarted = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let initial = restarted.state();
+    assert!(initial.ui.setup_complete);
+    assert!(initial.ui.profile.is_some());
+    assert_eq!(initial.ui.file_count, 0);
+    assert_eq!(initial.ui.visible_file_bytes, 0);
+    assert!(initial.ui.provider_change_key.is_empty());
+
+    let refreshed = restarted.refresh();
+    assert_eq!(refreshed.ui.file_count, 1);
+    assert_eq!(refreshed.ui.visible_file_bytes, 13);
+    assert!(refreshed.ui.provider_change_key.contains("startup.txt"));
+}
+
+#[test]
 fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

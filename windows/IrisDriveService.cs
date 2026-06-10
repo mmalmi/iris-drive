@@ -12,14 +12,16 @@ public sealed class IrisDriveService
 {
     private const string LocalMutationScanEnv = "IRIS_DRIVE_WINDOWS_CLOUD_SCAN_LOCAL_MUTATIONS";
     private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
-    private readonly IrisDriveNativeCore nativeCore;
+    private readonly Lazy<IrisDriveNativeCore> nativeCore;
 
     public IrisDriveService()
     {
-        nativeCore = new IrisDriveNativeCore(
+        nativeCore = new Lazy<IrisDriveNativeCore>(() => new IrisDriveNativeCore(
             DefaultConfigDirectory,
-            AppVersion);
+            AppVersion));
     }
+
+    private IrisDriveNativeCore NativeCore => nativeCore.Value;
 
     public string AppVersion =>
         typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
@@ -31,7 +33,7 @@ public sealed class IrisDriveService
 
     public Task<IrisDriveStatusData> StatusAsync()
     {
-        return Task.FromResult(IrisDriveStatusData.FromNativeJson(nativeCore.RefreshJson()));
+        return Task.Run(() => IrisDriveStatusData.FromNativeJson(NativeCore.RefreshJson()));
     }
 
     public Task<IrisDriveUpdateResult> CheckUpdateAsync()
@@ -103,7 +105,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        await nativeCore.DispatchActionAsync(
+        await NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "approve_device",
@@ -119,7 +121,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device request is required.");
         }
 
-        await nativeCore.DispatchActionAsync(
+        await NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "reject_device",
@@ -129,7 +131,7 @@ public sealed class IrisDriveService
 
     public Task ResetInviteAsync()
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object> { ["type"] = "reset_invite" });
     }
 
@@ -145,7 +147,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "revoke_device",
@@ -160,7 +162,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "appoint_admin",
@@ -175,7 +177,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Device key is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "demote_admin",
@@ -190,7 +192,7 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "add_relay",
@@ -200,7 +202,7 @@ public sealed class IrisDriveService
 
     public Task ResetRelaysAsync()
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object> { ["type"] = "reset_relays" });
     }
 
@@ -211,7 +213,7 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "add_backup_target",
@@ -227,7 +229,7 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "remove_backup_target",
@@ -242,7 +244,7 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "add_blossom_server",
@@ -257,7 +259,7 @@ public sealed class IrisDriveService
             return Task.CompletedTask;
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "remove_blossom_server",
@@ -267,7 +269,7 @@ public sealed class IrisDriveService
 
     public Task SyncBackupsAsync()
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "sync_backups",
@@ -277,7 +279,7 @@ public sealed class IrisDriveService
 
     public Task CheckBackupsAsync(string target = "")
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "check_backups",
@@ -294,7 +296,7 @@ public sealed class IrisDriveService
         }
 
         var resolvedSourcePath = await ResolveShareSourcePathForCreateAsync(normalizedSourcePath);
-        await nativeCore.DispatchActionAsync(
+        await NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "create_share",
@@ -310,7 +312,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "delete_share",
@@ -335,7 +337,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Recovery key is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "add_recovery_device",
@@ -350,7 +352,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share invite is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "accept_share_invite",
@@ -373,7 +375,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Recipient identity evidence is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "invite_share_member_from_evidence",
@@ -386,7 +388,7 @@ public sealed class IrisDriveService
 
     public Task<IrisDriveStatusData> ExportShareRecipientEvidenceAsync(string displayName)
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "export_share_recipient_evidence",
@@ -409,7 +411,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("User ID is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "record_pending_share_invite",
@@ -427,7 +429,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "add_share_shortcut",
@@ -445,7 +447,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share is required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "repair_share_wraps",
@@ -460,7 +462,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share and member are required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "revoke_share_member",
@@ -479,7 +481,7 @@ public sealed class IrisDriveService
             throw new InvalidOperationException("Share, member, and role are required.");
         }
 
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "set_share_member_role",
@@ -496,7 +498,7 @@ public sealed class IrisDriveService
 
     public Task SetLaunchOnStartupAsync(bool enabled)
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "set_launch_on_startup",
@@ -506,7 +508,7 @@ public sealed class IrisDriveService
 
     public Task LogoutAsync()
     {
-        return nativeCore.DispatchActionAsync(
+        return NativeCore.DispatchActionAsync(
             new Dictionary<string, object> { ["type"] = "logout" });
     }
 

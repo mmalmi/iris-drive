@@ -12,6 +12,7 @@ struct IrisDriveIOSApp: App {
                 .onAppear {
                     model.ensureFileProviderDomainIfProfileExists()
                     model.handleDebugLaunchEnvironment()
+                    model.refreshAfterStartup()
                     model.startForegroundSyncLoop()
                     model.scheduleBackgroundSyncIfNeeded()
                 }
