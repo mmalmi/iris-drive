@@ -97,6 +97,23 @@ test('buildReleaseManifest records the Windows idrive executable name', () => {
   assert.equal(manifest.assets[0].target, 'x86_64-pc-windows-msvc')
 })
 
+test('buildReleaseManifest marks the macOS updater archive as an app bundle', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
+  const appArchive = join(root, 'iris-drive-v0.2.27-macos-arm64.app.tar.gz')
+  writeFileSync(appArchive, 'archive')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    createdAt: 1774523304,
+    assetPaths: [appArchive],
+  })
+
+  assert.equal(manifest.assets[0].kind, 'app-bundle')
+  assert.equal(manifest.assets[0].executable, 'Iris Drive.app')
+  assert.equal(manifest.assets[0].target, 'darwin-aarch64')
+})
+
 test('buildReleaseManifestFiles writes both updater manifest names', () => {
   const files = buildReleaseManifestFiles({
     app: 'iris-drive',
@@ -311,6 +328,55 @@ test('local-release dry-run validates planned build assets over partial existing
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Would stage 9 planned asset\(s\)/)
+})
+
+test('local-release final dry-run refreshes public release resolver after htree publish', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-refresh-test-'))
+  const assetDir = join(root, 'dist')
+  const stageDir = join(root, 'stage')
+  mkdirSync(assetDir)
+  for (const assetName of plannedReleaseAssetNames('v9.9.9', [
+    'macos',
+    'linux',
+    'windows',
+    'android',
+  ])) {
+    writeFileSync(join(assetDir, assetName), assetName)
+  }
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--asset-dir',
+      assetDir,
+      '--stage-dir',
+      stageDir,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
+        IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://upload.iris.to',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(
+    result.stdout,
+    /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/,
+  )
+  assert.match(
+    result.stdout,
+    /Would verify public release manifest https:\/\/upload\.iris\.to\/npub1example\/releases%2Firis-drive\/latest\/release\.json/,
+  )
 })
 
 test('local-release final dry-run rejects a missing Android keystore file', () => {
@@ -597,6 +663,114 @@ test('local-release dry-run notarizes macOS artifacts and adds Applications shor
   assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
 })
 
+test('local-release dry-run wires restricted entitlement scrubbing and macOS release launch smoke', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS: 'false',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(
+    result.stdout,
+    /Would prepare entitlements .*Release\.entitlements.*strip.*com\.apple\.developer\.associated-domains/s,
+  )
+  assert.match(result.stdout, /scripts\/macos-release-smoke\.sh/)
+  assert.match(result.stdout, /--app .*Iris Drive\.app/)
+  assert.match(result.stdout, /--archive .*iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
+  assert.match(result.stdout, /--dmg .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+})
+
+test('local-release dry-run embeds macOS provisioning profiles when provisioned entitlements are kept', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-macos-profiles-test-'))
+  const appProfile = join(root, 'app.provisionprofile')
+  const fileProviderProfile = join(root, 'fileprovider.provisionprofile')
+  const envFile = join(root, 'provisioning.env')
+  writeFileSync(appProfile, 'app profile')
+  writeFileSync(fileProviderProfile, 'file provider profile')
+  writeFileSync(
+    envFile,
+    [
+      'IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS=true',
+      `IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE='${appProfile}'`,
+      `IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE='${fileProviderProfile}'`,
+      '',
+    ].join('\n'),
+  )
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+      '--env-file',
+      envFile,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /keep provisioned entitlements/)
+  assert.match(result.stdout, /Would embed provisioning profile .*app\.provisionprofile/)
+  assert.match(result.stdout, /Would embed provisioning profile .*fileprovider\.provisionprofile/)
+})
+
+test('macOS release entitlements strip Associated Domains when profile wildcard is not launch-safe', async () => {
+  const { prepareMacosEntitlementsData } = await import('./macos-entitlements.mjs')
+
+  const { entitlements, dropped } = prepareMacosEntitlementsData({
+    teamId: 'J8PPJKD7TA',
+    keepProvisionedEntitlements: true,
+    profileEntitlements: {
+      'com.apple.application-identifier': 'J8PPJKD7TA.to.iris.drive.macos',
+      'com.apple.developer.associated-domains': '*',
+      'com.apple.developer.team-identifier': 'J8PPJKD7TA',
+    },
+    sourceEntitlements: {
+      'com.apple.security.app-sandbox': true,
+      'com.apple.security.application-groups': ['$(TeamIdentifierPrefix)to.iris.drive'],
+      'com.apple.developer.associated-domains': [
+        'applinks:drive.iris.to',
+        'webcredentials:drive.iris.to',
+      ],
+      'com.apple.security.network.client': true,
+      'com.apple.security.network.server': true,
+    },
+  })
+
+  assert.deepEqual(entitlements['com.apple.security.application-groups'], [
+    'J8PPJKD7TA.to.iris.drive',
+  ])
+  assert.equal(entitlements['com.apple.developer.associated-domains'], undefined)
+  assert.deepEqual(dropped, ['com.apple.developer.associated-domains'])
+})
+
 test('local-release build-only mode does not stage existing unsigned artifacts', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-build-only-test-'))
   const assetDir = join(root, 'dist')
@@ -762,6 +936,25 @@ test('iOS provisioning helper covers the app and extension bundle IDs', () => {
   assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILES_ENV_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILE_RECREATE/)
+})
+
+test('macOS provisioning helper covers the Developer ID app and FileProvider profiles', () => {
+  const wrapper = readFileSync(
+    fileURLToPath(new URL('./macos-profiles', import.meta.url)),
+    'utf8',
+  )
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-profiles', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(wrapper, /IRIS_DRIVE_PROFILES_PLATFORM=macos/)
+  assert.match(script, /MAC_APP_DIRECT/)
+  assert.match(script, /to\.iris\.drive\.macos/)
+  assert.match(script, /to\.iris\.drive\.macos\.FileProvider/)
+  assert.match(script, /IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE/)
+  assert.match(script, /IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE/)
+  assert.match(script, /DEVELOPER_ID_APPLICATION/)
 })
 
 test('TestFlight helper creates a missing App Store Connect app record', async (t) => {

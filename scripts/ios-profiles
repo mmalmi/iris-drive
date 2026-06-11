@@ -20,55 +20,51 @@ loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
 const rawBaseUrl = process.env.IRIS_DRIVE_ASC_BASE_URL || 'https://api.appstoreconnect.apple.com/v1/'
 const baseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
 const action = process.argv[2] || 'ensure'
-const profileType = envValue(['IRIS_DRIVE_IOS_PROFILE_TYPE'], 'IOS_APP_STORE')
-const defaultProfileLabel = profileType.includes('DEVELOPMENT') ? 'Development' : 'App Store'
-const defaultCodeSignIdentity = profileType.includes('DEVELOPMENT') ? 'Apple Development' : 'Apple Distribution'
-const codeSignIdentity = envValue(['IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY'], defaultCodeSignIdentity)
+const profilePlatform = envValue(['IRIS_DRIVE_PROFILES_PLATFORM'], 'ios').toLowerCase()
+if (!['ios', 'macos'].includes(profilePlatform)) {
+  fail(`Unsupported IRIS_DRIVE_PROFILES_PLATFORM=${profilePlatform}`, 2)
+}
+const profileType = envValue(
+  profilePlatform === 'macos' ? ['IRIS_DRIVE_MACOS_PROFILE_TYPE'] : ['IRIS_DRIVE_IOS_PROFILE_TYPE'],
+  profilePlatform === 'macos' ? 'MAC_APP_DIRECT' : 'IOS_APP_STORE',
+)
+const defaultProfileLabel = defaultLabelForProfileType(profileType)
+const defaultCodeSignIdentity = defaultIdentityForProfileType(profileType)
+const codeSignIdentity = envValue(
+  profilePlatform === 'macos'
+    ? ['IRIS_DRIVE_MACOS_CODE_SIGN_IDENTITY']
+    : ['IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY'],
+  defaultCodeSignIdentity,
+)
 const profilesEnvPath = resolve(
   repoRoot,
-  envValue(['IRIS_DRIVE_IOS_PROFILES_ENV_PATH'], join(repoRoot, 'dist', 'ios', 'provisioning.env')),
+  envValue(
+    profilePlatform === 'macos'
+      ? ['IRIS_DRIVE_MACOS_PROFILES_ENV_PATH']
+      : ['IRIS_DRIVE_IOS_PROFILES_ENV_PATH'],
+    join(repoRoot, 'dist', profilePlatform, 'provisioning.env'),
+  ),
 )
 const deviceUdids = splitCsv(envValue(['IRIS_DRIVE_IOS_DEVICE_UDIDS']))
-const profileNameSuffix = envValue(['IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'])
-const recreateProfiles = boolEnv('IRIS_DRIVE_IOS_PROFILE_RECREATE', false)
-const targets = [
-  {
-    role: 'app',
-    identifier: envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios'),
-    profileName: envValue(['IRIS_DRIVE_IOS_PROFILE_NAME'], `Iris Drive ${defaultProfileLabel} main`),
-    envKey: 'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
-  },
-  {
-    role: 'file_provider',
-    identifier: envValue(
-      ['IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID'],
-      'to.iris.drive.ios.FileProvider',
-    ),
-    profileName: envValue(
-      ['IRIS_DRIVE_IOS_FILE_PROVIDER_PROFILE_NAME'],
-      `Iris Drive ${defaultProfileLabel} file provider`,
-    ),
-    envKey: 'IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID',
-  },
-  {
-    role: 'share_extension',
-    identifier: envValue(
-      ['IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID'],
-      'to.iris.drive.ios.ShareExtension',
-    ),
-    profileName: envValue(
-      ['IRIS_DRIVE_IOS_SHARE_EXTENSION_PROFILE_NAME'],
-      `Iris Drive ${defaultProfileLabel} share extension`,
-    ),
-    envKey: 'IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID',
-  },
-]
+const profileNameSuffix = envValue(
+  profilePlatform === 'macos'
+    ? ['IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX']
+    : ['IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'],
+)
+const recreateProfiles = boolEnv(
+  profilePlatform === 'macos'
+    ? 'IRIS_DRIVE_MACOS_PROFILE_RECREATE'
+    : 'IRIS_DRIVE_IOS_PROFILE_RECREATE',
+  false,
+)
+const targets = profileTargets(profilePlatform, defaultProfileLabel)
 
 function usage() {
-  console.log(`usage: scripts/ios-profiles <ensure|list>
+  const commandName = profilePlatform === 'macos' ? 'scripts/macos-profiles' : 'scripts/ios-profiles'
+  console.log(`usage: ${commandName} <ensure|list>
 
 Commands:
-  ensure  create or download provisioning profiles for manual iOS export
+  ensure  create or download provisioning profiles for manual ${profilePlatform} export
   list    list matching provisioning profiles known to App Store Connect
 
 Environment:
@@ -76,11 +72,10 @@ Environment:
   IRIS_DRIVE_ASC_AUTH_KEY_ID or IRIS_DRIVE_ASC_KEY_ID
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
   IRIS_DRIVE_ASC_CERTIFICATE_ID
-  IRIS_DRIVE_IOS_PROFILE_TYPE
-  IRIS_DRIVE_IOS_PROFILE_RECREATE
-  IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX
-  IRIS_DRIVE_IOS_DEVICE_UDIDS
-  IRIS_DRIVE_IOS_PROFILES_ENV_PATH`)
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_TYPE' : 'IRIS_DRIVE_IOS_PROFILE_TYPE'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_RECREATE' : 'IRIS_DRIVE_IOS_PROFILE_RECREATE'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX' : 'IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILES_ENV_PATH' : 'IRIS_DRIVE_IOS_PROFILES_ENV_PATH'}`)
 }
 
 if (['-h', '--help', 'help'].includes(action)) {
@@ -153,6 +148,91 @@ function splitCsv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function defaultLabelForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper.includes('DEVELOPMENT')) {
+    return 'Development'
+  }
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'Developer ID'
+  }
+  if (upper.includes('APP_STORE')) {
+    return 'App Store'
+  }
+  return 'Distribution'
+}
+
+function defaultIdentityForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper.includes('DEVELOPMENT')) {
+    return 'Apple Development'
+  }
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'Developer ID Application'
+  }
+  return 'Apple Distribution'
+}
+
+function profileTargets(platform, label) {
+  if (platform === 'macos') {
+    return [
+      {
+        role: 'app',
+        identifier: envValue(['IRIS_DRIVE_MACOS_BUNDLE_ID'], 'to.iris.drive.macos'),
+        profileName: envValue(
+          ['IRIS_DRIVE_MACOS_PROFILE_NAME'],
+          `Iris Drive Mac ${label} main`,
+        ),
+        envKey: 'IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE',
+      },
+      {
+        role: 'file_provider',
+        identifier: envValue(
+          ['IRIS_DRIVE_MACOS_FILE_PROVIDER_BUNDLE_ID'],
+          'to.iris.drive.macos.FileProvider',
+        ),
+        profileName: envValue(
+          ['IRIS_DRIVE_MACOS_FILE_PROVIDER_PROFILE_NAME'],
+          `Iris Drive Mac ${label} file provider`,
+        ),
+        envKey: 'IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE',
+      },
+    ]
+  }
+  return [
+    {
+      role: 'app',
+      identifier: envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios'),
+      profileName: envValue(['IRIS_DRIVE_IOS_PROFILE_NAME'], `Iris Drive ${label} main`),
+      envKey: 'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
+    },
+    {
+      role: 'file_provider',
+      identifier: envValue(
+        ['IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID'],
+        'to.iris.drive.ios.FileProvider',
+      ),
+      profileName: envValue(
+        ['IRIS_DRIVE_IOS_FILE_PROVIDER_PROFILE_NAME'],
+        `Iris Drive ${label} file provider`,
+      ),
+      envKey: 'IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID',
+    },
+    {
+      role: 'share_extension',
+      identifier: envValue(
+        ['IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID'],
+        'to.iris.drive.ios.ShareExtension',
+      ),
+      profileName: envValue(
+        ['IRIS_DRIVE_IOS_SHARE_EXTENSION_PROFILE_NAME'],
+        `Iris Drive ${label} share extension`,
+      ),
+      envKey: 'IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID',
+    },
+  ]
 }
 
 function resolveAscAuth() {
@@ -281,7 +361,7 @@ async function selectCertificate() {
     return configured
   }
 
-  const requiredType = profileType.includes('DEVELOPMENT') ? 'DEVELOPMENT' : 'DISTRIBUTION'
+  const requiredType = certificateTypeForProfileType(profileType)
   const certificates = await getAll('certificates', { limit: '200' })
   const now = Date.now()
   const candidates = certificates
@@ -308,8 +388,19 @@ async function selectCertificate() {
   return certificate.id
 }
 
+function certificateTypeForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'DEVELOPER_ID_APPLICATION'
+  }
+  if (upper.includes('DEVELOPMENT')) {
+    return 'DEVELOPMENT'
+  }
+  return 'DISTRIBUTION'
+}
+
 function profileRequiresDevices() {
-  return ['IOS_APP_DEVELOPMENT', 'IOS_APP_ADHOC'].includes(profileType)
+  return profilePlatform === 'ios' && ['IOS_APP_DEVELOPMENT', 'IOS_APP_ADHOC'].includes(profileType)
 }
 
 async function selectDevices() {
@@ -404,7 +495,8 @@ async function installProfile(profile) {
 
   const profileDir = join(os.homedir(), 'Library', 'MobileDevice', 'Provisioning Profiles')
   mkdirSync(profileDir, { recursive: true })
-  const profilePath = join(profileDir, `${uuid}.mobileprovision`)
+  const extension = profilePlatform === 'macos' ? 'provisionprofile' : 'mobileprovision'
+  const profilePath = join(profileDir, `${uuid}.${extension}`)
   writeFileSync(profilePath, Buffer.from(content, 'base64'))
   return { uuid, profilePath }
 }
@@ -469,10 +561,12 @@ async function createProfile(target, bundleId, certificateId, devices) {
 async function ensureProfiles() {
   const certificateId = await selectCertificate()
   const devices = await selectDevices()
-  const envValues = {
-    IRIS_DRIVE_IOS_SIGNING_STYLE: 'manual',
-    IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY: codeSignIdentity,
-  }
+  const envValues = profilePlatform === 'macos'
+    ? { IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS: 'true' }
+    : {
+        IRIS_DRIVE_IOS_SIGNING_STYLE: 'manual',
+        IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY: codeSignIdentity,
+      }
   const installed = []
 
   for (const target of targets) {
@@ -484,7 +578,7 @@ async function ensureProfiles() {
     }
 
     const { uuid, profilePath } = await installProfile(profile)
-    envValues[target.envKey] = uuid
+    envValues[target.envKey] = profilePlatform === 'macos' ? profilePath : uuid
     installed.push({
       identifier: target.identifier,
       name: profile.attributes?.name ?? profile.id,
@@ -501,7 +595,7 @@ async function ensureProfiles() {
       .join('\n') + '\n',
   )
 
-  console.log('Installed iOS provisioning profiles:')
+  console.log(`Installed ${profilePlatform} provisioning profiles:`)
   for (const item of installed) {
     console.log(`  - ${item.identifier}: ${item.name} [${item.uuid}]`)
     console.log(`    ${item.profilePath}`)
@@ -514,7 +608,7 @@ async function listMatchingProfiles() {
   for (const target of targets) {
     bundleIds.set((await exactBundleId(target.identifier)).id, target.identifier)
   }
-  console.log(`${profileType} profiles for Iris Drive:`)
+  console.log(`${profileType} profiles for Iris Drive (${profilePlatform}):`)
   for (const profile of await listProfiles()) {
     const identifier = bundleIds.get(profileBundleId(profile))
     if (!identifier) {

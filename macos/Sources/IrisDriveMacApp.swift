@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        if handOffToExistingInstanceIfNeeded() {
+        if !singleInstanceHandoffDisabled, handOffToExistingInstanceIfNeeded() {
             return
         }
         installSingleInstanceNotificationObserver()
@@ -2047,7 +2047,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
         return currentProcessHasEntitlement("com.apple.developer.fileprovider.testing-mode")
-            || currentProcessHasTeamIdentifier()
+            || currentProcessHasEntitlementList("com.apple.security.application-groups")
+    }
+
+    private var singleInstanceHandoffDisabled: Bool {
+        environmentFlag("IRIS_DRIVE_DISABLE_SINGLE_INSTANCE")
     }
 
     private func environmentFlag(_ name: String) -> Bool {
@@ -3025,6 +3029,19 @@ func currentProcessHasEntitlement(_ name: String) -> Bool {
         return false
     }
     return (value as? Bool) == true
+}
+
+private func currentProcessHasEntitlementList(_ name: String) -> Bool {
+    guard let value = currentProcessEntitlementValue(name) else {
+        return false
+    }
+    if let values = value as? [Any] {
+        return !values.isEmpty
+    }
+    if let value = value as? String {
+        return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    return false
 }
 
 private func currentProcessHasTeamIdentifier() -> Bool {

@@ -300,6 +300,13 @@ function inferAssetMetadata(name) {
       executable: target.includes('windows') ? 'idrive.exe' : 'idrive',
     }
   }
+  if (/^iris-drive-v.*-macos-arm64\.app\.tar\.gz$/.test(name)) {
+    return {
+      target: 'darwin-aarch64',
+      kind: 'app-bundle',
+      executable: 'Iris Drive.app',
+    }
+  }
   if (/\.dmg$/.test(name)) {
     return { kind: 'archive' }
   }

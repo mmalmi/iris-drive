@@ -36,14 +36,21 @@ import {
   splitCsv,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
+import {
+  macosRestrictedProfileEntitlementKeys,
+  prepareMacosEntitlementsData,
+} from './macos-entitlements.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const distDir = join(repoRoot, 'dist')
-const defaultEnvFiles = [join(repoRoot, '.env.release.local'), join(repoRoot, '.env.zapstore.local')]
+const defaultEnvFiles = [
+  join(repoRoot, 'dist', 'macos', 'provisioning.env'),
+  join(repoRoot, '.env.release.local'),
+  join(repoRoot, '.env.zapstore.local'),
+]
 const defaultBuildSteps = ['platform-versions', 'macos', 'linux', 'windows', 'android', 'ios']
-
 class SkipStepError extends Error {}
 
 function usage() {
@@ -156,6 +163,10 @@ function readOptionalEnvFiles(envFiles) {
   return loaded
 }
 
+function envFlag(env, name) {
+  return ['1', 'true', 'yes', 'on'].includes(String(env[name] ?? '').trim().toLowerCase())
+}
+
 function quote(arg) {
   const value = String(arg)
   return /[^\w./:-]/.test(value) ? JSON.stringify(value) : value
@@ -183,7 +194,12 @@ function run(command, args, {
     env,
     encoding: 'utf8',
     input,
-    stdio: capture ? 'pipe' : 'inherit',
+    stdio:
+      input !== undefined
+        ? ['pipe', capture ? 'pipe' : 'inherit', capture ? 'pipe' : 'inherit']
+        : capture
+          ? 'pipe'
+          : 'inherit',
   })
   if (result.status !== 0) {
     const stderr = capture ? result.stderr.trim() : ''
@@ -507,13 +523,113 @@ function createMacosDmg({ appPath, dmgPath, dryRun, env }) {
   )
 }
 
-function prepareMacosEntitlements(sourcePath, outputPath, teamId, dryRun) {
+function macosProvisionedEntitlementsEnabled(env) {
+  return envFlag(env, 'IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS')
+}
+
+function macosProvisioningProfilePath(env, name) {
+  const value = String(env[name] ?? '').trim()
+  return value ? resolve(repoRoot, value) : ''
+}
+
+function copyMacosProvisioningProfile({ profilePath, bundlePath, dryRun }) {
+  const destination = join(bundlePath, 'Contents', 'embedded.provisionprofile')
   if (dryRun) {
-    console.log(`Would prepare entitlements ${sourcePath} for team ${teamId}`)
+    console.log(`Would embed provisioning profile ${profilePath || '<missing>'} -> ${destination}`)
     return
   }
-  const text = readFileSync(sourcePath, 'utf8').replace(/\$\(TeamIdentifierPrefix\)/g, `${teamId}.`)
-  writeFileSync(outputPath, text)
+  if (!profilePath) {
+    throw new Error(
+      `Missing provisioning profile for ${bundlePath}. Set IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE and IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE, or unset IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS.`,
+    )
+  }
+  if (!existsSync(profilePath)) {
+    throw new Error(`macOS provisioning profile not found: ${profilePath}`)
+  }
+  copyFileSync(profilePath, destination)
+}
+
+function readPlistFile(path) {
+  const script = String.raw`
+import json
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(json.dumps(plistlib.load(handle)))
+`
+  return JSON.parse(run('python3', ['-c', script, path], { capture: true }))
+}
+
+function writePlistFile(path, data) {
+  const script = String.raw`
+import json
+import plistlib
+import sys
+
+with open(sys.argv[1], "wb") as handle:
+    plistlib.dump(json.loads(sys.stdin.read()), handle, sort_keys=False)
+`
+  run('python3', ['-c', script, path], { input: JSON.stringify(data) })
+}
+
+function readMacosProvisioningProfileEntitlements(profilePath) {
+  if (!profilePath) {
+    throw new Error(
+      'Missing macOS provisioning profile path while profile-filtering release entitlements.',
+    )
+  }
+  if (!existsSync(profilePath)) {
+    throw new Error(`macOS provisioning profile not found: ${profilePath}`)
+  }
+  const profilePlist = run('security', ['cms', '-D', '-i', profilePath], { capture: true })
+  const script = String.raw`
+import json
+import plistlib
+import sys
+
+profile = plistlib.loads(sys.stdin.buffer.read())
+print(json.dumps(profile.get("Entitlements", {})))
+`
+  return JSON.parse(run('python3', ['-c', script], { capture: true, input: profilePlist }))
+}
+
+function prepareMacosEntitlements(sourcePath, outputPath, teamId, {
+  dryRun,
+  env,
+  profileEntitlements = {},
+}) {
+  const keepProvisionedEntitlements = macosProvisionedEntitlementsEnabled(env)
+  const action = keepProvisionedEntitlements
+    ? 'keep provisioned entitlements authorized by embedded profile'
+    : `strip ${macosRestrictedProfileEntitlementKeys.join(', ')}`
+  if (dryRun) {
+    console.log(`Would prepare entitlements ${sourcePath} for team ${teamId} (${action})`)
+    return
+  }
+  rmSync(outputPath, { force: true })
+  const { entitlements, dropped } = prepareMacosEntitlementsData({
+    sourceEntitlements: readPlistFile(sourcePath),
+    teamId,
+    keepProvisionedEntitlements,
+    profileEntitlements,
+  })
+  writePlistFile(outputPath, entitlements)
+  if (dropped.length > 0) {
+    console.warn(
+      `Dropped macOS entitlement(s) not launch-authorized by release profile: ${dropped.join(', ')}`,
+    )
+  }
+  if (!existsSync(outputPath)) {
+    throw new Error(`Prepared entitlements were not written: ${outputPath}`)
+  }
+  if (!keepProvisionedEntitlements || dropped.length > 0) {
+    const prepared = readFileSync(outputPath, 'utf8')
+    const leaked = dropped.filter((key) => prepared.includes(key))
+    if (leaked.length > 0) {
+      throw new Error(`Prepared entitlements still contain provisioned key(s): ${leaked.join(', ')}`)
+    }
+  }
 }
 
 function buildMacosArtifacts({ env, tag, dryRun }) {
@@ -576,21 +692,54 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   if (!teamId) {
     throw new Error(`Could not resolve Team ID for macOS signing identity: ${identity}`)
   }
+  const keepProvisionedEntitlements = macosProvisionedEntitlementsEnabled(env)
+  const appProvisioningProfile = macosProvisioningProfilePath(
+    env,
+    'IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE',
+  )
+  const appexProvisioningProfile = macosProvisioningProfilePath(
+    env,
+    'IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE',
+  )
   const signingDir = join(repoRoot, 'macos', '.build', 'ReleaseSigning')
   const appEntitlements = join(signingDir, 'IrisDriveMac.entitlements')
   const appexEntitlements = join(signingDir, 'IrisDriveFileProvider.entitlements')
+  const appProfileEntitlements =
+    keepProvisionedEntitlements && !dryRun
+      ? readMacosProvisioningProfileEntitlements(appProvisioningProfile)
+      : {}
+  const appexProfileEntitlements =
+    keepProvisionedEntitlements && !dryRun && existsSync(appexPath)
+      ? readMacosProvisioningProfileEntitlements(appexProvisioningProfile)
+      : {}
   if (!dryRun) {
     if (!existsSync(appPath)) {
       throw new Error(`Missing built macOS app: ${appPath}`)
     }
     mkdirSync(signingDir, { recursive: true })
-    prepareMacosEntitlements(join(repoRoot, 'macos', 'Release.entitlements'), appEntitlements, teamId, dryRun)
-    prepareMacosEntitlements(
-      join(repoRoot, 'macos', 'FileProvider', 'Release.entitlements'),
-      appexEntitlements,
-      teamId,
-      dryRun,
-    )
+  }
+  prepareMacosEntitlements(join(repoRoot, 'macos', 'Release.entitlements'), appEntitlements, teamId, {
+    dryRun,
+    env,
+    profileEntitlements: appProfileEntitlements,
+  })
+  prepareMacosEntitlements(
+    join(repoRoot, 'macos', 'FileProvider', 'Release.entitlements'),
+    appexEntitlements,
+    teamId,
+    { dryRun, env, profileEntitlements: appexProfileEntitlements },
+  )
+  if (keepProvisionedEntitlements) {
+    copyMacosProvisioningProfile({ profilePath: appProvisioningProfile, bundlePath: appPath, dryRun })
+    if (dryRun || existsSync(appexPath)) {
+      copyMacosProvisioningProfile({
+        profilePath: appexProvisioningProfile,
+        bundlePath: appexPath,
+        dryRun,
+      })
+    }
+  }
+  if (!dryRun) {
     copyFileSync(idrivePath, join(appPath, 'Contents', 'MacOS', 'idrive'))
     chmodSync(join(appPath, 'Contents', 'MacOS', 'idrive'), 0o755)
     if (existsSync(appexPath)) {
@@ -664,6 +813,11 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   run('tar', ['-czf', updaterArchivePath, '-C', dirname(appPath), basename(appPath)], {
     dryRun,
   })
+  run(
+    join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
+    ['--app', appPath, '--archive', updaterArchivePath, '--dmg', dmgPath],
+    { dryRun, env },
+  )
 }
 
 function buildLinuxArtifacts({ env, tag, dryRun }) {
@@ -1092,7 +1246,7 @@ function stageRelease({
   )
 }
 
-function publishRelease({ stageDir, releaseTree, tag, draft, dryRun }) {
+function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = process.env }) {
   const addOutput = run('htree', ['add', stageDir], { capture: true, dryRun })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
   if (!dryRun && !match) {
@@ -1103,8 +1257,71 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun }) {
   if (draft) {
     args.push('--draft')
   }
-  run('htree', args, { dryRun })
-  return cid
+  const publishOutput = run('htree', args, { capture: !dryRun, dryRun })
+  if (publishOutput) {
+    console.log(publishOutput)
+  }
+  const npubMatch = publishOutput.match(/Published release:\s*htree:\/\/([^/\s]+)\//)
+  return {
+    cid,
+    npub: dryRun
+      ? String(env.IRIS_DRIVE_RELEASE_NPUB ?? 'npub1example').trim()
+      : (npubMatch?.[1] ?? ''),
+  }
+}
+
+function releaseResolverRefreshBaseUrls(env) {
+  const configured = String(env.IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS ?? '').trim()
+  if (/^(0|false|no|off|none)$/i.test(configured)) {
+    return []
+  }
+  return splitCsv(configured || 'https://upload.iris.to')
+}
+
+function publicReleaseManifestUrl(baseUrl, npub, releaseTree) {
+  return `${baseUrl.replace(/\/+$/, '')}/${npub}/${encodeURIComponent(releaseTree)}/latest/release.json`
+}
+
+function refreshPublicReleaseResolvers({ env, npub, releaseTree, tag, dryRun }) {
+  const baseUrls = releaseResolverRefreshBaseUrls(env)
+  if (baseUrls.length === 0) {
+    return
+  }
+  if (!npub) {
+    throw new Error('Could not determine release npub for public resolver refresh.')
+  }
+  const encodedTree = encodeURIComponent(releaseTree)
+  for (const rawBaseUrl of baseUrls) {
+    const baseUrl = rawBaseUrl.replace(/\/+$/, '')
+    const refreshUrl = `${baseUrl}/api/resolve/${npub}/${encodedTree}?refresh=1`
+    const manifestUrl = publicReleaseManifestUrl(baseUrl, npub, releaseTree)
+    const refreshBody = run(
+      'curl',
+      ['--fail', '--location', '--silent', '--show-error', '--max-time', '30', refreshUrl],
+      { capture: !dryRun, dryRun },
+    )
+    if (dryRun) {
+      console.log(`Would verify public release manifest ${manifestUrl}`)
+      continue
+    }
+    const refreshed = JSON.parse(refreshBody)
+    console.log(
+      `Refreshed public release resolver ${baseUrl}: ${refreshed.hash ?? refreshed.cid ?? 'ok'}`,
+    )
+    const manifestBody = run(
+      'curl',
+      ['--fail', '--location', '--silent', '--show-error', '--max-time', '30', manifestUrl],
+      { capture: true },
+    )
+    const manifest = JSON.parse(manifestBody)
+    const manifestTag = normalizeTag(String(manifest.tag ?? manifest.version ?? ''))
+    if (manifestTag !== normalizeTag(tag)) {
+      throw new Error(
+        `Public release manifest at ${manifestUrl} is stale: expected ${tag}, got ${manifestTag}`,
+      )
+    }
+    console.log(`Verified public release manifest ${manifestUrl} -> ${manifestTag}`)
+  }
 }
 
 function resolveZapstoreSignWith(env) {
@@ -1198,14 +1415,26 @@ function main() {
     if (!commandExists('htree')) {
       throw new Error('Missing htree; cannot publish release')
     }
-    const cid = publishRelease({
+    const published = publishRelease({
       stageDir,
       releaseTree,
       tag,
       draft: options.draft,
       dryRun: options.dryRun,
+      env,
     })
-    console.log(`Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${cid}`)
+    console.log(
+      `Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${published.cid}`,
+    )
+    if (!options.draft) {
+      refreshPublicReleaseResolvers({
+        env,
+        npub: published.npub,
+        releaseTree,
+        tag,
+        dryRun: options.dryRun,
+      })
+    }
     if (!options.draft && !options.skipZapstore) {
       publishZapstore({ env, tag, assetDir, dryRun: options.dryRun, plannedAssetNames })
     }

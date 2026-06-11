@@ -31,10 +31,13 @@ require_contains() {
 }
 
 require_executable scripts/release-gate.sh
+require_executable scripts/macos-release-smoke.sh
+require_executable scripts/macos-profiles
 require_executable scripts/ios-build
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
+require_file scripts/macos-entitlements.mjs
 require_file .env.release.example
 require_file .env.zapstore.example
 require_file zapstore.yaml
@@ -57,6 +60,11 @@ require_contains scripts/local-release.mjs "validateFinalPublishInputs"
 require_contains scripts/local-release.mjs "Missing Zapstore signing key"
 require_contains scripts/local-release.mjs "notarytool"
 require_contains scripts/local-release.mjs "stapler"
+require_contains scripts/local-release.mjs "macos-release-smoke.sh"
+require_contains scripts/local-release.mjs "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS"
+require_contains scripts/local-release.mjs "api/resolve"
+require_contains scripts/local-release.mjs "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS"
+require_contains scripts/local-release.mjs "dist', 'macos', 'provisioning.env"
 require_contains scripts/local-release.mjs "MARKETING_VERSION="
 require_contains scripts/local-release.mjs "-PirisDriveVersionName="
 require_contains android/app/build.gradle.kts "irisDriveVersionName"
@@ -77,6 +85,7 @@ require_contains scripts/release-gate.sh "cargo test -p idrive --test daemon_syn
 require_contains scripts/release-gate.sh "just e2e-5devices"
 require_contains zapstore.yaml "release_source: dist/zapstore-current-android-arm64.apk"
 require_contains .env.release.example "IRIS_DRIVE_RELEASE_TREE=releases/iris-drive"
+require_contains .env.release.example "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS="
 require_contains scripts/windows-publish.ps1 '[switch]$Installer'
 require_contains scripts/windows-installer.iss "OutputBaseFilename"
 require_contains .env.release.example "IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=internal,public"
@@ -85,6 +94,16 @@ require_contains .env.release.example "IRIS_DRIVE_IOS_PROFILES_ENV_PATH="
 require_contains .env.release.example "IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1"
 require_contains .env.release.example "IRIS_DRIVE_MACOS_CODESIGN_RETRY_DELAY_SECONDS="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE="
+require_contains .env.release.example "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS="
+require_contains .env.release.example "IRIS_DRIVE_MACOS_PROFILE_TYPE=MAC_APP_DIRECT"
+require_contains .env.release.example "IRIS_DRIVE_MACOS_PROFILES_ENV_PATH="
+require_contains .env.release.example "IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE="
+require_contains .env.release.example "IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE="
+require_contains scripts/macos-profiles "IRIS_DRIVE_PROFILES_PLATFORM=macos"
+require_contains scripts/ios-profiles "to.iris.drive.macos"
+require_contains scripts/ios-profiles "to.iris.drive.macos.FileProvider"
+require_contains scripts/ios-profiles "MAC_APP_DIRECT"
+require_contains scripts/macos-entitlements.mjs "com.apple.developer.associated-domains"
 require_contains .env.release.example "IRIS_DRIVE_TESTFLIGHT_PUBLIC_GROUPS="
 require_contains .env.zapstore.example "SIGN_WITH="
 require_contains .gitignore ".env.zapstore.local"
