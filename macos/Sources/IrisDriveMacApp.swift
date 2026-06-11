@@ -49,10 +49,10 @@ struct IrisDriveMacApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let screenshotFixtureMode = IrisDriveScreenshotFixtures.enabled
-    private var daemon: Process?
+    var daemon: Process?
     var daemonServiceActive = false
     private var userRequestedSyncStop = false
-    private var daemonRestartWorkItem: DispatchWorkItem?
+    var daemonRestartWorkItem: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var copyLinkMenuItem: NSMenuItem?
@@ -1535,7 +1535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func markStartupStateLoaded() { DispatchQueue.main.async { IrisDriveStatus.shared.stateLoaded = true } }
 
-    private func localProfileExists(paths: IrisDriveRuntimePaths) -> Bool {
+    func localProfileExists(paths: IrisDriveRuntimePaths) -> Bool {
         FileManager.default.fileExists(
             atPath: paths.configDirectory.appendingPathComponent("key").path
         )
@@ -1737,32 +1737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let process = Process()
-        configure(
-            process,
-            executable: idrive,
-            arguments: ["daemon", "--watch-interval", "0"],
-            paths: paths
-        )
-        pipeLogs(from: process, label: "idrive")
-
-        do {
-            try process.run()
-            daemon = process
-            irisDriveDebugLog("Iris Drive sync daemon started")
-            setDaemonRunning(true)
-            updateStatus("Sync on")
-            if IrisDriveStatus.shared.setupComplete {
-                prepareFileProviderRuntime(paths: paths, idrive: idrive)
-            }
-            startStatusRefreshTimer(interval: 5.0)
-            refreshStatus()
-        } catch {
-            NSLog("Iris Drive daemon failed to start: \(error)")
-            updateStatus("Sync failed")
-            setDaemonRunning(false)
-            scheduleDaemonRestart(paths: paths)
-        }
+        startAppManagedDaemon(idrive, paths: paths)
     }
 
     func startStatusRefreshTimer(interval: TimeInterval) {
@@ -1865,7 +1840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
     }
 
-    private func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
+    func scheduleDaemonRestart(paths: IrisDriveRuntimePaths) {
         guard !userRequestedSyncStop, !externalDaemonMode, !daemonServiceActive else { return }
         guard !IrisDriveStatus.shared.revoked else {
             updateStatus("Device removed")
@@ -1950,7 +1925,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return output
     }
 
-    private func configure(
+    func configure(
         _ process: Process,
         executable: URL?,
         arguments: [String],
@@ -1973,7 +1948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func pipeLogs(from process: Process, label: String) {
+    func pipeLogs(from process: Process, label: String) {
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout

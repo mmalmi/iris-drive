@@ -44,8 +44,16 @@ require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "
 require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "com.apple.security.network.server"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "        return 0"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'app_path="$(build_app)"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'app_base_dir="$BUILD_DIR/AppData"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '&& "$mode" != "development"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "startAppManagedDaemon"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "status.primaryDriveGatewayURL = nil"
+require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" "macOS app sandbox cannot install LaunchAgents directly"
+require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'currentProcessHasEntitlement("com.apple.security.app-sandbox")'
+require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'arguments: ["service", "status", "--json"]'
 require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Open on drive.iris.to"
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"
 require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" "embedded_hashtree_requested"

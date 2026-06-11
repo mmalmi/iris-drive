@@ -525,21 +525,49 @@ build_app() {
   printf '%s\n' "$app_path"
 }
 
+ensure_daemon_service() {
+  local app_path="$1"
+  local app_base_dir="$2"
+  local config_dir="$app_base_dir/Config"
+  local helper="$app_path/Contents/MacOS/idrive"
+  local output
+
+  if environment_flag "${IRIS_DRIVE_DISABLE_DAEMON_SERVICE:-0}"; then
+    log "macOS daemon service skipped: disabled by IRIS_DRIVE_DISABLE_DAEMON_SERVICE"
+    return 0
+  fi
+  if [[ ! -f "$config_dir/key" ]]; then
+    log "macOS daemon service skipped: no local profile at $config_dir"
+    return 0
+  fi
+  if [[ ! -x "$helper" ]]; then
+    echo "Bundled idrive helper not found at $helper" >&2
+    exit 1
+  fi
+
+  log "Installing macOS daemon service for dev app"
+  if ! output="$("$helper" --config-dir "$config_dir" service install --launch --json 2>&1)"; then
+    echo "macOS daemon service failed to start:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  log "macOS daemon service ready"
+}
+
 run_app() {
   local app_path
   local app_base_dir="${IRIS_DRIVE_APP_BASE_DIR:-}"
-  local mode
 
-  mode="$(signing_mode)"
   build_app
   app_path="$BUILD_APP_PATH"
-  if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
+  if [[ -z "$app_base_dir" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi
 
   terminate_running_app
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
+    ensure_daemon_service "$app_path" "$app_base_dir"
     open \
       --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" \
       --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \

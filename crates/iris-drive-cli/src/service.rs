@@ -302,7 +302,7 @@ fn macos_service_status(config_dir: &Path) -> Result<Value> {
     let (loaded, running, pid, detail) = match output {
         Ok(output) => {
             let detail = String::from_utf8_lossy(&output.stdout).to_string();
-            let running = output.status.success() && detail.contains("state = running");
+            let running = output.status.success() && macos_launchctl_detail_running(&detail);
             let pid = parse_launchctl_pid(&detail);
             (output.status.success(), running, pid, detail)
         }
@@ -393,13 +393,18 @@ fn command_refs(command: &[String]) -> Vec<&str> {
     command.iter().map(String::as_str).collect()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn parse_launchctl_pid(detail: &str) -> Option<u32> {
     detail.lines().find_map(|line| {
         line.trim()
             .strip_prefix("pid = ")
             .and_then(|pid| pid.parse::<u32>().ok())
     })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_launchctl_detail_running(detail: &str) -> bool {
+    detail.contains("state = running") || parse_launchctl_pid(detail).is_some()
 }
 
 fn stable_path_hash_hex(path: &Path, width: usize) -> String {
@@ -471,5 +476,17 @@ mod tests {
 
         assert_eq!(names, ["bootout", "enable", "bootstrap", "kickstart"]);
         assert_eq!(commands[1], ["enable", "gui/501/to.iris.drive.daemon.test"]);
+    }
+
+    #[test]
+    fn macos_launchctl_pid_counts_as_running() {
+        let detail = r#"
+gui/501/to.iris.drive.daemon.test = {
+    state = spawn scheduled
+    pid = 4242
+}
+"#;
+
+        assert!(macos_launchctl_detail_running(detail));
     }
 }
