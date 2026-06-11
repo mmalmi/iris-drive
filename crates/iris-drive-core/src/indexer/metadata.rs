@@ -7,7 +7,9 @@ pub async fn layer_root_meta<S: Store>(
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    let (name, parent_segs) = segments.split_last().expect("ROOT_META_PATH is non-empty");
+    let Some((name, parent_segs)) = segments.split_last() else {
+        return Err(IndexError::RootMeta("ROOT_META_PATH is empty".into()));
+    };
     for depth in 1..=parent_segs.len() {
         let dir_path: Vec<String> = parent_segs[..depth]
             .iter()
@@ -197,7 +199,9 @@ pub async fn layer_prev_link<S: Store>(
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    let (name, parent_segs) = segments.split_last().expect("PREV_LINK_PATH is non-empty");
+    let Some((name, parent_segs)) = segments.split_last() else {
+        return Err(IndexError::RootMeta("PREV_LINK_PATH is empty".into()));
+    };
     // Ensure each ancestor (just `.hashtree/` for now) exists.
     for depth in 1..=parent_segs.len() {
         let dir_path: Vec<String> = parent_segs[..depth]
@@ -331,7 +335,9 @@ async fn ensure_dir<S: Store>(
     dir_path: &[String],
 ) -> Result<Cid, IndexError> {
     let segs: Vec<&str> = dir_path.iter().map(String::as_str).collect();
-    let (name, parent_segs) = segs.split_last().expect("dir_path must be non-empty");
+    let Some((name, parent_segs)) = segs.split_last() else {
+        return Err(IndexError::RootMeta("metadata directory path is empty".into()));
+    };
     let parent_cid = resolve_dir(tree, root, parent_segs).await?;
     let entries = tree.list_directory(&parent_cid).await?;
     if entries

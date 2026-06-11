@@ -74,7 +74,10 @@ fn main() -> Result<()> {
     // Spawn `idrive daemon` and pump its stdout into the event loop.
     let proxy = event_loop.create_proxy();
     let mut child = spawn_daemon().context("spawning idrive daemon")?;
-    let stdout = child.stdout.take().expect("daemon stdout");
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("spawned daemon did not expose stdout"))?;
     let stderr = child.stderr.take();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
@@ -102,10 +105,18 @@ fn main() -> Result<()> {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::NewEvents(StartCause::Init) => {
+                let icon = match make_icon() {
+                    Ok(icon) => icon,
+                    Err(e) => {
+                        eprintln!("failed to build tray icon: {e}");
+                        *control_flow = ControlFlow::Exit;
+                        return;
+                    }
+                };
                 tray_icon = match TrayIconBuilder::new()
                     .with_menu(Box::new(menu.clone()))
                     .with_tooltip("Iris Drive")
-                    .with_icon(make_icon())
+                    .with_icon(icon)
                     .build()
                 {
                     Ok(t) => Some(t),
@@ -224,7 +235,7 @@ fn spawn_daemon() -> std::io::Result<Child> {
 }
 
 /// Build a 22×22 template version of the Iris Drive platter/reader glyph.
-fn make_icon() -> tray_icon::Icon {
+fn make_icon() -> Result<tray_icon::Icon> {
     const SIZE: u16 = 22;
     const CENTER: f32 = 11.0;
     const RING_RADIUS: f32 = 6.4;
@@ -251,7 +262,8 @@ fn make_icon() -> tray_icon::Icon {
             data.extend_from_slice(&[255, 255, 255, alpha]);
         }
     }
-    tray_icon::Icon::from_rgba(data, u32::from(SIZE), u32::from(SIZE)).expect("valid icon")
+    tray_icon::Icon::from_rgba(data, u32::from(SIZE), u32::from(SIZE))
+        .context("creating tray icon from RGBA buffer")
 }
 
 fn stroke_alpha(distance: f32, width: f32) -> u8 {

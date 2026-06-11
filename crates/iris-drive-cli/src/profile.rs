@@ -59,14 +59,16 @@ pub(crate) fn cmd_recover_app_key(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive restore` first"))?;
-    let loaded_from_disk = recovery_phrase.is_none_or(|phrase| phrase.trim().is_empty());
-    let phrase = if loaded_from_disk {
-        iris_drive_core::recovery_phrase::load_recovery_phrase(
+    let provided_recovery_phrase = recovery_phrase
+        .map(str::trim)
+        .filter(|phrase| !phrase.is_empty());
+    let loaded_from_disk = provided_recovery_phrase.is_none();
+    let phrase = match provided_recovery_phrase {
+        Some(phrase) => phrase.to_string(),
+        None => iris_drive_core::recovery_phrase::load_recovery_phrase(
             iris_drive_core::paths::recovery_phrase_path_in(config_dir),
         )
-        .context("loading saved recovery phrase")?
-    } else {
-        recovery_phrase.expect("checked above").trim().to_string()
+        .context("loading saved recovery phrase")?,
     };
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     profile
@@ -247,14 +249,17 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
         .reject_inbound_app_key_link_request(&app_key_hex)
         .context("rejecting AppKey request")?;
     config.save(config_path_in(config_dir))?;
+    let inbound_app_key_link_requests = config
+        .profile
+        .as_ref()
+        .map(inbound_app_key_link_requests_json)
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared while rejecting AppKey request"))?;
     println!(
         "{}",
         json!({
             "rejected": rejected,
             "rejected_app_key_npub": pubkey_npub(&app_key_hex),
-            "inbound_app_key_link_requests": inbound_app_key_link_requests_json(
-                config.profile.as_ref().expect("profile still present")
-            ),
+            "inbound_app_key_link_requests": inbound_app_key_link_requests,
         })
     );
     Ok(())
@@ -891,7 +896,10 @@ async fn handle_app_key_link_roster_app_message(
         iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
-    let state = config.profile.as_ref().expect("profile still present");
+    let state = config
+        .profile
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared while applying app-key-link roster"))?;
     let ack_frame = if accepted {
         app_key_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {

@@ -434,7 +434,8 @@ fn share_view_json_with_diagnostics(
         "shortcut_paths": view.shortcut_paths.clone(),
     });
     if diagnostics {
-        value.as_object_mut().unwrap().insert(
+        insert_json_field(
+            &mut value,
             "missing_key_wraps".to_string(),
             json!(app_key_npubs(&view.missing_key_wrap_pubkeys)),
         );
@@ -484,7 +485,8 @@ fn share_revoke_result_json(
         "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),
     });
     if diagnostics {
-        value.as_object_mut().unwrap().insert(
+        insert_json_field(
+            &mut value,
             "revoked_app_keys".to_string(),
             json!(app_key_npubs(&result.revoked_app_pubkeys)),
         );
@@ -508,16 +510,24 @@ fn share_repair_result_json(
             .unwrap_or(result.remaining_missing_key_wrap_pubkeys.len()),
     });
     if diagnostics {
-        value.as_object_mut().unwrap().insert(
+        insert_json_field(
+            &mut value,
             "repaired_key_wraps".to_string(),
             json!(app_key_npubs(&result.repaired_key_wrap_pubkeys)),
         );
-        value.as_object_mut().unwrap().insert(
+        insert_json_field(
+            &mut value,
             "remaining_missing_key_wraps".to_string(),
             json!(app_key_npubs(&result.remaining_missing_key_wrap_pubkeys)),
         );
     }
     value
+}
+
+fn insert_json_field(value: &mut Value, key: String, field: Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(key, field);
+    }
 }
 
 fn app_key_npubs(pubkeys: &[String]) -> Vec<String> {

@@ -113,11 +113,11 @@ pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     })
 }
 
-pub(crate) fn key_cookie_value(key: &str) -> HeaderValue {
+pub(crate) fn key_cookie_value(key: &str) -> Option<HeaderValue> {
     HeaderValue::from_str(&format!(
         "{KEY_COOKIE}={key}; Path=/; HttpOnly; SameSite=Strict"
     ))
-    .expect("valid cookie")
+    .ok()
 }
 
 pub(crate) fn parse_byte_range(value: &str, size: u64) -> Result<(u64, u64), String> {

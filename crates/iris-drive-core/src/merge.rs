@@ -289,14 +289,11 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
     let mut view = MergedView::default();
     for (path, write) in &writes {
         let tombstone = tombstones.get(path);
-        if tombstone.is_some_and(|t| should_mark_write_delete_conflict(write, t)) {
+        if let Some(tombstone) = tombstone
+            && should_mark_write_delete_conflict(write, tombstone)
+        {
             conflicts.insert(path.clone());
-            record_write_delete_conflict(
-                &mut conflict_details,
-                path.as_str(),
-                write,
-                tombstone.expect("checked is_some"),
-            );
+            record_write_delete_conflict(&mut conflict_details, path.as_str(), write, tombstone);
         }
         let suppressed = tombstone.is_some_and(|t| tombstone_suppresses_write(t, write));
         if suppressed {

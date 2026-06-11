@@ -374,10 +374,9 @@ fn handle_share_action_api(
         return Err((StatusCode::BAD_REQUEST, "invalid share action host".into()));
     }
     if method == Method::OPTIONS {
-        return Ok(
-            share_action_response_builder(StatusCode::NO_CONTENT, cors_origin.as_ref())
-                .body(Body::empty())
-                .expect("response"),
+        return try_finish_response(
+            share_action_response_builder(StatusCode::NO_CONTENT, cors_origin.as_ref()),
+            Body::empty(),
         );
     }
     if method == Method::GET {
@@ -401,11 +400,12 @@ fn share_action_json_response(
 ) -> Result<Response, (StatusCode, String)> {
     let body = serde_json::to_vec(result)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(share_action_response_builder(StatusCode::OK, cors_origin)
-        .header(CONTENT_TYPE, "application/json")
-        .header(CACHE_CONTROL, "no-store")
-        .body(Body::from(body))
-        .expect("response"))
+    try_finish_response(
+        share_action_response_builder(StatusCode::OK, cors_origin)
+            .header(CONTENT_TYPE, "application/json")
+            .header(CACHE_CONTROL, "no-store"),
+        Body::from(body),
+    )
 }
 
 fn share_action_response_builder(
@@ -528,20 +528,23 @@ async fn proxy_htree_daemon_request(
             builder = builder.header(name.as_str(), value.as_bytes());
         }
     }
-    if let Some(key) = request.key_query.as_deref() {
-        builder = builder.header(SET_COOKIE, key_cookie_value(key));
+    if let Some(key) = request.key_query.as_deref()
+        && let Some(cookie) = key_cookie_value(key)
+    {
+        builder = builder.header(SET_COOKIE, cookie);
     }
     let bytes = upstream
         .bytes()
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
-    Ok(builder
-        .body(if method == Method::HEAD {
+    try_finish_response(
+        builder,
+        if method == Method::HEAD {
             Body::empty()
         } else {
             Body::from(bytes)
-        })
-        .expect("response"))
+        },
+    )
 }
 
 fn is_proxy_response_header(name: &str) -> bool {
@@ -1015,10 +1018,10 @@ async fn serve_file<S: Store>(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.split(',').any(|part| part.trim() == etag))
     {
-        return Ok(response_builder(StatusCode::NOT_MODIFIED, options.head)
-            .header(ETAG, etag)
-            .body(Body::empty())
-            .expect("response"));
+        return try_finish_response(
+            response_builder(StatusCode::NOT_MODIFIED, options.head).header(ETAG, etag),
+            Body::empty(),
+        );
     }
 
     let range = if options.size == 0 {
@@ -1063,8 +1066,10 @@ async fn serve_file<S: Store>(
         .header(ETAG, etag)
         .header(CACHE_CONTROL, cache_control(options.cache_policy))
         .header(X_CONTENT_TYPE_OPTIONS, "nosniff");
-    if let Some(key) = options.set_key_cookie {
-        builder = builder.header(SET_COOKIE, key_cookie_value(key));
+    if let Some(key) = options.set_key_cookie
+        && let Some(cookie) = key_cookie_value(key)
+    {
+        builder = builder.header(SET_COOKIE, cookie);
     }
     if status == StatusCode::PARTIAL_CONTENT {
         let end = start.saturating_add(body_len).saturating_sub(1);
@@ -1076,13 +1081,14 @@ async fn serve_file<S: Store>(
             ),
         );
     }
-    Ok(builder
-        .body(if options.head {
+    try_finish_response(
+        builder,
+        if options.head {
             Body::empty()
         } else {
             Body::from(bytes)
-        })
-        .expect("response"))
+        },
+    )
 }
 
 #[must_use]

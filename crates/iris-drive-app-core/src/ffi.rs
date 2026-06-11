@@ -1477,9 +1477,9 @@ async fn run_app_key_link_exchange_async(
     let config_dir = Path::new(data_dir);
     let startup_config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    if startup_config.profile.is_none() {
+    let Some(account_state) = startup_config.profile.as_ref() else {
         return Ok(());
-    }
+    };
 
     let device = iris_drive_core::AppKey::load(key_path_in(config_dir))
         .map_err(|error| format!("loading app key: {error}"))?;
@@ -1489,10 +1489,6 @@ async fn run_app_key_link_exchange_async(
         normalized_config_relays(&startup_config.relays)
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
-    let account_state = startup_config
-        .profile
-        .as_ref()
-        .expect("account checked above");
     let root_scope_id = account_state.root_scope_id();
     let relay_filters = iris_drive_core::relay_sync::subscription_filters(
         &account_state.app_key_pubkey,
@@ -1943,7 +1939,10 @@ async fn handle_native_app_key_link_roster(
         iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(decision)
             if decision != iris_drive_core::ApplyDecision::Rejected
     );
-    let state = config.profile.as_ref().expect("account still present");
+    let state = config
+        .profile
+        .as_ref()
+        .ok_or_else(|| "profile disappeared while applying app-key-link roster".to_string())?;
     let ack_frame = if accepted {
         app_key_link_roster_ack_frame(state, &admin_app_key_hex, unix_now_seconds())
     } else {

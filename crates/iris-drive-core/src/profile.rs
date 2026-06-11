@@ -424,6 +424,13 @@ pub struct Profile {
 }
 
 impl Profile {
+    fn current_app_keys_projection(&self) -> Result<&AppKeysProjection, ProfileError> {
+        self.state
+            .app_keys
+            .as_ref()
+            .ok_or(ProfileError::NoCurrentAppKeysProjection)
+    }
+
     /// **Create** flow — fresh `AppKey` saved to the config dir. The `AppKey` is
     /// auto-authorized as the first admin via a self-signed single-entry
     /// `IrisProfile` roster op log.
@@ -753,7 +760,7 @@ impl Profile {
         self.state
             .inbound_app_key_link_requests
             .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
-        Ok(self.state.app_keys.as_ref().expect("just applied"))
+        self.current_app_keys_projection()
     }
 
     /// Revoke an `AppKey` from the roster and rotate the DCK so the
@@ -790,7 +797,7 @@ impl Profile {
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
-        Ok(self.state.app_keys.as_ref().expect("just applied"))
+        self.current_app_keys_projection()
     }
 
     /// Rotate the DCK without changing the `AppKey` roster. Useful for
@@ -809,7 +816,7 @@ impl Profile {
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
         self.state.sync_app_keys_from_profile();
-        Ok(self.state.app_keys.as_ref().expect("just applied"))
+        self.current_app_keys_projection()
     }
 
     /// Add a NIP-46 signer as an `IrisProfile` recovery authority. When
@@ -990,7 +997,7 @@ impl Profile {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
         self.state.sync_app_keys_from_profile();
-        Ok(self.state.app_keys.as_ref().expect("just applied"))
+        self.current_app_keys_projection()
     }
 
     pub fn appoint_admin(
@@ -1015,26 +1022,31 @@ impl Profile {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
-        let snap = self
-            .state
-            .app_keys
-            .as_ref()
-            .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
-        let current = snap
-            .app_actor(app_key_pubkey_hex)
-            .ok_or(ProfileError::AppKeyNotInRoster)?;
-        if current.role == role {
-            return Ok(self.state.app_keys.as_ref().expect("checked above"));
+        let (already_has_role, would_remove_last_admin) = {
+            let snap = self
+                .state
+                .app_keys
+                .as_ref()
+                .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
+            let current = snap
+                .app_actor(app_key_pubkey_hex)
+                .ok_or(ProfileError::AppKeyNotInRoster)?;
+            (
+                current.role == role,
+                current.is_admin()
+                    && role != AppActorRole::Admin
+                    && snap
+                        .app_actors
+                        .iter()
+                        .filter(|device| device.is_admin())
+                        .count()
+                        <= 1,
+            )
+        };
+        if already_has_role {
+            return self.current_app_keys_projection();
         }
-        if current.is_admin()
-            && role != AppActorRole::Admin
-            && snap
-                .app_actors
-                .iter()
-                .filter(|device| device.is_admin())
-                .count()
-                <= 1
-        {
+        if would_remove_last_admin {
             return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let capabilities = match role {
@@ -1052,7 +1064,7 @@ impl Profile {
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
         self.state.sync_app_keys_from_profile();
-        Ok(self.state.app_keys.as_ref().expect("just applied"))
+        self.current_app_keys_projection()
     }
 
     fn append_profile_roster_op(

@@ -90,7 +90,7 @@ pub(crate) fn cmd_daemon(
             }
         }
     } else {
-        let disabled_by = if !enable_gateway { "cli" } else { "settings" };
+        let disabled_by = if enable_gateway { "settings" } else { "cli" };
         (
             None,
             json!({
@@ -160,9 +160,9 @@ pub(crate) fn cmd_daemon(
             None
         };
         let gateway = if gateway_enabled {
-            let embedded_hashtree = embedded_hashtree
-                .as_ref()
-                .expect("gateway is only enabled when embedded hashtree started");
+            let embedded_hashtree = embedded_hashtree.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("gateway was enabled without an embedded hashtree")
+            })?;
             let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
             Some(
                 GatewayServer::bind_with_tree_and_htree_daemon(
@@ -412,13 +412,17 @@ pub(crate) fn cmd_daemon(
                     }
                 } => {
                     if let Some(rx) = mount_root_updates.as_mut() {
-                        visible_root = drain_latest_mount_root_update(
+                        let Some(drained_visible_root) = drain_latest_mount_root_update(
                             rx,
                             root_update_debounce,
                             Some(visible_root),
                         )
                         .await
-                        .expect("mount update branch always has an initial root");
+                        else {
+                            println!("{}", json!({"event": "mount_root_update_missing"}));
+                            continue;
+                        };
+                        visible_root = drained_visible_root;
                     }
                     match import_mount_visible_root_update(
                         &client,

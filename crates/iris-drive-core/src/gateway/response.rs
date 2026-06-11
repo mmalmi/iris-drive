@@ -49,35 +49,68 @@ pub(crate) fn directory_response(
         .header(CONTENT_LENGTH, bytes.len().to_string())
         .header(CACHE_CONTROL, cache_control(cache_policy))
         .header(X_CONTENT_TYPE_OPTIONS, "nosniff");
-    if let Some(key) = set_key_cookie {
-        builder = builder.header(SET_COOKIE, key_cookie_value(key));
+    if let Some(cookie) = set_key_cookie.and_then(key_cookie_value) {
+        builder = builder.header(SET_COOKIE, cookie);
     }
-    builder
-        .body(if head {
+    finish_response(
+        builder,
+        if head {
             Body::empty()
         } else {
             Body::from(bytes)
-        })
-        .expect("response")
+        },
+    )
 }
 
 pub(crate) fn text_response(status: StatusCode, message: &str) -> Response {
-    response_builder(status, false)
-        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from(message.to_string()))
-        .expect("response")
+    finish_response(
+        response_builder(status, false).header(CONTENT_TYPE, "text/plain; charset=utf-8"),
+        Body::from(message.to_string()),
+    )
 }
 
 pub(crate) fn redirect_response(location: &str) -> Response {
-    response_builder(StatusCode::TEMPORARY_REDIRECT, false)
-        .header(LOCATION, location)
-        .header(CACHE_CONTROL, "no-store")
-        .body(Body::empty())
-        .expect("response")
+    finish_response(
+        response_builder(StatusCode::TEMPORARY_REDIRECT, false)
+            .header(LOCATION, location)
+            .header(CACHE_CONTROL, "no-store"),
+        Body::empty(),
+    )
 }
 
 pub(crate) fn response_builder(status: StatusCode, _head: bool) -> http::response::Builder {
     Response::builder().status(status)
+}
+
+pub(crate) fn finish_response(builder: http::response::Builder, body: Body) -> Response {
+    builder.body(body).unwrap_or_else(|error| {
+        fallback_text_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("failed to build response: {error}"),
+        )
+    })
+}
+
+pub(crate) fn try_finish_response(
+    builder: http::response::Builder,
+    body: Body,
+) -> Result<Response, (StatusCode, String)> {
+    builder.body(body).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("response: {error}"),
+        )
+    })
+}
+
+fn fallback_text_response(status: StatusCode, message: &str) -> Response {
+    let mut response = Response::new(Body::from(message.to_string()));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response
 }
 
 pub(crate) fn entry_cid(entry: &TreeEntry) -> Cid {

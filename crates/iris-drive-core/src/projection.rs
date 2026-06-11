@@ -468,9 +468,9 @@ async fn ensure_visible_dir_segments<S: Store>(
     }
 
     let dir = tree.put_directory(Vec::new()).await?;
-    let (name, parent) = segments
-        .split_last()
-        .expect("non-empty segments checked above");
+    let Some((name, parent)) = segments.split_last() else {
+        return Ok(root);
+    };
     tree.set_entry(&root, parent, name, &dir, 0, LinkType::Dir)
         .await
         .map_err(Into::into)
