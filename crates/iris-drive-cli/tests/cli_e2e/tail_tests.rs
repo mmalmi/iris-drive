@@ -276,6 +276,12 @@ fn provider_commands_operate_on_virtual_root() {
         b"hello virtual"
     );
 
+    std::fs::write(
+        cfg.path().join("daemon.lock"),
+        format!("{}\n", std::process::id()),
+    )
+    .unwrap();
+
     let source = scratch.path().join("new.txt");
     std::fs::write(&source, b"from provider").unwrap();
     idrive(cfg.path())

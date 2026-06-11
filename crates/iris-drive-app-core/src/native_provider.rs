@@ -19,6 +19,23 @@ use crate::provider_metadata::provider_modified_at_index;
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderMutationLiveness {
+    RequireDaemonLock,
+    InProcessProvider,
+}
+
+pub(crate) fn provider_mutation_liveness_for_target(target_os: &str) -> ProviderMutationLiveness {
+    match target_os {
+        "android" | "ios" => ProviderMutationLiveness::InProcessProvider,
+        _ => ProviderMutationLiveness::RequireDaemonLock,
+    }
+}
+
+fn provider_mutation_liveness() -> ProviderMutationLiveness {
+    provider_mutation_liveness_for_target(std::env::consts::OS)
+}
+
 pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
     match run_native_provider_list(data_dir) {
         Ok(value) => value,
@@ -299,9 +316,11 @@ fn run_native_provider_rename(
 }
 
 fn ensure_daemon_available_for_provider_mutation(data_dir: &str) -> anyhow::Result<()> {
-    iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(Path::new(
-        data_dir,
-    ))?;
+    if provider_mutation_liveness() == ProviderMutationLiveness::RequireDaemonLock {
+        iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(
+            Path::new(data_dir),
+        )?;
+    }
     Ok(())
 }
 

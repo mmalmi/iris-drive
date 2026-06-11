@@ -51,6 +51,32 @@ fn native_provider_mutation_reports_daemon_unavailable_without_live_lock() {
 }
 
 #[test]
+fn provider_mutation_liveness_policy_keeps_desktop_daemon_gate_but_allows_mobile_process() {
+    use crate::native_provider::{ProviderMutationLiveness, provider_mutation_liveness_for_target};
+
+    assert_eq!(
+        provider_mutation_liveness_for_target("macos"),
+        ProviderMutationLiveness::RequireDaemonLock
+    );
+    assert_eq!(
+        provider_mutation_liveness_for_target("linux"),
+        ProviderMutationLiveness::RequireDaemonLock
+    );
+    assert_eq!(
+        provider_mutation_liveness_for_target("windows"),
+        ProviderMutationLiveness::RequireDaemonLock
+    );
+    assert_eq!(
+        provider_mutation_liveness_for_target("android"),
+        ProviderMutationLiveness::InProcessProvider
+    );
+    assert_eq!(
+        provider_mutation_liveness_for_target("ios"),
+        ProviderMutationLiveness::InProcessProvider
+    );
+}
+
+#[test]
 fn import_file_action_writes_shared_file_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

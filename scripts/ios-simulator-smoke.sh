@@ -19,6 +19,7 @@ DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_BUILD_LOG:-/tmp/iris-drive-ios-build.log}"
 BUNDLE_ID="to.iris.drive.ios"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
+SIMULATOR_BOOT_TIMEOUT_SECONDS="${IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS:-60}"
 APP_GROUP_ID="group.to.iris.drive"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
@@ -35,6 +36,8 @@ Usage:
 Environment:
   IRIS_DRIVE_IOS_SIMULATOR_DEVICE  Optional simulator device name.
   IRIS_DRIVE_IOS_BUILD_LOG         Build log path.
+  IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS
+                                      Seconds to wait for simctl bootstatus.
 USAGE
 }
 
@@ -74,6 +77,7 @@ preferred = sys.argv[1]
 with open(sys.argv[2], "r", encoding="utf-8") as handle:
     data = json.load(handle)
 booted = []
+shutdown = []
 available = []
 for runtime, devices in data.get("devices", {}).items():
     if "iOS" not in runtime:
@@ -87,9 +91,11 @@ for runtime, devices in data.get("devices", {}).items():
             continue
         if device.get("state") == "Booted":
             booted.append(device)
+        if device.get("state") == "Shutdown":
+            shutdown.append(device)
         available.append(device)
 
-choices = booted or available
+choices = shutdown or booted or available
 if not choices:
     raise SystemExit("no available iPhone simulator found")
 print(choices[0]["udid"])
@@ -143,6 +149,61 @@ safe_remove_sim_container() {
     exit 1
   fi
   rm -rf "$container"
+}
+
+simulator_state() {
+  local udid="$1"
+  local devices_json
+  devices_json="$(mktemp -t iris-drive-ios-simulator-state.XXXXXX.json)"
+  xcrun simctl list devices available --json >"$devices_json"
+  python3 - "$udid" "$devices_json" <<'PY'
+import json
+import sys
+
+udid = sys.argv[1]
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+for devices in data.get("devices", {}).values():
+    for device in devices:
+        if device.get("udid") == udid:
+            print(device.get("state", ""))
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+  local status=$?
+  rm -f "$devices_json"
+  return "$status"
+}
+
+wait_for_simulator_boot() {
+  local udid="$1"
+  local timeout_seconds="$2"
+  local attempts
+
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -le 0 ]]; then
+    echo "FAIL: IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS must be a positive integer." >&2
+    exit 1
+  fi
+
+  xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null &
+  local bootstatus_pid="$!"
+  attempts="$((timeout_seconds * 5))"
+  for _ in $(seq 1 "$attempts"); do
+    if ! kill -0 "$bootstatus_pid" >/dev/null 2>&1; then
+      wait "$bootstatus_pid"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  kill "$bootstatus_pid" >/dev/null 2>&1 || true
+  wait "$bootstatus_pid" >/dev/null 2>&1 || true
+
+  local state
+  state="$(simulator_state "$udid" || true)"
+  echo "FAIL: simulator $udid did not finish bootstatus within ${timeout_seconds}s (state=${state:-unknown})." >&2
+  exit 1
 }
 
 wait_for_debug_state() {
@@ -206,8 +267,7 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
   exit 0
 fi
 
-xcrun simctl boot "$DEVICE_UDID" >/dev/null 2>&1 || true
-xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
+wait_for_simulator_boot "$DEVICE_UDID" "$SIMULATOR_BOOT_TIMEOUT_SECONDS"
 
 xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
