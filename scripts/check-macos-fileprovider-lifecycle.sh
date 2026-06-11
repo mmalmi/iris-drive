@@ -44,13 +44,18 @@ require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "
 require_not_contains "$HELPER_ENTITLEMENTS" "macos/idrive-helper.entitlements" "com.apple.security.network.server"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "        return 0"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'app_path="$(build_app)"'
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'app_base_dir="$BUILD_DIR/AppData"'
-require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '&& "$mode" != "development"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "development_app_group_config_dir"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "remove_daemon_service"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "remove_repo_local_daemon_service"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "app-group runtime is managed by sandboxed app"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "startAppManagedDaemon"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "status.primaryDriveGatewayURL = nil"
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "self.daemonServiceActive = serviceRunning"
+require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Daemon offline"
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" "macOS app sandbox cannot install LaunchAgents directly"
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'currentProcessHasEntitlement("com.apple.security.app-sandbox")'
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'arguments: ["service", "status", "--json"]'

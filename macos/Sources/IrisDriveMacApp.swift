@@ -2325,8 +2325,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             if let service = json["service"] as? [String: Any] {
-                self.daemonServiceActive = service["installed"] as? Bool ?? self.daemonServiceActive
                 let serviceRunning = service["running"] as? Bool ?? false
+                self.daemonServiceActive = serviceRunning
                 self.setDaemonRunning(serviceRunning || (daemonStatusRunning ?? false))
             } else if let daemonStatusRunning {
                 self.setDaemonRunning(daemonStatusRunning)

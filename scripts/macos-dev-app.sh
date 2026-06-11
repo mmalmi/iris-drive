@@ -140,6 +140,27 @@ development_signing_identity() {
   return 1
 }
 
+development_signing_team() {
+  local team
+  team="$(development_team)"
+  if [[ -n "$team" ]]; then
+    printf '%s\n' "$team"
+    return 0
+  fi
+  team="$(team_identifier_for_identity "$(development_signing_identity)")"
+  if [[ -n "$team" ]]; then
+    printf '%s\n' "$team"
+    return 0
+  fi
+  echo "Could not resolve development signing team." >&2
+  return 1
+}
+
+development_app_group_config_dir() {
+  local team="$1"
+  printf '%s/Library/Group Containers/%s.to.iris.drive/Iris Drive/Config\n' "$HOME" "$team"
+}
+
 xcode_app_entitlements() {
   local entitlements="$DERIVED_DATA/Build/Intermediates.noindex/IrisDriveMac.build/$CONFIGURATION/IrisDriveMac.build/Iris Drive.app.xcent"
   if [[ -f "$entitlements" ]]; then
@@ -527,8 +548,7 @@ build_app() {
 
 ensure_daemon_service() {
   local app_path="$1"
-  local app_base_dir="$2"
-  local config_dir="$app_base_dir/Config"
+  local config_dir="$2"
   local helper="$app_path/Contents/MacOS/idrive"
   local output
 
@@ -554,26 +574,50 @@ ensure_daemon_service() {
   log "macOS daemon service ready"
 }
 
+remove_daemon_service() {
+  local app_path="$1"
+  local config_dir="$2"
+  local helper="$app_path/Contents/MacOS/idrive"
+
+  [[ -x "$helper" ]] || return 0
+  "$helper" --config-dir "$config_dir" service uninstall --json >/dev/null 2>&1 || true
+}
+
+remove_repo_local_daemon_service() {
+  remove_daemon_service "$1" "$BUILD_DIR/AppData/Config"
+}
+
 run_app() {
   local app_path
   local app_base_dir="${IRIS_DRIVE_APP_BASE_DIR:-}"
+  local mode
+  local service_config_dir=""
 
+  mode="$(signing_mode)"
   build_app
   app_path="$BUILD_APP_PATH"
-  if [[ -z "$app_base_dir" ]]; then
+  if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi
 
   terminate_running_app
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
-    ensure_daemon_service "$app_path" "$app_base_dir"
+    service_config_dir="$app_base_dir/Config"
+    ensure_daemon_service "$app_path" "$service_config_dir"
     open \
       --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" \
       --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
       "$app_path"
     echo "macOS app data: $app_base_dir"
   else
+    if [[ "$mode" == "development" ]]; then
+      service_config_dir="$(development_app_group_config_dir "$(development_signing_team)")"
+      remove_repo_local_daemon_service "$app_path"
+      remove_daemon_service "$app_path" "$service_config_dir"
+      log "macOS daemon service skipped: app-group runtime is managed by sandboxed app"
+      echo "macOS app data: ${service_config_dir%/Config}"
+    fi
     open \
       --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
       "$app_path"

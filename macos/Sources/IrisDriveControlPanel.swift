@@ -748,6 +748,9 @@ struct IrisDriveControlPanel: View {
     }
 
     private var heroText: String {
+        if !status.daemonRunning {
+            return "Daemon offline"
+        }
         switch syncState {
         case let .syncing(done, total):
             return "Syncing \(done) of \(total)…"
@@ -759,11 +762,13 @@ struct IrisDriveControlPanel: View {
     private var summaryLine: String {
         let files = status.fileCount ?? 0
         let usedBytes = status.visibleFileBytes ?? 0
-        return [
+        let parts: [String?] = [
             countLabel(files, "file"),
             "\(byteString(usedBytes)) used",
             "\(status.onlineDeviceCount)/\(status.authorizedDeviceCount) online",
-        ].joined(separator: "  ·  ")
+            status.daemonRunning ? nil : "daemon not running",
+        ]
+        return parts.compactMap { $0 }.joined(separator: "  ·  ")
     }
 
     // MARK: Devices
