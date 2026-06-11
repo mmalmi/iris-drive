@@ -162,7 +162,7 @@ public partial class MainWindow : Window
             var syncRunning = EnsureDaemonRunning(status);
             if (status.IsAwaitingLinkedApproval)
             {
-                RenderAwaitingApproval(status, null);
+                RenderAwaitingApproval(status, syncRunning ? null : "Daemon offline");
                 return;
             }
             if (!status.IsSetupComplete)
@@ -232,13 +232,15 @@ public partial class MainWindow : Window
 
     private void RenderStatus(IrisDriveStatusData status, bool syncRunning, string? notice)
     {
+        var shellStatus = syncRunning ? status.PrimaryStatusLabel : "Daemon offline";
+        var pillStatus = syncRunning ? status.PrimaryStatusLabel : "Offline";
         DriveTitle.Text = status.DriveName;
-        DriveMessage.Text = status.PrimaryStatusLabel;
-        StatusPill.Text = status.PrimaryStatusLabel;
+        DriveMessage.Text = shellStatus;
+        StatusPill.Text = pillStatus;
         FilesValue.Text = status.FileCount.ToString(CultureInfo.InvariantCulture);
         StorageValue.Text = FormatBytes(status.VisibleFileBytes);
         DevicesValue.Text = $"{status.OnlineDeviceCount}/{status.AuthorizedDeviceCount}";
-        NoticeText.Text = notice ?? "";
+        NoticeText.Text = notice ?? (syncRunning ? "" : OfflineDaemonNotice(NoticeText.Text));
 
         CopySnapshotButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SnapshotUrl);
         OpenSnapshotButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SnapshotUrl);
@@ -273,6 +275,13 @@ public partial class MainWindow : Window
         SyncLaunchOnStartup(status.LaunchOnStartup);
         OpenSitesPortalButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SitesPortalUrl);
         UpdateTrayText(syncRunning);
+    }
+
+    private static string OfflineDaemonNotice(string currentNotice)
+    {
+        return currentNotice.StartsWith("Could not start sync", StringComparison.Ordinal)
+            ? currentNotice
+            : "daemon not running";
     }
 
     private void RenderUnavailable(string message)

@@ -48,7 +48,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     notice.set_text(if sync_running {
         "Waiting for approval"
     } else {
-        "Sync paused"
+        "Daemon offline"
     });
 
     let copy = primary_button("Copy Device Key");

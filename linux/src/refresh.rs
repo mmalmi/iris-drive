@@ -30,9 +30,19 @@ pub(crate) fn refresh(model: &AppRef) {
             }
             model.ui.drive_title.set_text(&drive_name(&state));
             let primary_status_label = primary_status_label_value(&state);
-            model.ui.drive_message.set_text(primary_status_label);
-            model.ui.status_pill.set_text(primary_status_label);
-            model.ui.status.set_text(primary_status_label);
+            let shell_status_label = if sync_running {
+                primary_status_label
+            } else {
+                "Daemon offline"
+            };
+            let pill_status_label = if sync_running {
+                primary_status_label
+            } else {
+                "Offline"
+            };
+            model.ui.drive_message.set_text(shell_status_label);
+            model.ui.status_pill.set_text(pill_status_label);
+            model.ui.status.set_text(shell_status_label);
             model.ui.folder.set_text(&drive_mount_text(&state));
             let account = profile(&state);
             let app_key_npub = account.map(|account| account.current_app_key_npub.as_str());
@@ -85,6 +95,9 @@ pub(crate) fn refresh(model: &AppRef) {
                 .ui
                 .copy_share_identity_button
                 .set_sensitive(state.ui.profile.is_some());
+            if !sync_running && !model.ui.notice.text().starts_with("Could not start sync") {
+                model.ui.notice.set_text("daemon not running");
+            }
             if state.ui.last_share_invite.is_empty() {
                 model.ui.last_share_invite.set_text("-");
                 model.ui.copy_last_share_invite_button.set_sensitive(false);
