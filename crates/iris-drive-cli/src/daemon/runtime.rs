@@ -781,7 +781,7 @@ pub(crate) fn cmd_daemon(
                 }
             }
         }
-        let _ = client.disconnect().await;
+        relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
 }

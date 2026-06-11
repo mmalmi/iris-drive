@@ -1628,7 +1628,7 @@ async fn run_app_key_link_exchange_async(
             }
         }
     }
-    let _ = relay_client.disconnect().await;
+    iris_drive_core::relay_sync::shutdown_client(&relay_client).await;
     Ok(())
 }
 

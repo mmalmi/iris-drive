@@ -216,7 +216,7 @@ pub async fn sync_once_with_fips(
         }
     }
 
-    let _ = client.disconnect().await;
+    relay_sync::shutdown_client(&client).await;
     Ok(report)
 }
 

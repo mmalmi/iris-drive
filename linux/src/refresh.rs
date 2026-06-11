@@ -165,6 +165,9 @@ fn sync_launch_on_startup_if_needed(model: &AppRef, enabled: bool) {
 }
 
 pub(crate) fn set_view_mode(model: &AppRef, initialized: bool, sync_running: bool) {
+    model
+        .tray_sync_running
+        .store(sync_running, Ordering::Relaxed);
     model.ui.sidebar.set_visible(initialized);
     model.ui.setup.set_visible(!initialized);
     model.ui.main_view.set_visible(initialized);

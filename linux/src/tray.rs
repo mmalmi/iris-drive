@@ -10,7 +10,7 @@ pub(crate) fn connect_tray(model: &AppRef, window: &adw::ApplicationWindow) {
     }
 
     let (sender, receiver) = mpsc::channel();
-    let tray = install_tray(sender);
+    let tray = install_tray(sender, Arc::clone(&model.tray_sync_running));
     let available = tray.is_some();
 
     model.tray_available.set(available);
@@ -63,7 +63,6 @@ pub(crate) fn handle_tray_command(
             stop_daemon(model);
             refresh(model);
         }
-        TrayCommand::Logout => logout(model),
         TrayCommand::Quit => quit_application(model, window),
     }
 }
@@ -134,10 +133,16 @@ pub(crate) fn shutdown_tray_handle(tray: TrayServiceHandle) {
 pub(crate) fn shutdown_tray_handle(_tray: TrayServiceHandle) {}
 
 #[cfg(target_os = "linux")]
-pub(crate) fn install_tray(sender: mpsc::Sender<TrayCommand>) -> Option<TrayServiceHandle> {
+pub(crate) fn install_tray(
+    sender: mpsc::Sender<TrayCommand>,
+    sync_running: Arc<AtomicBool>,
+) -> Option<TrayServiceHandle> {
     use ksni::blocking::TrayMethods;
 
-    let tray = IrisDriveTray { sender };
+    let tray = IrisDriveTray {
+        sender,
+        sync_running,
+    };
     match tray.spawn() {
         Ok(handle) => Some(handle),
         Err(error) => {
@@ -148,13 +153,17 @@ pub(crate) fn install_tray(sender: mpsc::Sender<TrayCommand>) -> Option<TrayServ
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn install_tray(_sender: mpsc::Sender<TrayCommand>) -> Option<TrayServiceHandle> {
+pub(crate) fn install_tray(
+    _sender: mpsc::Sender<TrayCommand>,
+    _sync_running: Arc<AtomicBool>,
+) -> Option<TrayServiceHandle> {
     None
 }
 
 #[cfg(target_os = "linux")]
 pub(crate) struct IrisDriveTray {
     sender: mpsc::Sender<TrayCommand>,
+    sync_running: Arc<AtomicBool>,
 }
 
 #[cfg(target_os = "linux")]
@@ -219,27 +228,35 @@ impl ksni::Tray for IrisDriveTray {
                 "folder-open",
             ),
             ksni::MenuItem::Separator,
-            tray_menu_item(
+            tray_sync_menu_item(
                 &self.sender,
-                TrayCommand::StartSync,
-                "Resume Sync",
-                "media-playback-start",
-            ),
-            tray_menu_item(
-                &self.sender,
-                TrayCommand::StopSync,
-                "Pause Sync",
-                "media-playback-pause",
-            ),
-            tray_menu_item(
-                &self.sender,
-                TrayCommand::Logout,
-                "Log Out",
-                "system-log-out",
+                self.sync_running.load(Ordering::Relaxed),
             ),
             ksni::MenuItem::Separator,
             tray_menu_item(&self.sender, TrayCommand::Quit, "Quit", "application-exit"),
         ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn tray_sync_menu_item(
+    sender: &mpsc::Sender<TrayCommand>,
+    sync_running: bool,
+) -> ksni::MenuItem<IrisDriveTray> {
+    if sync_running {
+        tray_menu_item(
+            sender,
+            TrayCommand::StopSync,
+            "Pause Sync",
+            "media-playback-pause",
+        )
+    } else {
+        tray_menu_item(
+            sender,
+            TrayCommand::StartSync,
+            "Resume Sync",
+            "media-playback-start",
+        )
     }
 }
 

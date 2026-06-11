@@ -568,6 +568,22 @@ pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
     Ok(client)
 }
 
+pub async fn shutdown_client(client: &Client) {
+    client.shutdown().await;
+}
+
+/// Shut down relay tasks before daemon process exit and keep one handle alive.
+///
+/// nostr-relay-pool 0.44 performs async cleanup from `Drop`; if the last cloned
+/// client disappears while the Tokio runtime is unwinding, that destructor path
+/// can abort the helper process. The daemon is exiting anyway, so keeping one
+/// already-shutdown handle alive until process teardown is preferable to a crash
+/// report on normal app/parent shutdown.
+pub async fn shutdown_client_for_process_exit(client: Client) {
+    client.shutdown().await;
+    std::mem::forget(client);
+}
+
 /// Publish a signed app-key-link request from the requesting `AppKey`.
 pub async fn publish_app_key_link_request(
     client: &Client,

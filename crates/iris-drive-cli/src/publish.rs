@@ -25,7 +25,7 @@ pub(crate) fn cmd_publish(
 
         let report = publish_current_state(&client, config_dir, &config, &state, true).await?;
 
-        let _ = client.disconnect().await;
+        relay_sync::shutdown_client(&client).await;
         let drive_iris_to_url = report
             .root_cid
             .as_ref()

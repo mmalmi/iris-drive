@@ -481,7 +481,7 @@ async fn publish_current_app_key_root(config_dir: &Path) -> anyhow::Result<serde
         &authorized_app_keys,
     )
     .await;
-    let _ = client.disconnect().await;
+    iris_drive_core::relay_sync::shutdown_client(&client).await;
     let event_id = result?;
     Ok(json!({
         "published_drive_root": true,

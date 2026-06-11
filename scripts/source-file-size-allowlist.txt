@@ -22,7 +22,8 @@ scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desk
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2700 Legacy macOS control panel includes backup target controls; pending view split.
-scripts/local-release.mjs 1250 Local release orchestration needs a later module split.
+scripts/local-release.mjs 1500 Local release orchestration needs a later module split.
+scripts/local-release.test.mjs 1250 Local release test coverage needs a later fixture/helper split.
 windows/IrisDriveService.cs 1020 Legacy Windows service bridge pending command-client split.
 windows/MainWindow.xaml.cs 1800 Legacy Windows window controller pending view-model split.
 ios/Sources/IrisDriveMobileModel.swift 1450 Legacy iOS model pending FileProvider/model split.

@@ -50,6 +50,8 @@ public partial class MainWindow : Window
     private bool updatingRecoveryWordBox;
     private bool settingsUpdating;
     private Forms.NotifyIcon? trayIcon;
+    private Forms.ToolStripMenuItem? syncTrayMenuItem;
+    private bool traySyncRunning;
     private string[] pendingLaunchArguments;
 
     public MainWindow(string[]? launchArguments = null)
@@ -303,6 +305,7 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = false;
         StartButton.Visibility = Visibility.Visible;
         StopButton.Visibility = Visibility.Collapsed;
+        UpdateTrayText(false);
         DrivesList.Items.Clear();
         PeersList.Items.Clear();
         SharesList.Items.Clear();
@@ -1296,20 +1299,20 @@ public partial class MainWindow : Window
         menu.Items.Add("Show Iris Drive", null, (_, _) => ShowFromTray());
         menu.Items.Add("Open Drive Folder", null, (_, _) => OpenDriveMount());
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Resume Sync", null, async (_, _) =>
+        syncTrayMenuItem = new Forms.ToolStripMenuItem("Resume Sync");
+        syncTrayMenuItem.Click += async (_, _) =>
         {
-            if (currentStatus is not null)
+            if (traySyncRunning)
+            {
+                StopDaemon();
+            }
+            else if (currentStatus is not null)
             {
                 EnsureDaemonRunning(currentStatus);
             }
             await RefreshAsync();
-        });
-        menu.Items.Add("Pause Sync", null, async (_, _) =>
-        {
-            StopDaemon();
-            await RefreshAsync();
-        });
-        menu.Items.Add("Log out", null, async (_, _) => await LogoutAsync());
+        };
+        menu.Items.Add(syncTrayMenuItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
 
@@ -1350,10 +1353,22 @@ public partial class MainWindow : Window
 
     private void UpdateTrayText(bool syncRunning)
     {
+        traySyncRunning = syncRunning;
         if (trayIcon is not null)
         {
             trayIcon.Text = syncRunning ? "Iris Drive - running" : "Iris Drive - stopped";
         }
+        UpdateTraySyncMenuItem(syncRunning);
+    }
+
+    private void UpdateTraySyncMenuItem(bool syncRunning)
+    {
+        if (syncTrayMenuItem is null)
+        {
+            return;
+        }
+
+        syncTrayMenuItem.Text = syncRunning ? "Pause Sync" : "Resume Sync";
     }
 
     private void Quit()

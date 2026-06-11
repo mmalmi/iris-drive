@@ -507,6 +507,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         backup_check_sender,
         backup_check_receiver: RefCell::new(backup_check_receiver),
         backup_checking: Cell::new(false),
+        tray_sync_running: Arc::new(AtomicBool::new(false)),
         closed_to_tray: Cell::new(false),
         launch_on_startup_synced: Cell::new(None),
         retired: Cell::new(false),

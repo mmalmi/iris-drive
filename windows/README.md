@@ -11,7 +11,7 @@ shared `idrive` CLI:
 - shared-folder create, invite-by-evidence, accept invite, shortcut, repair,
   member role, and revoke actions through Rust app-core
 - local profile logout
-- Windows tray icon with show/open/start/stop/logout/quit actions
+- Windows tray icon with show/open/sync/quit actions
 - self-contained `win-x64` publish output for shortcuts/installers
 
 Build from the repo root on Windows:

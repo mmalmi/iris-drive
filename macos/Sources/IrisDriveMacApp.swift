@@ -55,10 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var daemonRestartWorkItem: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
-    private var copyLinkMenuItem: NSMenuItem?
-    private var openLinkMenuItem: NSMenuItem?
-    private var startSyncMenuItem: NSMenuItem?
-    private var stopSyncMenuItem: NSMenuItem?
+    private var syncMenuItem: NSMenuItem?
     private(set) var runtimePathsForMenu: IrisDriveRuntimePaths?
     private var fileProviderRegistrationInFlight = false
     private var fileProviderDomainState = FileProviderDomainState.unknown
@@ -835,6 +832,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         startSync()
     }
 
+    @objc func toggleSync() {
+        if IrisDriveStatus.shared.daemonRunning {
+            stopSync()
+        } else {
+            startSync()
+        }
+    }
+
     func addRelay(_ value: String) {
         mutateRelayConfig(arguments: ["relays", "add", value])
     }
@@ -1342,57 +1347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showDriveItem.target = self
         menu.addItem(showDriveItem)
 
-        let copyItem = NSMenuItem(
-            title: "Copy drive.iris.to Link",
-            action: #selector(copyDriveLink),
-            keyEquivalent: ""
-        )
-        copyItem.target = self
-        copyItem.isEnabled = false
-        menu.addItem(copyItem)
-
-        let openLinkItem = NSMenuItem(
-            title: "View on drive.iris.to",
-            action: #selector(openDriveLink),
-            keyEquivalent: ""
-        )
-        openLinkItem.target = self
-        openLinkItem.isEnabled = false
-        menu.addItem(openLinkItem)
-
         menu.addItem(.separator())
-        let startItem = NSMenuItem(
+        let syncItem = NSMenuItem(
             title: "Resume Sync",
-            action: #selector(startSync),
+            action: #selector(toggleSync),
             keyEquivalent: ""
         )
-        startItem.target = self
-        startItem.isEnabled = false
-        menu.addItem(startItem)
-
-        let stopItem = NSMenuItem(
-            title: "Pause Sync",
-            action: #selector(stopSync),
-            keyEquivalent: ""
-        )
-        stopItem.target = self
-        menu.addItem(stopItem)
-
-        let logoutItem = NSMenuItem(
-            title: "Log Out",
-            action: #selector(logout),
-            keyEquivalent: ""
-        )
-        logoutItem.target = self
-        menu.addItem(logoutItem)
-
-        let configItem = NSMenuItem(
-            title: "Show Config Folder",
-            action: #selector(openConfigFolder),
-            keyEquivalent: ""
-        )
-        configItem.target = self
-        menu.addItem(configItem)
+        syncItem.target = self
+        menu.addItem(syncItem)
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(
@@ -1406,10 +1368,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.menu = menu
         statusItem = item
         statusMenuItem = status
-        copyLinkMenuItem = copyItem
-        openLinkMenuItem = openLinkItem
-        startSyncMenuItem = startItem
-        stopSyncMenuItem = stopItem
+        syncMenuItem = syncItem
+        updateSyncMenuItem(running: IrisDriveStatus.shared.daemonRunning)
         irisDriveDebugLog("Iris Drive menu bar item installed")
     }
 
@@ -2213,8 +2173,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 self.updateStatus("Device removed")
             }
-
-            self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "native state changed")
             irisDriveDebugLog("Iris Drive control panel updated from app-core")
         }
@@ -2386,8 +2344,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 self.updateStatus("Device removed")
             }
-
-            self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "status changed")
             irisDriveDebugLog("Iris Drive control panel updated")
         }
@@ -2473,8 +2429,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)
             }
-
-            self.updateLinkMenuState()
         }
         refreshStatus()
     }
@@ -2628,7 +2582,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.ensureFileProviderDomainAfterStatusIfNeeded()
             }
             status.fips = IrisDriveFipsStatus(json: json["fips"] as? [String: Any] ?? [:])
-            self.updateLinkMenuState()
             self.signalFileProviderDomainForProviderChangeIfNeeded(reason: "external status changed")
             irisDriveDebugLog("Iris Drive control panel updated from external daemon status")
         }
@@ -2913,15 +2866,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         IrisDriveStatus.shared.daemonRunning = running
-        startSyncMenuItem?.isEnabled = !running
-        stopSyncMenuItem?.isEnabled = running
+        updateSyncMenuItem(running: running)
     }
 
-    private func updateLinkMenuState() {
-        let status = IrisDriveStatus.shared
-        let hasLink = !(status.snapshotLinkURL ?? "").isEmpty || !(status.rootCID ?? "").isEmpty
-        copyLinkMenuItem?.isEnabled = hasLink
-        openLinkMenuItem?.isEnabled = hasLink
+    private func updateSyncMenuItem(running: Bool) {
+        syncMenuItem?.title = running ? "Pause Sync" : "Resume Sync"
+        syncMenuItem?.isEnabled = true
     }
 
     private func currentSnapshotLink() -> String? {

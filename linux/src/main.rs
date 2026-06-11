@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -129,6 +130,7 @@ struct AppModel {
     backup_check_sender: mpsc::Sender<BackupCheckEvent>,
     backup_check_receiver: RefCell<mpsc::Receiver<BackupCheckEvent>>,
     backup_checking: Cell<bool>,
+    tray_sync_running: Arc<AtomicBool>,
     closed_to_tray: Cell<bool>,
     launch_on_startup_synced: Cell<Option<bool>>,
     retired: Cell<bool>,
@@ -166,7 +168,6 @@ enum TrayCommand {
     OpenDriveFolder,
     StartSync,
     StopSync,
-    Logout,
     Quit,
 }
 
