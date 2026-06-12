@@ -152,7 +152,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.app_actors.len(), 1);
     assert_eq!(state.ui.app_actors[0].actor_kind, "device");
     assert_eq!(state.ui.app_actors[0].label, "Pixel");
-    assert_eq!(state.ui.app_actors[0].display_label, "This Device");
+    assert_eq!(state.ui.app_actors[0].display_label, "Pixel");
     assert_eq!(state.ui.app_actors[0].role, "admin");
     assert_eq!(state.ui.app_actors[0].role_label, "Admin");
     assert_eq!(state.ui.app_actors[0].state_label, "Linked");

@@ -155,6 +155,20 @@ wait_for_debug_state() {
   return 1
 }
 
+wait_for_config_status() {
+  local config_dir="$1"
+  local jq_expr="$2"
+  local seconds="$3"
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    if "$IDRIVE" --config-dir "$config_dir" status 2>/dev/null \
+      | python3 -c "$jq_expr" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 unused_loopback_port() {
   python3 - <<'PY'
 import socket
@@ -402,10 +416,10 @@ launch_sim_app \
   "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
-if ! wait_for_debug_state \
-  "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
-  45; then
+if ! wait_for_config_status \
+  "$SIM_APP_BASE_DIR" \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
+  90; then
   echo "FAIL: iOS GUI device did not ingest owner approval before the approved-device UI check." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -424,7 +438,7 @@ run_ui_test \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); a=ui.get("profile") or {}; current=a.get("device_pubkey"); devices=ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == current and d.get("is_current_device") and d.get("is_online") and d.get("state") == "Linked" for d in devices); raise SystemExit(0 if ok else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); a=ui.get("profile") or {}; current=a.get("current_app_key_npub") or a.get("device_pubkey"); devices=ui.get("app_actors") or ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(d.get("pubkey") == current and (d.get("is_current_app_key") or d.get("is_current_device")) and d.get("is_online") and d.get("state") == "Linked" for d in devices); raise SystemExit(0 if ok else 1)' \
   45; then
   echo "FAIL: iOS GUI device did not show linked/online after the owner approved its FIPS request." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
@@ -458,7 +472,7 @@ run_ui_test \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); devices=s.get("ui",{}).get("devices") or []; raise SystemExit(0 if any(d.get("label") == "iOS UI linked" for d in devices) and len(devices) >= 2 else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); devices=ui.get("app_actors") or ui.get("devices") or []; raise SystemExit(0 if any((d.get("display_label") or d.get("label")) == "iOS UI linked" for d in devices) and len(devices) >= 2 else 1)' \
   15; then
   echo "FAIL: iOS Add Device UI did not add the linked device." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2

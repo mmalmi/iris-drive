@@ -485,6 +485,12 @@ pub fn apply_remote_files_root_event(
     let parsed = hashtree_nostr::parse_verified_hashtree_root_event(event)
         .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
         .ok_or_else(|| RelayError::HashtreeRoot("not a hashtree root event".to_string()))?;
+    let Some(account) = config.profile.as_ref() else {
+        return Err(RelayError::NoAccount);
+    };
+    if parsed.event.pubkey != account.app_key_pubkey {
+        return Ok(FilesRootApply::NotOurAppKey);
+    }
     let root_cid = if let Some(local_keys) = local_keys {
         hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, local_keys)
             .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
@@ -505,12 +511,6 @@ pub fn apply_remote_files_root_event(
         observed: std::collections::BTreeMap::new(),
         local_only: false,
     };
-    let Some(account) = config.profile.as_ref() else {
-        return Err(RelayError::NoAccount);
-    };
-    if parsed.event.pubkey != account.app_key_pubkey {
-        return Ok(FilesRootApply::NotOurAppKey);
-    }
     let app_key_pubkey = account.app_key_pubkey.clone();
     let Some(drive) = config
         .drives

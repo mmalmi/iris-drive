@@ -852,12 +852,13 @@ fn apply_files_root_event_ignores_same_root_with_newer_timestamp() {
 #[test]
 fn apply_files_root_event_from_foreign_app_key_ignored() {
     let dir = tempdir().unwrap();
-    let (mut cfg, _) = config_with_owner_account(dir.path());
+    let (mut cfg, acct) = config_with_owner_account(dir.path());
     let other_app_key = Keys::generate();
     let root = encrypted_root(0x61, 1_700_000_000, 0);
     let event = build_private_hashtree_root_event(&other_app_key, "main", &root).unwrap();
 
-    let outcome = apply_remote_files_root_event(&mut cfg, &event, Some(&other_app_key)).unwrap();
+    let outcome =
+        apply_remote_files_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap();
 
     assert_eq!(outcome, FilesRootApply::NotOurAppKey);
     assert!(cfg.drive("main").unwrap().app_key_roots.is_empty());

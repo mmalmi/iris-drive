@@ -98,7 +98,7 @@ class AppStateTest {
                   "actor_kind": "device",
                   "pubkey": "device-a",
                   "label": "Pixel",
-                  "display_label": "This Device",
+                  "display_label": "Pixel",
                   "role": "admin",
                   "role_label": "Admin",
                   "state": "linked",
@@ -124,7 +124,7 @@ class AppStateTest {
         assertEquals("1/1 online", state.fips.rosterLabel)
         assertEquals(1, state.fips.rosterOnlineDeviceCount)
         assertEquals("TCP, 12 ms", state.fips.peerStatuses.single().connectionLabel)
-        assertEquals("This Device", state.devices.single().displayLabel)
+        assertEquals("Pixel", state.devices.single().displayLabel)
         assertEquals("device", state.devices.single().actorKind)
         assertEquals("Admin", state.devices.single().roleLabel)
         assertEquals("Linked", state.devices.single().stateLabel)
@@ -296,7 +296,7 @@ class AppStateTest {
                 DeviceState(
                     pubkey = "device-a",
                     label = "Pixel",
-                    displayLabel = "This Device",
+                    displayLabel = "Pixel",
                     role = "admin",
                     roleLabel = "Admin",
                     state = "Admin",

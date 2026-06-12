@@ -1604,10 +1604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func openFileProviderItem(path targetPath: String?) {
-        let domain = NSFileProviderDomain(
-            identifier: irisDriveDomainIdentifier,
-            displayName: irisDriveFileProviderDomainDisplayName
-        )
+        let domain = irisDriveFileProviderDomain(runtime: currentFileProviderRuntimeConfig())
         guard let manager = NSFileProviderManager(for: domain) else {
             NSLog("Iris Drive FileProvider manager unavailable")
             handleFileProviderOpenFailure("manager unavailable")
@@ -1615,20 +1612,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let identifier = targetPath.map { Self.fileProviderIdentifier(for: $0) } ?? .rootContainer
-        manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
+        refreshFileProviderDomainForOpen(manager: manager) { [weak self] in
+            manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let url {
+                        self.openMountedDriveFolder(url)
+                        return
+                    }
+
+                    if let error {
+                        NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
+                    } else {
+                        NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
+                    }
+                    self.handleFileProviderOpenFailure("user-visible URL unavailable")
+                }
+            }
+        }
+    }
+
+    private func refreshFileProviderDomainForOpen(manager: NSFileProviderManager, completion: @escaping () -> Void) {
+        guard fileProviderIntegrationEnabled else {
+            completion()
+            return
+        }
+        guard let paths = runtimePathsForMenu else {
+            completion()
+            return
+        }
+
+        let idrive = idriveExecutableURL()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async { completion() }
+                return
+            }
+            do {
+                let summary = try self.providerSignalSummary(idrive: idrive, paths: paths)
+                DispatchQueue.main.async {
+                    self.signalFileProviderDomain(directoryPaths: summary.directoryPaths)
+                    self.reimportFileProviderDomainForOpen(
+                        manager: manager,
+                        key: summary.changeKey,
+                        completion: completion
+                    )
+                }
+            } catch {
+                NSLog("Iris Drive FileProvider open refresh skipped: \(error)")
+                DispatchQueue.main.async { completion() }
+            }
+        }
+    }
+
+    private func reimportFileProviderDomainForOpen(manager: NSFileProviderManager, key: String, completion: @escaping () -> Void) {
+        guard fileProviderReimportEnabled else {
+            completion()
+            return
+        }
+        guard !fileProviderReimportInFlight else {
+            NSLog("Iris Drive FileProvider reimport skipped (open requested); already in flight")
+            completion()
+            return
+        }
+
+        fileProviderReimportInFlight = true
+        lastFileProviderReimportAt = Date()
+        lastFileProviderReimportKey = key
+        manager.reimportItems(below: .rootContainer) { [weak self] error in
             DispatchQueue.main.async {
-                guard let self else { return }
-                if let url {
-                    self.openMountedDriveFolder(url)
+                guard let self else {
+                    completion()
                     return
                 }
-
+                self.fileProviderReimportInFlight = false
                 if let error {
-                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
+                    NSLog("Iris Drive FileProvider reimport failed (open requested): \(error)")
                 } else {
-                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
+                    NSLog("Iris Drive FileProvider reimport requested (open requested)")
                 }
-                self.handleFileProviderOpenFailure("user-visible URL unavailable")
+                completion()
             }
         }
     }

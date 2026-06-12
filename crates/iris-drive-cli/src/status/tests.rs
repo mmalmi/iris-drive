@@ -309,7 +309,7 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
         .find(|peer| peer["is_current_app_key"] == true)
         .expect("current AppKey peer");
     assert!(current.get("is_current_device").is_none());
-    assert_eq!(current["display_label"], "This Device");
+    assert_eq!(current["display_label"], "Mac");
     assert_eq!(current["role_label"], "Admin");
     assert_eq!(current["connection_state"], "local");
     assert_eq!(current["connection_label"], "This Device");

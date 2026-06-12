@@ -183,7 +183,7 @@ enum IrisDriveScreenshotFixtures {
             "app_key_pubkey": "fixture-\(id)",
             "app_key_npub": fakeNpub(id),
             "label": label,
-            "display_label": current ? "This Device" : label,
+            "display_label": label,
             "role": role,
             "role_label": role == "admin" ? "Admin" : "Member",
             "is_current_app_key": current,

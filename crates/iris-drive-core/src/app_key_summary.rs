@@ -94,13 +94,10 @@ pub fn app_actor_role_label(role: AppActorRole) -> &'static str {
 
 #[must_use]
 pub fn app_key_display_label(
-    is_current_app_key: bool,
+    _is_current_app_key: bool,
     label: Option<&str>,
     fallback: &str,
 ) -> String {
-    if is_current_app_key {
-        return "This Device".to_owned();
-    }
     label
         .map(str::trim)
         .filter(|label| !label.is_empty())
@@ -465,10 +462,7 @@ mod tests {
 
         assert_eq!(app_actor_role_key(AppActorRole::Admin), "admin");
         assert_eq!(app_actor_role_label(AppActorRole::Member), "Member");
-        assert_eq!(
-            app_key_display_label(true, Some("Mac"), "npub1x"),
-            "This Device"
-        );
+        assert_eq!(app_key_display_label(true, Some("Mac"), "npub1x"), "Mac");
         assert_eq!(
             app_key_display_label(false, Some("  Phone  "), "npub1x"),
             "Phone"
@@ -536,7 +530,7 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].npub, current_npub);
-        assert_eq!(rows[0].display_label, "This Device");
+        assert_eq!(rows[0].display_label, "Mac");
         assert_eq!(rows[0].role, "admin");
         assert_eq!(rows[0].role_label, "Admin");
         assert_eq!(rows[0].connection_state, "local");
